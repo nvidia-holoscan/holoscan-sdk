@@ -245,6 +245,17 @@ bool GXFResource::handle_dev_id(std::optional<int32_t>& dev_id_value) {
   return false;
 }
 
+void GXFResource::reset_backend_objects() {
+  HOLOSCAN_LOG_TRACE(
+      "GXFResource '{}' of type '{}'::reset_backend_objects", gxf_cname_, gxf_typename());
+
+  // Reset GraphEntity Resource
+  Resource::reset_backend_objects();
+
+  // Reset the GraphEntity of this GXFResource itself
+  reset_gxf_graph_entity();
+}
+
 YAML::Node GXFResource::to_yaml_node() const {
   YAML::Node node = Resource::to_yaml_node();
   node["gxf_eid"] = YAML::Node(gxf_eid());

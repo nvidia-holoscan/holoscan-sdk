@@ -33,9 +33,9 @@ std::string ArgType::to_string() const {
       container_type_ == ArgContainerType::kVector ? "std::vector<{}>" : "std::array<{},N>";
   std::string container_str = nested_str;
   for (int32_t i = 1; i < dimension_; ++i) {
-    container_str = fmt::format(nested_str, container_str);
+    container_str = fmt::vformat(nested_str, fmt::make_format_args(container_str));
   }
-  return fmt::format(container_str, el_type_str);
+  return fmt::vformat(container_str, fmt::make_format_args(el_type_str));
 }
 
 template <typename T>

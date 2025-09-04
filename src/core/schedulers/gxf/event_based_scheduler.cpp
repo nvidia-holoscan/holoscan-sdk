@@ -19,8 +19,10 @@
 
 #include <memory>
 
+#include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -55,10 +57,26 @@ void EventBasedScheduler::setup(ComponentSpec& spec) {
              "negative value means not stop on deadlock. This parameter only applies when  "
              "stop_on_deadlock=true",
              0L);
+  spec.param(pin_cores_,
+             "pin_cores",
+             "Pin Cores",
+             "CPU core IDs to pin the worker threads to. If specified, all the worker threads "
+             "created based on the parameter `worker_thread_number` will be pinned to the same "
+             "set of specified cores. If not specified, the worker threads will not be pinned to "
+             "any cores.",
+             ParameterFlag::kOptional);
 }
 
 nvidia::gxf::EventBasedScheduler* EventBasedScheduler::get() const {
   return static_cast<nvidia::gxf::EventBasedScheduler*>(gxf_cptr_);
+}
+
+std::shared_ptr<Clock> EventBasedScheduler::clock() {
+  if (clock_.has_value()) {
+    // Create a Clock resource that wraps the gxf::Clock implementation
+    return std::make_shared<Clock>(std::static_pointer_cast<ClockInterface>(clock_.get()));
+  }
+  return nullptr;
 }
 
 void EventBasedScheduler::initialize() {
@@ -80,6 +98,13 @@ void EventBasedScheduler::initialize() {
 
   // parent class initialize() call must be after the argument additions above
   Scheduler::initialize();
+}
+
+void* EventBasedScheduler::clock_gxf_cptr() const {
+  if (clock_.has_value() && clock_.get() != nullptr) {
+    return clock_.get()->gxf_cptr();
+  }
+  return nullptr;
 }
 
 }  // namespace holoscan

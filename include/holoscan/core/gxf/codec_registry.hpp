@@ -399,6 +399,8 @@ class CodecRegistry {
     add_codec<std::vector<std::vector<std::complex<double>>>>(
         "std::vector<std::vector<std::complex<double>>>>"s);
     add_codec<std::vector<std::vector<std::string>>>("std::vector<std::vector<std::string>>>"s);
+    add_codec<std::unordered_map<std::string, std::string>>(
+        "std::unordered_map<std::string, std::string>"s);
 
     // shared_ptr variants for all of the above
     add_codec<std::shared_ptr<bool>>("std::shared_ptr<bool>"s);
@@ -460,6 +462,8 @@ class CodecRegistry {
         "std::shared_ptr<std::vector<std::vector<std::complex<double>>>>>"s);
     add_codec<std::shared_ptr<std::vector<std::vector<std::string>>>>(
         "std::shared_ptr<std::vector<std::vector<std::string>>>>"s);
+    add_codec<std::shared_ptr<std::unordered_map<std::string, std::string>>>(
+        "std::shared_ptr<std::unordered_map<std::string, std::string>>"s);
 
     // add code for the camera pose array used by HolovizOp
     add_codec<std::shared_ptr<std::array<float, 16>>>("std::shared_ptr<std::array<float, 16>>"s);

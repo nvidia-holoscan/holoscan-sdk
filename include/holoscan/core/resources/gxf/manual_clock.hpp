@@ -23,6 +23,12 @@
 
 #include "./clock.hpp"
 
+namespace nvidia {
+namespace gxf {
+class ManualClock;
+}
+}  // namespace nvidia
+
 namespace holoscan {
 
 /**
@@ -35,9 +41,9 @@ namespace holoscan {
  *
  * - **initial_timestamp** (int64_t): The initial time offset in nanoseconds.
  */
-class ManualClock : public Clock {
+class ManualClock : public gxf::Clock {
  public:
-  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(ManualClock, Clock)
+  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(ManualClock, gxf::Clock)
   ManualClock() = default;
   ManualClock(const std::string& name, nvidia::gxf::ManualClock* component);
 
@@ -54,6 +60,9 @@ class ManualClock : public Clock {
 
   /// @brief Waits until the given duration has elapsed on the clock
   void sleep_for(int64_t duration_ns) override;
+
+  // Bring the templated sleep_for method from base class into scope
+  using gxf::Clock::sleep_for;
 
   /// @brief Waits until the given target time
   void sleep_until(int64_t target_time_ns) override;

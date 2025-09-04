@@ -322,25 +322,25 @@ struct codec<ops::HolovizOp::InputSpec> {
     auto yuv_model_conversion =
         deserialize_trivial_type<ops::HolovizOp::YuvModelConversion>(endpoint);
     if (!yuv_model_conversion) {
-      forward_error(image_format);
+      forward_error(yuv_model_conversion);
     }
     out.yuv_model_conversion_ = yuv_model_conversion.value();
 
     auto yuv_range = deserialize_trivial_type<ops::HolovizOp::YuvRange>(endpoint);
     if (!yuv_range) {
-      forward_error(image_format);
+      forward_error(yuv_range);
     }
     out.yuv_range_ = yuv_range.value();
 
     auto x_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
     if (!x_chroma_location) {
-      forward_error(image_format);
+      forward_error(x_chroma_location);
     }
     out.x_chroma_location_ = x_chroma_location.value();
 
     auto y_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
     if (!y_chroma_location) {
-      forward_error(image_format);
+      forward_error(y_chroma_location);
     }
     out.y_chroma_location_ = y_chroma_location.value();
 

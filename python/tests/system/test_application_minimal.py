@@ -22,7 +22,7 @@ import pytest
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Executor, Operator, OperatorSpec
 from holoscan.operators import PingRxOp, PingTxOp
-from holoscan.resources import ManualClock, RealtimeClock
+from holoscan.resources import ManualClock, RealtimeClock, SyntheticClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 from .env_wrapper import env_var_context
@@ -84,7 +84,7 @@ def test_minimal_app(ping_config_file, SchedulerClass, capfd):  # noqa: N803
 @pytest.mark.parametrize(
     "SchedulerClass", [EventBasedScheduler, GreedyScheduler, MultiThreadScheduler]
 )
-@pytest.mark.parametrize("ClockClass", [RealtimeClock, ManualClock])
+@pytest.mark.parametrize("ClockClass", [RealtimeClock, ManualClock, SyntheticClock])
 def test_minimal_app_with_clock(ping_config_file, SchedulerClass, ClockClass):  # noqa: N803
     app = MinimalApp()
     app.config(ping_config_file)

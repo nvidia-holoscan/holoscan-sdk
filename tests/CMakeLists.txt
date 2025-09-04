@@ -158,6 +158,7 @@ ConfigureTest(
   SYSTEM_TEST
   system/condition_combiner.cpp
   system/cuda_allocators.cpp
+  system/cuda_green_context.cpp
   system/cuda_stream.cpp
   system/cycle.cpp
   system/emit_receive_port_name_test.cpp
@@ -203,7 +204,7 @@ target_link_libraries(SYSTEM_TEST
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
   # Exclude tests that are known to fail with ASAN
-  set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-HolovizApps.*")
+  set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-HolovizApps.*:RealtimePingFirstInFirstOutApp.*:RealtimePingRoundRobinApp.*:RealtimePingDeadlineApp.*")
 endif()
 
 # ##################################################################################################
@@ -295,7 +296,7 @@ target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
 "\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=5000;\
 HOLOSCAN_MAX_DURATION_MS=5000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based;\
 "
   )
 set_tests_properties(

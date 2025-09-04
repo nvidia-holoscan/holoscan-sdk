@@ -30,16 +30,20 @@ namespace holoscan {
 SerializationBuffer::SerializationBuffer(const std::string& name,
                                          nvidia::gxf::SerializationBuffer* component)
     : GXFResource(name, component) {
+  if (!component) {
+    throw std::invalid_argument("SerializationBuffer component cannot be null");
+  }
   auto maybe_buffer_size = component->getParameter<size_t>("buffer_size");
   if (!maybe_buffer_size) {
-    throw std::runtime_error("Failed to get maybe_buffer_size");
+    throw std::runtime_error(
+        "Failed to get maybe_buffer_size parameter from GXF SerializationBuffer");
   }
   buffer_size_ = maybe_buffer_size.value();
 
   auto maybe_allocator =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::Allocator>>("allocator");
   if (!maybe_allocator) {
-    throw std::runtime_error("Failed to get allocator");
+    throw std::runtime_error("Failed to get allocator parameter from GXF SerializationBuffer");
   }
   auto allocator_handle = maybe_allocator.value();
   allocator_ =

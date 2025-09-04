@@ -89,8 +89,8 @@ void Component::update_params_from_args() {
   update_params_from_args(spec_->params());
 }
 
-void ComponentBase::reset_graph_entities() {
-  HOLOSCAN_LOG_TRACE("Component '{}'::reset_graph_entities", name_);
+void ComponentBase::reset_backend_objects() {
+  HOLOSCAN_LOG_TRACE("Component '{}'::reset_backend_objects", name_);
   // Note: Should NOT also be necessary to reset graph entities in spec_->params() as the
   // params are filled in via args.
   for (auto& arg : args_) {
@@ -113,17 +113,15 @@ void ComponentBase::reset_graph_entities() {
       switch (container_type) {
         case ArgContainerType::kNative: {
           auto condition = std::any_cast<std::shared_ptr<Condition>>(arg.value());
-          auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
-          if (gxf_condition) {
-            gxf_condition->reset_gxf_graph_entity();
+          if (condition) {
+            condition->reset_backend_objects();
           }
         } break;
         case ArgContainerType::kVector: {
           auto conditions = std::any_cast<std::vector<std::shared_ptr<Condition>>>(arg.value());
           for (auto& condition : conditions) {
-            auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
-            if (gxf_condition) {
-              gxf_condition->reset_gxf_graph_entity();
+            if (condition) {
+              condition->reset_backend_objects();
             }
           }
         } break;
@@ -135,19 +133,15 @@ void ComponentBase::reset_graph_entities() {
       switch (container_type) {
         case ArgContainerType::kNative: {
           auto resource = std::any_cast<std::shared_ptr<Resource>>(arg.value());
-          auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
-          if (gxf_resource) {
-            gxf_resource->reset_gxf_graph_entity();
-            continue;
+          if (resource) {
+            resource->reset_backend_objects();
           }
         } break;
         case ArgContainerType::kVector: {
           auto resources = std::any_cast<std::vector<std::shared_ptr<Resource>>>(arg.value());
           for (auto& resource : resources) {
-            auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
-            if (gxf_resource) {
-              gxf_resource->reset_gxf_graph_entity();
-              continue;
+            if (resource) {
+              resource->reset_backend_objects();
             }
           }
         } break;

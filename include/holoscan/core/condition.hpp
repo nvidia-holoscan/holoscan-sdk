@@ -365,11 +365,11 @@ class Condition : public Component {
    */
   int64_t wrapper_cid() const;
 
- protected:
-  // Add friend classes that can call reset_graph_entites
-  friend class holoscan::Operator;
+  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
+  void set_parameters() override;
 
-  using Component::reset_graph_entities;
+ protected:
+  friend class holoscan::Operator;  // needs to call set_operator and wrapper_cid
 
   using ComponentBase::update_params_from_args;
 
@@ -391,9 +391,6 @@ class Condition : public Component {
 
   /// Update parameters based on the specified arguments
   void update_params_from_args();
-
-  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
-  virtual void set_parameters();
 
   bool is_initialized_ = false;  ///< Whether the condition is initialized.
 

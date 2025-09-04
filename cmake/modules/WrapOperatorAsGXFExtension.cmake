@@ -287,7 +287,6 @@ function(generate_gxf_extension)
       message(FATAL_ERROR "Missing required EXTENSION_ID_HASH1 and EXTENSION_ID_HASH2 arguments for ${EXTENSION_NAME} manifest generation")
     endif()
     convert_uuid_hashes_to_ietf(${EXTENSION_ID_HASH1} ${EXTENSION_ID_HASH2} EXT_UUID)
-    find_package(CUDAToolkit REQUIRED)
     set(MANIFEST_FORWARD_ARGS
       --uuid "${EXT_UUID}"    # FIXME: codelet vs extension UUID?
       --version "${EXTENSION_VERSION}"

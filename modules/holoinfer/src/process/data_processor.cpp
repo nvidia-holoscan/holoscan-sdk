@@ -660,14 +660,6 @@ DataProcessor::~DataProcessor() {
       HOLOSCAN_LOG_ERROR("Error unloading CUDA module: {}", error_string);
     }
   }
-
-  if (context_ != nullptr) {
-    err = cuCtxDestroy(context_);
-    if (err != CUDA_SUCCESS) {
-      cuGetErrorString(err, &error_string);
-      HOLOSCAN_LOG_ERROR("Error destroying CUDA context: {}", error_string);
-    }
-  }
 }
 
 }  // namespace inference

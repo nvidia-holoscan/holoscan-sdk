@@ -27,6 +27,7 @@
     holoscan.operators.PingTensorTxOp
     holoscan.operators.PingTxOp
     holoscan.operators.SegmentationPostprocessorOp
+    holoscan.operators.DataTypeTxTestOp
     holoscan.operators.V4L2VideoCaptureOp
     holoscan.operators.VideoStreamRecorderOp
     holoscan.operators.VideoStreamReplayerOp
@@ -45,6 +46,9 @@ _OPERATOR_MODULES = {
     "ping_tensor_tx": ["PingTensorTxOp"],
     "ping_tx": ["PingTxOp"],
     "segmentation_postprocessor": ["SegmentationPostprocessorOp"],
+    # Test operators are not intended to have a stable API for external use, so do not automatically
+    # import them to the public API here.
+    # "test_ops": ["DataTypeRxTestOp", "DataTypeTxTestOp"],
     "v4l2_video_capture": ["V4L2VideoCaptureOp"],
     "video_stream_recorder": ["VideoStreamRecorderOp"],
     "video_stream_replayer": ["VideoStreamReplayerOp"],

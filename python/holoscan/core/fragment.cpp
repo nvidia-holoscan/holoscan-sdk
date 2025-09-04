@@ -512,14 +512,19 @@ void init_fragment(py::module_& m) {
             }
 
             // Fallback to C++ lookup
-            const std::type_info* lookup_type = nullptr;
-            const auto* cpp_type = py::detail::get_type_info((PyTypeObject*)service_type.ptr());
-            if (!cpp_type) {
+            const auto& cpp_types = py::detail::all_type_info((PyTypeObject*)service_type.ptr());
+            if (cpp_types.empty()) {
               throw py::type_error("Unable to get C++ type info from Python type.");
             }
-            lookup_type = cpp_type->cpptype;
 
-            auto base_service = fragment->get_service_by_type_info(*lookup_type, id);
+            std::shared_ptr<FragmentService> base_service;
+            for (const auto* cpp_type : cpp_types) {
+              const std::type_info* lookup_type = cpp_type->cpptype;
+              base_service = fragment->get_service_by_type_info(*lookup_type, id);
+              if (base_service) {
+                break;
+              }
+            }
             if (!base_service) {
               return py::none();
             }
@@ -738,7 +743,7 @@ bool PyFragment::register_service_from(Fragment* application, std::string_view i
 
       // Use DefaultFragmentService for all Python services to ensure consistent lookup
       ServiceKey key{typeid(DefaultFragmentService), service_id};
-      fragment_services_by_key_[key] = service;
+      fragment_services_by_key_[key] = std::move(service);
     } catch (const py::cast_error&) {
       // If it's not a FragmentService, it might be a Resource or other type
       // The base class register_service_from should have already handled it

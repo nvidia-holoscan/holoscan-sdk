@@ -29,6 +29,10 @@ init_globals() {
     export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
     export TOP=$(dirname "${RUN_SCRIPT_FILE}")
 
+    # Versions
+    export SUPPORTED_CUDA_VERSIONS=("12" "13")
+    export CUDA_DEFAULT_VERSION="12"
+
     # Executables
     export HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
     export HOLOSCAN_DOCKER_EXE=${HOLOSCAN_DOCKER_EXE:-"docker"}
@@ -107,7 +111,7 @@ get_boolean() {
     echo -n "${bool_out}"
 }
 
-# Archs & GPUs =================================================================
+# Archs, GPUs, CUDA =================================================================
 
 checkif_x86_64() {
     if [ $(get_host_arch) == "x86_64" ]; then
@@ -204,31 +208,53 @@ is_cross_gpu() {
     [ "$GPU" != $(get_host_gpu) ]
 }
 
+get_default_cuda_major_version() {
+    echo -n "${CUDA_DEFAULT_VERSION}"
+}
 
-get_arch+gpu_str() {
-    local suffix=""
+validate_cuda_major_version() {
+    local cuda_major="${1:-}"
+    # Check if cuda_major is in the supported list
+    local found=0
+    for version in "${SUPPORTED_CUDA_VERSIONS[@]}"; do
+        if [[ "$cuda_major" == "$version" ]]; then
+            found=1
+            break
+        fi
+    done
+
+    if [[ $found -eq 0 ]]; then
+        c_echo_err R "Invalid CUDA version: '${cuda_major}'. Supported versions are: ${SUPPORTED_CUDA_VERSIONS[*]}"
+        return 1
+    fi
+
+    echo -n "${cuda_major}"
+}
+
+get_build_flavor_str() {
+    local suffix="cu${CUDA_MAJOR}"
     if [ "$ARCH" = "aarch64" ]; then
-        suffix="$ARCH-$GPU"
+        suffix+="-$ARCH-$GPU"
     else
-        suffix="$ARCH"
+        suffix+="-$ARCH"
     fi
     echo -n "$suffix"
 }
 
 get_build_img_name() {
-    echo -n "${SDK_BUILD_IMG}-$(get_arch+gpu_str)"
+    echo -n "${SDK_BUILD_IMG}-$(get_build_flavor_str)"
 }
 
 get_run_img_name() {
-    echo -n "${SDK_RUN_IMG}-$(get_arch+gpu_str)"
+    echo -n "${SDK_RUN_IMG}-$(get_build_flavor_str)"
 }
 
 get_build_dir() {
-    echo -n "${SDK_BUILD_DIR}-$(get_arch+gpu_str)"
+    echo -n "${SDK_BUILD_DIR}-$(get_build_flavor_str)"
 }
 
 get_install_dir() {
-    echo -n "${SDK_INSTALL_DIR}-$(get_arch+gpu_str)"
+    echo -n "${SDK_INSTALL_DIR}-$(get_build_flavor_str)"
 }
 
 # CUDA =========================================================================
@@ -361,6 +387,17 @@ clear_cache() {
     run_command rm -rf ${TOP}/.cache/ccache
     run_command rm -rf ${TOP}/.cache/cpm
     run_command rm -rf ${TOP}/.cache/gxf
+
+    # Clean up old build images, keeping only IDs associated with a ':latest' tag
+    c_echo W "Cleaning up old '${SDK_BUILD_IMG}-*' images and docker buildx cache..."
+    local base_img_pattern="${SDK_BUILD_IMG}-*"
+    local latest_ids=$(docker images -q --filter="reference=${base_img_pattern}:latest" | sort -u)
+    local all_ids=$(docker images -q --filter="reference=${base_img_pattern}" | sort -u)
+    local ids_to_delete=$(echo "$all_ids" | grep -v -f <(echo "$latest_ids"))
+    if [ -n "$ids_to_delete" ]; then
+        run_command docker rmi -f $ids_to_delete || true
+    fi
+    run_command docker buildx prune -f --filter 'type=regular' # don't delete cache mounts
 }
 
 check_system_deps_desc() { c_echo 'Check system dependencies
@@ -452,6 +489,7 @@ build_image() {
     run_command $HOLOSCAN_DOCKER_EXE build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
         --build-arg GPU_TYPE=${GPU} \
+        --build-arg CUDA_MAJOR=${CUDA_MAJOR} \
         --platform $(get_platform_str) \
         --network=host \
         ${NO_CACHE} \
@@ -500,12 +538,7 @@ Arguments:
 build() {
     # Prerequisite steps
     if [ "$DO_STANDALONE" != "true" ]; then
-        # Adjust final stage for igpu to support nvdla_compiler
-        local stage="build"
-        if [ "$GPU" = "igpu" ]; then
-            stage="build-igpu"
-        fi
-        build_image --target $stage
+        build_image
     fi
 
     # Default cuda architecture
@@ -622,6 +655,11 @@ build() {
     # --net=host
     #   Provide access to the host network
     #
+    # --ulimit memlock=-1
+    # --ulimit stack=67108864
+    #   Set resource limits for memory locking (unlimited) and stack size (64MB), to prevent
+    #   out-of-memory issues on systems with high core counts during parallel builds.
+    #
     # --interactive (-i)
     #   Making the container interactive allows cancelling the build
     #
@@ -671,6 +709,8 @@ build() {
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
+        --ulimit memlock=-1 \
+        --ulimit stack=67108864 \
         --interactive \
         ${USE_TTY} \
         --entrypoint=bash \
@@ -684,6 +724,7 @@ build() {
         -c "set -e
             if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then
                 cmake -S . -B ${build_path} -G Ninja \
+                    -D HOLOSCAN_CUDA_MAJOR_VERSION=${CUDA_MAJOR} \
                     -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
                     -D HOLOSCAN_BUILD_PYTHON=${build_python} \
                     -D HOLOSCAN_PYTHON_EXAMPLES=${build_python} \
@@ -1093,7 +1134,8 @@ launch() {
     #   Start in the build or install directory
     #
     # --runtime=nvidia \
-    #   Enable GPU acceleration
+    # --gpus all
+    #   Enable GPU acceleration and access to all GPUs
     #
     # ${display_server_opt}
     #   Enable graphical applications (X11 or Wayland)
@@ -1117,11 +1159,25 @@ launch() {
     #   Define path for cupy' kernel cache, needed since $HOME does
     #   not exist when running with `-u id:group`
     #
+    # --ipc=host
+    # --cap-add=CAP_SYS_PTRACE
+    #   Allow process tracing to enable shared memory transport for UCX
+    #
+    # --cap-add=CAP_SYS_NICE
+    # --ulimit rtprio=10
+    #   Allow setting process priorities and scheduling policies for real-time scheduling
+    #
+    # --ulimit memlock=-1
+    # --ulimit stack=67108864
+    #   Set resource limits for memory locking (unlimited), stack size (64MB), to prevent
+    #   out-of-memory issues on systems with high core counts.
+    #
     # Container launch command steps:
     # - Append the Holoscan bin folder to the existing `PATH` before running
     # - Add the GXF module to PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_git_sha)"
+    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+')
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
@@ -1136,9 +1192,10 @@ launch() {
         -v ${mount_point}:${container_mount} \
         -w ${container_top}/${working_dir} \
         --runtime=nvidia \
+        --gpus all \
         ${display_server_opt} \
         ${mount_device_opt} \
-        -e PYTHONPATH=${container_top}/${working_dir}/python/lib \
+        -e PYTHONPATH=${pythonpath}:${container_top}/${working_dir}/python/lib \
         -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
         -e HOLOSCAN_INPUT_PATH=${container_top}/data \
         -e HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data \
@@ -1146,6 +1203,7 @@ launch() {
         --ipc=host \
         --cap-add=CAP_SYS_PTRACE \
         --cap-add=CAP_SYS_NICE \
+        --ulimit rtprio=10 \
         --ulimit memlock=-1 \
         --ulimit stack=67108864 \
         ${extra_args[@]} \
@@ -1726,7 +1784,11 @@ get_list_of_global_flags() {
         Associated environment variable: HOLOSCAN_BUILD_ARCH
     --gpu, -g [igpu | dgpu]     : Specify the GPU stack (integrated vs discrete) for arm64
         Default: current host GPU ($(get_host_gpu))
-        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE"
+    --cuda, -cu [12 | 13]       : Specify the CUDA major version
+        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
+        Default: ${CUDA_DEFAULT_VERSION}
+        Associated environment variable: HOLOSCAN_CUDA_MAJOR_VERSION
+    "
 }
 
 print_usage() {
@@ -1769,7 +1831,7 @@ main() {
 
     # Parse args
     local args=()
-    unset ARCH GPU
+    unset ARCH GPU CUDA_MAJOR
     while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -1798,6 +1860,11 @@ main() {
             shift
             shift
         ;;
+        -cu|--cuda)
+            CUDA_MAJOR=$(validate_cuda_major_version $2)
+            shift
+            shift
+        ;;
         *)
             args+=("$1")
             shift
@@ -1811,6 +1878,9 @@ main() {
     fi
     if [ -z "${GPU-}" ]; then
         GPU=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
+    fi
+    if [ -z "${CUDA_MAJOR-}" ]; then
+        CUDA_MAJOR=$(validate_cuda_major_version ${HOLOSCAN_CUDA_MAJOR_VERSION:-${CUDA_DEFAULT_VERSION}})
     fi
 
     # Run command

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,15 +56,11 @@ class GXFNetworkContext : public holoscan::NetworkContext, public GXFComponent {
    */
   YAML::Node to_yaml_node() const override;
 
- protected:
-  // Make Fragment a friend class so it can call reset_graph_entities
-  friend class holoscan::Fragment;
+  /// Reset any backend-specific objects
+  void reset_backend_objects() override;
 
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   void set_parameters() override;
-
-  /// Reset the GXF GraphEntity of all components associated with the network context
-  void reset_graph_entities() override;
 };
 
 }  // namespace holoscan::gxf

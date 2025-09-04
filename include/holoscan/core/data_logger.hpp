@@ -61,7 +61,7 @@ class DataLogger {
    * @param io_type The type of I/O port (kInput or kOutput).
    * @return true if logging (including serialization and sending) was successful, false otherwise.
    */
-  virtual bool log_data(const std::any&, const std::string& unique_id,
+  virtual bool log_data(const std::any& data, const std::string& unique_id,
                         int64_t acquisition_timestamp = -1,
                         const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
                         IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;

@@ -72,12 +72,18 @@ struct YAML::convert<nvidia::gxf::SchedulingPolicy> {
     // Support using the numeric enum values as well
     try {
       int32_t numeric_value = std::stoi(value);
-      if (numeric_value == static_cast<int32_t>(nvidia::gxf::SchedulingPolicy::kFirstInFirstOut)) {
-        rhs = nvidia::gxf::SchedulingPolicy::kFirstInFirstOut;
-        return true;
-      } else if (numeric_value == static_cast<int32_t>(nvidia::gxf::SchedulingPolicy::kDeadline)) {
-        rhs = nvidia::gxf::SchedulingPolicy::kDeadline;
-        return true;
+      switch (numeric_value) {
+        case static_cast<int32_t>(nvidia::gxf::SchedulingPolicy::kFirstInFirstOut):
+          rhs = nvidia::gxf::SchedulingPolicy::kFirstInFirstOut;
+          return true;
+        case static_cast<int32_t>(nvidia::gxf::SchedulingPolicy::kRoundRobin):
+          rhs = nvidia::gxf::SchedulingPolicy::kRoundRobin;
+          return true;
+        case static_cast<int32_t>(nvidia::gxf::SchedulingPolicy::kDeadline):
+          rhs = nvidia::gxf::SchedulingPolicy::kDeadline;
+          return true;
+        default:
+          break;  // Invalid numeric value, fall through to return false
       }
     } catch (...) {
       // Not a valid number, continue to return false

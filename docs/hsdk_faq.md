@@ -32,13 +32,13 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-dgpu
 ```
 
   * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
 ```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-igpu
+docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-igpu
 ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -91,12 +91,13 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that HSDK 2.2 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 3.6 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holsocan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
 | :---- | :---- | :---- | :---- | :---- |
-| Ubuntu 22.04 | Yes | Yes | Yes | No |
+| Ubuntu 22.04 | Yes | Yes | Yes | Yes |
+| Ubuntu 24.04 | Yes | Yes | Yes | Yes |
 | RHEL 9.x | Yes | No | No | No |
 | Other Linux distros | No | No | No | No |
 
@@ -104,8 +105,10 @@ A2: The prerequisites include:
 
 * Ampere or above recommended for best performance
 * [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for GPUDirect RDMA support
-* Tested with [NVIDIA Quadro RTX 6000](https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/quadro-product-literature/quadro-rtx-6000-us-nvidia-704093-r4-web.pdf) and [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/)
-* [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above
+* Tested with [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/) and [NVIDIA RTX ADA 6000](https://www.nvidia.com/en-us/products/workstations/rtx-6000/)
+* [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above.
+    * x86 workstations: Tested with [OpenRM drivers](https://github.com/NVIDIA/open-gpu-kernel-modules) >= R550.
+    * [CUDA Green Context](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html) features require 560 or above.
 
 **Q3: Are there any additional setup steps required?**
 

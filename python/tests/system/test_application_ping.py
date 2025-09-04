@@ -24,7 +24,7 @@ import numpy as np
 import pytest
 
 from holoscan.conditions import CountCondition, PeriodicCondition
-from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
+from holoscan.core import Application, Clock, IOSpec, Operator, OperatorSpec, Tracker
 from holoscan.operators import PingTensorRxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import GreedyScheduler
@@ -194,6 +194,16 @@ def test_my_ping_app_periodic_manual_clock(ping_config_file, use_new_receivers, 
     assert f"received message {count}" in captured.out
     assert f"received message {count + 1}" not in captured.out
 
+    clock = app.scheduler().clock
+    assert isinstance(clock, Clock)
+
+    manual_clock = clock.cast_to(ManualClock)
+    assert isinstance(manual_clock, ManualClock)
+
+    with pytest.raises(RuntimeError) as err:
+        clock.cast_to(RealtimeClock)
+    assert "Clock could not be cast to RealtimeClock" in str(err.value)
+
 
 @pytest.mark.parametrize("use_new_receivers", [True, False])
 def test_my_ping_app_periodic_realtime_clock(ping_config_file, use_new_receivers, capfd):
@@ -216,6 +226,16 @@ def test_my_ping_app_periodic_realtime_clock(ping_config_file, use_new_receivers
 
     assert f"received message {count}" in captured.out
     assert f"received message {count + 1}" not in captured.out
+
+    clock = app.scheduler().clock
+    assert isinstance(clock, Clock)
+
+    realtime_clock = clock.cast_to(RealtimeClock)
+    assert isinstance(realtime_clock, RealtimeClock)
+
+    with pytest.raises(RuntimeError) as err:
+        clock.cast_to(ManualClock)
+    assert "Clock could not be cast to ManualClock" in str(err.value)
 
 
 @pytest.mark.parametrize("use_new_receivers", [True, False])

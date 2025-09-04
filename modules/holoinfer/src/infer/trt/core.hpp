@@ -39,7 +39,8 @@ class TrtInfer : public InferBase {
   TrtInfer(const std::string& model_path, const std::string& model_name,
            const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
            bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback,
-           bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out);
+           bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
+           std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
 
   /**
    * @brief Destructor
@@ -133,6 +134,9 @@ class TrtInfer : public InferBase {
 
   /// @brief Flag showing if input path map is path to engine file
   bool is_engine_path_;
+
+  /// @brief Function to allocate a CUDA stream (optional)
+  std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
 
   /**
    * @brief Parameter initialization

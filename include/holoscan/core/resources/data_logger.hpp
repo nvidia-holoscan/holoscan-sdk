@@ -40,6 +40,53 @@ class TensorMap;           // forward declaration
 // Shared mutex for thread-safe console output coordination across all console logger types
 extern std::mutex console_output_mutex;
 
+/**
+ * @brief Base class for all data logger resources.
+ *
+ * This class provides the core functionality for logging data to the console. Concrete
+ * implementations of this class should provide the actual logging functionality.
+ *
+ * ==Parameters ==
+ *
+ * - **log_inputs**: bool (optional, default: true)
+ *   - Globally enable or disable logging on input ports (`InputContext::receive` calls)
+ * - **log_outputs**: bool (optional, default: true)
+ *   - Globally enable or disable logging on output ports (`OutputContext::emit` calls)
+ * - **log_metadata**: bool (optional, default: true)
+ *   - Globally enable or disable logging of MetadataDictionary contents
+ * - **log_tensor_data_contents**: bool (optional, default: true)
+ *   - Enable logging of the contents of tensors, not just basic description information. Note that
+ *     logging GPU tensor contents will have the overhead of a device to host data transfer.
+ * - **use_scheduler_clock**: bool (optional, default: false)
+ *   - Whether the `get_timestamp()` method uses the scheduler's clock for timestamps (if false,
+ *     uses system clock).
+ * - **allowlist_patterns**: std::vector<std::string> (optional, default: empty vector)
+ * - **denylist_patterns**: std::vector<std::string> (optional, default: empty vector)
+ *
+ * Note on allowlist/denylist pattern matching:
+ *
+ * If `allowlist_patterns` or `denylist_patterns` are specified, they are applied to the
+ * `unique_id` assigned to messages by the underlying framework.
+ *
+ * In a non-distributed application (without a fragment name), the unique_id for a message will
+ * have one of the following forms:
+ *
+ * - operator_name.port_name
+ * - operator_name.port_name:index  (for multi-receivers with N:1 connection)
+ *
+ * For distributed applications, the fragment name will also appear in the unique id:
+ *
+ * - fragment_name.operator_name.port_name
+ * - fragment_name.operator_name.port_name:index  (for multi-receivers with N:1 connection)
+ *
+ * The pattern matching logic is as follows:
+ *
+ *   - If `denylist patterns` is not empty and there is a match, do not log it.
+ *   - Next check if `allowlist_patterns` is empty:
+ *
+ *       - If yes, return true (allow everything)
+ *       - If no, return true only if there is a match to at least one of the specified patterns.
+ */
 class DataLoggerResource : public DataLogger, public Resource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(DataLoggerResource,
@@ -238,8 +285,14 @@ class DataLoggerResource : public DataLogger, public Resource {
   // Parameter<std::shared_ptr<DataLoggerSerializer>> serializer_;
   Parameter<bool> log_outputs_;
   Parameter<bool> log_inputs_;
-  Parameter<bool> log_tensor_data_content_;
   Parameter<bool> log_metadata_;
+  Parameter<bool> log_tensor_data_content_;
+  Parameter<bool> use_scheduler_clock_;
+  // Use Resource here since both holoscan::Clock and holoscan::gxf::Clock inherit from it
+  Parameter<std::shared_ptr<Resource>> clock_;
+
+  // Get the interface corresponding to the clock parameter
+  std::shared_ptr<ClockInterface> clock_interface_;
 
   // Filtering parameters
   Parameter<std::vector<std::string>> allowlist_patterns_;
@@ -250,6 +303,8 @@ class DataLoggerResource : public DataLogger, public Resource {
   std::optional<std::regex> compiled_allowlist_pattern_;
   std::optional<std::regex> compiled_denylist_pattern_;
   bool patterns_compiled_ = false;
+  std::chrono::time_point<std::chrono::steady_clock> time_reference_;
+  int64_t time_offset_ = 0;
 
   /**
    * @brief Compiles string patterns into regex objects for efficient matching.

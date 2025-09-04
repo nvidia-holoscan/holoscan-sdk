@@ -50,6 +50,17 @@ GXFCondition::GXFCondition(const std::string& name, nvidia::gxf::SchedulingTerm*
   is_initialized_ = true;
 }
 
+void GXFCondition::reset_backend_objects() {
+  HOLOSCAN_LOG_TRACE(
+      "GXFCondition '{}' of type '{}'::reset_backend_objects", gxf_cname_, gxf_typename());
+
+  // Reset GraphEntity Condition
+  Condition::reset_backend_objects();
+
+  // Reset the GraphEntity of this GXFCondition itself
+  reset_gxf_graph_entity();
+}
+
 void GXFCondition::initialize() {
   if (is_initialized_) {
     HOLOSCAN_LOG_DEBUG("GXFCondition '{}' is already initialized. Skipping...", name());

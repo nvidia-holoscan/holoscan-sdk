@@ -437,7 +437,7 @@ void PyApplication::attach_services_to_fragment(const std::shared_ptr<Fragment>&
     ServiceKey key{typeid(DefaultFragmentService), service_key};
     auto py_service = service.cast<std::shared_ptr<FragmentService>>();
 
-    fragment_services_by_key_[key] = py_service;
+    fragment_services_by_key_[key] = std::move(py_service);
   }
 }
 
@@ -462,7 +462,7 @@ void PyApplication::set_python_service(const std::string& service_id, py::object
     // std::shared_ptr<DistributedAppService>, the stored pointer cannot be dynamically cast to
     // distributed::ServiceDriverEndpoint or distributed::ServiceWorkerEndpoint.
     auto shared = service.cast<std::shared_ptr<DistributedAppService>>();
-    ServiceKey key{typeid(*shared), service_id};
+    ServiceKey key{typeid(DistributedAppService), service_id};
     fragment_services_by_key_[key] = shared;
     HOLOSCAN_LOG_DEBUG("Fragment service '{}' is inherits from DistributedAppService", service_id);
   } catch (const py::cast_error&) {

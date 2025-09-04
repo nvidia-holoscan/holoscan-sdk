@@ -41,7 +41,7 @@ void HoloInferTests::holoinfer_assert(const HoloInfer::InferStatus& status,
 
   if (test_tracker.find(test_id) == test_tracker.end()) {
     test_tracker.insert({test_id, test_status});
-#if use_torch
+#if defined(HOLOINFER_TORCH_ENABLED)
     holoinfer_assert_with_message(status, module, current_test, test_name, "context setup failure");
 #endif
     if (test_tracker.at(test_id)) {
@@ -112,25 +112,27 @@ HoloInfer::InferStatus HoloInferTests::setup_inference() {
 
 void HoloInferTests::setup_specifications() {
   // Create inference specification structure
-  inference_specs_ = std::make_shared<HoloInfer::InferenceSpecs>(backend,
-                                                                 backend_map,
-                                                                 model_path_map,
-                                                                 pre_processor_map,
-                                                                 inference_map,
-                                                                 device_map,
-                                                                 dla_core_map,
-                                                                 temporal_map,
-                                                                 activation_map,
-                                                                 batch_sizes,
-                                                                 is_engine_path,
-                                                                 infer_on_cpu,
-                                                                 parallel_inference,
-                                                                 enable_fp16,
-                                                                 input_on_cuda,
-                                                                 output_on_cuda,
-                                                                 use_cuda_graphs,
-                                                                 dla_core,
-                                                                 dla_gpu_fallback);
+  inference_specs_ =
+      std::make_shared<HoloInfer::InferenceSpecs>(backend,
+                                                  backend_map,
+                                                  model_path_map,
+                                                  pre_processor_map,
+                                                  inference_map,
+                                                  device_map,
+                                                  dla_core_map,
+                                                  temporal_map,
+                                                  activation_map,
+                                                  batch_sizes,
+                                                  is_engine_path,
+                                                  infer_on_cpu,
+                                                  parallel_inference,
+                                                  enable_fp16,
+                                                  input_on_cuda,
+                                                  output_on_cuda,
+                                                  use_cuda_graphs,
+                                                  dla_core,
+                                                  dla_gpu_fallback,
+                                                  std::function<cudaStream_t(int32_t device_id)>());
 }
 
 HoloInfer::InferStatus HoloInferTests::create_specifications() {

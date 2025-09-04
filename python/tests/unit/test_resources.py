@@ -16,7 +16,7 @@ limitations under the License.
 """  # noqa: E501
 
 from holoscan.conditions import CountCondition
-from holoscan.core import ComponentSpec, Resource
+from holoscan.core import ClockInterface, ComponentSpec, Resource
 from holoscan.core import _Resource as ResourceBase
 from holoscan.gxf import GXFResource, GXFSystemResourceBase
 from holoscan.operators import PingRxOp, PingTxOp
@@ -25,7 +25,6 @@ from holoscan.resources import (
     AsyncBufferReceiver,
     AsyncBufferTransmitter,
     BlockMemoryPool,
-    Clock,
     CudaAllocator,
     CudaStreamPool,
     DoubleBufferReceiver,
@@ -41,6 +40,7 @@ from holoscan.resources import (
     StdComponentSerializer,
     StdEntitySerializer,
     StreamOrderedAllocator,
+    SyntheticClock,
     ThreadPool,
     Transmitter,
     UcxComponentSerializer,
@@ -364,7 +364,7 @@ class TestManualClock:
             name=name,
             initial_timestamp=100,
         )
-        assert isinstance(clk, Clock)
+        assert isinstance(clk, ClockInterface)
         assert isinstance(clk, GXFResource)
         assert isinstance(clk, ResourceBase)
         assert clk.id == -1
@@ -380,6 +380,30 @@ class TestManualClock:
         ManualClock(app, 100, "manual")
 
 
+class TestSyntheticClock:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "synthetic-clock"
+        clk = SyntheticClock(
+            fragment=app,
+            name=name,
+            initial_timestamp=100,
+        )
+        assert isinstance(clk, ClockInterface)
+        assert isinstance(clk, GXFResource)
+        assert isinstance(clk, ResourceBase)
+        assert clk.id == -1
+        assert clk.gxf_typename == "nvidia::gxf::SyntheticClock"
+        assert f"name: {name}" in repr(clk)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_positional_initialization(self, app):
+        SyntheticClock(app, 100, "synthetic")
+
+
 class TestRealtimeClock:
     def test_kwarg_based_initialization(self, app, capfd):
         name = "realtime-clock"
@@ -390,7 +414,7 @@ class TestRealtimeClock:
             initial_time_scale=2.0,
             use_time_since_epoch=True,
         )
-        assert isinstance(clk, Clock)
+        assert isinstance(clk, ClockInterface)
         assert isinstance(clk, GXFResource)
         assert isinstance(clk, ResourceBase)
         assert clk.id == -1
@@ -491,6 +515,60 @@ class TestThreadPool:
         assert len(pool.operators) == 2
         assert tx_op in pool.operators
         assert rx_op in pool.operators
+
+    def test_add_realtime_method_rr_via_yaml_enum(self, app, operators_config_file):
+        app.config(operators_config_file)
+
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+        rx_op = PingRxOp(app, name="rx")
+
+        # Test add_realtime with SCHED_RR real-time scheduling policy
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        pool.add_realtime(
+            tx_op,
+            **app.kwargs("realtime_threadpool_enum"),
+        )
+
+        # Test regular add with pin_cores
+        pool.add(rx_op, pin_operator=True, pin_cores=[1, 3])
+
+        assert len(pool.operators) == 2
+        assert tx_op in pool.operators
+        assert rx_op in pool.operators
+
+        # initialize the operator manually (will warn)
+        tx_op.initialize()
+        # check that it has the expected CPUThread resource name and the
+        # description of the resource includes SCHED_RR (round-robin)
+        assert "tx_cpu_thread" in tx_op.resources
+        assert "SCHED_RR" in repr(tx_op.resources["tx_cpu_thread"])
+
+    def test_add_realtime_method_rr_via_yaml_str(self, app, operators_config_file):
+        app.config(operators_config_file)
+
+        tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")
+        rx_op = PingRxOp(app, name="rx")
+
+        # Test add_realtime with SCHED_RR real-time scheduling policy
+        pool = ThreadPool(fragment=app, initial_size=2, name="test_pool")
+        pool.add_realtime(
+            tx_op,
+            **app.kwargs("realtime_threadpool_string"),
+        )
+
+        # Test regular add with pin_cores
+        pool.add(rx_op, pin_operator=True, pin_cores=[1, 3])
+
+        assert len(pool.operators) == 2
+        assert tx_op in pool.operators
+        assert rx_op in pool.operators
+
+        # initialize the operator manually (will warn)
+        tx_op.initialize()
+        # check that it has the expected CPUThread resource name and the
+        # description of the resource includes SCHED_FIFO
+        assert "tx_cpu_thread" in tx_op.resources
+        assert "SCHED_FIFO" in repr(tx_op.resources["tx_cpu_thread"])
 
     def test_add_realtime_method_deadline(self, app):
         tx_op = PingTxOp(app, CountCondition(app, 5), name="tx")

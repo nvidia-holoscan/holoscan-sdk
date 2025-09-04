@@ -54,7 +54,7 @@ Fragment::~Fragment() {
   is_run_called_ = true;
 
   // Explicitly clean up graph entities.
-  reset_graph_entities();
+  reset_backend_objects();
 }
 
 Fragment& Fragment::name(const std::string& name) & {
@@ -236,6 +236,13 @@ std::shared_ptr<Scheduler> Fragment::scheduler() {
   return scheduler_;
 }
 
+std::shared_ptr<Scheduler> Fragment::scheduler() const {
+  if (!scheduler_) {
+    scheduler_ = const_cast<Fragment*>(this)->make_scheduler<GreedyScheduler>();
+  }
+  return scheduler_;
+}
+
 void Fragment::network_context(const std::shared_ptr<NetworkContext>& network_context) {
   network_context_ = network_context;
 }
@@ -395,7 +402,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
-  add_flow(upstream_op, downstream_op, port_pairs, IOSpec::ConnectorType::kDefault);
+  add_flow(upstream_op, downstream_op, std::move(port_pairs), IOSpec::ConnectorType::kDefault);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -897,22 +904,15 @@ void Fragment::shutdown_data_loggers() {
   data_loggers_.clear();
 }
 
-void Fragment::reset_graph_entities() {
-  // Explicitly clean up graph entities. This is necessary for Python apps, because the Python
-  // object lifetime may outlive the Application runtime and these must be released prior to the
-  // call to `GxfContextDestroy` to avoid a segfault in the `nvidia::gxf::GraphEntity` destructor.
-  // This method is invoked by the GXFExecutor::run_gxf_graph() function and during the Fragment
-  // destructor to ensure proper cleanup of graph entity resources.
+void Fragment::reset_backend_objects() {
   for (auto& op : graph().get_nodes()) {
-    op->reset_graph_entities();
+    op->reset_backend_objects();
   }
-  auto gxf_sch = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler());
-  if (gxf_sch) {
-    gxf_sch->reset_graph_entities();
+  if (scheduler()) {
+    scheduler()->reset_backend_objects();
   }
-  auto gxf_network_context = std::dynamic_pointer_cast<gxf::GXFNetworkContext>(network_context());
-  if (gxf_network_context) {
-    gxf_network_context->reset_graph_entities();
+  if (network_context()) {
+    network_context()->reset_backend_objects();
   }
 }
 
@@ -923,8 +923,8 @@ void Fragment::reset_state() {
     return;
   }
 
-  // First clean up any graph entities
-  reset_graph_entities();
+  // First clean up any backend-specific objects (e.g. GXF GraphEntity objects)
+  reset_backend_objects();
 
   // If this has a GXFExecutor, we need to reset its flags
   auto gxf_executor = std::dynamic_pointer_cast<gxf::GXFExecutor>(executor_);

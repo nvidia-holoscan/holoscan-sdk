@@ -33,27 +33,30 @@ namespace holoscan {
 
 UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* component)
     : Receiver(name, component) {
+  if (!component) {
+    throw std::invalid_argument("UcxReceiver component cannot be null");
+  }
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
   if (!maybe_capacity) {
-    throw std::runtime_error("Failed to get capacity");
+    throw std::runtime_error("Failed to get capacity parameter from GXF UcxReceiver");
   }
   capacity_ = maybe_capacity.value();
 
   auto maybe_policy = component->getParameter<uint64_t>("policy");
   if (!maybe_policy) {
-    throw std::runtime_error("Failed to get policy");
+    throw std::runtime_error("Failed to get policy parameter from GXF UcxReceiver");
   }
   policy_ = maybe_policy.value();
 
   auto maybe_address = component->getParameter<std::string>("address");
   if (!maybe_address) {
-    throw std::runtime_error("Failed to get address");
+    throw std::runtime_error("Failed to get address parameter from GXF UcxReceiver");
   }
   address_ = maybe_address.value();
 
   auto maybe_port = component->getParameter<uint32_t>("port");
   if (!maybe_port) {
-    throw std::runtime_error("Failed to get port");
+    throw std::runtime_error("Failed to get port parameter from GXF UcxReceiver");
   }
   port_ = maybe_port.value();
 
@@ -61,7 +64,7 @@ UcxReceiver::UcxReceiver(const std::string& name, nvidia::gxf::Receiver* compone
   auto maybe_buffer =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::UcxSerializationBuffer>>("buffer");
   if (!maybe_buffer) {
-    throw std::runtime_error("Failed to get buffer");
+    throw std::runtime_error("Failed to get buffer parameter from GXF UcxReceiver");
   }
   auto buffer_handle = maybe_buffer.value();
   buffer_ = std::make_shared<holoscan::UcxSerializationBuffer>(std::string{buffer_handle->name()},

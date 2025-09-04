@@ -11,7 +11,7 @@ The data logging system consists of several key components:
 - **{cpp:class}`DataLogger <holoscan::DataLogger>`** - The core interface that defines methods for logging different data types
 - **{cpp:class}`DataLoggerResource <holoscan::DataLoggerResource>`** - A resource-based implementation with common configuration parameters
 - **{cpp:class}`BasicConsoleLogger <holoscan::data_loggers::BasicConsoleLogger>`** - A concrete implementation that logs data to the console
-- **{cpp:class}`GXFConsoleLogger <holoscan::data_loggers::GXFConsoleLogger>`** - A version of `BasicConsoleLogger` which also logs Tensor within messages that are emitted or received as a `holoscan::gxf::Entity` or `nvidia::gxf::Entity`. It is recommended to use this version over `BasicConsoleLogger` as it will also log the tensors emitted or received by a number of the built-in operators of the SDK which directly use GXF::Entity type to support both Tensors as well as GXF VideoBuffers. `VideoBuffer` components are not currently logged by this implementation, but this could be added by overriding the `log_backend_specific` method.
+- **{cpp:class}`GXFConsoleLogger <holoscan::data_loggers::GXFConsoleLogger>`** - A version of `BasicConsoleLogger` which also logs Tensors and/or `nvidia::gxf::VideoBuffer` objects within messages that are emitted or received as a `holoscan::gxf::Entity` or `nvidia::gxf::Entity`. It is recommended to use this version over `BasicConsoleLogger` as it will also log the tensors emitted or received by a number of the built-in operators of the SDK which directly use GXF::Entity type to support both Tensors as well as GXF VideoBuffers. `VideoBuffer` components are not currently logged by this implementation, but this could be added by overriding the `log_backend_specific` method.
 - **{cpp:class}`AsyncConsoleLogger <holoscan::data_loggers::AsyncConsoleLogger>`** - A version of `GXFConsoleLogger` which performs logging asynchronously by a queue that is processed by a worker thread owned by the logger. This version has the option of using separate logging queues for "large" data (e.g. Tensor/TensorMap) vs. other types so that data contents can be dropped if the queue size reaches a user-specfied limit.
 - **{cpp:class}`SimpleTextSerializer <holoscan::data_loggers::SimpleTextSerializer>`** - A serializer for converting data to human-readable text
 
@@ -220,9 +220,9 @@ class MyApp(Application):
 The example above shows example code adding the logger within the `compose` method, but it can
 also be added from the `main` application file via as done in the following example applications:
 
-1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/tensor_interop/python/tensor_interop.py))
-2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/multithread/python/multithread.py))
-3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.5.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.5.0/examples/video_replayer/python/video_replayer.py))
+1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.6.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.6.0/examples/tensor_interop/python/tensor_interop.py))
+2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.6.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.6.0/examples/multithread/python/multithread.py))
+3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.6.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.6.0/examples/video_replayer/python/video_replayer.py))
 
 As with any other resource or operator in the SDK, parameters can be passed in directly via
 arguments or indirectly via reading from the YAML config.

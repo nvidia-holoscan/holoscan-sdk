@@ -94,6 +94,20 @@ class TestPoseTree:
             result = tree.get(frame_a, frame_a, 0.0)
             np.testing.assert_array_almost_equal(result.translation, np.array([0.0, 0.0, 0.0]))
 
+    def test_create_frames(self, tree):
+        # Create three frames and test pose chain
+        tree.set_multithreading_info(3, 4)
+        assert tree.create_frame_with_id(42, "a") == 42
+        assert tree.create_frame_with_id(7, "b") == 7
+        assert tree.create_frame_with_id(15, "c") == 15
+        assert tree.create_frame_with_id(25, "d") == 25
+        assert tree.create_frame("e") == 3
+        assert tree.create_frame("f") == 11
+        assert tree.create_frame("g") == 19
+        with pytest.raises(RuntimeError):
+            tree.create_frame_with_id(11, "h")
+        assert tree.create_frame("h") == 23
+
     def test_create_edges(self):
         tree = PoseTree()
         tree.init(8, 256, 1024, 4, 4, 1, 1)

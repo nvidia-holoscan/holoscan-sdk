@@ -17,8 +17,12 @@
 
 #include "holoscan/core/application.hpp"
 
+#include <ucs/config/global_opts.h>
+#include <ucs/type/status.h>
+
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>  // for std::call_once
@@ -208,13 +212,26 @@ void Application::set_ucx_env() {
   // Reuse address
   // (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
   setenv("UCX_TCP_CM_REUSEADDR", "y", 0);
-  // Disable UCX memory type cache
-  // (see https://ucx-py.readthedocs.io/en/latest/configuration.html#ucx-memtype-cache and
-  //  https://openucx.readthedocs.io/en/master/faq.html#i-m-running-ucx-with-gpu-memory-and-geting-a-segfault-why)
-  setenv("UCX_MEMTYPE_CACHE", "n", 0);
   // Disable UCX CM to use all devices
   // (see issue 4233845)
   setenv("UCX_CM_USE_ALL_DEVICES", "n", 0);
+
+  // Disable UCX memory type cache
+  // (see https://ucx-py.readthedocs.io/en/latest/configuration.html#ucx-memtype-cache and
+  //  https://openucx.readthedocs.io/en/master/faq.html#i-m-running-ucx-with-gpu-memory-and-geting-a-segfault-why)
+
+  // Set memtype cache to disabled unless the user has already set it
+  if (std::getenv("UCX_MEMTYPE_CACHE") == nullptr) {
+    // UCX uses `__attribute__((constructor))` to load 'global' UCS environment variables even
+    // before Holoscan's main() is called, so cannot set this one via `setenv`.
+    // We need to set it via a call to`ucs_global_opts_set_value` instead.
+
+    ucs_status_t status = ucs_global_opts_set_value("MEMTYPE_CACHE", "no");
+    if (status != UCS_OK) {
+      HOLOSCAN_LOG_WARN("Failed to set UCX_MEMTYPE_CACHE=no with status: {}",
+                        ucs_status_string(status));
+    }
+  }
 }
 
 void Application::set_v4l2_env() {
@@ -531,14 +548,14 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
 
     // Make sure that multi-thread scheduler is used for the fragment
     if (scheduler_setting == SchedulerType::kDefault) {
-      // Check if holoscan::MultiThreadScheduler is already set to the fragment.
+      // Check if holoscan::EventBasedScheduler is already set to the fragment.
       // If it is, then we should use the default scheduler.
-      // Otherwise, we should set new multi-thread scheduler.
+      // Otherwise, we should set a new event-based scheduler.
 
-      auto multi_thread_scheduler =
-          std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler);
-      if (!multi_thread_scheduler) {
-        scheduler_setting = SchedulerType::kMultiThread;
+      auto event_based_scheduler =
+          std::dynamic_pointer_cast<holoscan::EventBasedScheduler>(scheduler);
+      if (!event_based_scheduler) {
+        scheduler_setting = SchedulerType::kEventBased;
       }
     }
 
@@ -636,7 +653,7 @@ void Application::initiate_distributed_app_shutdown(const std::string& fragment_
   auto driver_client = app_driver_client();
 
   if (driver_client) {
-    HOLOSCAN_LOG_WARN("Application::initiate_distributed_app_shutdown started");
+    HOLOSCAN_LOG_INFO("Application::initiate_distributed_app_shutdown started");
     // Initiate shutdown via RPC
     driver_client->initiate_shutdown(fragment_name);
   } else {

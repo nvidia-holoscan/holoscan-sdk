@@ -98,7 +98,6 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
 # - libvulkan1: needed for holoviz operator
 # - libegl1: needed for holoviz operator in headless mode
 # - libv4l-0: needed for v4l2 operator
-# - libnuma1: needed for holoscan::core on ARM64
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
 libnvinfer-bin (>=10.3), \
 libcublas-12-6 | libcublas.so.12, \
@@ -115,24 +114,19 @@ libvulkan1, \
 libegl1, \
 libv4l-0"
 )
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
-  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "${CPACK_DEBIAN_PACKAGE_RECOMMENDS}, \
-libnuma1")
-endif()
 
 # Packages for optional features:
 # - libcupti: needed for Torch inference backend
 # - libnvToolsExt: needed for Torch inference backend
 # - libcudnn: needed for Torch and OnnxRuntime
 # - libcusparselt: needed for Torch inference backend
-# - libpng, libjpeg, libopenblas: needed for Torch inference backend.
+# - libopenblas: needed for Torch inference backend.
 # - libjpeg needed by v4l2 for mjpeg support
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
 cuda-cupti-12-6 | libcupti.so.12, \
 cuda-nvtx-12-6 | libnvToolsExt.so.1, \
 libcudnn9-cuda-12 | libcudnn.so.9, \
 libcusparselt0 | libcusparselt.so.0, \
-libpng16-16, \
 libjpeg-turbo8, \
 libopenblas0"
 )

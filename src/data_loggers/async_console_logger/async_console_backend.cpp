@@ -113,7 +113,7 @@ bool AsyncConsoleBackend::log_entry(const DataEntry& entry) {
   std::string type_name = get_data_type_name(entry);
 
   // Add metadata if available and enabled
-  if (log_metadata_ && entry.metadata) {
+  if (log_metadata_.load() && entry.metadata) {
     // For async background thread safety, catch any exceptions during metadata serialization
     // This prevents any potential segfault when Python objects are accessed from background
     // threads
@@ -176,7 +176,7 @@ bool AsyncConsoleBackend::log_large_entry(const DataEntry& entry) {
   std::string type_name = get_large_data_type_name(entry);
 
   // Add metadata if available and enabled
-  if (log_metadata_ && entry.metadata) {
+  if (log_metadata_.load() && entry.metadata) {
     // For async background thread safety, catch any exceptions during metadata serialization
     // This prevents any potential segfault when Python objects are accessed from background
     // threads
@@ -277,14 +277,15 @@ std::string AsyncConsoleBackend::serialize_large_data_content(const DataEntry& e
       case DataEntry::TensorData:
         if (std::holds_alternative<std::shared_ptr<holoscan::Tensor>>(entry.data)) {
           auto tensor = std::get<std::shared_ptr<holoscan::Tensor>>(entry.data);
-          return serializer_->serialize_tensor_to_string(tensor, log_tensor_data_content_);
+          return serializer_->serialize_tensor_to_string(tensor, log_tensor_data_content_.load());
         }
         return "Tensor (null)";
 
       case DataEntry::TensorMapData:
         if (std::holds_alternative<holoscan::TensorMap>(entry.data)) {
           auto& tensor_map = std::get<holoscan::TensorMap>(entry.data);
-          return serializer_->serialize_tensormap_to_string(tensor_map, log_tensor_data_content_);
+          return serializer_->serialize_tensormap_to_string(tensor_map,
+                                                            log_tensor_data_content_.load());
         }
         return "TensorMap (empty)";
 

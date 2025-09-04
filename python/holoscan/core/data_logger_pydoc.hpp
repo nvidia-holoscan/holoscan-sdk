@@ -50,6 +50,15 @@ the operator. For situations where this is not acceptable, `AsyncDataLoggerResou
 provided as an alternative.
 )doc")
 
+PYDOC(get_timestamp, R"doc(
+Get current timestamp via the logger's configured clock.
+
+Returns
+----------
+timestamp : int
+    When `use_scheduler_clock` is ``True``, this is the timestamp returned by the scheduler's clock.
+    Otherwise it is the system clock time in nanoseconds relative to epoch).
+)doc")
 }  // namespace DataLoggerResource
 
 namespace AsyncDataLoggerResource {

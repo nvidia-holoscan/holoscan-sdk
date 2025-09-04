@@ -20,11 +20,13 @@
     holoscan.resources.AsyncBufferReceiver
     holoscan.resources.AsyncBufferTransmitter
     holoscan.resources.BlockMemoryPool
-    holoscan.resources.Clock
     holoscan.resources.CudaAllocator
+    holoscan.resources.CudaGreenContext
+    holoscan.resources.CudaGreenContextPool
     holoscan.resources.CudaStreamPool
     holoscan.resources.DoubleBufferReceiver
     holoscan.resources.DoubleBufferTransmitter
+    holoscan.resources.GXFClock
     holoscan.resources.GXFComponentResource
     holoscan.resources.ManualClock
     holoscan.resources.MemoryStorageType
@@ -37,6 +39,7 @@
     holoscan.resources.StdComponentSerializer
     holoscan.resources.StdEntitySerializer
     holoscan.resources.StreamOrderedAllocator
+    holoscan.resources.SyntheticClock
     holoscan.resources.ThreadPool
     holoscan.resources.Transmitter
     holoscan.resources.UnboundedAllocator
@@ -53,11 +56,13 @@ from ._resources import (
     AsyncBufferReceiver,
     AsyncBufferTransmitter,
     BlockMemoryPool,
-    Clock,
     CudaAllocator,
+    CudaGreenContext,
+    CudaGreenContextPool,
     CudaStreamPool,
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
+    GXFClock,
     ManualClock,
     MemoryStorageType,
     OrConditionCombiner,
@@ -69,6 +74,7 @@ from ._resources import (
     StdComponentSerializer,
     StdEntitySerializer,
     StreamOrderedAllocator,
+    SyntheticClock,
     ThreadPool,
     Transmitter,
     UcxComponentSerializer,
@@ -88,11 +94,13 @@ __all__ = [
     "AsyncBufferReceiver",
     "AsyncBufferTransmitter",
     "BlockMemoryPool",
-    "Clock",
     "CudaAllocator",
+    "CudaGreenContext",
+    "CudaGreenContextPool",
     "CudaStreamPool",
     "DoubleBufferReceiver",
     "DoubleBufferTransmitter",
+    "GXFClock",
     "GXFComponentResource",
     "ManualClock",
     "MemoryStorageType",
@@ -105,6 +113,7 @@ __all__ = [
     "StdComponentSerializer",
     "StdEntitySerializer",
     "StreamOrderedAllocator",
+    "SyntheticClock",
     "ThreadPool",
     "Transmitter",
     "UcxComponentSerializer",

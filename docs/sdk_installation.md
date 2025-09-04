@@ -63,8 +63,10 @@ OS | NGC Container | Debian/RPM package | Python wheel | Build from source
 NVIDIA discrete GPU (dGPU) requirements:
 - Ampere or above recommended for best performance
 - [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for GPUDirect RDMA support
-- Tested with [NVIDIA Quadro RTX 6000](https://www.nvidia.com/content/dam/en-zz/Solutions/design-visualization/quadro-product-literature/quadro-rtx-6000-us-nvidia-704093-r4-web.pdf) and [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/)
-- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above
+* Tested with [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/) and [NVIDIA RTX ADA 6000](https://www.nvidia.com/en-us/products/workstations/rtx-6000/)
+- [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above.
+    * x86 workstations: Tested with [OpenRM drivers](https://github.com/NVIDIA/open-gpu-kernel-modules) >= R550.
+    - *Several Holoscan SDK components support [CUDA Green Contexts](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html). Drivers 560 or above are required to use Green Context features.*
 
 ````
 `````
@@ -83,11 +85,11 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-dgpu
    ```
 - **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -207,7 +209,7 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 | [V4L2][v4l2] support [^6] | **Included** | automatically [^2]<br>installed | require manual<br>installation |
 | [Torch][torch] support [^7] | **Included** | require manual [^8]<br>installation | require manual [^8]<br>installation |
 | [ONNX Runtime][ort] support [^9] | **Included** | require manual [^10]<br>installation | require manual [^10]<br>installation |
-| [MOFED][mofed] support [^11] | **User space included** <br>Install kernel drivers on the host | require manual <br>installation | require manual <br>installation |
+| [ConnectX][connectx] support [^11] | **User space included** <br>Install kernel drivers on the host | require manual <br>installation | require manual <br>installation |
 | [CLI] support | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) |
 
 [examples]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme
@@ -218,7 +220,7 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 [v4l2]: https://en.wikipedia.org/wiki/Video4Linux
 [torch]: https://pytorch.org/
 [ort]: https://onnxruntime.ai/
-[mofed]: https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/
+[connectx]: https://www.nvidia.com/en-us/networking/ethernet-adapters/
 [cli]: ./holoscan_packager.md
 [^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.6.3/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^2]: Debian installation on x86_64 requires the [latest cuda-keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) to automatically install all dependencies.
@@ -226,11 +228,11 @@ For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia
 [^4]: TensorRT 10.3+ needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^5]: Vulkan 1.3.204+ loader needed for the HoloViz operator (+ libegl1 for headless rendering). Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
-[^7]: Torch support requires LibTorch 2.5+, TorchVision 0.20+, OpenBLAS 0.3.20+, OpenMPI v4.1.7a1+, UCC 1.4+, MKL 2021.1.1 (x86_64 only), NVIDIA Performance Libraries (aarch64 dGPU only), libpng, and libjpeg. Note that container builds use OpenMPI and UCC originating from the NVIDIA HPC-X package bundle.
-[^8]: To install LibTorch and TorchVision, either build them from source, download our [pre-built packages](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/), or copy them from the holoscan container (in `/opt`).
-[^9]: ONNXRuntime 1.18.1+ needed for the Inference operator. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
-[^10]: To install ONNXRuntime, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/) with CUDA 12 and TensoRT execution provider support, or copy it from the holoscan container (in `/opt/onnxruntime`).
-[^11]: Tested with MOFED 24.07
+[^7]: Torch support tested with LibTorch 2.8.0, OpenBLAS 0.3.20+ (aarch64 iGPU only), NVIDIA Performance Libraries (aarch64 dGPU only).
+[^8]: To install LibTorch on baremetal, either build it from source, from the python wheel, or extract it from the holoscan container (in `/opt/libtorch/`). See instructions in the [Inference](./inference.md) section.
+[^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
+[^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).
+[^11]: Tested with DOCA 3.0.0.
 
 ### Need more control over the SDK?
 

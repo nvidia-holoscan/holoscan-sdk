@@ -820,6 +820,7 @@ void HolovizOp::read_frame_buffer(InputContext& op_input, OutputContext& op_outp
     if (!maybe_render_buffer_input || maybe_render_buffer_input.value().is_null()) {
       std::string err_msg = fmt::format("Operator '{}': No message available at '{}': {}",
                                         name_,
+                                        buffer_input_name,
                                         maybe_render_buffer_input.error().what());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
@@ -1038,32 +1039,10 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
                              buffer_info.component_swizzle[1],
                              buffer_info.component_swizzle[2],
                              buffer_info.component_swizzle[3]);
-  if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
-    // if it's the device convert to `CUDeviceptr`
-    const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
-    CUdeviceptr cu_buffer_ptr_plane_1 = 0;
-    size_t row_pitch_plane_1 = 0;
-    CUdeviceptr cu_buffer_ptr_plane_2 = 0;
-    size_t row_pitch_plane_2 = 0;
-    if (buffer_info.color_planes.size() >= 2) {
-      cu_buffer_ptr_plane_1 = cu_buffer_ptr + buffer_info.color_planes[1].offset;
-      row_pitch_plane_1 = buffer_info.color_planes[1].stride;
-    }
-    if (buffer_info.color_planes.size() >= 3) {
-      cu_buffer_ptr_plane_2 = cu_buffer_ptr + buffer_info.color_planes[2].offset;
-      row_pitch_plane_2 = buffer_info.color_planes[2].stride;
-    }
-    viz::ImageCudaDevice(buffer_info.width,
-                         buffer_info.height,
-                         image_format,
-                         cu_buffer_ptr,
-                         buffer_info.stride[0],
-                         cu_buffer_ptr_plane_1,
-                         row_pitch_plane_1,
-                         cu_buffer_ptr_plane_2,
-                         row_pitch_plane_2);
-  } else {
+  if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kSystem) {
     // convert to void * if using the system/host
+    // note that Holoviz and GXF have different names for CPU only memory, GXF calls it "system"
+    // and Holoviz calls it "host".
     const auto host_buffer_ptr = reinterpret_cast<const void*>(buffer_info.buffer_ptr);
     const void* host_buffer_ptr_plane_1 = nullptr;
     size_t row_pitch_plane_1 = 0;
@@ -1088,6 +1067,30 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
                    row_pitch_plane_1,
                    host_buffer_ptr_plane_2,
                    row_pitch_plane_2);
+  } else {
+    // if the image is device accessible, convert to `CUDeviceptr`
+    const auto cu_buffer_ptr = reinterpret_cast<CUdeviceptr>(buffer_info.buffer_ptr);
+    CUdeviceptr cu_buffer_ptr_plane_1 = 0;
+    size_t row_pitch_plane_1 = 0;
+    CUdeviceptr cu_buffer_ptr_plane_2 = 0;
+    size_t row_pitch_plane_2 = 0;
+    if (buffer_info.color_planes.size() >= 2) {
+      cu_buffer_ptr_plane_1 = cu_buffer_ptr + buffer_info.color_planes[1].offset;
+      row_pitch_plane_1 = buffer_info.color_planes[1].stride;
+    }
+    if (buffer_info.color_planes.size() >= 3) {
+      cu_buffer_ptr_plane_2 = cu_buffer_ptr + buffer_info.color_planes[2].offset;
+      row_pitch_plane_2 = buffer_info.color_planes[2].stride;
+    }
+    viz::ImageCudaDevice(buffer_info.width,
+                         buffer_info.height,
+                         image_format,
+                         cu_buffer_ptr,
+                         buffer_info.stride[0],
+                         cu_buffer_ptr_plane_1,
+                         row_pitch_plane_1,
+                         cu_buffer_ptr_plane_2,
+                         row_pitch_plane_2);
   }
   viz::EndLayer();
 }
@@ -1138,6 +1141,12 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
 
       src_coord = reinterpret_cast<uintptr_t>(host_buffer.data());
     } else {
+      // if the coordinates are in cuda managed memory, synchronize the stream to ensure the data
+      // is available on the host
+      if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged) {
+        HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(stream),
+                                        "Failed to synchronize CUDA stream");
+      }
       src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
     }
     constexpr uint32_t values_per_coordinate = 3;
@@ -1355,6 +1364,12 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
 
           src_coord = reinterpret_cast<uintptr_t>(host_buffer.data());
         } else {
+          // if the coordinates are in cuda managed memory, synchronize the stream to ensure the
+          // data is available on the host
+          if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged) {
+            HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(stream),
+                                            "Failed to synchronize CUDA stream");
+          }
           src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
         }
 

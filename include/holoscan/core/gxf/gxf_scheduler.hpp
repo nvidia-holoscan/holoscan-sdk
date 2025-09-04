@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,13 +39,6 @@ class GXFScheduler : public holoscan::Scheduler, public GXFComponent {
   GXFScheduler() = default;
 
   /**
-   * @brief Get the Clock used by the scheduler.
-   *
-   * @return The Clock used by the scheduler.
-   */
-  virtual std::shared_ptr<Clock> clock() = 0;
-
-  /**
    * @brief Get the type name of the GXF scheduler.
    *
    * The returned string is the type name of the GXF scheduler and is used to
@@ -72,15 +65,15 @@ class GXFScheduler : public holoscan::Scheduler, public GXFComponent {
    */
   YAML::Node to_yaml_node() const override;
 
- protected:
-  // Make Fragment a friend class so it can call reset_graph_entities
-  friend class holoscan::Fragment;
+  /// Reset any backend-specific objects
+  void reset_backend_objects() override;
 
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   void set_parameters() override;
 
-  /// Reset the GXF GraphEntity of all components associated with the scheduler
-  void reset_graph_entities() override;
+ private:
+  // raw pointer to the nvidia::gxf::Clock instance used by the scheduler
+  virtual void* clock_gxf_cptr() const = 0;
 };
 
 }  // namespace holoscan::gxf

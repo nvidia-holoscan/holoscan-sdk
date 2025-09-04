@@ -571,42 +571,15 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
       std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
 
-      nvidia::gxf::Shape output_shape;
-
-      switch (dims.size()) {
-        case 4: {
-          std::array<int, 4> dimarray;
-          for (size_t u = 0; u < 4; ++u) {
-            dimarray[u] = (static_cast<int>(dims[u]));
-          }
-          nvidia::gxf::Shape out_shape(dimarray);
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 3: {
-          std::array<int, 3> dimarray;
-          for (size_t u = 0; u < 3; ++u) {
-            dimarray[u] = (static_cast<int>(dims[u]));
-          }
-          nvidia::gxf::Shape out_shape(dimarray);
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 2: {
-          nvidia::gxf::Shape out_shape{static_cast<int>(dims[0]), static_cast<int>(dims[1])};
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 1: {
-          output_shape = nvidia::gxf::Shape{static_cast<int>(dims[0])};
-          break;
-        }
-        default: {
-          HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and 4.");
-          return report_error(
+      if (dims.size() < 1 || dims.size() > nvidia::gxf::Shape::kMaxRank) {
+        HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
+                          nvidia::gxf::Shape::kMaxRank);
+        return report_error(
               module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
-        }
       }
+
+      std::vector<int32_t> dimarray(dims.begin(), dims.end());
+      nvidia::gxf::Shape output_shape = nvidia::gxf::Shape(dimarray);
 
       size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
       auto tensor_dtype = input_data_map.at(current_out_tensor)->get_datatype();
@@ -813,42 +786,15 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
 
       std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
 
-      nvidia::gxf::Shape output_shape;
-
-      switch (dims.size()) {
-        case 4: {
-          std::array<int, 4> dimarray;
-          for (size_t u = 0; u < 4; ++u) {
-            dimarray[u] = (static_cast<int>(dims[u]));
-          }
-          nvidia::gxf::Shape out_shape(dimarray);
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 3: {
-          std::array<int, 3> dimarray;
-          for (size_t u = 0; u < 3; ++u) {
-            dimarray[u] = (static_cast<int>(dims[u]));
-          }
-          nvidia::gxf::Shape out_shape(dimarray);
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 2: {
-          nvidia::gxf::Shape out_shape{static_cast<int>(dims[0]), static_cast<int>(dims[1])};
-          output_shape = std::move(out_shape);
-          break;
-        }
-        case 1: {
-          output_shape = nvidia::gxf::Shape{static_cast<int>(dims[0])};
-          break;
-        }
-        default: {
-          HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and 4.");
-          return report_error(
+      if (dims.size() < 1 || dims.size() > nvidia::gxf::Shape::kMaxRank) {
+        HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
+                          nvidia::gxf::Shape::kMaxRank);
+        return report_error(
               module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
-        }
       }
+
+      std::vector<int32_t> dimarray(dims.begin(), dims.end());
+      nvidia::gxf::Shape output_shape = nvidia::gxf::Shape(dimarray);
 
       size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
       auto tensor_dtype = input_data_map.at(current_out_tensor)->get_datatype();

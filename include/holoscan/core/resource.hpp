@@ -220,21 +220,14 @@ class Resource : public Component {
    */
   YAML::Node to_yaml_node() const override;
 
+  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
+  virtual void set_parameters();
+
  protected:
-  // Add friend classes that can call reset_graph_entites
-  friend class holoscan::NetworkContext;
-  friend class holoscan::Scheduler;
-  friend class holoscan::Operator;
-
-  using Component::reset_graph_entities;
-
   using ComponentBase::update_params_from_args;
 
   /// Update parameters based on the specified arguments
   void update_params_from_args();
-
-  /// Set the parameters based on defaults (sets GXF parameters for GXF components)
-  virtual void set_parameters();
 
   ResourceType resource_type_ = ResourceType::kNative;  ///< The type of the resource.
   bool is_initialized_ = false;                         ///< Whether the resource is initialized.

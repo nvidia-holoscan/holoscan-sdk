@@ -4,7 +4,6 @@ This folder includes the following scripts:
 
 - [`aja_build.sh`](#aja_build)
 - [`convert_gxf_entities_to_images.py`](#convert_gxf_entities_to_imagespy)
-- [`convert_gxf_entities_to_images.py`](#convert_gxf_entities_to_imagespy)
 - [`convert_gxf_entities_to_video.py`](#convert_gxf_entities_to_videopy)
 - [`convert_video_to_gxf_entities.py`](#convert_video_to_gxf_entitiespy)
 - [`download_ngc_data`](#download_ngc_data)
@@ -13,6 +12,7 @@ This folder includes the following scripts:
 - [`get_cmake_cuda_archs.py`](#get_cmake_cuda_archspy)
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`gxf_entity_codec.py`](#gxf_entity_codecpy)
+- [`list_ld_dependencies.sh`](#list_ld_dependenciessh)
 - [`video_validation.py`](#video_validationpy)
 
 > Note: these will be included in the SDK installation at `/opt/nvidia/holoscan/bin`
@@ -236,6 +236,43 @@ ____
 ## gxf_entity_codec.py
 
 Utility classes used by `convert_gxf_entities_to_images.py`, `convert_gxf_entities_to_video.py` and `convert_video_to_gxf_entities.py`.
+
+____
+
+## list_ld_dependencies.sh
+
+This script is used to list the shared library dependencies of the Holoscan SDK and its components. It does this by iterating through a set of directories managed by the SDK and running the `ldd` command on each shared library (`.so` file) found within. It then filters out system libraries and libraries with known paths, and prints out the remaining dependencies.
+
+The script also maintains a map of libraries to their dependencies, as well as a map of dependencies to the libraries that depend on them. This allows the script to print out a list of dependencies for each library, as well as a list of libraries that depend on each dependency.
+
+The script can be run with no arguments to list the dependencies of all libraries in the directories managed by the SDK, or it can be run with a specific library path to list only the dependencies of that library.
+
+### Prerequisites
+
+- The script must be run on a Linux system with the `ldd` command available.
+
+### Usage
+
+baremetal:
+
+  ```sh
+  ./scripts/list_ld_dependencies.sh
+  ```
+
+container:
+
+  ```sh
+  # build container
+  ./run launch . --run-cmd ./scripts/list_ld_dependencies.sh -s
+
+  # dev container
+  docker run --rm -it \
+    --runtime=nvidia \
+    --entrypoint=bash \
+    -v $(pwd)/scripts/list_ld_dependencies.sh:/list.sh \
+    nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu \
+    /list.sh
+  ```
 
 ____
 

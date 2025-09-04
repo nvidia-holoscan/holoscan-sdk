@@ -14,10 +14,7 @@
 # limitations under the License.
 
 add_subdirectory(clock)
-
-if(HOLOSCAN_PYTHON_EXAMPLES)
-  add_subdirectory(cuda_stream_pool)
-endif()
-
+add_subdirectory(cuda_green_context)
+add_subdirectory(cuda_stream_pool)
 add_subdirectory(native)
 add_subdirectory(thread_pool)

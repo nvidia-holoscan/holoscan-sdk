@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_SCHEDULER_GXF_GREEDY_SCHEDULER_HPP
-#define HOLOSCAN_CORE_SCHEDULER_GXF_GREEDY_SCHEDULER_HPP
+#ifndef HOLOSCAN_CORE_SCHEDULERS_GXF_GREEDY_SCHEDULER_HPP
+#define HOLOSCAN_CORE_SCHEDULERS_GXF_GREEDY_SCHEDULER_HPP
 
 #include <cstdint>
 #include <memory>
@@ -25,7 +25,6 @@
 #include <gxf/std/greedy_scheduler.hpp>
 #include "../../gxf/gxf_scheduler.hpp"
 #include "../../resources/gxf/clock.hpp"
-#include "../../resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -54,7 +53,7 @@ class GreedyScheduler : public gxf::GXFScheduler {
 
   const char* gxf_typename() const override { return "nvidia::gxf::GreedyScheduler"; }
 
-  std::shared_ptr<Clock> clock() override { return clock_.get(); }
+  std::shared_ptr<Clock> clock() override;
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
@@ -69,13 +68,14 @@ class GreedyScheduler : public gxf::GXFScheduler {
   nvidia::gxf::GreedyScheduler* get() const;
 
  private:
-  Parameter<std::shared_ptr<Clock>> clock_;
+  Parameter<std::shared_ptr<gxf::Clock>> clock_;
   Parameter<bool> stop_on_deadlock_;
   Parameter<int64_t> max_duration_ms_;
   Parameter<double> check_recession_period_ms_;
   Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
+  void* clock_gxf_cptr() const override;
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_SCHEDULER_GXF_GREEDY_SCHEDULER_HPP */
+#endif /* HOLOSCAN_CORE_SCHEDULERS_GXF_GREEDY_SCHEDULER_HPP */

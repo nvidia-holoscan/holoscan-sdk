@@ -35,7 +35,8 @@ class OnnxInferImpl {
  public:
   // Internal only
   OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
-                bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out);
+                bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
+                std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
   ~OnnxInferImpl();
 
   const std::string model_path_;
@@ -45,6 +46,7 @@ class OnnxInferImpl {
   const bool use_cuda_;
   const bool cuda_buf_in_;
   const bool cuda_buf_out_;
+  const std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
 
   std::unique_ptr<Ort::Env> env_;
 
@@ -264,22 +266,25 @@ int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
   return 0;
 }
 
-extern "C" OnnxInfer* NewOnnxInfer(const std::string& model_file_path, bool enable_fp16,
-                                   int32_t dla_core, bool dla_gpu_fallback, bool cuda_flag,
-                                   bool cuda_buf_in, bool cuda_buf_out) {
+extern "C" OnnxInfer* NewOnnxInfer(
+    const std::string& model_file_path, bool enable_fp16, int32_t dla_core, bool dla_gpu_fallback,
+    bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
+    std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream) {
   return new OnnxInfer(model_file_path,
                        enable_fp16,
                        dla_core,
                        dla_gpu_fallback,
                        cuda_flag,
                        cuda_buf_in,
-                       cuda_buf_out);
+                       cuda_buf_out,
+                       std::move(allocate_cuda_stream));
 }
 
 OnnxInfer::OnnxInfer(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
-                     bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out)
+                     bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
+                     std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : impl_(new OnnxInferImpl(model_file_path, enable_fp16, dla_core, dla_gpu_fallback, cuda_flag,
-                              cuda_buf_in, cuda_buf_out)) {}
+                              cuda_buf_in, cuda_buf_out, std::move(allocate_cuda_stream))) {}
 
 OnnxInfer::~OnnxInfer() {
   if (impl_) {
@@ -313,14 +318,16 @@ static void logging_function(void* param, OrtLoggingLevel severity, const char* 
 
 OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
                              bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in,
-                             bool cuda_buf_out)
+                             bool cuda_buf_out,
+                             std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : model_path_(model_file_path),
       enable_fp16_(enable_fp16),
       dla_core_(dla_core),
       dla_gpu_fallback_(dla_gpu_fallback),
       use_cuda_(cuda_flag),
       cuda_buf_in_(cuda_buf_in),
-      cuda_buf_out_(cuda_buf_out) {
+      cuda_buf_out_(cuda_buf_out),
+      allocate_cuda_stream_(std::move(allocate_cuda_stream)) {
   try {
     OrtLoggingLevel logging_level;
     switch (log_level()) {
@@ -348,7 +355,16 @@ OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp1
       throw std::runtime_error("Onnxruntime env creation failed");
     }
 
-    check_cuda(cudaStreamCreate(&cuda_stream_));
+    // If a CUDA stream pool is provided, try to allocate a stream from it
+    if (allocate_cuda_stream_) {
+      cuda_stream_ = allocate_cuda_stream_(0);
+    }
+
+    // If no stream could be allocated, create a new one
+    if (!cuda_stream_) {
+      check_cuda(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+    }
+
     check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
 
     set_holoscan_inf_onnx_session_options();

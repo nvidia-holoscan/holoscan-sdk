@@ -43,6 +43,8 @@
 #include "gxf/core/component.hpp"
 #include "gxf/core/expected.hpp"
 #include "gxf/core/registrar.hpp"
+#include "gxf/std/cuda_green_context.hpp"
+#include "gxf/std/cuda_green_context_pool.hpp"
 #include "gxf/cuda/cuda_stream_pool.hpp"
 #include "gxf/std/block_memory_pool.hpp"
 #include "gxf/std/scheduling_term.hpp"
@@ -268,9 +270,19 @@ inline void process_resource_arg(void* gxf_context, uint64_t cid,
          process_resource(static_cast<nvidia::gxf::BlockMemoryPool*>(nullptr),
                           holoscan::BlockMemoryPool{});
        }},
-      {"nvidia::gxf::CudaStreamPool", [&]() {
+      {"nvidia::gxf::CudaStreamPool",
+       [&]() {
          process_resource(static_cast<nvidia::gxf::CudaStreamPool*>(nullptr),
                           holoscan::CudaStreamPool{});
+       }},
+      {"nvidia::gxf::CudaGreenContext",
+       [&]() {
+         process_resource(static_cast<nvidia::gxf::CudaGreenContext*>(nullptr),
+                          holoscan::CudaGreenContext(nullptr));
+       }},
+      {"nvidia::gxf::CudaGreenContextPool", [&]() {
+         process_resource(static_cast<nvidia::gxf::CudaGreenContextPool*>(nullptr),
+                          holoscan::CudaGreenContextPool{});
        }}};
 
   // Get the type name of the resource

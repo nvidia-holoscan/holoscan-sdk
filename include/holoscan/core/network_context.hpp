@@ -248,10 +248,10 @@ class NetworkContext : public Component {
    */
   YAML::Node to_yaml_node() const override;
 
- protected:
-  /// Reset the GXF GraphEntity of any components associated with the scheduler
-  void reset_graph_entities() override;
+  /// Reset any backend-specific objects
+  void reset_backend_objects() override;
 
+ protected:
   std::unordered_map<std::string, std::shared_ptr<Resource>>
       resources_;  ///< The resources used by the network context.
 };

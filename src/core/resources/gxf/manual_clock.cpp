@@ -19,16 +19,20 @@
 
 #include <string>
 
+#include <gxf/std/clock.hpp>
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan {
 
 ManualClock::ManualClock(const std::string& name, nvidia::gxf::ManualClock* component)
-    : Clock(name, component) {
+    : gxf::Clock(name, component) {
+  if (!component) {
+    throw std::invalid_argument("ManualClock component cannot be null");
+  }
   auto maybe_initial_timestamp = component->getParameter<uint64_t>("initial_timestamp");
   if (!maybe_initial_timestamp) {
-    throw std::runtime_error("Failed to get initial_timestamp");
+    throw std::runtime_error("Failed to get initial_timestamp parameter from GXF ManualClock");
   }
   initial_timestamp_ = maybe_initial_timestamp.value();
 }
@@ -58,7 +62,7 @@ void ManualClock::sleep_for(int64_t duration_ns) {
   if (clock) {
     clock->sleepFor(duration_ns);
   } else {
-    HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");
+    HOLOSCAN_LOG_ERROR("ManualClock component not yet registered with GXF");
   }
 }
 
@@ -67,7 +71,7 @@ void ManualClock::sleep_until(int64_t target_time_ns) {
   if (clock) {
     clock->sleepUntil(target_time_ns);
   } else {
-    HOLOSCAN_LOG_ERROR("RealtimeClock component not yet registered with GXF");
+    HOLOSCAN_LOG_ERROR("ManualClock component not yet registered with GXF");
   }
 }
 

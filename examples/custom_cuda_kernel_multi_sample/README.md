@@ -2,7 +2,10 @@
 
 Example shows ingestion of a multiple custom CUDA kernels in Holoscan SDK.
 
-This sample has multiple custom CUDA kernels ingested into the workflow. In the application, input in the workflow comes through video_replayer operator, there are 2 instances of format_converter operator that converts the format of the input data for 2 custom CUDA kernels. Inference processor operator then ingests both the tensors from format converter operators, and applies custom CUDA kernels as per the specifications in the workflow, the result is then sent to Holoviz operator for display. 
+This sample has multiple custom CUDA kernels ingested into the workflow. In the application, input in the workflow comes through video_replayer operator, there are 2 instances of format_converter operator that converts the format of the input data for 2 custom CUDA kernels. Inference processor operator then ingests both the tensors from format converter operators, and applies custom CUDA kernels as per the specifications in the workflow, the result is then sent to Holoviz operator for display.
+
+This example also demonstrates the usage of green context in HSDK operators.
+A CUDA green context pool with 3 partitions is created. Each of the two format_converter operators and the inference processor uses one partition from this pool. The cuda_stream_pool for these three operators is linked to their respective green context.
 
 ## Data
 

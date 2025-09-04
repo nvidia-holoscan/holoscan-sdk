@@ -185,6 +185,8 @@ reserved_size : int
     The number of CUDA streams to initially reserve in the pool (prior to first request).
 max_size : int
     The maximum number of streams that can be allocated, unlimited by default.
+cuda_green_context : holoscan.resources.CudaGreenContext, optional
+    The green context to use for the stream pool.
 name : str, optional
     The name of the stream pool.
 
@@ -195,6 +197,60 @@ References
 )doc")
 
 }  // namespace CudaStreamPool
+
+namespace CudaGreenContextPool {
+
+PYDOC(CudaGreenContextPool, R"doc(
+CUDA green context pool.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment
+    The fragment to assign the resource to.
+dev_id : int
+    CUDA device ID. Specifies the device on which to create the green context pool.
+flags : int
+    Flags for CUDA green contexts in the pool. This will be passed to CUDA's
+    cuDevSmResourceSplitByCount() [1]_ when creating the green contexts. The default value of 0
+    indicates no flags are used.
+num_partitions : int
+    The number of partitions to create for the green context pool.
+sms_per_partition : list of int
+    The number of SMs per partition of the green context pool.
+default_context_index : int, optional
+    The index of the default green context to use. When index < 0, the last partition's index will
+    be used.
+min_sm_size : int, optional
+    The minimum number of SMs per partition of the green context pool.
+name : str, optional
+    The name of the green context pool.
+
+References
+----------
+.. [1] https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html
+)doc")
+
+}  // namespace CudaGreenContextPool
+
+namespace CudaGreenContext {
+
+PYDOC(CudaGreenContext, R"doc(
+CUDA green context.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment
+    The fragment to assign the resource to.
+cuda_green_context_pool : holoscan.resources.CudaGreenContextPool
+    The green context pool to use for the green context.
+index : int, optional
+    The index of the green context in the green context pool. If not specified, the default green
+    context will be used.
+name : str, optional
+    The name of the green context.
+)doc")
+
+}  // namespace CudaGreenContext
 
 namespace UnboundedAllocator {
 

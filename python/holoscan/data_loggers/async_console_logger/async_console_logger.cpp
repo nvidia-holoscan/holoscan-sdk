@@ -55,8 +55,10 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
   // Define a constructor that fully initializes the object.
   PyAsyncConsoleLogger(
       Fragment* fragment, std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
-      bool log_inputs = true, bool log_outputs = true, bool log_tensor_data_content = false,
-      bool log_metadata = true, const std::vector<std::string>& allowlist_patterns = {},
+      bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
+      bool log_tensor_data_content = true, bool use_scheduler_clock = false,
+      std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
+      const std::vector<std::string>& allowlist_patterns = {},
       const std::vector<std::string>& denylist_patterns = {}, size_t max_queue_size = 50000,
       int64_t worker_sleep_time = 50000,
       // when loading the enum from the YAML config via **app.kwargs(key) it will become a string.
@@ -69,8 +71,9 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
       : AsyncConsoleLogger(
             ArgList{Arg{"log_inputs", log_inputs},
                     Arg{"log_outputs", log_outputs},
-                    Arg{"log_tensor_data_content", log_tensor_data_content},
                     Arg{"log_metadata", log_metadata},
+                    Arg{"log_tensor_data_content", log_tensor_data_content},
+                    Arg{"use_scheduler_clock", use_scheduler_clock},
                     Arg{"allowlist_patterns", allowlist_patterns},
                     Arg{"denylist_patterns", denylist_patterns},
                     Arg{"max_queue_size", max_queue_size},
@@ -80,6 +83,9 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
                     Arg{"enable_large_data_queue", enable_large_data_queue}}) {
     if (serializer) {
       this->add_arg(Arg{"serializer", serializer});
+    }
+    if (clock.has_value()) {
+      this->add_arg(Arg{"clock", clock.value()});
     }
     if (std::holds_alternative<std::string>(queue_policy)) {
       // C++ layer supports YAML::Node -> enum conversion via the registered argument setter
@@ -122,6 +128,8 @@ PYBIND11_MODULE(_async_console_logger, m) {
                     bool,
                     bool,
                     bool,
+                    bool,
+                    std::optional<std::shared_ptr<Resource>>,
                     const std::vector<std::string>&,
                     const std::vector<std::string>&,
                     size_t,
@@ -136,8 +144,10 @@ PYBIND11_MODULE(_async_console_logger, m) {
            "serializer"_a = py::none(),
            "log_inputs"_a = true,
            "log_outputs"_a = true,
-           "log_tensor_data_content"_a = false,
            "log_metadata"_a = true,
+           "log_tensor_data_content"_a = true,
+           "use_scheduler_clock"_a = false,
+           "clock"_a = py::none(),
            "allowlist_patterns"_a = py::list(),
            "denylist_patterns"_a = py::list(),
            "max_queue_size"_a = 50000,

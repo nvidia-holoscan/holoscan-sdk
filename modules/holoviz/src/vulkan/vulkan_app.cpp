@@ -165,6 +165,11 @@ class Vulkan::Impl {
   void create_pipelines();
 
   /**
+   * Invalidate the framebuffers, so that they are recreated on the next draw pass
+   */
+  void invalidate_frame_buffers();
+
+  /**
    * Create all the framebuffers in which the image will be rendered
    * - Swapchain need to be created before calling this
    */
@@ -479,7 +484,6 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
 
   create_framebuffer_sequence();
   create_render_pass();
-  create_frame_buffers();
 
   // init batch submission
   nvvk_.batch_submission_.init(nvvk_.vk_ctx_.m_queueGCT);
@@ -642,7 +646,8 @@ void Vulkan::Impl::set_surface_format(SurfaceFormat surface_format) {
       // recreate the framebuffer sequence and all dependent structures
       create_framebuffer_sequence();
       create_render_pass();
-      create_frame_buffers();
+      // Recreate the frame buffers on the next draw pass
+      invalidate_frame_buffers();
       create_pipelines();
     }
   }
@@ -667,8 +672,8 @@ void Vulkan::Impl::set_present_mode(PresentMode present_mode) {
         submit_temp_cmd_buffer(cmd_buffer);
       }
 
-      // Recreating other resources
-      create_frame_buffers();
+      // Recreate the frame buffers on the next draw pass
+      invalidate_frame_buffers();
     }
   }
 }
@@ -895,6 +900,8 @@ void Vulkan::Impl::prepare_frame() {
   if (!transfer_jobs_.empty() && (!transfer_jobs_.back().fence_)) {
     throw std::runtime_error("Transfer pass is active!");
   }
+
+  create_frame_buffers();
 
   // Acquire the next image from the framebuffer sequence
   fb_sequence_->acquire();
@@ -1180,9 +1187,14 @@ void Vulkan::Impl::create_pipelines() {
                       false /*depth_write_enable*/);
 }
 
-void Vulkan::Impl::create_frame_buffers() {
-  // Recreate the frame buffers
+void Vulkan::Impl::invalidate_frame_buffers() {
   framebuffers_.clear();
+}
+
+void Vulkan::Impl::create_frame_buffers() {
+  if (!framebuffers_.empty()) {
+    return;
+  }
 
   // Array of attachment (color, depth)
   std::array<vk::ImageView, 2> attachments;
@@ -1238,8 +1250,8 @@ void Vulkan::Impl::on_framebuffer_size(int w, int h) {
     submit_temp_cmd_buffer(cmd_buffer);
   }
 
-  // Recreating other resources
-  create_frame_buffers();
+  // Recreate the frame buffers on next draw pass
+  invalidate_frame_buffers();
 }
 
 vk::CommandBuffer Vulkan::Impl::create_temp_cmd_buffer() {

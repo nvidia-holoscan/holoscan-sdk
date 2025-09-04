@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +68,11 @@ class GXFResource : public holoscan::Resource, public gxf::GXFComponent {
   bool handle_dev_id(std::optional<int32_t>& dev_id_value);
   /// The GXF type name (used for GXFComponentResource)
   std::string gxf_typename_ = "unknown_gxf_typename";
+
+  /**
+   * @brief Reset any backend-specific state
+   */
+  void reset_backend_objects() override;
 };
 
 /**

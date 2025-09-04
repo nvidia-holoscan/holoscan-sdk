@@ -19,8 +19,10 @@
 
 #include <memory>
 
+#include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -67,6 +69,14 @@ nvidia::gxf::GreedyScheduler* GreedyScheduler::get() const {
   return static_cast<nvidia::gxf::GreedyScheduler*>(gxf_cptr_);
 }
 
+std::shared_ptr<Clock> GreedyScheduler::clock() {
+  if (clock_.has_value()) {
+    // Create a Clock resource that wraps the gxf::Clock implementation
+    return std::make_shared<Clock>(std::static_pointer_cast<ClockInterface>(clock_.get()));
+  }
+  return nullptr;
+}
+
 void GreedyScheduler::initialize() {
   // Set up prerequisite parameters before calling Scheduler::initialize()
   auto frag = fragment();
@@ -86,6 +96,13 @@ void GreedyScheduler::initialize() {
 
   // parent class initialize() call must be after the argument additions above
   Scheduler::initialize();
+}
+
+void* GreedyScheduler::clock_gxf_cptr() const {
+  if (clock_.has_value() && clock_.get() != nullptr) {
+    return clock_.get()->gxf_cptr();
+  }
+  return nullptr;
 }
 
 }  // namespace holoscan

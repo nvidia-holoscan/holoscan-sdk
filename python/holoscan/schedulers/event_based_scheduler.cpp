@@ -16,10 +16,13 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 #include "./event_based_scheduler_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -53,10 +56,11 @@ class PyEventBasedScheduler : public EventBasedScheduler {
   using EventBasedScheduler::EventBasedScheduler;
 
   // Define a constructor that fully initializes the object.
-  explicit PyEventBasedScheduler(Fragment* fragment, std::shared_ptr<Clock> clock = nullptr,
+  explicit PyEventBasedScheduler(Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
                                  int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
                                  int64_t max_duration_ms = -1LL,
                                  int64_t stop_on_deadlock_timeout = 0LL,
+                                 std::optional<std::vector<uint32_t>> pin_cores = std::nullopt,
                                  const std::string& name = "event_based_scheduler")
       : EventBasedScheduler(ArgList{Arg{"worker_thread_number", worker_thread_number},
                                     Arg{"stop_on_deadlock", stop_on_deadlock},
@@ -65,6 +69,10 @@ class PyEventBasedScheduler : public EventBasedScheduler {
     // to indicate that the argument should not be set.
     if (max_duration_ms >= 0) {
       this->add_arg(Arg{"max_duration_ms", max_duration_ms});
+    }
+    // pin_cores is an optional argument in GXF. We only add it if it's not None and not empty.
+    if (pin_cores.has_value()) {
+      this->add_arg(Arg("pin_cores", pin_cores.value()));
     }
     name_ = name;
     fragment_ = fragment;
@@ -87,11 +95,12 @@ void init_event_based_scheduler(py::module_& m) {
              std::shared_ptr<EventBasedScheduler>>(
       m, "EventBasedScheduler", doc::EventBasedScheduler::doc_EventBasedScheduler)
       .def(py::init<Fragment*,
-                    std::shared_ptr<Clock>,
+                    std::shared_ptr<gxf::Clock>,
                     int64_t,
                     bool,
                     int64_t,
                     int64_t,
+                    std::optional<std::vector<uint32_t>>,
                     const std::string&>(),
            "fragment"_a,
            py::kw_only(),
@@ -100,13 +109,15 @@ void init_event_based_scheduler(py::module_& m) {
            "stop_on_deadlock"_a = true,
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
-           "name"_a = "multithread_scheduler"s,
+           "pin_cores"_a = std::nullopt,
+           "name"_a = "event_based_scheduler"s,
            doc::EventBasedScheduler::doc_EventBasedScheduler)
       .def_property_readonly("clock", &EventBasedScheduler::clock)
       .def_property_readonly("worker_thread_number", &EventBasedScheduler::worker_thread_number)
       .def_property_readonly("max_duration_ms", &EventBasedScheduler::max_duration_ms)
       .def_property_readonly("stop_on_deadlock", &EventBasedScheduler::stop_on_deadlock)
       .def_property_readonly("stop_on_deadlock_timeout",
-                             &EventBasedScheduler::stop_on_deadlock_timeout);
+                             &EventBasedScheduler::stop_on_deadlock_timeout)
+      .def_property_readonly("pin_cores", &EventBasedScheduler::pin_cores);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

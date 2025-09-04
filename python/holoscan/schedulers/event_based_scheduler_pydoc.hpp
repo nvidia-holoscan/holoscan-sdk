@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,11 @@ max_duration_ms : int, optional
 stop_on_deadlock_timeout : int, optional
     The scheduler will wait this amount of time before determining that it is in deadlock
     and should stop. It will reset if a job comes in during the wait. A negative value means not
-    stop on deadlock. This parameter only applies when `stop_on_deadlock=true`",
+    stop on deadlock. This parameter only applies when `stop_on_deadlock=true`.
+pin_cores : list of int, optional
+    CPU core IDs to pin the worker threads to. If specified, all the worker threads created based
+    on the parameter `worker_thread_number` will be pinned to the same set of specified cores. If
+    not specified, the worker threads will not be pinned to any cores.
 name : str, optional
     The name of the scheduler.
 )doc")

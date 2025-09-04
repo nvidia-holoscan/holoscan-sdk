@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
-#define PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
+#ifndef HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
+#define HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
 
 #include <string>
 
@@ -35,12 +35,15 @@ Example tensor receive operator.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment
     The fragment that the operator belongs to.
-name : str, optional (constructor only)
+receive_as_tensormap : bool, optional
+    Whether to receive the tensor as a TensorMap. If false, receive<std::shared_ptr<Tensor>> is
+    used instead. Default value is ``True``.
+name : str, optional
     The name of the operator. Default value is ``"ping_tensor_rx"``.
 )doc")
 
 }  // namespace holoscan::doc::PingTensorRxOp
 
-#endif /* PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP */
+#endif /* HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP */

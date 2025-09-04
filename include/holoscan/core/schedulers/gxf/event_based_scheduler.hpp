@@ -21,11 +21,11 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <gxf/std/event_based_scheduler.hpp>
 #include "../../gxf/gxf_scheduler.hpp"
 #include "../../resources/gxf/clock.hpp"
-#include "../../resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -41,6 +41,8 @@ namespace holoscan {
  *
  * - **worker_thread_number** (int64_t): The number of (CPU) worker threads to use for executing
  * operators. Defaults to 1.
+ * - **pin_cores** (list of int, optional): CPU core IDs to pin the worker threads to (empty means
+ * no core pinning).
  * - **stop_on_deadlock** (bool): If True, the application will terminate if a deadlock state is
  * reached. Defaults to true.
  * - **stop_on_deadlock_timeout** (int64_t): The amount of time (in ms) before an application is
@@ -55,7 +57,7 @@ class EventBasedScheduler : public gxf::GXFScheduler {
 
   const char* gxf_typename() const override { return "nvidia::gxf::EventBasedScheduler"; }
 
-  std::shared_ptr<Clock> clock() override { return clock_.get(); }
+  std::shared_ptr<Clock> clock() override;
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
@@ -66,17 +68,23 @@ class EventBasedScheduler : public gxf::GXFScheduler {
   int64_t stop_on_deadlock_timeout() { return stop_on_deadlock_timeout_; }
   // could return std::optional<int64_t>, but just using int64_t simplifies the Python bindings
   int64_t max_duration_ms() { return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1; }
+  std::vector<uint32_t> pin_cores() {
+    return pin_cores_.has_value() ? pin_cores_.get() : std::vector<uint32_t>{};
+  }
 
   nvidia::gxf::EventBasedScheduler* get() const;
 
  private:
-  Parameter<std::shared_ptr<Clock>> clock_;
+  Parameter<std::shared_ptr<gxf::Clock>> clock_;
   Parameter<int64_t> worker_thread_number_;
   Parameter<bool> stop_on_deadlock_;
   Parameter<int64_t> max_duration_ms_;
   Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
+  Parameter<std::vector<uint32_t>> pin_cores_;  // CPU core IDs to pin the worker threads to
   // The following parameter needs to wait on ThreadPool support
   // Parameter<bool> thread_pool_allocation_auto_;
+
+  void* clock_gxf_cptr() const override;
 };
 
 }  // namespace holoscan

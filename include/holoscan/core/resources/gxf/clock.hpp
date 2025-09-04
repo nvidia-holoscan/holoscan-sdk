@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,19 +20,27 @@
 
 #include <string>
 
-#include <gxf/std/clock.hpp>
+#include "../../clock.hpp"
 #include "../../gxf/gxf_resource.hpp"
+
+namespace nvidia {
+namespace gxf {
+class Clock;
+}
+}  // namespace nvidia
 
 namespace holoscan {
 
+namespace gxf {
+
 /**
- * @brief Base clock class.
+ * @brief GXF-based clock implementation.
  *
- * Clock classes are used by a Scheduler to control the flow of time in an application.
+ * This class wraps a GXF Clock component and implements the ClockInterface.
  */
-class Clock : public gxf::GXFResource {
+class Clock : public ClockInterface, public GXFResource {
  public:
-  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Clock, gxf::GXFResource)
+  HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(Clock, GXFResource)
   Clock() = default;
   Clock(const std::string& name, nvidia::gxf::Clock* component);
 
@@ -40,30 +48,24 @@ class Clock : public gxf::GXFResource {
   const char* gxf_typename() const override { return "nvidia::gxf::Clock"; }
 
   /// @brief The current time of the clock. Time is measured in seconds.
-  virtual double time() const = 0;
+  double time() const override = 0;
 
   /// @brief The current timestamp of the clock. Timestamps are measured in nanoseconds.
-  virtual int64_t timestamp() const = 0;
+  int64_t timestamp() const override = 0;
 
   /// @brief Waits until the given duration has elapsed on the clock
-  virtual void sleep_for(int64_t duration_ns) = 0;
+  void sleep_for(int64_t duration_ns) override = 0;
 
-  /**
-   * @brief Set a duration to sleep.
-   *
-   * @param duration The sleep duration of type `std::chrono::duration`.
-   */
-  template <typename Rep, typename Period>
-  void sleep_for(std::chrono::duration<Rep, Period> duration) {
-    int64_t duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-    sleep_for(duration_ns);
-  }
+  // Bring the templated sleep_for method from ClockInterface into scope
+  using ClockInterface::sleep_for;
 
   /// @brief Waits until the given target time
-  virtual void sleep_until(int64_t target_time_ns) = 0;
+  void sleep_until(int64_t target_time_ns) override = 0;
 
   nvidia::gxf::Clock* get() const;
 };
+
+}  // namespace gxf
 
 }  // namespace holoscan
 

@@ -1,5 +1,5 @@
 #*****************************************************************************
-# SPDX-FileCopyrightText: Copyright (c) 2020-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #*****************************************************************************
 include_guard(GLOBAL)
@@ -222,7 +222,6 @@ function(compile_glsl)
     # The custom command is added to the build system, check for the presence of the output
     # but also for changes done in GLSL headers
     add_custom_command(
-         PRE_BUILD
          OUTPUT ${GLSL_OUT}
          COMMAND echo ${GLSLANGVALIDATOR} ${COMPILE_CMD}
          COMMAND ${GLSLANGVALIDATOR} ${COMPILE_CMD}

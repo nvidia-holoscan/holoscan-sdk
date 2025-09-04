@@ -2032,7 +2032,46 @@ One exception to the above behavior is for the transmit of tensors between fragm
 
 One other important detail when `emitter_name="holoscan::Tensor"` is used is that the name of the key in the `TensorMap` that is transmitted will depend on whether the Python tensor-like object transmitted was a host tensor (any tensor-like object having `__array_interface__`) or device tensor (any tensor-like object having `__cuda_array_interface__`). This key name information is used by any downstream Python operator to automatically convert the received tensor to a NumPy or CuPy array for the host or device case, respectively. This behavior was originally introduced to make the behavior of sending tensors between fragments of a distributed application comparable to sending those same tensors within-fragment (i.e. if a CuPy array was sent a CuPy array is also received at the other end despite the intermediate representation as a C++ `holoscan::Tensor`). The one downside to the approach currently used for `emitter_name="holoscan::Tensor` is that a host or device array from some other third-party library like PyTorch will not preserve its original type. It will instead be received as a NumPy (for host data) or CuPy (for device data) array on receive.
 
-For more information on compatibility with general C++ types for Python operators there is a dedicated section on {ref}`how to register emit/receive custom C++ types from Python <customizing-python-emit-receive-of-cpp-types>`.
+
+(cpp-python-data-type-interop)=
+
+### Interoperation of C++ and Python types for Python API applications
+
+It is possible for native Python operators to receive many basic C++ data types as described in the table below. By default, emitting basic Python types from a native Python operator results in (a shared pointer to) the Python object itself being emitted. In some cases, if the downstream operator is wrapping a C++ implementation that expects a C++ type as input, it is desired to instead have the native Python operator emit a specific C++ type. This can be done by specifying the "emitter_type" kwarg to `Operator.emit` to specify which C++ type the Python object should be emitted as. Because Python has a single `int` type, for instance, this "emitter_type" keyword is needed to unambiguously specify which C++ integer type to cast it to when emitting.
+
+For more information on extending this C++/Python type compatibility with general C++ types for Python operators there is a dedicated section on {ref}`how to register emit/receive capabilities for custom C++ types from Python <customizing-python-emit-receive-of-cpp-types>`.
+
+By default receive and emit logic is provided for the following basic C++ types. The left column lists a C++ type emitted by a wrapped C++ operator and the right column lists the type a native Python operator would receive. By default native Python operators emitting one of the types in the rightmost column will emit the Python object directly. However, to send data as a C++ type to a downstream wrapped C++ operator, the `Operator.emit` call can specify the `emitter_name` kwarg with one of the strings in the middle column in order to force output of the Python object as the specified C++ type.
+
+
+| C++ Type                                                             | emitter_name                                            | Received Python Type         |
+|----------------------------------------------------------------------|---------------------------------------------------------|------------------------------|
+| bool                                                                 | "bool"                                                  | bool                         |
+| int8_t                                                               | "int8_t"                                                | int                          |
+| int16_t                                                              | "int16_t"                                               | int                          |
+| int32_t                                                              | "int32_t"                                               | int                          |
+| int64_t                                                              | "int64_t"                                               | int                          |
+| uint8_t                                                              | "uint8_t"                                               | int                          |
+| uint16_t                                                             | "uint16_t"                                              | int                          |
+| uint32_t                                                             | "uint32_t"                                              | int                          |
+| uint64_t                                                             | "uint64_t"                                              | int                          |
+| float                                                                | "float"                                                 | float                        |
+| double                                                               | "double"                                                | float                        |
+| std::complex&lt;float&gt;                                            | "std::complex&lt;float&gt;"                             | complex                      |
+| std::complex&lt;double&gt;                                           | "std::complex&lt;float&gt;"                             | complex                      |
+| std::string                                                          | "std::string"                                           | str                          |
+| std::vector&lt;T&gt; for T any of the types above                    | "std::vector&lt;double&gt;", etc.                       | list[T]                      |
+| std::vector&lt;std::vector&lt;T&gt;&gt; for T any of the types above | "std::vector&lt;std::vector&lt;double&gt;&gt;", etc.    | list[list[T]]                |
+| std::unordered_map&lt;std::string, std::string&gt;                   | "std::unordered_map&lt;std::string, std::string&gt;"    | dict[str, str]               |
+| std::shared_ptr&lt;T&gt; for the types above                         | "std::shared_ptr&lt;std::vector&lt;float&gt;&gt;", etc. | same as without `shared_ptr` |
+| std::nullptr_t                                                       | "std::nullptr_t"                                        | None                         |
+
+All of the types in the table above also appear in the {ref}`table of UCX serialization codecs<object-serialization>`, so it is also possible to send these types between native Python and wrapped C++ operators in different fragments of a distributed application.
+
+:::{note}
+Receive of C++ `std::shared_ptr` of the types in the table above is supported for Python native operators, but the value is extracted and cast to the Python type, so the native Python operator will be working with a copy of the contained data. Similarly, a `std::shared_ptr` can be transmitted, but this is done via `std::make_shared<T>` on the C++ object cast from the Python one. Wrapped C++ operators emitting a `std::shared_ptr<holoscan::Tensor>` or `holosan::TensorMap` is one case where a special code path is used to avoid any copying of the tensor data when interoperating between Python and C++ wrapped operators.
+:::
+
 
 (python-wrapped-operators)=
 ### Python wrapping of a C++ operator
@@ -2256,7 +2295,82 @@ To learn more about overriding connectors and/or conditions there is a [multi_br
 
 The Holoscan SDK enables seamless integration with various powerful, GPU-accelerated libraries to build efficient, high-performance pipelines.
 
-Please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository for detailed examples and more information on Holoscan's tensor interoperability and handling CUDA libraries in the pipeline. This includes [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [MatX](https://github.com/NVIDIA/MatX) for C++, [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
+This guide provides a detailed example of integrating the [MatX](https://github.com/NVIDIA/MatX) library below. For more examples, please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository. This tutorial covers libraries such as [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
+
+(interoperability-with-matx)=
+#### MatX Integration (C++, since v3.5)
+
+The {cpp:class}`holoscan::Tensor`'s support for the [DLPack standard](https://dmlc.github.io/dlpack/latest/) enables zero-copy data sharing with libraries like [MatX](https://github.com/NVIDIA/MatX). MatX is a high-performance C++17 library for numerical computing on NVIDIA GPUs that you can use within Holoscan operators for computationally intensive tasks.
+
+To use MatX in your Holoscan application, you need to link against the `holoscan::matx` interface library in your `CMakeLists.txt`:
+
+```{code-block} cmake
+target_link_libraries(my_application
+  PRIVATE
+  holoscan::core
+  holoscan::matx
+)
+```
+
+##### Converting from `matx::tensor` to `holoscan::Tensor`
+
+You can convert a `matx::tensor` to a `holoscan::Tensor` without a data copy by using the `ToDlPack()` method. This is useful when you have a MatX tensor and want to send it to a downstream Holoscan operator.
+
+```{code-block} cpp
+:caption: Converting from matx::tensor to holoscan::Tensor
+// In a transmitter operator's compute() method:
+
+// Create a MatX tensor on the GPU
+auto matx_tensor = matx::make_tensor<float>({10});
+matx_tensor.SetVals({1, 2, 3, 4, 5, 6, 7, 8, 9, 10});
+
+// Convert the MatX tensor to a holoscan::Tensor using DLPack.
+// This is a zero-copy operation.
+auto holoscan_tensor = std::make_shared<holoscan::Tensor>(matx_tensor.ToDlPack());
+
+// Create a holoscan::TensorMap to hold the tensor
+holoscan::TensorMap out_message;
+out_message.insert({"tensor", holoscan_tensor});
+
+// Emit the holoscan::TensorMap
+op_output.emit(out_message, "out");
+```
+
+##### Converting from `holoscan::Tensor` to `matx::tensor`
+
+Conversely, you can create a `matx::tensor` view from a `holoscan::Tensor` without copying data. This is useful when you receive a `holoscan::Tensor` and want to perform computations using MatX.
+
+```{code-block} cpp
+:caption: Converting from holoscan::Tensor to matx::tensor
+// In a receiver operator's compute() method:
+auto maybe_tensor_map = op_input.receive<holoscan::TensorMap>("in");
+
+if (maybe_tensor_map) {
+  auto& tensor_map = maybe_tensor_map.value();
+  for (const auto& [name, tensor] : tensor_map) {
+    HOLOSCAN_LOG_INFO("tensor name: {}", name);
+    HOLOSCAN_LOG_INFO("tensor nbytes: {}", tensor->nbytes());
+
+    // Create a MatX tensor view from the holoscan::Tensor's data pointer and shape.
+    // This is a zero-copy operation.
+    auto matx_tensor =
+        matx::make_tensor<float>(static_cast<float*>(tensor->data()), {tensor->shape()[0]});
+    HOLOSCAN_LOG_INFO("MatX tensor: ");
+    matx::print(matx_tensor);
+
+    // Perform a simple calculation on the GPU: matx_tensor = matx_tensor * 2.0 + 1
+    (matx_tensor = matx_tensor * 2.f + matx::ones()).run();
+
+    HOLOSCAN_LOG_INFO("Result of 'matx_tensor * 2 + 1':");
+    matx::print(matx_tensor);
+  }
+}
+```
+
+:::{note}
+A complete example is available in the `examples/matx/matx_basic/cpp/matx_basic.cu` file.
+:::
+
 
 (holoscan-operator-execution-control)=
 ### Operator Execution Control and Monitoring

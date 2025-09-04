@@ -92,8 +92,8 @@ int main([[maybe_unused]] int argc, char** argv) {
     app->scheduler(app->make_scheduler<holoscan::GreedyScheduler>("GS", scheduler_args));
   } else if (scheduler != "default") {
     throw std::runtime_error(fmt::format(
-        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
-        "'greedy', 'default'}",
+        "unrecognized scheduler option '{}', should be one of {{'multi_thread', 'event_based', "
+        "'greedy', 'default'}}",
         scheduler));
   }
 

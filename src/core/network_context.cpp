@@ -32,20 +32,16 @@ void NetworkContext::initialize() {
   }
 }
 
-void NetworkContext::reset_graph_entities() {
-  HOLOSCAN_LOG_TRACE("NetworkContext '{}'::reset_graph_entities", name_);
+void NetworkContext::reset_backend_objects() {
+  HOLOSCAN_LOG_TRACE("NetworkContext '{}'::reset_backend_objects", name_);
   for (auto& [_, resource] : resources_) {
     if (resource) {
-      auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
-      if (gxf_resource) {
-        gxf_resource->reset_gxf_graph_entity();
-      }
-      resource->reset_graph_entities();
+      resource->reset_backend_objects();
     }
   }
   // Clear the resources map to enable subsequent executions
   resources_.clear();
-  Component::reset_graph_entities();
+  Component::reset_backend_objects();
 }
 
 YAML::Node NetworkContext::to_yaml_node() const {

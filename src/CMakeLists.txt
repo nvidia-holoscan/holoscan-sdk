@@ -109,6 +109,20 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # ##############################################################################
+# # Add library holoscan::matx
+# ##############################################################################
+# Create an INTERFACE library to wrap the matx dependency.
+# This avoids a name collision with the 'matx' target created by rapids-cmake (CPM).
+add_library(holoscan_matx INTERFACE)
+add_library(holoscan::matx ALIAS holoscan_matx)
+
+target_link_libraries(holoscan_matx
+    INTERFACE
+        matx::matx
+)
+
+
+# ##############################################################################
 # # Add library holoscan::profiler
 # ##############################################################################
 add_holoscan_library(profiler
@@ -244,6 +258,8 @@ add_holoscan_library(core
     core/resources/gxf/condition_combiner.cpp
     core/resources/gxf/cpu_thread.cpp
     core/resources/gxf/cuda_allocator.cpp
+    core/resources/gxf/cuda_green_context_pool.cpp
+    core/resources/gxf/cuda_green_context.cpp
     core/resources/gxf/cuda_stream_pool.cpp
     core/resources/gxf/double_buffer_receiver.cpp
     core/resources/gxf/double_buffer_transmitter.cpp
@@ -262,6 +278,7 @@ add_holoscan_library(core
     core/resources/gxf/std_component_serializer.cpp
     core/resources/gxf/std_entity_serializer.cpp
     core/resources/gxf/stream_ordered_allocator.cpp
+    core/resources/gxf/synthetic_clock.cpp
     core/resources/gxf/system_resources.cpp
     core/resources/gxf/transmitter.cpp
     core/resources/gxf/ucx_component_serializer.cpp
@@ -292,6 +309,7 @@ target_link_libraries(core
         ${CMAKE_DL_LIBS}  # for dlopen
         holoscan::logger
         holoscan::profiler
+        CUDA::cuda_driver
         CUDA::cudart
         fmt::fmt-header-only
         GXF::app

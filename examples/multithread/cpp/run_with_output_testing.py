@@ -187,10 +187,28 @@ def main():
         elif args.mode == "tracking":
             args.config = os.path.join(exe_dir, "multithread_tracking.yaml")
 
+    # Validate the config file path
+    if not os.path.isfile(args.config):
+        print(f"Error: YAML config file not found: {args.config}")
+        return 1
+
+    # Validate the C++ application binary path
+    if not os.path.isfile(args.multithread_exe):
+        print(f"Error: C++ application binary not found: {args.multithread_exe}")
+        return 1
+
+    # Normalize the paths
+    config_path = os.path.abspath(args.config)
+    binary_path = os.path.abspath(args.multithread_exe)
+
     # Run the multithread example and capture output
     try:
         result = subprocess.run(
-            [args.multithread_exe, args.config], capture_output=True, text=True, check=True
+            [binary_path, config_path],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=30,  # 30 second timeout
         )
         output = result.stderr  # Holoscan logs go to stderr
         output += result.stdout  # Data flow tracking prints to stdout

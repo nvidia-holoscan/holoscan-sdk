@@ -90,6 +90,8 @@ The following examples illustrate the use of specific resource classes that can 
 
 * [**CudaStreamPool** and **CudaStreamCondition**](resources/cuda_stream_pool): demonstrates how Python apps can make use of a `CudaStreamPool` resource and `CudaStreamCondition` condition. Also demonstrates how to use stream-related API from native Python operator `compute` methods and have CuPy calls within `compute` use the desired stream.
 
+* [**CudaGreenContext**](resources/cuda_green_context): demonstrates the usage of  `CudaGreenContext` when creating `CudaStreamPool`. It is backward compatible when `CudaGreenContext` is not configured for a `CudaStreamPool`.
+
 ## Decorator-based Python API
 
 * [**Python Functions as Operators**](python_decorator): demonstrates how to use a decorator to convert a Python function into an Operator.

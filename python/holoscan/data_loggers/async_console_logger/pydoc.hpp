@@ -50,9 +50,17 @@ log_inputs : bool, optional
 log_outputs : bool, optional
     Whether to log output messages. Default is True.
 log_tensor_data_content : bool, optional
-    Whether to log the actual content of tensor data. Default is False.
+    Whether to log the actual content of tensor data. Default is True.
 log_metadata : bool, optional
     Whether to log metadata associated with messages. Default is True.
+use_scheduler_clock : bool, optional
+    Whether to use the scheduler's clock for timestamps (if False, uses the C++
+    `std::chrono::steady_clock` time relative to epoch). Ignored if `clock` is provided.
+    Default is True.
+clock : holoscan.resources.GXFClock or holoscan.core.Clock, optional
+    If a clock is explicitly specified, all emit and receive timestamps will be determined via
+    the timestamp method of this clock. Can be a GXF-based clock like
+    ``holoscan.resources.RealtimeClock``.
 allowlist_patterns : list of str, optional
     List of regex patterns to apply to message unique IDs. If empty, all messages not matching a
     denylist pattern will be logged. Otherwise, there must be a match to one of the allowlist

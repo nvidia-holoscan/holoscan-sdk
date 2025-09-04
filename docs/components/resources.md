@@ -74,6 +74,12 @@ The `ManualClock` compresses time intervals (e.g., `PeriodicCondition` proceeds 
 
 The parameter `initial_timestamp` controls the initial timestamp on the clock in ns.
 
+### Synthetic Clock
+
+The `SyntheticClock` is a clock where time flow is synthesized, like from a recording or a simulation.
+
+The parameter `initial_timestamp` controls the initial timestamp on the clock in ns.
+
 ## Transmitter (advanced)
 
 Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators a `DoubleBufferTransmitter` will automatically be used by default, while for connections between fragments in a distributed application, a `UcxTransmitter` will be used. When data frame flow tracking is enabled any `DoubleBufferTransmitter` will be replaced by an `AnnotatedDoubleBufferTransmitter` which also records the timestamps needed for that feature. `AsyncBufferTransmitter` is optionally used when `IOSpec::ConnectorType::kAsyncBuffer` is used in the `add_flow` method for lock-free, wait-free and asynchronous data flow.
@@ -164,3 +170,28 @@ The AsyncDataLoggerResource inherits all of the parameters from DataLoggerResour
 - The `large_data_queue_policy` parameter controls how large data queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
 - The `enable_large_data_queue` parameter controls whether to enable the large data queue and worker thread for processing full tensor content.
 - The `shutdown_timeout` parameter specifies the maximum time in nanoseconds to wait for worker threads to shutdown gracefully.
+
+
+## CUDA Green Context Resources
+
+CUDA Green Context is an advanced feature that enables partitioning of a GPU into multiple isolated execution contexts, each with its own set of Streaming Multiprocessors (SMs). This allows for fine-grained control over GPU resource allocation, enabling multiple operators or applications to share a single GPU without interfering with each other's workloads. Holoscan provides resource classes to manage and utilize CUDA Green Contexts.
+
+### CudaGreenContextPool
+
+This resource manages a pool of CUDA Green Contexts, each representing a partition of the GPU with a specified number of SMs. The pool is typically created once per application and individual green contexts are allocated from it for use by operators. A default green context can be specified through the `default_context_index` parameter. When this parameter is a negative number or not specified (default), the last green context partition will be used as the default. This can be the green context partition with the remaining SMs that are not used in `sms_per_partition`.
+
+- The `dev_id` parameter specifies the CUDA device ID on which the green context pool will be created.
+- The `flags` parameter specifies additional configuration flags for the green context pool, default 0. (Refer to the CUDA Green Context documentation for supported flag values.)
+- The `num_partitions` parameter specifies the number of green context partitions to create.
+- The `sms_per_partition` parameter is a list specifying the number of SMs to allocate to each partition. The number used should be a multiple of `min_sm_count`.
+- The `default_context_index` parameter specifies which green context partition is used as the default. When it is a negative number or not specified (default), the last green context partition will be used as default. This can be the green context partition with the remaining SMs that are not used in `sms_per_partition`.
+- The `min_sm_count` parameter is used when splitting GPU SMs into groups. The default value is 2.
+
+### CudaGreenContext
+
+This resource represents a single CUDA Green Context, which is a partition of the GPU with a dedicated set of Streaming Multiprocessors (SMs). `CudaGreenContext` resources are typically created from a `CudaGreenContextPool` and can be bound to a `CudaStreamPool` to control which GPU partition they create cuda streams from. This enables fine-grained control over GPU resource allocation and isolation between different operators or applications.
+
+- The `green_context_pool` parameter specifies the `CudaGreenContextPool` resource from which this green context is allocated. This must be set to an existing pool resource.
+- The `index` parameter specifies the index of the green context partition within the pool to use. If not specified or specified as a negative number, the default green context from `green_context_pool` will be used.
+
+By assigning different `CudaGreenContext` resources to different operators, users can ensure that each operator runs in its own isolated GPU partition, improving performance isolation and resource management in complex applications.

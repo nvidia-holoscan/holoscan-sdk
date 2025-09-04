@@ -662,7 +662,7 @@ The [scheduler](./components/schedulers.md) controls how the application schedul
 
 The default scheduler is a single-threaded [`GreedyScheduler`](./components/schedulers.md#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` ({cpp:class}`C++ <holoscan::Scheduler>`/{py:class}`Python <holoscan.core.Scheduler>`) or change the parameters from the default scheduler, using the `scheduler()` function ({cpp:func}`C++ <holoscan::Fragment::scheduler>`/{py:func}`Python <holoscan.core.Fragment.scheduler>`).
 
-For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithread-scheduler) or [`EventBasedScheduler`](./components/schedulers.md#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute.
+For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithread-scheduler) or [`EventBasedScheduler`](./components/schedulers.md#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute. Additionally, the EventBasedScheduler also offers options for running time-critical operators under real-time scheduling policies supported by Linux kernel (see {ref}`Real-time scheduling with thread pools<configuring-app-thread-pools-realtime>`).
 
 The code snippet below shows how to set and configure a non-default scheduler:
 
@@ -719,7 +719,7 @@ This is also illustrated in the [multithread](https://github.com/nvidia-holoscan
 
 Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal worker thread pool by default. In some scenarios, it may be desirable for users to instead assign operators to specific user-defined thread pools. This also allows optionally pinning operators to a specific thread.
 
-Assuming that, I have three operators, `op1`, `op2` and `op3`. Assume that I want to assign these two a thread pool and that I would like operators 2 and 3 to be pinned to specific threads in the thread pool. The code for configuring thread pools from the Fragment `compose` method is shown in the example below.
+Assume I have three operators, `op1`, `op2` and `op3`, that I want to assign to a thread pool. I would also like to pin `op2` and `op3` to specific threads within the pool. The example below shows the code for configuring thread pools to achieve this from the Fragment `compose` method.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -775,6 +775,100 @@ Note that any given operator can only belong to a single thread pool. Assigning 
 There is also a related boolean parameter, `strict_thread_pinning` that can be passed as a `holoscan::Arg` to the `MultiThreadScheduler` constructor. When this argument is set to `false` and an operator is pinned to a specific thread, it is allowed for other operators to also run on that same thread whenever the pinned operator is not ready to execute. When `strict_thread_pinning` is `true`, the thread can ONLY be used by the operator that was pinned to the thread. For the `EventBasedScheduler`, it is always in strict pinning mode and there is no such parameter.
 
 If a thread pool is configured by the single-thread `GreedyScheduler` is used a warning will be logged indicating that the user-defined thread pools would be ignored. Only `MultiThreadScheduler` and `EventBasedScheduler` can make use of the thread pools.
+
+(configuring-app-thread-pools-realtime)=
+#### Linux real-time scheduling with thread pools
+
+The `EventBasedScheduler` offers additional features to pin an operator to a dedicated worker thread scheduled by real-time scheduling policies supported in the Linux kernel. The configuration can be done by using the `add_realtime()` method (in contrast to the `add()` method) in `ThreadPool` to assign an operator with a real-time scheduling policy along with the parameters required for the selected scheduling policy. The supported real-time scheduling policies are:
+
+- **SCHED_FIFO** (`SchedulingPolicy::kFirstInFirstOut`): First-in-first-out scheduling policy that provides priority execution. Operators with this policy will run until completion or until preempted by a higher priority Linux process or thread. Operators with the same priority under `SCHED_FIFO` are scheduled in a first-in-first-out fashion.
+- **SCHED_RR** (`SchedulingPolicy::kRoundRobin`): Round-robin scheduling policy that provides execution with CPU time sharing for operators with the same priority level in a round-robin fashion.
+- **SCHED_DEADLINE** (`SchedulingPolicy::kDeadline`): Earliest Deadline First scheduling policy that ensures operators meet their specified deadlines. This policy requires setting runtime, deadline, and period parameters.
+
+For more detailed information about Linux kernel schedulers, refer to the [Ubuntu Real-time documentation](https://documentation.ubuntu.com/real-time/latest/explanation/schedulers/#id1).
+
+:::{important}
+**Important Notes About Using Real-time Scheduling Polices:**
+
+- **SCHED_DEADLINE Behavior**: Since SCHED_DEADLINE inherently enforces periodic execution, adding a `PeriodicCondition` to these operators is unnecessary.
+
+- **Operator Conditions Still Apply**: Real-time scheduling policies work alongside existing operator conditions. While real-time policies reduce overall scheduling latency, the actual operator execution start timing may still be constrained by conditions defined in the application's graph structure.
+
+- **Understanding the Scope**: The Holoscan SDK integrates with Linux kernel real-time scheduling policies but cannot guarantee real-time performance across your entire application. This feature offers a way to reduce scheduling overhead for specific time-sensitive operators, but the overall system behavior depends on your application design and the underlying Linux kernel configuration.
+:::
+
+:::{note}
+Using real-time scheduling policies requires appropriate Linux kernel configuration and may require running `sudo sysctl -w kernel.sched_rt_runtime_us=-1` beforehand to disable the real-time runtime limit.
+
+**Container Requirements:**
+- **SCHED_DEADLINE**: Requires root privileges and `--cap-add=CAP_SYS_NICE` when running in a container
+- **SCHED_FIFO/SCHED_RR**: May require `--ulimit rtprio=99` when running in a container (can replace 99 with the highest value actually used for the `sched_priority` argument to `add_realtime()`)
+:::
+
+Here's an example of configuring operators to run with real-time policies:
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:name: holoscan-realtime-thread-pool-example-cpp
+
+    // Create a thread pool for real-time operators
+    auto realtime_pool = make_thread_pool("realtime_pool", 2);
+
+    // Add operator with SCHED_FIFO policy and priority 1, pinned to CPU core 0
+    realtime_pool->add_realtime(op1, SchedulingPolicy::kFirstInFirstOut, true, {0}, 1);
+
+    // Add operator with SCHED_RR policy and priority 2, pinned to CPU core 1
+    realtime_pool->add_realtime(op2, SchedulingPolicy::kRoundRobin, true, {1}, 2);
+
+    // Add operator with SCHED_DEADLINE policy, pinned to CPU core 2
+    // runtime: 1ms, deadline: 10ms, period: 10ms
+    realtime_pool->add_realtime(op3, SchedulingPolicy::kDeadline, true, {2}, 0,
+                                1000000, 10000000, 10000000);
+```
+````
+
+````{tab-item} Python
+```{code-block} python
+:name: holoscan-realtime-thread-pool-example-python
+    # Import required for real-time scheduling
+    from holoscan.resources import SchedulingPolicy
+
+    # Create a thread pool for real-time operators
+    realtime_pool = self.make_thread_pool("realtime_pool", 2)
+
+    # Add operator with SCHED_FIFO policy and priority 1, pinned to CPU core 0
+    realtime_pool.add_realtime(
+        op1,
+        sched_policy=SchedulingPolicy.SCHED_FIFO,
+        pin_operator=True,
+        pin_cores=[0],
+        sched_priority=1
+    )
+
+    # Add operator with SCHED_RR policy and priority 2, pinned to CPU core 1
+    realtime_pool.add_realtime(
+        op2,
+        sched_policy=SchedulingPolicy.SCHED_RR,
+        pin_operator=True,
+        pin_cores=[1],
+        sched_priority=2
+    )
+
+    # Add operator with SCHED_DEADLINE policy, pinned to CPU core 2
+    # runtime: 1ms, deadline: 10ms, period: 10ms
+    realtime_pool.add_realtime(
+        op3,
+        sched_policy=SchedulingPolicy.SCHED_DEADLINE,
+        pin_operator=True,
+        pin_cores=[2],
+        sched_runtime=1000000,
+        sched_deadline=10000000,
+        sched_period=10000000,
+    )
+```
+````
+`````
 
 (configuring-app-runtime)=
 ### Configuring runtime properties

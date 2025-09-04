@@ -18,11 +18,13 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "gxf/std/resources.hpp"  // for GPUDevice
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
+#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
 
 namespace holoscan {
 
@@ -32,38 +34,46 @@ constexpr int32_t kDefaultStreamPriority = 0;
 constexpr uint32_t kDefaultReservedSize = 1;
 constexpr uint32_t kDefaultMaxSize = 0;
 constexpr int32_t kDefaultDeviceId = 0;
+
 }  // namespace
 
 CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component)
     : Allocator(name, component) {
+  if (!component) {
+    throw std::invalid_argument("CudaStreamPool component cannot be null");
+  }
   auto maybe_stream_flags = component->getParameter<int32_t>("stream_flags");
   if (!maybe_stream_flags) {
-    throw std::runtime_error("Failed to get stream_flags");
+    throw std::runtime_error("Failed to get stream_flags parameter from GXF CudaStreamPool");
   }
   stream_flags_ = maybe_stream_flags.value();
 
   auto maybe_stream_priority = component->getParameter<int32_t>("stream_priority");
   if (!maybe_stream_priority) {
-    throw std::runtime_error("Failed to get stream_priority");
+    throw std::runtime_error("Failed to get stream_priority parameter from GXF CudaStreamPool");
   }
   stream_priority_ = maybe_stream_priority.value();
 
   auto maybe_reserved_size = component->getParameter<uint32_t>("reserved_size");
   if (!maybe_reserved_size) {
-    throw std::runtime_error("Failed to get reserved_size");
+    throw std::runtime_error("Failed to get reserved_size parameter from GXF CudaStreamPool");
   }
   reserved_size_ = maybe_reserved_size.value();
 
   auto maybe_max_size = component->getParameter<uint32_t>("max_size");
   if (!maybe_max_size) {
-    throw std::runtime_error("Failed to get max_size");
+    throw std::runtime_error("Failed to get max_size parameter from GXF CudaStreamPool");
   }
   max_size_ = maybe_max_size.value();
+
+  auto maybe_cuda_green_context =
+      component->getParameter<std::shared_ptr<CudaGreenContext>>("cuda_green_context");
+  cuda_green_context_ = maybe_cuda_green_context ? maybe_cuda_green_context.value() : nullptr;
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
   if (!maybe_gpu_device) {
-    throw std::runtime_error("Failed to get dev_id");
+    throw std::runtime_error("Failed to get dev_id parameter from GXF CudaStreamPool");
   }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
@@ -96,17 +106,39 @@ void CudaStreamPool::setup(ComponentSpec& spec) {
              "cudaSreamCreateWithPriority . Lower numbers represent higher priorities. See: "
              "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html.",
              kDefaultStreamPriority);
-  spec.param(
-      reserved_size_,
-      "reserved_size",
-      "Reserved Stream Size",
-      "The number of CUDA streams to initially reserve in the pool (prior to first request).",
-      kDefaultReservedSize);
+  spec.param(reserved_size_,
+             "reserved_size",
+             "Reserved Stream Size",
+             "The number of CUDA streams to initially reserve in the pool"
+             " (prior to first request).",
+             kDefaultReservedSize);
   spec.param(max_size_,
              "max_size",
              "Maximum Pool Size",
              "The maximum number of streams that can be allocated, unlimited by default",
              kDefaultMaxSize);
+  spec.param(cuda_green_context_,
+             "cuda_green_context",
+             "Cuda Green Context",
+             "The green context to use for the CUDA streams in the pool.",
+             static_cast<std::shared_ptr<CudaGreenContext>>(nullptr));
+}
+
+void CudaStreamPool::initialize() {
+  HOLOSCAN_LOG_DEBUG("CudaStreamPool '{}': initialize", name());
+
+  std::shared_ptr<CudaGreenContext> green_context_ptr;
+  if (cuda_green_context_.has_value()) {
+    green_context_ptr = cuda_green_context_.get();
+  }
+
+  if (green_context_ptr != nullptr) {
+    if (gxf_eid_ != 0 && green_context_ptr->gxf_eid() == 0) {
+      green_context_ptr->gxf_eid(gxf_eid_);
+    }
+    green_context_ptr->initialize();
+  }
+  GXFResource::initialize();
 }
 
 }  // namespace holoscan

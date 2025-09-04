@@ -31,6 +31,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <functional>
 
 #include "holoinfer_constants.hpp"
 
@@ -305,6 +306,7 @@ struct InferenceSpecs {
    * @param dla_core The DLA core index to execute the engine on, only supported for trt. Set to -1
    * to disable DLA.
    * @param dla_gpu_fallback If DLA is enabled, use the GPU if a layer cannot be executed on DLA.
+   * @param allocate_cuda_stream Function to allocate a CUDA stream (optional)
    */
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
@@ -313,7 +315,7 @@ struct InferenceSpecs {
                  const Mappings& activation_map, const std::vector<int32_t>& trt_opt_profile,
                  bool is_engine_path, bool oncpu, bool parallel_proc, bool use_fp16,
                  bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs, int32_t dla_core,
-                 bool dla_gpu_fallback)
+                 bool dla_gpu_fallback, std::function<cudaStream_t(int32_t)> allocate_cuda_stream)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -332,7 +334,8 @@ struct InferenceSpecs {
         cuda_buffer_out_(cuda_buffer_out),
         use_cuda_graphs_(use_cuda_graphs),
         dla_core_(dla_core),
-        dla_gpu_fallback_(dla_gpu_fallback) {}
+        dla_gpu_fallback_(dla_gpu_fallback),
+        allocate_cuda_stream_(std::move(allocate_cuda_stream)) {}
 
   /**
    * @brief Get the model data path map
@@ -445,6 +448,9 @@ struct InferenceSpecs {
 
   /// @brief Output Data Map with key as tensor name and value as DataBuffer
   DataMap output_per_model_;
+
+  /// @brief Function to allocate a CUDA stream
+  std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
 };
 
 /**

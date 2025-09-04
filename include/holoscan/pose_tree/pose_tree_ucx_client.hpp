@@ -176,7 +176,7 @@ class PoseTreeUCXClient {
 
   std::shared_ptr<PoseTree> pose_tree_;  ///< The local PoseTree instance to synchronize
   std::string host_;                     ///< Hostname or IP address of the server
-  uint16_t port_;                        ///< Port number of the server
+  uint16_t port_{};                      ///< Port number of the server
   bool request_snapshot_;                ///< Whether to request a full snapshot on connection
   std::atomic<bool> running_{false};     ///< Flag indicating if the client is running
   std::thread client_thread_;            ///< The worker thread handling UCX communication

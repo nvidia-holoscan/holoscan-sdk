@@ -356,7 +356,6 @@ class DataProcessor {
   // Custom CUDA kernel feature related parameters
 
   CUdevice device_ = 0;
-  CUcontext context_ = nullptr;
   CUmodule module_ = nullptr;
   std::string custom_cuda_src_;
   std::map<std::string, CUfunction> kernel_;

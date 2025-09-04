@@ -61,8 +61,8 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
     explicit NodeTypeCompare(const std::list<NodeType>* nodes) : ordered_nodes(nodes) {}
 
     bool operator()(const NodeType& lhs, const NodeType& rhs) const {
-      // If ordered_nodes is null, fall back to name comparison
-      if (!ordered_nodes) {
+      // If ordered_nodes is null or empty, fall back to name comparison
+      if (!ordered_nodes || ordered_nodes->empty()) {
         return lhs->name() < rhs->name();
       }
       // Find the positions in ordered_nodes_

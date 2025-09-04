@@ -70,7 +70,7 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
       auto pool_param =
           std::any_cast<holoscan::MetaParameter<std::shared_ptr<holoscan::CudaStreamPool>>*>(
               param_wrapper.value());
-      if (pool_param->has_value()) {
+      if (pool_param->has_value() && pool_param->get() != nullptr) {
         cuda_stream_pool_ = pool_param->get();
         return;
       }
@@ -78,50 +78,139 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
       HOLOSCAN_LOG_ERROR(
           "Failed to cast cuda_stream_pool parameter of operator '{}': {}", op->name(), e.what());
     }
-    // don't add a stream pool by default if a "cuda_stream_pool" parameter was defined
-    return;
   }
 
+  std::shared_ptr<CudaStreamPool> cuda_stream_pool_ptr = nullptr;
   for (auto& resource : op->resources()) {
     // If the resource is a
-    auto stream_pool_resource = std::dynamic_pointer_cast<CudaStreamPool>(resource.second);
-    if (stream_pool_resource) {
-      cuda_stream_pool_ = stream_pool_resource;
-      return;
+    cuda_stream_pool_ptr = std::dynamic_pointer_cast<CudaStreamPool>(resource.second);
+    if (cuda_stream_pool_ptr) {
+      HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaStreamPool in resources", op->name());
+      cuda_stream_pool_ = cuda_stream_pool_ptr;
+
+      // Note: Do not return early here, still need to initialize CudaGreenContextPool before
+      // CudaGreenContext below if either of these was provided.
+      break;
     }
   }
 
-  // Add a CudaStreamPool with initial capacity 1 on the active device
-  int gpu_count = 0;
-  cudaError_t cuda_status = HOLOSCAN_CUDA_CALL_DEBUG_MSG(
-      cudaGetDeviceCount(&gpu_count),
-      "A default cuda_stream_pool parameter could not be added to operator '{}' because no GPU "
-      "device was found. ",
-      op->name());
-  if (cuda_status == cudaSuccess) {
-    // determine the currently active GPU device
-    int device = 0;
-    cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
-        cudaGetDevice(&device), "Failed to determine the currently active GPU device");
+  // Before adding default cuda_stream_pool, check if cuda_green_context_pool and cuda_green_context
+  // are already in resources. A CudaGreenContextPool is mandatory. A CudaGreenContext is optional
+  // and the default green context will be created if none is provided.
+  std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool_ptr = nullptr;
+  for (auto& resource : op->resources()) {
+    auto pool_resource = std::dynamic_pointer_cast<CudaGreenContextPool>(resource.second);
+    if (pool_resource) {
+      HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContextPool in resources", op->name());
+      cuda_green_context_pool_ptr = pool_resource;
+      break;
+    }
+  }
+
+  // if not found in resources, check if it is added in spec parameters
+  if (!cuda_green_context_pool_ptr) {
+    auto param_iter = params.find("cuda_green_context_pool");
+    if (param_iter != params.end()) {
+      auto param_wrapper = param_iter->second;
+      auto pool_param =
+          std::any_cast<holoscan::MetaParameter<std::shared_ptr<holoscan::CudaGreenContextPool>>*>(
+              param_wrapper.value());
+      if (pool_param->has_value()) {
+        HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContextPool in parameters", op->name());
+        cuda_green_context_pool_ptr = pool_param->get();
+      }
+    }
+  }
+
+  if (cuda_green_context_pool_ptr) {
+    HOLOSCAN_LOG_DEBUG("Operator '{}': initializing the CudaGreenContextPool", op->name());
+    if (op->graph_entity()) {
+      cuda_green_context_pool_ptr->gxf_eid(op->graph_entity()->eid());
+    }
+    cuda_green_context_pool_ptr->initialize();
+  }
+
+  // check if a CudaGreenContext is already in resources
+  std::shared_ptr<CudaGreenContext> cuda_green_context_ptr = nullptr;
+  for (auto& resource : op->resources()) {
+    auto context_resource = std::dynamic_pointer_cast<CudaGreenContext>(resource.second);
+    if (context_resource) {
+      HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContext in resources", op->name());
+      cuda_green_context_ptr = context_resource;
+      break;
+    }
+  }
+
+  // if not in resources, check if a CudaGreenContext is added in spec parameters
+  if (!cuda_green_context_ptr) {
+    auto params = op->spec()->params();
+    for (auto& param : params) {
+      if (param.second.type() == typeid(CudaGreenContext)) {
+        HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContext in parameters", op->name());
+        cuda_green_context_ptr = std::any_cast<std::shared_ptr<CudaGreenContext>>(param.second);
+        break;
+      }
+    }
+  }
+
+  // Create default Green context if not found in resources or spec parameters
+  if (!cuda_green_context_ptr && cuda_green_context_pool_ptr) {
+    HOLOSCAN_LOG_DEBUG("Operator '{}': creating the default CudaGreenContext", op->name());
+    cuda_green_context_ptr =
+        op->fragment()->make_resource<CudaGreenContext>(cuda_green_context_pool_ptr);
+  }
+
+  // Initialize the Green context
+  if (cuda_green_context_ptr) {
+    HOLOSCAN_LOG_DEBUG("Operator '{}': initializing the CudaGreenContext", op->name());
+    if (op->graph_entity()) {
+      cuda_green_context_ptr->gxf_eid(op->graph_entity()->eid());
+    }
+    cuda_green_context_ptr->initialize();
+  }
+
+  if (!cuda_stream_pool_ptr) {
+    HOLOSCAN_LOG_DEBUG("Operator '{}': Creating default CudaStreamPool", op->name());
+    // Add a CudaStreamPool with initial capacity 1 on the active device
+    int gpu_count = 0;
+    cudaError_t cuda_status = HOLOSCAN_CUDA_CALL_DEBUG_MSG(
+        cudaGetDeviceCount(&gpu_count),
+        "A default cuda_stream_pool parameter could not be added to operator '{}' because no GPU "
+        "device was found. ",
+        op->name());
     if (cuda_status == cudaSuccess) {
-      if (gpu_count > 0) {
-        // Note: `op` will have already been initialized, so do not use
-        // `op->add_cuda_stream_pool`. Instead, manually handle creating and initializing
-        // the stream pool here.
-        auto cuda_stream_pool = op->fragment()->make_resource<CudaStreamPool>(
-            fmt::format("{}_stream_pool", op->name()).c_str(), device, 0, 0, 1, 0);
-        // assign this new stream pool resource to the same entity as the operator
-        if (op->graph_entity()) {
-          cuda_stream_pool->gxf_eid(op->graph_entity()->eid());
+      // determine the currently active GPU device
+      int device = 0;
+      cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
+          cudaGetDevice(&device), "Failed to determine the currently active GPU device");
+      if (cuda_status == cudaSuccess) {
+        if (gpu_count > 0) {
+          // Note: `op` will have already been initialized, so do not use
+          // `op->add_cuda_stream_pool`. Instead, manually handle creating and initializing
+          // the stream pool here.
+          auto cuda_stream_pool = op->fragment()->make_resource<CudaStreamPool>(
+              fmt::format("{}_stream_pool", op->name()).c_str(),
+              device,
+              0,
+              0,
+              1,
+              0,
+              cuda_green_context_ptr);
+          // assign this new stream pool resource to the same entity as the operator
+          if (op->graph_entity()) {
+            cuda_stream_pool->gxf_eid(op->graph_entity()->eid());
+          }
+          HOLOSCAN_LOG_DEBUG("Operator '{}': Initializing CudaStreamPool in parameters",
+                             op->name());
+          cuda_stream_pool->initialize();
+          op->add_arg(cuda_stream_pool);
+          cuda_stream_pool_ = cuda_stream_pool;
+          HOLOSCAN_LOG_DEBUG(
+              "No cuda_stream_pool parameter or resource found for operator '{}'."
+              "Added a default CUDA stream pool with initial size 1 on device {}.",
+              op->name(),
+              device);
         }
-        cuda_stream_pool->initialize();
-        op->add_arg(cuda_stream_pool);
-        cuda_stream_pool_ = cuda_stream_pool;
-        HOLOSCAN_LOG_DEBUG(
-            "No cuda_stream_pool parameter or resource found for operator '{}'."
-            "Added a default CUDA stream pool with initial size 1 on device {}.",
-            op->name(),
-            device);
       }
     }
   }

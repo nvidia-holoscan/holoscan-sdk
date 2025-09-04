@@ -17,11 +17,16 @@ cmake_minimum_required(VERSION 3.20)
 project(holoscan_examples)
 
 # Finds the package holoscan
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_VERSION_MAJOR)
+  set(cuda_prefix "cu${CUDAToolkit_VERSION_MAJOR}-")
+endif()
+
 find_package(holoscan REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install"
-                   "/workspace/holoscan-sdk/install-x86_64"
-                   "/workspace/holoscan-sdk/install-aarch64-dgpu"
-                   "/workspace/holoscan-sdk/install-aarch64-igpu"
+                   "/workspace/holoscan-sdk/install-${cuda_prefix}x86_64"
+                   "/workspace/holoscan-sdk/install-${cuda_prefix}aarch64-dgpu"
+                   "/workspace/holoscan-sdk/install-${cuda_prefix}aarch64-igpu"
                    )
 
 # Enable testing

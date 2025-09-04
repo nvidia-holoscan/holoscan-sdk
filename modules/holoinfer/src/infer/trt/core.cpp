@@ -32,7 +32,8 @@ namespace inference {
 TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
                    const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
                    bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
-                   bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out)
+                   bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
+                   std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : model_path_(model_path),
       model_name_(model_name),
       trt_opt_profile_(trt_opt_profile),
@@ -43,7 +44,8 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
       dla_gpu_fallback_(dla_gpu_fallback),
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
-      cuda_buf_out_(cuda_buf_out) {
+      cuda_buf_out_(cuda_buf_out),
+      allocate_cuda_stream_(std::move(allocate_cuda_stream)) {
   if (trt_opt_profile.size() != 3) {
     HOLOSCAN_LOG_WARN(
         "TRT Inference: Optimization profile must of of size 3. Size from inference parameters: "
@@ -86,12 +88,20 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
     engine_path_ = model_path_;
   }
 
-  check_cuda(cudaSetDevice(device_id_));
-  // Create the CUDA stream with the non-blocking flags set. This is needed for CUDA stream
-  // capturing since capturing fails if another thread is scheduling work to stream '0' while
-  // we capture in this thread. We explicitly synchronize with the caller using events so stream
-  // '0' does not need to sync with us.
-  check_cuda(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+  // If a CUDA stream pool is provided, try to allocate a stream from it
+  if (allocate_cuda_stream_) {
+    cuda_stream_ = allocate_cuda_stream_(device_id_);
+  }
+
+  // If no stream could be allocated, create a new one
+  if (!cuda_stream_) {
+    check_cuda(cudaSetDevice(device_id_));
+    // Create the CUDA stream with the non-blocking flags set. This is needed for CUDA stream
+    // capturing since capturing fails if another thread is scheduling work to stream '0' while
+    // we capture in this thread. We explicitly synchronize with the caller using events so stream
+    // '0' does not need to sync with us.
+    check_cuda(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+  }
   // create the CUDA event used to synchronize with the caller
   check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
 

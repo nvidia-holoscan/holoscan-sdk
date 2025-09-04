@@ -31,10 +31,15 @@ endfunction()
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_versions.html#cpm-version-format
 #
 # Note: When multiple CPM packages are available, the first one takes precedence.
+#       Since matx depends on cccl library via rapids-cmake and Holoscan's rapids-cmake version is
+#       old, we need to override cccl library to 2.8.0+.
 rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps/rapids-cmake-packages.json")
 
 # Define packages to override the default ones.
 
+# CCCL is a dependency of matx.
+include(${rapids-cmake-dir}/cpm/cccl.cmake)
+rapids_cpm_cccl()
 # fmt must be populated before rmm and spdlog to ensure fmt headers are installed in the package
 superbuild_depend(fmt_rapids)
 # rmm is fetched by spdlog but need to call this first because a patch needs to be applied to rmm
@@ -61,6 +66,7 @@ superbuild_depend(gxf)
 superbuild_depend(nvtx3)
 superbuild_depend(eigen3_urm)
 superbuild_depend(ucxx_rapids)
+superbuild_depend(matx)
 
 # Testing dependencies
 if(HOLOSCAN_BUILD_TESTS)

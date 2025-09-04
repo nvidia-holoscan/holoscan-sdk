@@ -61,6 +61,7 @@
 #include "./core/network_contexts/gxf/ucx_context.hpp"
 
 // Resources
+#include "./core/clock.hpp"
 #include "./core/resources/async_data_logger.hpp"
 #include "./core/resources/data_logger.hpp"
 #include "./core/resources/gxf/async_buffer_receiver.hpp"
@@ -68,6 +69,8 @@
 #include "./core/resources/gxf/block_memory_pool.hpp"
 #include "./core/resources/gxf/clock.hpp"
 #include "./core/resources/gxf/condition_combiner.hpp"
+#include "./core/resources/gxf/cuda_green_context.hpp"
+#include "./core/resources/gxf/cuda_green_context_pool.hpp"
 #include "./core/resources/gxf/cuda_stream_pool.hpp"
 #include "./core/resources/gxf/double_buffer_receiver.hpp"
 #include "./core/resources/gxf/double_buffer_transmitter.hpp"
@@ -79,6 +82,7 @@
 #include "./core/resources/gxf/std_component_serializer.hpp"
 #include "./core/resources/gxf/std_entity_serializer.hpp"
 #include "./core/resources/gxf/stream_ordered_allocator.hpp"
+#include "./core/resources/gxf/synthetic_clock.hpp"
 #include "./core/resources/gxf/system_resources.hpp"
 #include "./core/resources/gxf/ucx_component_serializer.hpp"
 #include "./core/resources/gxf/ucx_entity_serializer.hpp"

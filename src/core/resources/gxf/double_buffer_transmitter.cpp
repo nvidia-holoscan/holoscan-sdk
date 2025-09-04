@@ -28,13 +28,16 @@ namespace holoscan {
 DoubleBufferTransmitter::DoubleBufferTransmitter(const std::string& name,
                                                  nvidia::gxf::DoubleBufferTransmitter* component)
     : Transmitter(name, component) {
+  if (!component) {
+    throw std::invalid_argument("DoubleBufferTransmitter component cannot be null");
+  }
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
   if (!maybe_capacity) {
-    throw std::runtime_error("Failed to get capacity");
+    throw std::runtime_error("Failed to get capacity from GXF DoubleBufferTransmitter");
   }
   auto maybe_policy = component->getParameter<uint64_t>("policy");
   if (!maybe_policy) {
-    throw std::runtime_error("Failed to get policy");
+    throw std::runtime_error("Failed to get policy from GXF DoubleBufferTransmitter");
   }
   capacity_ = maybe_capacity.value();
   policy_ = maybe_policy.value();

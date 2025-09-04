@@ -83,23 +83,77 @@ void init_system_resources(py::module_& m) {
            "pin_operator"_a = false,
            "pin_cores"_a = std::vector<uint32_t>(),
            doc::ThreadPool::doc_add)
-      .def("add_realtime",
-           py::overload_cast<const std::shared_ptr<Operator>&,
-                             SchedulingPolicy,
-                             bool,
-                             std::vector<uint32_t>,
-                             uint32_t,
-                             uint64_t,
-                             uint64_t,
-                             uint64_t>(&ThreadPool::add_realtime),
-           "op"_a,
-           "sched_policy"_a,
-           "pin_operator"_a = true,
-           "pin_cores"_a = std::vector<uint32_t>(),
-           "sched_priority"_a = 0,
-           "sched_runtime"_a = 0,
-           "sched_deadline"_a = 0,
-           "sched_period"_a = 0,
-           doc::ThreadPool::doc_add_realtime);
+      // use std::variant for policy to also accept an integer or string value parsed from YAML
+      .def(
+          "add_realtime",
+          [](ThreadPool& self,
+             const std::shared_ptr<Operator>& op,
+             std::variant<SchedulingPolicy, int, std::string>
+                 sched_policy_variant,
+             bool pin_operator = true,
+             std::vector<uint32_t> pin_cores = std::vector<uint32_t>(),
+             uint32_t sched_priority = 0,
+             uint64_t sched_runtime = 0,
+             uint64_t sched_deadline = 0,
+             uint64_t sched_period = 0) {
+            // Convert variant to SchedulingPolicy enum
+            SchedulingPolicy policy;
+            std::visit(
+                [&policy](auto&& arg) {
+                  using T = std::decay_t<decltype(arg)>;
+                  if constexpr (std::is_same_v<T, SchedulingPolicy>) {
+                    // Already the correct enum type
+                    policy = arg;
+                  } else if constexpr (std::is_same_v<T, int>) {
+                    // Convert integer to enum
+                    switch (arg) {
+                      case static_cast<int>(SchedulingPolicy::kFirstInFirstOut):
+                        policy = SchedulingPolicy::kFirstInFirstOut;
+                        break;
+                      case static_cast<int>(SchedulingPolicy::kRoundRobin):
+                        policy = SchedulingPolicy::kRoundRobin;
+                        break;
+                      case static_cast<int>(SchedulingPolicy::kDeadline):
+                        policy = SchedulingPolicy::kDeadline;
+                        break;
+                      default:
+                        throw py::value_error("Invalid scheduling policy integer: " +
+                                              std::to_string(arg));
+                    }
+                  } else if constexpr (std::is_same_v<T, std::string>) {
+                    // Convert string to enum
+                    if (arg == "SCHED_FIFO") {
+                      policy = SchedulingPolicy::kFirstInFirstOut;
+                    } else if (arg == "SCHED_RR") {
+                      policy = SchedulingPolicy::kRoundRobin;
+                    } else if (arg == "SCHED_DEADLINE") {
+                      policy = SchedulingPolicy::kDeadline;
+                    } else {
+                      throw py::value_error(
+                          "Invalid scheduling policy string: '" + arg +
+                          "'. Valid values are: 'SCHED_FIFO', 'SCHED_RR', 'SCHED_DEADLINE'");
+                    }
+                  }
+                },
+                sched_policy_variant);
+
+            self.add_realtime(op,
+                              policy,
+                              pin_operator,
+                              pin_cores,
+                              sched_priority,
+                              sched_runtime,
+                              sched_deadline,
+                              sched_period);
+          },
+          "op"_a,
+          "sched_policy"_a,
+          "pin_operator"_a = true,
+          "pin_cores"_a = std::vector<uint32_t>(),
+          "sched_priority"_a = 0,
+          "sched_runtime"_a = 0,
+          "sched_deadline"_a = 0,
+          "sched_period"_a = 0,
+          doc::ThreadPool::doc_add_realtime);
 }
 }  // namespace holoscan

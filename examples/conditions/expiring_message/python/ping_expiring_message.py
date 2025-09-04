@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,6 @@ limitations under the License.
 
 from holoscan.conditions import CountCondition, PeriodicCondition
 from holoscan.core import Application, ConditionType, IOSpec, Operator, OperatorSpec
-from holoscan.schedulers import GreedyScheduler
 
 
 class PingTxOp(Operator):
@@ -46,12 +45,6 @@ class PingTxOp(Operator):
 
         # The scheduler's clock is available as a parameter.
         # The clock object has methods to retrieve timestamps.
-
-        # To get the clock we currently have to set the scheduler manually in the main method.
-        # TODO: Refactor C++ lib so the clock method is on Scheduler rather than GXFScheduler.  # noqa: E501, FIX002
-        #       That would allow us to access 'clock' attribute without manually setting scheduler,
-        #       but might require adding renaming Clock->GXFClock and then adding
-        #       a new holoscan::Clock independent of GXF.
         clock = scheduler.clock
 
         print(f"Sending message: {self.index}")
@@ -118,7 +111,6 @@ class MyPingApp(Application):
 
 def main():
     app = MyPingApp()
-    app.scheduler(GreedyScheduler(fragment=app, name="greedy"))
     app.run()
 
 

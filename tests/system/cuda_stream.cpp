@@ -230,7 +230,7 @@ class PingDefaultStreamPoolRxOp : public Operator {
   void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
-               ExecutionContext& context) {
+               ExecutionContext& context) override {
     auto maybe_message = op_input.receive<gxf::Entity>("in");
     cudaStream_t internal_stream = op_input.receive_cuda_stream("in");
 
@@ -545,35 +545,24 @@ TEST_P(CudaStreamParameterizedTestFixture, TestStreamDualRxApp) {
   std::string log_output = testing::internal::GetCapturedStderr();
 
   std::vector<std::string> port_names{"in1", "in2"};
-  bool receivers_all_default = !(format_converter_stream_allocation || tx_stream_allocation);
 
-  // either:
-  //   1.) FormatConverterOp sent it internal non-default stream
-  //   2.) a stream created by tx was automatically passed through format converter to rx
-  //   3.) rx allocated its own internal stream
-  bool receive_default =
-      !(rx_stream_allocation || format_converter_stream_allocation || tx_stream_allocation);
+  // As of Holoscan v3.6, a default CUDA stream pool is automatically created even if a
+  // "cuda_stream_pool" parameter was defined. Given this, non-default streams are always
+  // received.
+
   for (const auto& port_name : port_names) {
-    std::string log_msg = fmt::format("dual_rx received {}default CUDA stream from port '{}'",
-                                      receive_default ? "" : "non-",
-                                      port_name);
+    std::string log_msg =
+        fmt::format("dual_rx received non-default CUDA stream from port '{}'", port_name);
     EXPECT_TRUE(log_output.find(log_msg) != std::string::npos) << "=== LOG ===\n"
                                                                << log_output << "\n===========\n";
 
-    log_msg = fmt::format("receive_cuda_streams found 1 {}default stream",
-                          receivers_all_default ? "" : "non-");
+    log_msg = fmt::format("receive_cuda_streams found 1 non-default stream");
     EXPECT_TRUE(log_output.find(log_msg) != std::string::npos) << "=== LOG ===\n"
                                                                << log_output << "\n===========\n";
 
     log_msg = fmt::format("CUDA stream from port '{}' corresponds to device 0", port_name);
-    if (receive_default) {
-      // will not find the message in this case
-      EXPECT_TRUE(log_output.find(log_msg) == std::string::npos) << "=== LOG ===\n"
-                                                                 << log_output << "\n===========\n";
-    } else {
-      EXPECT_TRUE(log_output.find(log_msg) != std::string::npos) << "=== LOG ===\n"
-                                                                 << log_output << "\n===========\n";
-    }
+    EXPECT_TRUE(log_output.find(log_msg) != std::string::npos) << "=== LOG ===\n"
+                                                               << log_output << "\n===========\n";
   }
 }
 

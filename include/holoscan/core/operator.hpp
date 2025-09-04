@@ -46,6 +46,7 @@
 #include "./operator_spec.hpp"
 #include "./operator_status.hpp"
 #include "./resource.hpp"
+#include "./gxf/gxf_cuda.hpp"
 
 #include "gxf/app/graph_entity.hpp"
 #include "gxf/core/gxf.h"
@@ -564,6 +565,7 @@ class Operator : public ComponentBase {
   /**
    * @brief If no `CudaStreamPool` parameter or argument already exists, add a default one.
    *
+   * This method is available to be called by derived classes to add a default CudaStreamPool in
    * This method is available to be called by derived classes to add a default `CudaStreamPool` in`
    * the case that the user did not pass one in as an argument to `make_operator`.
    *
@@ -578,6 +580,12 @@ class Operator : public ComponentBase {
    * @param max_size The maximum number of streams that can be allocated by the pool
    * (0 = unbounded).
    */
+  [[deprecated(
+      "Operator::add_cuda_stream_pool() is deprecated and will be removed in a future release. "
+      "A default CUDA stream pool is automatically added. To provide a customized CUDA stream "
+      "instead, just pass a std::shared_ptr<CudaStreamPool> as created via "
+      "Fragment::make_resource<CudaStreamPool> directly as an unnamed positional argument to "
+      "Fragment::make_operator.")]]
   void add_cuda_stream_pool(int32_t dev_id = 0, uint32_t stream_flags = 0,
                             int32_t stream_priority = 0, uint32_t reserved_size = 1,
                             uint32_t max_size = 0);
@@ -772,6 +780,12 @@ class Operator : public ComponentBase {
    */
   virtual void release_internal_resources();
 
+  /// Reset any backend-specific objects associated with this operator (e.g. GXF GraphEntity)
+  void reset_backend_objects() override;
+
+  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
+  virtual void set_parameters();
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -787,7 +801,7 @@ class Operator : public ComponentBase {
 
   // Make GXFExecutor a friend class so it can call protected initialization methods
   friend class holoscan::gxf::GXFExecutor;
-  // Fragment should be able to call reset_graph_entities
+  // Fragment must be able to call set_self_shared
   friend class Fragment;
 
   friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
@@ -840,9 +854,6 @@ class Operator : public ComponentBase {
    * Should be called before GXFExecutor::create_input_port or GXFExecutor::create_output_port.
    */
   void find_ports_used_by_condition_args();
-
-  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
-  virtual void set_parameters();
 
   /**
    * @brief This function returns a consolidated MessageLabel for all the input ports of an
@@ -899,9 +910,6 @@ class Operator : public ComponentBase {
    * @param output_name The name of the output port
    */
   void update_published_messages(std::string output_name);
-
-  /// Reset the GXF GraphEntity of any components associated with this operator
-  virtual void reset_graph_entities();
 
   /// Initialize the next flows for the operator.
   void initialize_next_flows();

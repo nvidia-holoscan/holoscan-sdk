@@ -51,9 +51,11 @@ class OnnxInfer : public InferBase {
    * @param cuda_flag Flag to show if inference will happen using CUDA
    * @param cuda_buf_in Flag to demonstrate if input data buffer is on cuda
    * @param cuda_buf_out Flag to demonstrate if output data buffer will be on cuda
+   * @param allocate_cuda_stream Function to allocate a CUDA stream (optional)
    * */
   OnnxInfer(const std::string& model_file_path, bool enable_fp16, int32_t dla_core,
-            bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out);
+            bool dla_gpu_fallback, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
+            std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
 
   /**
    * @brief Destructor

@@ -33,6 +33,7 @@
 #include <common/type_name.hpp>
 #include "./common.hpp"
 #include "./cuda_object_handler.hpp"
+#include "./data_logger.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
@@ -270,7 +271,12 @@ class InputContext {
     // Special case handling for std::shared_ptr<holoscan::Tensor>
     if constexpr (std::is_same_v<DataT, std::shared_ptr<holoscan::Tensor>>) {
       HOLOSCAN_LOG_TRACE("\tstd::shared_ptr<Tensor> code path");
-      auto maybe_tensormap = receive<holoscan::TensorMap>(name);
+
+      // Omit logging TensorMap here as we want to log use log_tensor_data instead for this single
+      // tensor case.
+      bool omit_tensormap_logging = true;
+      auto maybe_tensormap = receive_single_value<holoscan::TensorMap>(
+          input_name.c_str(), InputType::kAny, omit_tensormap_logging);
       if (maybe_tensormap.has_value()) {
         HOLOSCAN_LOG_TRACE("\t\tTensorMap code path");
         auto& tensor_map = maybe_tensormap.value();
@@ -655,8 +661,8 @@ class InputContext {
   }
 
   template <typename DataT>
-  inline holoscan::expected<DataT, holoscan::RuntimeError> receive_single_value(const char* name,
-                                                                                InputType in_type) {
+  inline holoscan::expected<DataT, holoscan::RuntimeError> receive_single_value(
+      const char* name, InputType in_type, bool omit_tensormap_logging = false) {
     bool omit_data_logging = false;
     if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
       omit_data_logging = true;
@@ -696,10 +702,12 @@ class InputContext {
           return make_unexpected<holoscan::RuntimeError>(
               create_receive_error(name, error_message.c_str()));
         }
-        HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
-        auto& data_loggers = op_->fragment()->data_loggers();
-        if (tensor_map.size() > 0 && !data_loggers.empty()) {
-          log_tensormap(tensor_map, name, IOSpec::IOType::kInput);
+        if (!omit_tensormap_logging) {
+          HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
+          auto& data_loggers = op_->fragment()->data_loggers();
+          if (tensor_map.size() > 0 && !data_loggers.empty()) {
+            log_tensormap(tensor_map, name, IOSpec::IOType::kInput);
+          }
         }
         return tensor_map;
       } else {

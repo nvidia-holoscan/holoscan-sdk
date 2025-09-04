@@ -29,6 +29,8 @@
 #include "../operator_spec.hpp"
 #include "../parameter.hpp"
 #include "../resources/gxf/cuda_stream_pool.hpp"
+#include "../resources/gxf/cuda_green_context.hpp"
+#include "../resources/gxf/cuda_green_context_pool.hpp"
 #include "gxf/cuda/cuda_stream.hpp"
 #include "gxf/cuda/cuda_stream_id.hpp"
 #include "gxf/cuda/cuda_stream_pool.hpp"
@@ -294,6 +296,13 @@ class CudaObjectHandler : public holoscan::CudaObjectHandler {
 
   /// CUDA stream pool used to allocate the internal CUDA stream
   Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_;
+
+  /// CUDA green context used to create cuda stream pool
+  Parameter<std::shared_ptr<CudaGreenContext>> cuda_green_context_;
+
+  /// CUDA green context pool used to allocate the internal CUDA stream using green context
+  /// partitions.
+  Parameter<std::shared_ptr<CudaGreenContextPool>> cuda_green_context_pool_;
 
   expected<nvidia::gxf::Handle<nvidia::gxf::CudaStreamPool>, RuntimeError> cuda_stream_pool_handle(
       gxf_context_t context);

@@ -18,6 +18,7 @@
 #include <pybind11/pybind11.h>
 
 #include "arg.hpp"
+#include "clock.hpp"
 #include "core.hpp"
 #include "data_logger.hpp"
 #include "execution_context.hpp"
@@ -42,6 +43,7 @@ PYBIND11_MODULE(_core, m) {
   init_component(m);
   init_condition(m);
   init_resource(m);
+  init_clock(m);
   init_data_logger(m);
   init_io_context(m);
   init_execution_context(m);

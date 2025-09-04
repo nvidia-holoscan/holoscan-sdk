@@ -222,6 +222,10 @@ bool AppWorker::execute_fragments(
 }
 
 std::shared_ptr<distributed::AppDriverClient> AppWorker::app_driver_client() const {
+  if (!worker_server_) {
+    HOLOSCAN_LOG_WARN("AppWorker::app_driver_client() called but worker_server_ is null");
+    return nullptr;
+  }
   return worker_server_->app_driver_client();
 }
 

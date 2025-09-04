@@ -26,7 +26,7 @@ namespace holoscan::gxf {
 
 nvidia::gxf::Clock* GXFScheduler::gxf_clock() {
   if (this->clock()) {
-    return static_cast<nvidia::gxf::Clock*>(this->clock()->gxf_cptr());
+    return static_cast<nvidia::gxf::Clock*>(this->clock_gxf_cptr());
   } else {
     HOLOSCAN_LOG_ERROR("GXFScheduler clock is not set");
     return nullptr;
@@ -42,12 +42,12 @@ void GXFScheduler::set_parameters() {
   }
 }
 
-void GXFScheduler::reset_graph_entities() {
+void GXFScheduler::reset_backend_objects() {
   HOLOSCAN_LOG_TRACE(
-      "GXFScheduler '{}' of type '{}'::reset_graph_entities", gxf_cname_, gxf_typename());
+      "GXFScheduler '{}' of type '{}'::reset_backend_objects", gxf_cname_, gxf_typename());
 
   // Reset GraphEntity of resources_ and spec_->args() of Scheduler
-  Scheduler::reset_graph_entities();
+  Scheduler::reset_backend_objects();
 
   // Reset the GraphEntity of this GXFScheduler itself
   reset_gxf_graph_entity();

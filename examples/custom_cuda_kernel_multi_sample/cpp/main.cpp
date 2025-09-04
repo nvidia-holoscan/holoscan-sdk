@@ -17,6 +17,7 @@
 
 #include <getopt.h>
 
+#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -29,6 +30,8 @@
 
 class App : public holoscan::Application {
  public:
+  explicit App(bool enable_green_context) : enable_green_context_(enable_green_context) {}
+
   void compose() override {
     using namespace holoscan;
 
@@ -48,18 +51,59 @@ class App : public holoscan::Application {
     source = make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"), args);
 
     auto in_dtype = std::string("rgb888");
-    auto format_converter = make_operator<ops::FormatConverterOp>("format_converter",
-                                                                  from_config("format_converter"),
-                                                                  Arg("in_dtype") = in_dtype,
-                                                                  Arg("pool") = pool_resource);
+    std::shared_ptr<Operator> format_converter;
+    std::shared_ptr<Operator> format_converter2;
+    std::shared_ptr<Operator> processor;
 
-    auto format_converter2 = make_operator<ops::FormatConverterOp>("format_converter2",
-                                                                   from_config("format_converter2"),
-                                                                   Arg("in_dtype") = in_dtype,
-                                                                   Arg("pool") = pool_resource);
+    if (enable_green_context_) {
+      // Create a global CUDA Green context pool
+      // Use the default min_sm_count=2, create partitions with 3 green contexts
+      std::vector<uint32_t> partitions = {4, 4, 8};
+      auto cuda_green_context_pool = make_resource<CudaGreenContextPool>(
+          "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
+      auto cuda_green_context1 =
+          make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 0);
+      auto cuda_stream_pool1 =
+          make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context1);
+      auto cuda_green_context2 =
+          make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 1);
+      auto cuda_stream_pool2 =
+          make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context2);
+      auto cuda_green_context3 =
+          make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 2);
+      auto cuda_stream_pool3 =
+          make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context3);
 
-    auto processor = make_operator<ops::InferenceProcessorOp>(
-        "processor", from_config("processor"), Arg("allocator") = pool_resource);
+      format_converter = make_operator<ops::FormatConverterOp>("format_converter",
+                                                               from_config("format_converter"),
+                                                               Arg("in_dtype") = in_dtype,
+                                                               Arg("pool") = pool_resource,
+                                                               cuda_stream_pool1);
+
+      format_converter2 = make_operator<ops::FormatConverterOp>("format_converter2",
+                                                                from_config("format_converter2"),
+                                                                Arg("in_dtype") = in_dtype,
+                                                                Arg("pool") = pool_resource,
+                                                                cuda_stream_pool2);
+
+      processor = make_operator<ops::InferenceProcessorOp>("processor",
+                                                           from_config("processor"),
+                                                           Arg("allocator") = pool_resource,
+                                                           cuda_stream_pool3);
+    } else {
+      format_converter = make_operator<ops::FormatConverterOp>("format_converter",
+                                                               from_config("format_converter"),
+                                                               Arg("in_dtype") = in_dtype,
+                                                               Arg("pool") = pool_resource);
+
+      format_converter2 = make_operator<ops::FormatConverterOp>("format_converter2",
+                                                                from_config("format_converter2"),
+                                                                Arg("in_dtype") = in_dtype,
+                                                                Arg("pool") = pool_resource);
+
+      processor = make_operator<ops::InferenceProcessorOp>(
+          "processor", from_config("processor"), Arg("allocator") = pool_resource);
+    }
 
     std::vector<ops::HolovizOp::InputSpec> input_object_specs(3);
     input_object_specs[0].tensor_name_ = "input_formatted";
@@ -100,16 +144,62 @@ class App : public holoscan::Application {
     add_flow(format_converter, holoviz, {{"", "receivers"}});
     add_flow(processor, holoviz, {{"transmitter", "receivers"}});
   }
+
+ private:
+  bool enable_green_context_ = false;
 };
 
 int main(int argc, char** argv) {
-  auto app = holoscan::make_application<App>();
-
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/custom_cuda_kernel_multi_sample.yaml";
-  if (argc >= 2) {
-    config_path = argv[1];
+  bool green_context = false;
+
+  // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+  struct option long_options[] = {{"help", no_argument, nullptr, 'h'},
+                                  {"config_path", optional_argument, nullptr, 'c'},
+                                  {"green_context", no_argument, 0, 'g'},
+                                  {nullptr, 0, nullptr, 0}};
+
+  // Parse command line options for config_path and green_context
+  while (true) {
+    int option_index = 0;
+    // NOLINTBEGIN(concurrency-mt-unsafe)
+    int c = getopt_long(argc, argv, "hc:g", static_cast<option*>(long_options), &option_index);
+    // NOLINTEND(concurrency-mt-unsafe)
+    if (c == -1) {
+      break;
+    }
+    const std::string argument(optarg != nullptr ? optarg : "");
+    switch (c) {
+      case 'h':
+      case '?':
+        std::cout << "Usage: " << argv[0] << " [options]" << std::endl
+                  << "Options:" << std::endl
+                  << "  -h, --help           display this information" << std::endl
+                  << "  -c, --config_path    path to config yaml file" << std::endl
+                  << "  -g, --green_context  flag to enable green context" << std::endl;
+        return EXIT_SUCCESS;
+      case 'c':
+        if (!argument.empty()) {
+          config_path = argument;
+        }
+        break;
+      case 'g':
+        green_context = true;
+        break;
+      default:
+        throw std::runtime_error(fmt::format("Unhandled option `{}`", static_cast<char>(c)));
+    }
   }
+  // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
+
+  auto app = holoscan::make_application<App>(green_context);
+
+  // EventBasedScheduler is required for CUDA context switching to run the application
+  // on multiple worker threads
+  auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
+      "event-based-scheduler", holoscan::Arg("worker_thread_number", 2L));
+  app->scheduler(scheduler);
 
   app->config(config_path);
 

@@ -134,6 +134,11 @@ void PoseTreeManager::setup(holoscan::ComponentSpec& spec) {
              "Server Shutdown Poll Sleep (ms)",
              "Milliseconds to sleep while polling during server shutdown.",
              10L);
+  spec.param(maximum_clients_,
+             "maximum_clients",
+             "Maximum number of PoseTree clients",
+             "Maximum number of PoseTree clients.",
+             1024L);
 }
 
 std::shared_ptr<PoseTree> PoseTreeManager::tree() {
@@ -184,6 +189,7 @@ PoseTreeManager::expected<void> PoseTreeManager::driver_start_impl(std::string_v
     server_config.worker_progress_sleep_us = worker_progress_sleep_us_.get();
     server_config.shutdown_timeout_ms = server_shutdown_timeout_ms_.get();
     server_config.shutdown_poll_sleep_ms = server_shutdown_poll_sleep_ms_.get();
+    server_config.maximum_clients = maximum_clients_.get();
 
     try {
       server_ = std::make_unique<PoseTreeUCXServer>(pose_tree_instance_, server_config);

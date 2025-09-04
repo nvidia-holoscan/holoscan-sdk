@@ -62,7 +62,8 @@ struct emitter_receiver {
   }
 };
 
-/* Implements a receiver for the array<float, 16> camera pose type accepted by HolovizOp.
+/* Emit and receive for shared_ptr<T> of any type T that pybind11 can cast via
+ * pybind11::object.cast<T>() and py::cast().
  */
 template <typename T>
 struct emitter_receiver<std::shared_ptr<T>> {

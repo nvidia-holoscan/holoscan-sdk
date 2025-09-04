@@ -391,7 +391,7 @@ class OperatorRunner {
   template <typename... Args>
   holoscan::unexpected<holoscan::RuntimeError> create_error(holoscan::ErrorCode code,
                                                             const char* format, Args&&... args) {
-    auto message = fmt::format(format, std::forward<Args>(args)...);
+    auto message = fmt::vformat(format, fmt::make_format_args(args...));
     HOLOSCAN_LOG_DEBUG(message);
     return holoscan::unexpected<holoscan::RuntimeError>(
         holoscan::RuntimeError(code, message.c_str()));

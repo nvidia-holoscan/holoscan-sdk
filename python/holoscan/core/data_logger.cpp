@@ -55,7 +55,10 @@ void init_data_logger(py::module_& m) {
 
   // DataLoggerResource implementation
   py::class_<DataLoggerResource, DataLogger, Resource, std::shared_ptr<DataLoggerResource>>(
-      m, "DataLoggerResource", py::dynamic_attr(), doc::DataLoggerResource::doc_DataLoggerResource);
+      m, "DataLoggerResource", py::dynamic_attr(), doc::DataLoggerResource::doc_DataLoggerResource)
+      .def("get_timestamp",
+           &DataLoggerResource::get_timestamp,
+           doc::DataLoggerResource::doc_get_timestamp);
 
   py::enum_<AsyncQueuePolicy>(m, "AsyncQueuePolicy", "Policy for handling queue overflow")
       .value("REJECT", AsyncQueuePolicy::kReject, "Reject new items when queue is full")

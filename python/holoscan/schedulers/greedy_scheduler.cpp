@@ -53,7 +53,7 @@ class PyGreedyScheduler : public GreedyScheduler {
   using GreedyScheduler::GreedyScheduler;
 
   // Define a constructor that fully initializes the object.
-  explicit PyGreedyScheduler(Fragment* fragment, std::shared_ptr<Clock> clock = nullptr,
+  explicit PyGreedyScheduler(Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
                              bool stop_on_deadlock = true, int64_t max_duration_ms = -1LL,
                              double check_recession_period_ms = 5.0,
                              int64_t stop_on_deadlock_timeout = 0LL,
@@ -87,7 +87,7 @@ void init_greedy_scheduler(py::module_& m) {
              std::shared_ptr<GreedyScheduler>>(
       m, "GreedyScheduler", doc::GreedyScheduler::doc_GreedyScheduler)
       .def(py::init<Fragment*,
-                    std::shared_ptr<Clock>,
+                    std::shared_ptr<gxf::Clock>,
                     bool,
                     int64_t,
                     double,

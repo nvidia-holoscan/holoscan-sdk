@@ -403,8 +403,13 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
                                nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE},
                                memory_storage_type_,
                                buffers_[buf.index].ptr,
-                               [buffer = buf, fd = fd_](void*) mutable {
-                                 POSIX_CALL(ioctl(fd, VIDIOC_QBUF, &buffer));
+                               [this, buffer = buf](void*) mutable {
+                                 // The file descriptor is closed in stop() and we can get the
+                                 // callback later, make sure the fd is valid
+                                 std::lock_guard<std::mutex> lock(fd_mutex_);
+                                 if (fd_ != -1) {
+                                   POSIX_CALL(ioctl(fd_, VIDIOC_QBUF, &buffer));
+                                 }
                                  return nvidia::gxf::Success;
                                });
   } else {
@@ -455,8 +460,13 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
                                        buf.length,
                                        memory_storage_type_,
                                        buffers_[buf.index].ptr,
-                                       [buffer = buf, fd = fd_](void*) mutable {
-                                         POSIX_CALL(ioctl(fd, VIDIOC_QBUF, &buffer));
+                                       [this, buffer = buf](void*) mutable {
+                                         // The file descriptor is closed in stop() and we can get
+                                         // the callback later, make sure the fd is valid
+                                         std::lock_guard<std::mutex> lock(fd_mutex_);
+                                         if (fd_ != -1) {
+                                           POSIX_CALL(ioctl(fd_, VIDIOC_QBUF, &buffer));
+                                         }
                                          return nvidia::gxf::Success;
                                        });
     }
@@ -503,8 +513,11 @@ void V4L2VideoCaptureOp::stop() {
   buffers_.clear();
 
   // close FD
-  POSIX_CALL(v4l2_close(fd_));
-  fd_ = -1;
+  {
+    std::lock_guard<std::mutex> lock(fd_mutex_);
+    POSIX_CALL(v4l2_close(fd_));
+    fd_ = -1;
+  }
 }
 
 void V4L2VideoCaptureOp::v4l2_initialize() {

@@ -250,6 +250,13 @@ class Fragment : public FragmentServiceProvider {
    */
   std::shared_ptr<Scheduler> scheduler();
 
+  /**
+   * @brief Get the scheduler used by the executor
+   *
+   * @return The reference to the scheduler of the fragment's executor (`Scheduler` object.)
+   */
+  std::shared_ptr<Scheduler> scheduler() const;
+
   // /**
   //  * @brief Set the scheduler used by the executor
   //  *
@@ -1081,8 +1088,8 @@ class Fragment : public FragmentServiceProvider {
     return std::make_shared<ExecutorT>(std::forward<ArgsT>(args)...);
   }
 
-  /// Cleanup helper that will by called by GXFExecutor prior to GxfContextDestroy.
-  void reset_graph_entities();
+  /// Cleanup helper that will be called by the executor prior to destroying any backend context
+  void reset_backend_objects();
 
   /// Shutdown data loggers to ensure async loggers complete before GXF context destruction.
   void shutdown_data_loggers();
@@ -1118,7 +1125,8 @@ class Fragment : public FragmentServiceProvider {
   std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
   std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
   std::shared_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
-  std::shared_ptr<Scheduler> scheduler_;  ///< The scheduler used by the executor
+  mutable std::shared_ptr<Scheduler>
+      scheduler_;  ///< Lazily initialized scheduler (mutable for const access).
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
   std::shared_ptr<DataFlowTracker> data_flow_tracker_;  ///< The DataFlowTracker for the fragment
   std::vector<std::shared_ptr<ThreadPool>>

@@ -6,6 +6,15 @@ CUDA provides the concept of streams to allow for asynchronous concurrent execut
 
 The `CudaStreamPool` class ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:class}`Python <holoscan.resources.CudaStreamPool>`) is a resource that provides a mechanism for allocating CUDA streams from a pool of streams whose lifetime is managed by Holoscan. As of Holoscan v2.8, new APIs are provided to make use of dedicated CUDA streams easier for application authors. These APIs are intended as a replacement of the legacy `CudaStreamHandler` utility described in the note below.
 
+The `CudaGreenContextPool` and `CudaGreenContext` classes provide advanced resource management for CUDA streams in Holoscan applications.
+`CudaGreenContextPool` class ({cpp:class}`C++ <holoscan::CudaGreenContextPool>`/{py:class}`Python <holoscan.resources.CudaGreenContextPool>`) is a resource that provides a mechanism to partition GPU resources (SMs) into a pool of "green" CUDA contexts, which are lightweight CUDA contexts partitioned for efficient concurrent execution for different operators or applications for improved isolation and concurrency.
+
+`CudaGreenContext` class ({cpp:class}`C++ <holoscan::CudaGreenContext>`/{py:class}`Python <holoscan.resources.CudaGreenContext>`) is a resource retrieved through "index" from a `CudaGreenContextPool`.  `CudaStreamPool` created for an operator can be associated with a `CudaGreenContext`. This ensures the CUDA streams for different operators are running on dedicated and isolated GPU resources.
+
+The `CudaGreenContextPool` and `CudaGreenContext` classes are intended for advanced users who need fine-grained control over CUDA context partitioning and stream management. In most cases, using a `CudaStreamPool` is sufficient, but for applications requiring explicit context partitioning, `CudaGreenContextPool` and `CudaGreenContext` provide the necessary APIs.
+
+Typical usage involves creating a `CudaGreenContextPool` in the application or fragment, then assigning a `CudaGreenContext` from the pool to each operator that requires a dedicated context partition. The SDK manages the lifetime and initialization of these resources, so users do not need to interact directly with low-level CUDA context APIs.
+
 :::{note}
 There is a legacy `CudaStreamHandler` utility class (provided via `#include "holoscan/utils/cuda_stream_handler.hpp"`) that made it possible to write a C++ operator that could make use of a `CudaStreamPool`. This class had some limitations:
 - It required receiving messages as type `holoscan::gxf::Entity`.
@@ -101,6 +110,86 @@ visualizer = HolovizOp(
 ```
 ````
 `````
+
+(configuring-a-cuda-green-context)=
+
+## Configuring a CUDA Green Context for an operator
+
+To enable an operator to use a dedicated CUDA Green Context, the user can create a `CudaGreenContextPool` resource with SMs partition table and assign a `CudaGreenContext` from the pool to the operator. A `CudaStreamPool` can be created using this `CudaGreenContext` through its API.
+
+Below is an example of how to configure a `CudaGreenContextPool` and assign a `CudaGreenContext` to an operator in C++ and Python.
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+// The code below would appear within `Application::compose` (or `Fragment::compose`)
+
+// Create a green context pool with 2 partitions, and each uses 8 SMs. The default green context is the last partition from the green context pool. If the total SMs is bigger than 16, then an additional
+// green context will be created and can be used as default green context partition.
+std::vector<uint32_t> partitions = std::vector<uint32_t>{8, 8};
+const audo cuda_green_context_pool =
+    make_resource<CudaGreenContextPool>("cuda_green_context_pool",
+                                        Arg("dev_id", 0),
+                                        Arg("num_partitions", (uint32_t)partitions.size()),
+                                        Arg("sms_per_partition", partitions));
+
+// Create a green context
+const auto cuda_green_context =  make_resource<CudaGreenContext>("cuda_green_context",
+                                                                 cuda_green_context_pool, 1);
+
+// Create CudaStreamPool with green context
+const auto cuda_stream_pool =
+    make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context);
+
+auto tx = make_operator<ops::PingTxOp>("tx",
+                                       make_condition<CountCondition>(10),
+                                       cuda_stream_pool);
+```
+````
+````{tab-item} Python
+
+```python
+# The code below would appear within `Application.compose` (or `Fragment.compose`)
+
+partitions = [8, 8]
+cuda_green_context_pool = CudaGreenContextPool(
+    self,
+    dev_id=0,
+    flags=0,
+    num_partitions=2,
+    sms_per_partition=partitions,
+    name="cuda_green_context_pool",
+)
+cuda_green_context = CudaGreenContext(
+    self,
+    cuda_green_context_pool=cuda_green_context_pool,
+    index=1,
+    name="cuda_green_context",
+)
+stream_pool = CudaStreamPool(
+    self,
+    name="stream_pool",
+    dev_id=0,
+    stream_flags=0,
+    stream_priority=0,
+    reserved_size=1,
+    max_size=5,
+    cuda_green_context=cuda_green_context,
+)
+```
+````
+`````
+
+Note that For CudaGreenContextPool, the default green context partition can also be specified using `default_context_index` if one of the partitions is to be used.
+For CudaGreenContext, argument `index` is optional, if not specified, the pool default green context is used.
+
+The following code demonstrates operators that need to use the default green context only.
+
+```cpp
+auto operator_tx =
+    make_operator<ops::PingTxOp>("tx",
+                                 Arg("cuda_green_context_pool", cuda_green_context_pool));
+```
 
 ## Sending stream information between operators
 

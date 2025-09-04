@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,8 +50,9 @@ class PyPingTensorRxOp : public holoscan::ops::PingTensorRxOp {
   using PingTensorRxOp::PingTensorRxOp;
 
   // Define a constructor that fully initializes the object.
-  PyPingTensorRxOp(Fragment* fragment, const py::args& args,
-                   const std::string& name = "ping_tensor_rx") {
+  PyPingTensorRxOp(Fragment* fragment, const py::args& args, bool receive_as_tensormap = true,
+                   const std::string& name = "ping_tensor_rx")
+      : PingTensorRxOp(Arg{"receive_as_tensormap", receive_as_tensormap}) {
     add_positional_condition_and_resource_args(this, args);
     name_ = name;
     fragment_ = fragment;
@@ -71,8 +72,9 @@ PYBIND11_MODULE(_ping_tensor_rx, m) {
 
   py::class_<PingTensorRxOp, PyPingTensorRxOp, Operator, std::shared_ptr<PingTensorRxOp>>(
       m, "PingTensorRxOp", doc::PingTensorRxOp::doc_PingTensorRxOp)
-      .def(py::init<Fragment*, const py::args&, const std::string&>(),
+      .def(py::init<Fragment*, const py::args&, bool, const std::string&>(),
            "fragment"_a,
+           "receive_as_tensormap"_a = true,
            "name"_a = "ping_tensor_rx"s,
            doc::PingTensorRxOp::doc_PingTensorRxOp);
 }  // PYBIND11_MODULE NOLINT

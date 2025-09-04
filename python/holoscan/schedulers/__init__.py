@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,8 @@
     holoscan.schedulers.MultiThreadScheduler
 """
 
-# must first import Clock for the std::shared_ptr<Clock> arguments in the __init__ methods
-from ..resources import Clock  # noqa
+# must first import GXFClock for the std::shared_ptr<gxf::Clock> arguments in the __init__ methods
+from ..resources import GXFClock  # noqa
 from ._schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 __all__ = [

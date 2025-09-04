@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,7 +77,7 @@ class GXFComponent {
   void set_gxf_parameter(const std::string& component_name, const std::string& key,
                          ParameterWrapper& param_wrap);
 
-  void reset_gxf_graph_entity() { gxf_graph_entity_.reset(); }
+  void reset_gxf_graph_entity();
 
  protected:
   gxf_context_t gxf_context_ = nullptr;

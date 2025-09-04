@@ -44,6 +44,7 @@ struct PoseTreeUCXServerConfig {
       100};  ///< Sleep duration in microseconds between worker progress calls
   int64_t shutdown_timeout_ms{1000};   ///< Maximum time in milliseconds to wait for clean shutdown
   int64_t shutdown_poll_sleep_ms{10};  ///< Sleep duration in milliseconds between shutdown polls
+  int64_t maximum_clients{1024};      ///< Maximum number of clients expected.
 };
 
 /**
@@ -191,7 +192,7 @@ class PoseTreeUCXServer {
   std::shared_ptr<PoseTree> pose_tree_;  ///< The PoseTree instance being synchronized
   PoseTree::InitParameters
       pose_tree_init_params_;         ///< Initialization parameters from the original PoseTree
-  uint16_t port_;                     ///< The port number the server is listening on
+  uint16_t port_{};                   ///< The port number the server is listening on
   std::atomic<bool> running_{false};  ///< Flag indicating if the server is running
   std::thread server_thread_;         ///< The worker thread handling UCX communication
 

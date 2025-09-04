@@ -189,4 +189,9 @@ gxf_uid_t GXFComponent::gxf_entity_group_id() {
   return gid;
 }
 
+void GXFComponent::reset_gxf_graph_entity() {
+  gxf_graph_entity_.reset();
+  gxf_cptr_ = nullptr;
+  gxf_component_ = nvidia::gxf::Handle<nvidia::gxf::Component>::Unspecified();
+}
 }  // namespace holoscan::gxf

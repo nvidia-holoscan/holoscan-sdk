@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ import datetime
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import PingTxOp
-from holoscan.schedulers import GreedyScheduler
+from holoscan.resources import RealtimeClock
 
 
 class TimedPingRxOp(Operator):
@@ -56,35 +56,38 @@ class TimedPingRxOp(Operator):
         print(f"\treceive time (s) = {clock.time()}")
         print(f"\treceive timestamp (ns) = {clock.timestamp()}")
 
+        # cast the clock to a RealtimeClock to call the type-specific set_time_scale method
+        realtime_clock = clock.cast_to(RealtimeClock)
+
         print("\tnow pausing for 0.1 s...")
-        clock.sleep_for(100_000_000)
-        ts = clock.timestamp()
+        realtime_clock.sleep_for(100_000_000)
+        ts = realtime_clock.timestamp()
         print(f"\ttimestamp after pause = {ts}")
 
         print("\tnow pausing until a target time 0.25 s in the future")
         target_ts = ts + 250_000_000
-        clock.sleep_until(target_ts)
-        print(f"\ttimestamp = {clock.timestamp()}")
+        realtime_clock.sleep_until(target_ts)
+        print(f"\ttimestamp = {realtime_clock.timestamp()}")
 
         print("\tnow pausing for 0.125 s via a datetime.timedelta object")
-        clock.sleep_for(datetime.timedelta(seconds=0.125))
-        print(f"\ttimestamp = {clock.timestamp()}")
+        realtime_clock.sleep_for(datetime.timedelta(seconds=0.125))
+        print(f"\ttimestamp = {realtime_clock.timestamp()}")
 
         print("\tnow adjusting time scale to 4.0 (time runs 4x faster)")
-        clock.set_time_scale(4.0)
+        realtime_clock.set_time_scale(4.0)
 
         print(
             "\tnow pausing 2.0 s via std::chrono::duration, but real pause will be 0.5 s "
             "due to the adjusted time scale."
         )
-        clock.sleep_for(datetime.timedelta(seconds=2.0))
+        realtime_clock.sleep_for(datetime.timedelta(seconds=2.0))
         print(
             f"\tfinal timestamp = {clock.timestamp()} (2.0 s increase will be shown despite "
             "scale of 4.0)"
         )
 
         print("\tnow resetting the time scale back to 1.0")
-        clock.set_time_scale(1.0)
+        realtime_clock.set_time_scale(1.0)
 
 
 class MyPingApp(Application):
@@ -99,7 +102,6 @@ class MyPingApp(Application):
 
 def main():
     app = MyPingApp()
-    app.scheduler(GreedyScheduler(fragment=app, name="greedy"))
     app.run()
 
 

@@ -190,11 +190,33 @@ class PoseTree {
   void deinit();
 
   /**
+   * @brief Set information needed to avoid overlap in frame id creating across PoseTree.
+
+   * @param start_frame_id The first id to be assigned by this PoseTree (must be > 0(.
+   * @param increment How much increment to leave between two frames id..
+   */
+  expected_t<void> set_multithreading_info(frame_t start_frame_id, frame_t increment);
+
+  /**
    * @brief Get the current PoseTree version.
    *
    * @return Current version of the PoseTree.
    */
   version_t get_pose_tree_version() const;
+
+  /**
+   * @brief Create a new frame in the PoseTree.
+   *
+   * An optional name may be given to give a human-readable name to the frame. The name is a
+   * null-terminated string with at most 63 characters. User defined name cannot start with "_",
+   * which is reserved for auto generated names such as "_frame_i", where i is the uid of the frame.
+   * A hint on the maximum number of edges this frame will be connected to can be provided.
+   *
+   * @param frame_id Frame id to be assigned.
+   * @param name Human-readable name for the frame.
+   * @return Frame id on success, error on failure.
+   */
+  expected_t<frame_t> create_frame_with_id(frame_t frame_id, std::string_view name);
 
   /**
    * @brief Create a new frame in the PoseTree.
@@ -885,7 +907,8 @@ class PoseTree {
   // Implementation of find_frame
   expected_t<frame_t> find_frame_impl(std::string_view name) const;
   // Implementation of create_frame
-  expected_t<frame_t> create_frame_impl(std::string_view name, int32_t number_edges);
+  expected_t<frame_t> create_frame_impl(std::string_view name, int32_t number_edges,
+                                        const frame_t* id);
   // Implementation of create_edges
   expected_t<version_t> create_edges_impl(frame_t lhs, frame_t rhs, int32_t maximum_length,
                                           PoseTreeEdgeHistory::AccessMethod method);
@@ -932,7 +955,9 @@ class PoseTree {
   nvidia::FixedVector<std::string_view> name_to_uid_map_keys_;
 
   /// Store the list of the current frame of the PoseTree.
-  nvidia::UniqueIndexMap<FrameInfo> frame_map_;
+  pose_tree::HashMap<frame_t, FrameInfo> frame_map_;
+  frame_t next_frame_id_{};
+  frame_t frame_id_increment_{};
 
   /// Used to implement a dfs.
   std::unique_ptr<frame_t[]> frames_stack_;

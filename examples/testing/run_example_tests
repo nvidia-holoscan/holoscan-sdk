@@ -23,7 +23,10 @@ SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
 source_dir=$(realpath "$SCRIPT_DIR/..")
 
 # Compile the examples
-build_dir=${source_dir}/examples-build
+# Note: the examples/CMakeLists.txt file automatically discovers all CMakeLists.txt files in subdirectories,
+#       so we specify ../examples-build as the build directory to prevent the 'examples-build' folder from being treated
+#       as an example and including all CMakeLists.txt files within it.
+build_dir=${source_dir}/../examples-build
 cmake -S ${source_dir} -B ${build_dir}
 cmake --build ${build_dir} -j
 

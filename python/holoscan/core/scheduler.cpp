@@ -89,6 +89,10 @@ class PyScheduler : public Scheduler {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(void, Scheduler, setup, spec);
   }
+  std::shared_ptr<Clock> clock() override {
+    /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+    PYBIND11_OVERRIDE_PURE(std::shared_ptr<Clock>, Scheduler, clock);
+  }
 };
 
 void init_scheduler(py::module_& m) {
@@ -110,6 +114,7 @@ void init_scheduler(py::module_& m) {
       .def("initialize",
            &Scheduler::initialize,
            doc::Scheduler::doc_initialize)  // note: virtual function
+      .def_property_readonly("clock", &Scheduler::clock)
       .def(
           "__repr__",
           [](const py::object& obj) {

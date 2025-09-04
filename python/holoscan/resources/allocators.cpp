@@ -15,11 +15,14 @@
  * limitations under the License.
  */
 
+
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "./allocators_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -28,6 +31,8 @@
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/block_memory_pool.hpp"
 #include "holoscan/core/resources/gxf/cuda_allocator.hpp"
+#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
+#include "holoscan/core/resources/gxf/cuda_green_context_pool.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/core/resources/gxf/rmm_allocator.hpp"
 #include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
@@ -51,6 +56,9 @@ constexpr const char* kPoolInitialSize = "16MB";  // 16 MB initial pool size
 constexpr const char* kPoolMaxSize = "32MB";
 #endif
 constexpr const char* kReleaseThreshold = "4MB";  // 4MB release threshold
+
+// Default empty vector for sms_per_partition
+static const std::vector<uint32_t> kDefaultSmsPerPartition = {};
 
 }  // namespace
 
@@ -98,6 +106,53 @@ class PyUnboundedAllocator : public UnboundedAllocator {
   }
 };
 
+class PyCudaGreenContextPool : public CudaGreenContextPool {
+ public:
+  /* Inherit the constructors */
+  using CudaGreenContextPool::CudaGreenContextPool;
+
+  // Define a constructor that fully initializes the object.
+  explicit PyCudaGreenContextPool(Fragment* fragment, int32_t dev_id = 0, uint32_t flags = 0,
+                                  uint32_t num_partitions = 0,
+                                  const std::vector<uint32_t>& sms_per_partition = {},
+                                  int32_t default_context_index = -1,
+                                  uint32_t min_sm_size = 2,
+                                  const std::string& name = "cuda_green_context_pool")
+      : CudaGreenContextPool(ArgList{
+            Arg{"dev_id", dev_id},
+            Arg{"flags", flags},
+            Arg{"num_partitions", num_partitions},
+            Arg{"sms_per_partition", sms_per_partition},
+            Arg{"default_context_index", default_context_index},
+            Arg{"min_sm_size", min_sm_size},
+        }) {
+    name_ = name;
+    fragment_ = fragment;
+    spec_ = std::make_shared<ComponentSpec>(fragment);
+    setup(*spec_);
+  }
+};
+
+class PyCudaGreenContext : public CudaGreenContext {
+ public:
+  /* Inherit the constructors */
+  using CudaGreenContext::CudaGreenContext;
+
+  // Define a constructor that fully initializes the object.
+  explicit PyCudaGreenContext(
+      Fragment* fragment, std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool = nullptr,
+      int32_t index = -1, const std::string& name = "cuda_green_context")
+      : CudaGreenContext(cuda_green_context_pool, index) {
+    name_ = name;
+    fragment_ = fragment;
+    if (cuda_green_context_pool) {
+      cuda_green_context_pool->initialize();
+    }
+    spec_ = std::make_shared<ComponentSpec>(fragment);
+    setup(*spec_);
+  }
+};
+
 class PyCudaStreamPool : public CudaStreamPool {
  public:
   /* Inherit the constructors */
@@ -106,16 +161,16 @@ class PyCudaStreamPool : public CudaStreamPool {
   // Define a constructor that fully initializes the object.
   explicit PyCudaStreamPool(Fragment* fragment, int32_t dev_id = 0, uint32_t stream_flags = 0,
                             int32_t stream_priority = 0, uint32_t reserved_size = 1,
-                            uint32_t max_size = 0, const std::string& name = "cuda_stream_pool")
-      : CudaStreamPool(ArgList{
-            Arg{"dev_id", dev_id},
-            Arg{"stream_flags", stream_flags},
-            Arg{"stream_priority", stream_priority},
-            Arg{"reserved_size", reserved_size},
-            Arg{"max_size", max_size},
-        }) {
+                            uint32_t max_size = 0,
+                            std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr,
+                            const std::string& name = "cuda_stream_pool")
+      : CudaStreamPool(dev_id, stream_flags, stream_priority, reserved_size, max_size,
+                       cuda_green_context) {
     name_ = name;
     fragment_ = fragment;
+    if (cuda_green_context) {
+      cuda_green_context->initialize();
+    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -197,18 +252,63 @@ void init_allocators(py::module_& m) {
            "name"_a = "block_memory_pool",
            doc::BlockMemoryPool::doc_BlockMemoryPool);
 
+  py::class_<CudaGreenContextPool,
+             PyCudaGreenContextPool,
+             gxf::GXFResource,
+             std::shared_ptr<CudaGreenContextPool>>(
+      m, "CudaGreenContextPool", doc::CudaGreenContextPool::doc_CudaGreenContextPool)
+      .def(py::init<Fragment*,
+                    int32_t,
+                    uint32_t,
+                    uint32_t,
+                    std::vector<uint32_t>,
+                    int32_t,
+                    uint32_t,
+                    const std::string&>(),
+           "fragment"_a,
+           "dev_id"_a = 0,
+           "flags"_a = 0U,
+           "num_partitions"_a = 0U,
+           "sms_per_partition"_a = py::cast(std::vector<uint32_t>{}),
+           "default_context_index"_a = -1,
+           "min_sm_size"_a = 2U,
+           "name"_a = "cuda_green_context_pool",
+           doc::CudaGreenContextPool::doc_CudaGreenContextPool);
+
+  py::class_<CudaGreenContext,
+             PyCudaGreenContext,
+             gxf::GXFResource,
+             std::shared_ptr<CudaGreenContext>>(
+      m, "CudaGreenContext", doc::CudaGreenContext::doc_CudaGreenContext)
+      .def(py::init<Fragment*,
+                    std::shared_ptr<CudaGreenContextPool>,
+                    int32_t,
+                    const std::string&>(),
+           "fragment"_a,
+           "cuda_green_context_pool"_a = nullptr,
+           "index"_a = -1,
+           "name"_a = "cuda_green_context",
+           doc::CudaGreenContext::doc_CudaGreenContext);
+
   py::class_<CudaStreamPool, PyCudaStreamPool, Allocator, std::shared_ptr<CudaStreamPool>>(
       m, "CudaStreamPool", doc::CudaStreamPool::doc_CudaStreamPool)
-      .def(
-          py::init<Fragment*, int32_t, uint32_t, int32_t, uint32_t, uint32_t, const std::string&>(),
-          "fragment"_a,
-          "dev_id"_a = 0,
-          "stream_flags"_a = 0U,
-          "stream_priority"_a = 0,
-          "reserved_size"_a = 1U,
-          "max_size"_a = 0U,
-          "name"_a = "cuda_stream_pool"s,
-          doc::CudaStreamPool::doc_CudaStreamPool);
+      .def(py::init<Fragment*,
+                    int32_t,
+                    uint32_t,
+                    int32_t,
+                    uint32_t,
+                    uint32_t,
+                    std::shared_ptr<CudaGreenContext>,
+                    const std::string&>(),
+           "fragment"_a,
+           "dev_id"_a = 0,
+           "stream_flags"_a = 0U,
+           "stream_priority"_a = 0,
+           "reserved_size"_a = 1U,
+           "max_size"_a = 0U,
+           "cuda_green_context"_a = nullptr,
+           "name"_a = "cuda_stream_pool"s,
+           doc::CudaStreamPool::doc_CudaStreamPool);
 
   py::class_<UnboundedAllocator,
              PyUnboundedAllocator,

@@ -196,6 +196,16 @@ class AsyncDataLoggerBackend {
  * Both queues should handle logging the `MetadataDictionary` when Holoscan's metadata feature is
  * enabled.
  *
+ * Inherited parameters from DataLoggerResource:
+ * - **log_inputs**: bool (optional, default: true)
+ * - **log_outputs**: bool (optional, default: true)
+ * - **log_metadata**: bool (optional, default: true)
+ * - **log_tensor_data_content**: bool (optional, default: false)
+ * - **use_scheduler_clock**: bool (optional, default: false)
+ * - **allowlist_patterns**: std::vector<std::string> (optional, default: empty)
+ * - **denylist_patterns**: std::vector<std::string> (optional, default: empty)
+ *
+ * See the DataLoggerResource documentation for details on these inherited parameters.
  */
 class AsyncDataLoggerResource : public DataLoggerResource {
  public:

@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <shared_mutex>
+#include <type_traits>
 #include <utility>
 
 #include "holoscan/core/expected.hpp"
@@ -79,7 +80,7 @@ class HashMap {
    * efficiency).
    * @return Success or error status.
    */
-  expected_t<void> reserve(int32_t size, int32_t capacity) {
+  expected_t<void> initialize(int32_t size, int32_t capacity) {
     if (size <= 0) {
       return unexpected_t(Error::kInvalidArgument);
     }
@@ -138,6 +139,26 @@ class HashMap {
   }
 
   /**
+   * @brief Try to get the value ptr associated with a key.
+   *
+   * @param key The key to search for.
+   * @return Value associated with the key on success, Error::kKeyNotFound if key doesn't exist.
+   */
+  expected_t<const Value*> try_get(const Key& key) const {
+    return get_index(key).map([this](const int32_t index) { return &entries_[index].value; });
+  }
+
+  /**
+   * @brief Try to get the value ptr associated with a key.
+   *
+   * @param key The key to search for.
+   * @return Value associated with the key on success, Error::kKeyNotFound if key doesn't exist.
+   */
+  expected_t<Value*> try_get(const Key& key) {
+    return get_index(key).map([this](const int32_t index) { return &entries_[index].value; });
+  }
+
+  /**
    * @brief Insert a key-value pair into the hash map.
    *
    * @param key The key to insert.
@@ -145,27 +166,20 @@ class HashMap {
    * @return Success or error status. Error::kHashMapFull if the map is full,
    *         Error::kKeyAlreadyExists if the key already exists.
    */
-  expected_t<void> insert(const Key& key, Value value) {
-    if (size_ >= max_size_) {
-      return unexpected_t(Error::kHashMapFull);
-    }
-    hash_t hash = std::hash<Key>{}(key);
-    int32_t index = hash % capacity_;
-    while (entries_[index].is_occupied) {
-      if (entries_[index].hash == hash && entries_[index].key == key) {
-        return unexpected_t(Error::kKeyAlreadyExists);
-      }
-      ++index;
-      if (index == capacity_) {
-        index = 0;
-      }
-    }
-    entries_[index].hash = hash;
-    entries_[index].key = key;
-    entries_[index].value = std::move(value);
-    entries_[index].is_occupied = true;
-    ++size_;
-    return {};
+  expected_t<Value*> insert(const Key& key, const Value& value) { return insert_impl(key, value); }
+
+  /**
+   * @brief Insert a key-value pair into the hash map (perfect forwarding version).
+   *
+   * @param key The key to insert.
+   * @param value The value to associate with the key.
+   * @return Success or error status. Error::kHashMapFull if the map is full,
+   *         Error::kKeyAlreadyExists if the key already exists.
+   */
+  template <typename ValueType,
+            typename = std::enable_if_t<!std::is_same_v<std::decay_t<ValueType>, Value>>>
+  expected_t<Value*> insert(const Key& key, ValueType&& value) {
+    return insert_impl(key, std::forward<ValueType>(value));
   }
 
   /**
@@ -199,6 +213,13 @@ class HashMap {
    */
   int32_t size() const { return size_; }
 
+  /**
+   * @brief Get the capacity of the hash map.
+   *
+   * @return Max capacity of the hash map.
+   */
+  int32_t capacity() const { return max_size_; }
+
  private:
   /**
    * @brief Internal structure representing an entry in the hash map.
@@ -213,6 +234,37 @@ class HashMap {
     /// The value associated with the key.
     Value value;
   };
+
+  /**
+   * @brief Internal implementation for inserting key-value pairs.
+   *
+   * @param key The key to insert.
+   * @param value The value to associate with the key.
+   * @return Success or error status.
+   */
+  template <typename ValueType>
+  expected_t<Value*> insert_impl(const Key& key, ValueType&& value) {
+    if (size_ >= max_size_) {
+      return unexpected_t(Error::kHashMapFull);
+    }
+    hash_t hash = std::hash<Key>{}(key);
+    int32_t index = hash % capacity_;
+    while (entries_[index].is_occupied) {
+      if (entries_[index].hash == hash && entries_[index].key == key) {
+        return unexpected_t(Error::kKeyAlreadyExists);
+      }
+      ++index;
+      if (index == capacity_) {
+        index = 0;
+      }
+    }
+    entries_[index].hash = hash;
+    entries_[index].key = key;
+    entries_[index].value = std::forward<ValueType>(value);
+    entries_[index].is_occupied = true;
+    ++size_;
+    return &entries_[index].value;
+  }
 
   /**
    * @brief Fill holes in the hash table after deletion to maintain linear probing invariants.
@@ -247,6 +299,27 @@ class HashMap {
     }
   }
 
+  /**
+   * @brief Get the index where the key is
+   *
+   * @param key The key to search for.
+   * @return The index associated with the key on success, Error::kKeyNotFound if key doesn't exist.
+   */
+  expected_t<int32_t> get_index(const Key& key) const {
+    hash_t hash = std::hash<Key>{}(key);
+    int32_t index = hash % capacity_;
+    while (entries_[index].is_occupied) {
+      if (entries_[index].hash == hash && entries_[index].key == key) {
+        return index;
+      }
+      ++index;
+      if (index == capacity_) {
+        index = 0;
+      }
+    }
+    return unexpected_t(Error::kKeyNotFound);
+  }
+
   /// Array of entries in the hash map.
   std::unique_ptr<Entry[]> entries_;
   /// Current number of elements in the hash map.
@@ -259,4 +332,4 @@ class HashMap {
 
 }  // namespace holoscan::pose_tree
 
-#endif  // HOLOSCAN_POSE_TREE_HASH_MAP_HPP
+#endif /* HOLOSCAN_POSE_TREE_HASH_MAP_HPP */

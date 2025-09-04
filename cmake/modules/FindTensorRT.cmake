@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,6 +43,13 @@ read_version(NV_TENSORRT_MAJOR "${_TRT_VERSION_FILE}")
 read_version(NV_TENSORRT_MINOR "${_TRT_VERSION_FILE}")
 read_version(NV_TENSORRT_PATCH "${_TRT_VERSION_FILE}")
 set(TensorRT_VERSION "${NV_TENSORRT_MAJOR}.${NV_TENSORRT_MINOR}.${NV_TENSORRT_PATCH}")
+
+if(NOT NV_TENSORRT_MAJOR)
+  read_version(TRT_MAJOR_ENTERPRISE "${_TRT_VERSION_FILE}")
+  read_version(TRT_MINOR_ENTERPRISE "${_TRT_VERSION_FILE}")
+  read_version(TRT_PATCH_ENTERPRISE "${_TRT_VERSION_FILE}")
+  set(TensorRT_VERSION "${TRT_MAJOR_ENTERPRISE}.${TRT_MINOR_ENTERPRISE}.${TRT_PATCH_ENTERPRISE}")
+endif()
 unset(_TRT_VERSION_FILE)
 
 # Find libs, and create the imported target

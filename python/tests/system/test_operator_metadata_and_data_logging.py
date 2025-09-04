@@ -15,6 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import time
+
 import pytest
 
 from holoscan.conditions import CountCondition
@@ -32,8 +34,8 @@ from holoscan.data_loggers import (
     GXFConsoleLogger,
     SimpleTextSerializer,
 )
-from holoscan.operators import PingRxOp, PingTensorRxOp, PingTensorTxOp
-from holoscan.resources import UnboundedAllocator
+from holoscan.operators import PingRxOp, PingTensorRxOp, PingTensorTxOp, PingTxOp
+from holoscan.resources import RealtimeClock, UnboundedAllocator
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 try:
@@ -111,12 +113,12 @@ class PingMetadataRxOp(Operator):
         print(f"received message {self.count}")
         self.count += 1
         if self.is_metadata_enabled:
-            print("metadata is enabled")
+            print("metadata is enabled", flush=True)
             assert "multiplier" in self.metadata
             assert "channel_1_id" in self.metadata
             assert "channel_2_id" in self.metadata
         else:
-            print("metadata is disabled")
+            print("metadata is disabled", flush=True)
             assert "multiplier" not in self.metadata
             assert "channel_1_id" not in self.metadata
             assert "channel_2_id" not in self.metadata
@@ -423,6 +425,132 @@ def test_data_logging_allowlist_denylist(
     assert (mx13_str in captured.err) == expect_mx13
 
 
+class PingRxTimestampOp(Operator):
+    def __init__(self, fragment, *args, use_scheduler_clock=False, clock=None, **kwargs):
+        self.use_scheduler_clock = use_scheduler_clock
+        self.logger_clock = clock
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.input("in")
+
+    def compute(self, op_input, op_output, context):
+        op_input.receive("in")
+
+        loggers = self.fragment.data_loggers
+        assert len(loggers) == 1
+
+        data_logger = loggers[0]
+        thresh_ns = 1e6  # 1 ms
+        if self.logger_clock is not None:
+            reference_timestamp = self.logger_clock.timestamp()
+        else:
+            if self.use_scheduler_clock:
+                scheduler_clock = self.fragment.scheduler().clock
+                reference_timestamp = scheduler_clock.timestamp()
+            else:
+                reference_timestamp = time.time_ns()
+        diff_ns = data_logger.get_timestamp() - reference_timestamp
+        print(
+            f"PingRxTimestampLog timestamp = {data_logger.get_timestamp()}"
+            f"\t{reference_timestamp=}\t{abs(diff_ns)=}",
+            flush=True,
+        )
+        assert abs(diff_ns) < thresh_ns
+
+
+class MyPingTimestampApp(Application):
+    """Ping application with user-provided data logger class and clock options.
+
+    PingRxTimestampOp verifies that the timestamps are within an expected tolerance.
+    """
+
+    def __init__(
+        self,
+        *args,
+        count=10,
+        logger_class=AsyncConsoleLogger,
+        use_scheduler_clock=False,
+        clock_class=None,
+        clock_kwargs=None,
+        **kwargs,
+    ):
+        self.count = count
+        self.use_scheduler_clock = use_scheduler_clock
+        self.logger_class = logger_class
+        self.clock_class = clock_class
+        self.clock_kwargs = {} if clock_kwargs is None else clock_kwargs
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        tx = PingTxOp(self, CountCondition(self, self.count), name="tx")
+        if self.clock_class:
+            logger_clock = self.clock_class(self, name="logger-clock", **self.clock_kwargs)
+        else:
+            logger_clock = None
+        rx = PingRxTimestampOp(
+            self, name="rx", use_scheduler_clock=self.use_scheduler_clock, clock=logger_clock
+        )
+        self.add_flow(tx, rx)
+        self.add_data_logger(
+            self.logger_class(
+                fragment=self,
+                name="console-logger",
+                log_inputs=True,
+                log_outputs=True,
+                log_metadata=False,
+                log_tensor_data_content=False,
+                use_scheduler_clock=self.use_scheduler_clock,
+                clock=logger_clock,
+            )
+        )
+
+
+@pytest.mark.parametrize("use_scheduler_clock", [False, True])
+@pytest.mark.parametrize("logger_class", [AsyncConsoleLogger, BasicConsoleLogger, GXFConsoleLogger])
+def test_data_logging_timestamp(use_scheduler_clock, logger_class, capfd):
+    """Test data logger timestamps with and without using the scheduler's clock."""
+    count = 3
+    app = MyPingTimestampApp(
+        count=count,
+        logger_class=logger_class,
+        use_scheduler_clock=use_scheduler_clock,
+        clock_class=None,
+    )
+    app.enable_metadata(False)
+
+    scheduler_kwargs = {"stop_on_deadlock_timeout": logging_timeout}
+    app.scheduler(GreedyScheduler(fragment=app, **scheduler_kwargs))
+    app.run()
+
+    # assert that the expected logging data was recorded
+    captured = capfd.readouterr()
+    assert "error" not in captured.err
+
+
+@pytest.mark.parametrize("use_time_since_epoch", [False, True])
+@pytest.mark.parametrize("logger_class", [AsyncConsoleLogger, BasicConsoleLogger, GXFConsoleLogger])
+def test_data_logging_timestamp_clock_parameter(use_time_since_epoch, logger_class, capfd):
+    """Test data logger timestamps with and without using an externally provided clock."""
+    count = 3
+    app = MyPingTimestampApp(
+        count=count,
+        logger_class=logger_class,
+        use_scheduler_clock=False,
+        clock_class=RealtimeClock,
+        clock_kwargs={"use_time_since_epoch": use_time_since_epoch},
+    )
+    app.enable_metadata(False)
+
+    scheduler_kwargs = {"stop_on_deadlock_timeout": logging_timeout}
+    app.scheduler(GreedyScheduler(fragment=app, **scheduler_kwargs))
+    app.run()
+
+    # assert that the expected logging data was recorded
+    captured = capfd.readouterr()
+    assert "error" not in captured.err
+
+
 class TensorMetadataMiddleOp(Operator):
     def __init__(self, fragment, value=5, emit_mode="tensormap", *args, **kwargs):
         self.count = 1
@@ -468,6 +596,7 @@ class TensorConsoleLoggingApp(Application):
         logger_class=BasicConsoleLogger,
         extra_logger_kwargs=None,
         mx_emit_mode="tensormap",
+        receive_as_tensormap=True,
         **kwargs,
     ):
         self.count = count
@@ -480,6 +609,7 @@ class TensorConsoleLoggingApp(Application):
         self.logger_class = logger_class
         self.mx_emit_mode = mx_emit_mode
         self.extra_logger_kwargs = extra_logger_kwargs or {}
+        self.receive_as_tensormap = receive_as_tensormap
         super().__init__(*args, **kwargs)
 
     def compose(self):
@@ -502,9 +632,9 @@ class TensorConsoleLoggingApp(Application):
             # PingRxOp can receive arbitrary Python objects
             rx = PingRxOp(self, name="rx")
         else:
-            # PingTensorRxOp wraps a C++ operator that only receives holoscan::Tensor, not Python
+            # PingTensorRxOp wraps a C++ operator that only receives holoscan Tensors, not Python
             # objects
-            rx = PingTensorRxOp(self, name="rx")
+            rx = PingTensorRxOp(self, name="rx", receive_as_tensormap=self.receive_as_tensormap)
         self.add_flow(tx, mx)
         self.add_flow(mx, rx)
 
@@ -534,15 +664,34 @@ class TensorConsoleLoggingApp(Application):
 @pytest.mark.parametrize(
     "logger_class, extra_logger_kwargs",
     [
-        (AsyncConsoleLogger, {"enable_large_data_queue": False}),
-        (AsyncConsoleLogger, {"enable_large_data_queue": True}),
-        (BasicConsoleLogger, {}),
-        (GXFConsoleLogger, {}),
+        pytest.param(
+            AsyncConsoleLogger,
+            {"enable_large_data_queue": False},
+            id="async_logger_with_large_data_disabled",
+        ),
+        pytest.param(
+            AsyncConsoleLogger,
+            {"enable_large_data_queue": True},
+            id="async_logger_with_large_data_enabled",
+        ),
+        pytest.param(BasicConsoleLogger, {}, id="basic_logger"),
+        pytest.param(GXFConsoleLogger, {}, id="gxf_logger"),
     ],
 )
-@pytest.mark.parametrize("mx_emit_mode", ["tensormap", "tensor", "ndarray"])
+@pytest.mark.parametrize(
+    "mx_emit_mode, receive_as_tensormap",
+    # when tensor is emitted test receiving as both std::shared_ptr<Tensor> and TensorMap
+    [
+        pytest.param("tensormap", True, id="emit_tensormap_recv_tensormap"),
+        pytest.param("tensor", False, id="emit_tensor_recv_tensor"),
+        pytest.param("tensor", True, id="emit_tensor_recv_tensormap"),
+        pytest.param("ndarray", False, id="emit_ndarray_recv_tensor"),
+    ],
+)
 @pytest.mark.skipif(cp is None, reason="cupy not available")
-def test_tensor_content_logging(logger_class, extra_logger_kwargs, mx_emit_mode, capfd):
+def test_tensor_content_logging(
+    logger_class, extra_logger_kwargs, mx_emit_mode, receive_as_tensormap, capfd
+):
     count = 2
     value = 5
     max_elements = 25
@@ -553,6 +702,7 @@ def test_tensor_content_logging(logger_class, extra_logger_kwargs, mx_emit_mode,
         logger_class=logger_class,
         mx_emit_mode=mx_emit_mode,
         extra_logger_kwargs=extra_logger_kwargs,
+        receive_as_tensormap=receive_as_tensormap,
     )
     scheduler_kwargs = {"stop_on_deadlock_timeout": logging_timeout}
     app.scheduler(GreedyScheduler(fragment=app, **scheduler_kwargs))
@@ -573,7 +723,23 @@ def test_tensor_content_logging(logger_class, extra_logger_kwargs, mx_emit_mode,
     elif mx_emit_mode == "tensor":
         # unnamed GPU tensor receives name "#cupy: tensor"
         assert "constant_tensor" not in captured.err
-        assert "#cupy: tensor" in captured.err
+
+        # Check that the `count` messages were logged for rx.in
+        rx_in_lines = [line for line in captured.err.split("\n") if "ID:rx.in" in line]
+        assert len(rx_in_lines) == count
+        rx_in_line = rx_in_lines[0]
+
+        if receive_as_tensormap:
+            # TensorMap with single tensor named "#cupy: tensor"
+            assert "#cupy: tensor" in rx_in_line, (
+                f"#cupy: tensor not found on rx.in line: {rx_in_line}"
+            )
+            assert "TensorMap" in rx_in_line, f"TensorMap not found on rx.in line: {rx_in_line}"
+        else:
+            assert "#cupy: tensor" not in rx_in_line, (
+                "#cupy:tensor not found on rx.in line: {rx_in_line}"
+            )
+            assert "TensorMap" not in rx_in_line, f"TensorMap not found on rx.in line: {rx_in_line}"
 
     if mx_emit_mode != "ndarray":
         # tensor shape printed unless raw Python object was emitted

@@ -36,6 +36,7 @@
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
+#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
@@ -91,6 +92,9 @@ void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32
   auto params = spec()->params();
   auto param_iter = params.find("cuda_stream_pool");
   if (param_iter != params.end()) {
+    HOLOSCAN_LOG_WARN(
+        "add_cuda_stream_pool call has no effect on an operator with an explicit Parameter "
+        "named 'cuda_stream_pool' defined");
     return;
   }
 
@@ -103,20 +107,29 @@ void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32
     }
   }
 
-  // If no CudaStreamPool was found, create a default one
+  // check if cuda_green_context is already in resources
+  std::shared_ptr<CudaGreenContext> cuda_green_context_ptr = nullptr;
+  if (resources_.find("cuda_green_context") != resources_.end()) {
+    cuda_green_context_ptr =
+        std::dynamic_pointer_cast<CudaGreenContext>(resources_["cuda_green_context"]);
+    HOLOSCAN_LOG_DEBUG("CudaGreenContext resource found for Operator '{}'.", name_);
+  }
 
+  // If no CudaStreamPool was found, create a default one
   auto cuda_stream_pool =
       fragment()->make_resource<CudaStreamPool>(fmt::format("{}_stream_pool", name_),
                                                 dev_id,
                                                 stream_flags,
                                                 stream_priority,
                                                 reserved_size,
-                                                max_size);
+                                                max_size,
+                                                cuda_green_context_ptr);
 
   // set it to belong to the operator's GXF entity
   if (graph_entity_) {
     cuda_stream_pool->gxf_eid(graph_entity_->eid());
   }
+
   // if the operator has already been initialized, initialize the stream pool
   if (is_initialized_) {
     cuda_stream_pool->initialize();
@@ -213,8 +226,8 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
     // Just return the current operator timestamp label because
     // there is no input label
     if (op_backend_ptr) {
-      auto scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(fragment()->scheduler());
-      nvidia::gxf::Clock* scheduler_clock = scheduler->gxf_clock();
+      auto scheduler = fragment()->scheduler();
+      auto scheduler_clock = scheduler->clock();
 
       // Calculate the current execution according to the scheduler clock and
       // convert nanoseconds to microseconds as GXF scheduler uses nanoseconds
@@ -580,28 +593,20 @@ bool Operator::has_ucx_connector() {
   return false;
 }
 
-void Operator::reset_graph_entities() {
+void Operator::reset_backend_objects() {
   if (!spec_) {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
 
-  HOLOSCAN_LOG_TRACE("Operator '{}'::reset_graph_entities", name_);
+  HOLOSCAN_LOG_TRACE("Operator '{}'::reset_backend_objects", name_);
   auto reset_resource = [](std::shared_ptr<holoscan::Resource> resource) {
     if (resource) {
-      auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
-      if (gxf_resource) {
-        gxf_resource->reset_gxf_graph_entity();
-      }
-      resource->reset_graph_entities();
+      resource->reset_backend_objects();
     }
   };
   auto reset_condition = [](std::shared_ptr<holoscan::Condition> condition) {
     if (condition) {
-      auto gxf_condition = std::dynamic_pointer_cast<holoscan::gxf::GXFCondition>(condition);
-      if (gxf_condition) {
-        gxf_condition->reset_gxf_graph_entity();
-      }
-      condition->reset_graph_entities();
+      condition->reset_backend_objects();
     }
   };
   auto reset_iospec =
@@ -624,7 +629,7 @@ void Operator::reset_graph_entities() {
   conditions_.clear();
   reset_iospec(spec_->inputs());
   reset_iospec(spec_->outputs());
-  ComponentBase::reset_graph_entities();
+  ComponentBase::reset_backend_objects();
   graph_entity_.reset();
 }
 

@@ -236,6 +236,21 @@ void InferenceOp::start() {
       HoloInfer::raise_error(module_, "Parameter Validation failed: " + status.get_message());
     }
 
+    std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream;
+    // If a CUDA stream pool is provided, use it to allocate a CUDA stream
+    if (cuda_stream_pool_.try_get()) {
+      allocate_cuda_stream = [this](int32_t device_id) -> cudaStream_t {
+        if (cuda_stream_pool_->get_dev_id() == device_id) {
+          auto maybe_stream = cuda_stream_pool_->get()->allocateStream();
+          if (!maybe_stream) {
+            throw std::runtime_error("Failed to allocate CUDA stream");
+          }
+          return maybe_stream.value()->stream().value();
+        }
+        return nullptr;
+      };
+    }
+
     // Create inference specification structure
     inference_specs_ =
         std::make_shared<HoloInfer::InferenceSpecs>(backend_.get(),
@@ -256,7 +271,8 @@ void InferenceOp::start() {
                                                     output_on_cuda_.get(),
                                                     enable_cuda_graphs_.get(),
                                                     dla_core_.get(),
-                                                    dla_gpu_fallback_.get());
+                                                    dla_gpu_fallback_.get(),
+                                                    allocate_cuda_stream);
     HOLOSCAN_LOG_INFO("Inference Specifications created");
     // Create holoscan inference context
     holoscan_infer_context_ = std::make_unique<HoloInfer::InferContext>();

@@ -32,12 +32,12 @@ void GXFNetworkContext::set_parameters() {
   }
 }
 
-void GXFNetworkContext::reset_graph_entities() {
+void GXFNetworkContext::reset_backend_objects() {
   HOLOSCAN_LOG_TRACE(
-      "GXFNetworkContext '{}' of type '{}'::reset_graph_entities", gxf_cname_, gxf_typename());
+      "GXFNetworkContext '{}' of type '{}'::reset_backend_objects", gxf_cname_, gxf_typename());
 
   // Reset GraphEntity of resources_ and spec_->args() of Scheduler
-  NetworkContext::reset_graph_entities();
+  NetworkContext::reset_backend_objects();
 
   // Reset the GraphEntity of this GXFNetworkContext itself
   reset_gxf_graph_entity();

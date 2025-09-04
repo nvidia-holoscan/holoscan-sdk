@@ -51,7 +51,6 @@ message(STATUS "TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}")
 
 # Find dependencies
 find_package(Torch REQUIRED)
-find_package(TorchVision REQUIRED)
 
 # Create the holoinfer torch backend library
 add_library(holoinfer_torch SHARED core.cpp)
@@ -61,12 +60,11 @@ set_target_properties(holoinfer_torch PROPERTIES
     EXPORT_NAME infer::torch
     SOVERSION ${PROJECT_VERSION_MAJOR}
     VERSION ${PROJECT_VERSION}
-    INSTALL_RPATH_USE_LINK_PATH true # find libtorch and torchvision in install tree
+    INSTALL_RPATH_USE_LINK_PATH true # find libtorch in install tree
 )
 target_link_libraries(holoinfer_torch
     PRIVATE
         torch
-        -Wl,--no-as-needed TorchVision::TorchVision # torch plugin
         holoscan::logger
         yaml-cpp
         holoscan_security_flags

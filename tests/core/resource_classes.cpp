@@ -25,6 +25,7 @@
 #include "../config.hpp"
 #include "../utils.hpp"
 #include "common/assert.hpp"
+#include "holoscan/core/application.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/resource.hpp"
@@ -40,6 +41,7 @@
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
 #include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
+#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
@@ -299,11 +301,9 @@ TEST_F(ResourceClassesWithGXFContext, TestAllocatorDefaultConstructor) {
 
 TEST_F(ResourceClassesWithGXFContext, TestRealtimeClock) {
   const std::string name{"realtime"};
-  ArgList arglist{
-      Arg{"initial_time_offset", 0.0},
-      Arg{"initial_time_scale", 1.0},
-      Arg{"use_time_since_epoch", false},
-  };
+  ArgList arglist{Arg{"initial_time_offset", 0.0},
+                  Arg{"initial_time_scale", 1.0},
+                  Arg{"use_time_since_epoch", false}};
   auto resource = F.make_resource<RealtimeClock>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<RealtimeClock>(arglist)));
@@ -317,9 +317,7 @@ TEST_F(ResourceClassesWithGXFContext, TestRealtimeClockDefaultConstructor) {
 
 TEST_F(ResourceClassesWithGXFContext, TestManualClock) {
   const std::string name{"realtime"};
-  ArgList arglist{
-      Arg{"initial_timestamp", static_cast<int64_t>(0)},
-  };
+  ArgList arglist{Arg{"initial_timestamp", static_cast<int64_t>(0)}};
   auto resource = F.make_resource<ManualClock>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<ManualClock>(arglist)));
@@ -331,6 +329,19 @@ TEST_F(ResourceClassesWithGXFContext, TestManualClockDefaultConstructor) {
   auto resource = F.make_resource<ManualClock>();
 }
 
+TEST_F(ResourceClassesWithGXFContext, TestSyntheticClock) {
+  const std::string name{"realtime"};
+  ArgList arglist{Arg{"initial_timestamp", static_cast<int64_t>(0)}};
+  auto resource = F.make_resource<SyntheticClock>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<SyntheticClock>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::SyntheticClock"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestSyntheticClockDefaultConstructor) {
+  auto resource = F.make_resource<SyntheticClock>();
+}
 TEST_F(ResourceClassesWithGXFContext, TestSerializationBuffer) {
   const std::string name{"serialization_buffer"};
   ArgList arglist{
@@ -515,6 +526,82 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeScheduling) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeSchedulingFromYAMLEnum) {
+  const std::string config_file = test_config.get_test_data_file("threadpool_config.yaml");
+  auto app = make_application<Application>();
+  app->config(config_file);
+
+  const std::string name{"thread0"};
+  std::vector<uint32_t> pin_cores{0, 2};
+  ArgList arglist = app->from_config("realtime_threadpool_enum");
+  auto resource = F.make_resource<CPUThread>(name, arglist);
+
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+
+  // have to initialize to be able to retrieve and check the parameter values
+  // (this is expected to cause a warning due to the manual initialization)
+  resource->initialize();
+  const auto& maybe_policy = resource->sched_policy();
+  EXPECT_TRUE(maybe_policy);
+  if (maybe_policy) {
+    EXPECT_EQ(maybe_policy.value(), SchedulingPolicy::kRoundRobin);
+  }
+  const auto& maybe_priority = resource->sched_priority();
+  EXPECT_TRUE(maybe_priority);
+  if (maybe_policy) {
+    EXPECT_EQ(maybe_priority.value(), 2);
+  }
+  const auto& cores = resource->pin_cores();
+  auto sz = cores.size();
+  EXPECT_EQ(sz, 2);
+  if (sz > 0) {
+    EXPECT_EQ(cores[0], 0);
+  }
+  if (sz > 1) {
+    EXPECT_EQ(cores[1], 2);
+  }
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeSchedulingFromYAMLString) {
+  const std::string config_file = test_config.get_test_data_file("threadpool_config.yaml");
+  auto app = make_application<Application>();
+  app->config(config_file);
+
+  const std::string name{"thread0"};
+  std::vector<uint32_t> pin_cores{0, 2};
+  ArgList arglist = app->from_config("realtime_threadpool_string");
+  auto resource = F.make_resource<CPUThread>(name, arglist);
+
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+
+  // have to initialize to be able to retrieve and check the parameter values
+  // (this is expected to cause a warning due to the manual initialization)
+  resource->initialize();
+  const auto& maybe_policy = resource->sched_policy();
+  EXPECT_TRUE(maybe_policy);
+  if (maybe_policy) {
+    EXPECT_EQ(maybe_policy.value(), SchedulingPolicy::kFirstInFirstOut);
+  }
+  const auto& maybe_priority = resource->sched_priority();
+  EXPECT_TRUE(maybe_priority);
+  if (maybe_policy) {
+    EXPECT_EQ(maybe_priority.value(), 2);
+  }
+  const auto& cores = resource->pin_cores();
+  auto sz = cores.size();
+  EXPECT_EQ(sz, 2);
+  if (sz > 0) {
+    EXPECT_EQ(cores[0], 0);
+  }
+  if (sz > 1) {
+    EXPECT_EQ(cores[1], 2);
+  }
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestGPUDevice) {

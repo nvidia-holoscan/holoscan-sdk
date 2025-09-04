@@ -253,19 +253,21 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-          holo_infer_context_.insert({model_name,
-                                      std::make_unique<TrtInfer>(model_path,
-                                                                 model_name,
-                                                                 trt_opt_profile,
-                                                                 device_id,
-                                                                 device_gpu_dt_,
-                                                                 inference_specs->use_fp16_,
-                                                                 inference_specs->use_cuda_graphs_,
-                                                                 dla_core,
-                                                                 inference_specs->dla_gpu_fallback_,
-                                                                 inference_specs->is_engine_path_,
-                                                                 cuda_buffer_in_,
-                                                                 cuda_buffer_out_)});
+          holo_infer_context_.insert(
+              {model_name,
+               std::make_unique<TrtInfer>(model_path,
+                                          model_name,
+                                          trt_opt_profile,
+                                          device_id,
+                                          device_gpu_dt_,
+                                          inference_specs->use_fp16_,
+                                          inference_specs->use_cuda_graphs_,
+                                          dla_core,
+                                          inference_specs->dla_gpu_fallback_,
+                                          inference_specs->is_engine_path_,
+                                          cuda_buffer_in_,
+                                          cuda_buffer_out_,
+                                          inference_specs->allocate_cuda_stream_)});
           break;
         }
 
@@ -282,7 +284,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
-#if use_onnxruntime
+#if defined(HOLOINFER_ORT_ENABLED)
           HOLOSCAN_LOG_INFO("Searching for ONNX Runtime libraries");
           void* handle = dlopen("libholoscan_infer_onnx_runtime.so", RTLD_NOW);
           if (handle == nullptr) {
@@ -291,8 +293,14 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           HOLOSCAN_LOG_INFO("Found ONNX Runtime libraries");
-          using NewOnnxInfer =
-              OnnxInfer* (*)(const std::string&, bool, int32_t, bool, bool, bool, bool);
+          using NewOnnxInfer = OnnxInfer* (*)(const std::string&,
+                                              bool,
+                                              int32_t,
+                                              bool,
+                                              bool,
+                                              bool,
+                                              bool,
+                                              std::function<cudaStream_t(int32_t device_id)>);
           auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle, "NewOnnxInfer"));
           if (!new_ort_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
@@ -313,7 +321,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                        inference_specs->dla_gpu_fallback_,
                                        inference_specs->oncuda_,
                                        cuda_buffer_in_,
-                                       cuda_buffer_out_);
+                                       cuda_buffer_out_,
+                                       inference_specs->allocate_cuda_stream_);
           holo_infer_context_[model_name] = std::unique_ptr<OnnxInfer>(context);
 #else
           HOLOSCAN_LOG_ERROR("Onnxruntime backend not supported or incorrectly installed.");
@@ -330,7 +339,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             status.set_message("Inference manager, model path must have .pt or .pth extension.");
             return status;
           }
-#if use_torch
+#if defined(HOLOINFER_TORCH_ENABLED)
           HOLOSCAN_LOG_INFO("Searching for libtorch libraries");
           void* handle = dlopen("libholoscan_infer_torch.so", RTLD_NOW);
           if (handle == nullptr) {

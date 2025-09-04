@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,8 +26,13 @@ namespace holoscan::doc {
 
 namespace Clock {
 
-PYDOC(Clock, R"doc(
-Base clock class.
+PYDOC(Clock_args_kwargs, R"doc(
+Create a Clock resource from a clock implementation.
+
+Parameters
+----------
+clock_impl : ClockInterface
+    The clock implementation to wrap (e.g., RealtimeClock or ManualClock).
 )doc")
 
 PYDOC(time, R"doc(
@@ -49,21 +54,39 @@ timestamp : int
 )doc")
 
 PYDOC(sleep_for, R"doc(
-Set the GXF scheduler to sleep for a specified duration.
+Set the scheduler to sleep for a specified duration.
 
 Parameters
 ----------
-duration_ns : int
+duration_ns : int or datetime.timedelta
     The duration to sleep (in nanoseconds).
 )doc")
 
 PYDOC(sleep_until, R"doc(
-Set the GXF scheduler to sleep until a specified timestamp.
+Set the scheduler to sleep until a specified timestamp.
 
 Parameters
 ----------
 target_time_ns : int
     The target timestamp (in nanoseconds).
+)doc")
+
+PYDOC(set_clock_impl, R"doc(
+Set the clock implementation.
+
+Parameters
+----------
+clock_impl : ClockInterface
+    The new clock implementation to use.
+)doc")
+
+PYDOC(clock_impl, R"doc(
+Get the underlying clock implementation.
+
+Returns
+-------
+ClockInterface
+    The clock implementation (RealtimeClock, ManualClock, etc.).
 )doc")
 
 }  // namespace Clock
@@ -117,6 +140,41 @@ name : str, optional
 )doc")
 
 }  // namespace ManualClock
+
+namespace SyntheticClock {
+
+PYDOC(SyntheticClock, R"doc(
+A clock where time flow is synthesized, like from a recording or a simulation.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment
+    The fragment to assign the resource to.
+initial_timestamp : int, optional
+    The initial timestamp on the clock (in nanoseconds).
+name : str, optional
+    The name of the clock.
+)doc")
+
+PYDOC(advance_to, R"doc(
+Manually advance the clock to a desired new target time.
+
+Parameters
+----------
+new_time_ns : int
+    The target time to advance to.
+)doc")
+
+PYDOC(advance_by, R"doc(
+Manually advance the clock by a given delta.
+
+Parameters
+----------
+time_delta_ns : int or datetime.timedelta
+    The amount by which to advance the time.
+)doc")
+
+}  // namespace SyntheticClock
 
 }  // namespace holoscan::doc
 

@@ -1600,6 +1600,29 @@
             ],
         },
         {
+            "name": "(gdb) examples/matx/matx_basic/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/matx/matx_basic/cpp/matx_basic",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/multithread/cpp/multithread",
             "type": "cppdbg",
             "request": "launch",

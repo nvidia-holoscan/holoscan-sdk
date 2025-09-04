@@ -60,6 +60,7 @@ if(HOLOSCAN_CPP_EXAMPLES)
   add_subdirectory(ping_any)
   add_subdirectory(ping_conditional)
   add_subdirectory(ping_cycle)
+  add_subdirectory(matx)
 endif()
 
 # Python Only examples

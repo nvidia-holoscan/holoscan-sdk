@@ -35,10 +35,11 @@ namespace holoscan {
 
 // Message type identifiers for Active Message (AM) communication
 enum MessageType : uint16_t {
-  MSG_SUBSCRIBE = 1,      // Client -> Server: Request to join and optionally get a snapshot
-  MSG_DELTA = 2,          // Both ways: Incremental PoseTree update (frame/edge)
-  MSG_SNAPSHOT_DATA = 3,  // Server -> Client: Full PoseTree state snapshot
-  MSG_CLOSE = 4,          // Both ways: Close connection
+  MSG_SUBSCRIBE = 1,           // Client -> Server: Request to join and optionally get a snapshot
+  MSG_DELTA = 2,               // Both ways: Incremental PoseTree update (frame/edge)
+  MSG_SNAPSHOT_DATA = 3,       // Server -> Client: Full PoseTree state snapshot
+  MSG_CLOSE = 4,               // Both ways: Close connection
+  MSG_DISTRIBUTED_CONFIG = 5,  // Server -> Client config information
 };
 
 // Ensure packed layout for all serialized structs
@@ -68,6 +69,12 @@ struct EdgeData {
   double time;
   double qw, qx, qy, qz;  // Quaternion for rotation
   double tx, ty, tz;      // Vector for translation
+};
+
+// Data to configure the distributed frame id assignment
+struct DistributedConfig {
+  uint64_t start_frame_id;
+  uint64_t increment;
 };
 
 // The DELTA message structure, containing the type of change and the data

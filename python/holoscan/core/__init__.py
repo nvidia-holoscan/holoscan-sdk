@@ -28,6 +28,8 @@ create a custom application.
     holoscan.core.AsyncDataLoggerResource
     holoscan.core.AsyncQueuePolicy
     holoscan.core.CLIOptions
+    holoscan.core.Clock
+    holoscan.core.ClockInterface
     holoscan.core.Component
     holoscan.core.ComponentSpec
     holoscan.core.Condition
@@ -95,6 +97,8 @@ from ._core import (
     AsyncDataLoggerResource,
     AsyncQueuePolicy,
     CLIOptions,
+    Clock,
+    ClockInterface,
     Component,
     ConditionType,
     Config,
@@ -154,6 +158,8 @@ __all__ = [
     "AsyncDataLoggerResource",
     "AsyncQueuePolicy",
     "CLIOptions",
+    "Clock",
+    "ClockInterface",
     "Component",
     "ComponentSpec",
     "ConditionType",

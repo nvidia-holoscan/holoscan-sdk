@@ -25,7 +25,6 @@
 #include <gxf/std/multi_thread_scheduler.hpp>
 #include "../../gxf/gxf_scheduler.hpp"
 #include "../../resources/gxf/clock.hpp"
-#include "../../resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -57,7 +56,7 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
 
   const char* gxf_typename() const override { return "nvidia::gxf::MultiThreadScheduler"; }
 
-  std::shared_ptr<Clock> clock() override { return clock_.get(); }
+  std::shared_ptr<Clock> clock() override;
 
   void setup(ComponentSpec& spec) override;
   void initialize() override;
@@ -73,13 +72,15 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
   nvidia::gxf::MultiThreadScheduler* get() const;
 
  private:
-  Parameter<std::shared_ptr<Clock>> clock_;
+  Parameter<std::shared_ptr<gxf::Clock>> clock_;
   Parameter<int64_t> worker_thread_number_;
   Parameter<bool> stop_on_deadlock_;
   Parameter<double> check_recession_period_ms_;
   Parameter<int64_t> max_duration_ms_;
   Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
   Parameter<bool> strict_job_thread_pinning_;
+
+  void* clock_gxf_cptr() const override;
 };
 
 }  // namespace holoscan

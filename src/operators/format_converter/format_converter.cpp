@@ -178,10 +178,29 @@ static gxf_result_t verifyFormatDTypeChannels(FormatDType dtype, int channel_cou
 }
 
 void FormatConverterOp::initialize() {
+#if CUDART_VERSION >= 13000
+  // Workaround pending proper NPP support to get stream context in CUDA 13.0+
+  int device = 0;
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGetDevice(&device), "Failed to get CUDA device");
+
+  cudaDeviceProp prop{};
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGetDeviceProperties(&prop, device),
+    "Failed to get CUDA device properties");
+
+  npp_stream_ctx_.nCudaDeviceId = device;
+  npp_stream_ctx_.nMultiProcessorCount = prop.multiProcessorCount;
+  npp_stream_ctx_.nMaxThreadsPerMultiProcessor = prop.maxThreadsPerMultiProcessor;
+  npp_stream_ctx_.nMaxThreadsPerBlock = prop.maxThreadsPerBlock;
+  npp_stream_ctx_.nSharedMemPerBlock = prop.sharedMemPerBlock;
+  npp_stream_ctx_.nCudaDevAttrComputeCapabilityMajor = prop.major;
+  npp_stream_ctx_.nCudaDevAttrComputeCapabilityMinor = prop.minor;
+#else
   auto nppStatus = nppGetStreamContext(&npp_stream_ctx_);
   if (NPP_SUCCESS != nppStatus) {
     throw std::runtime_error("Failed to get NPP CUDA stream context");
   }
+#endif
+
   Operator::initialize();
 }
 
@@ -840,7 +859,8 @@ void FormatConverterOp::convertTensorFormat(
       const int32_t out_v_step = color_planes[2].stride;
       int32_t out_yuv_steps[3] = {out_y_step, out_u_step, out_v_step};
 
-      status = nppiRGBToYUV420_8u_C3P3R(in_tensor_ptr, src_step, out_yuv_ptrs, out_yuv_steps, roi);
+      status = nppiRGBToYUV420_8u_C3P3R_Ctx(
+          in_tensor_ptr, src_step, out_yuv_ptrs, out_yuv_steps, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "rgb888 to yuv420 conversion failed (NPP error code: {})", static_cast<int>(status)));
@@ -862,7 +882,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiYUV420ToRGB_8u_P3AC4R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
+      status = nppiYUV420ToRGB_8u_P3AC4R_Ctx(
+          in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "yuv420 to rgba8888 conversion failed (NPP error code: {})", static_cast<int>(status)));
@@ -884,7 +905,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiYUV420ToRGB_8u_P3C3R(in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi);
+      status = nppiYUV420ToRGB_8u_P3C3R_Ctx(
+          in_yuv_ptrs, in_yuv_steps, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "yuv420 to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
@@ -902,8 +924,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status =
-          nppiNV12ToRGB_709HDTV_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
+      status = nppiNV12ToRGB_709HDTV_8u_P2C3R_Ctx(
+          in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("NV12 to BT.709HDTV rgb888 conversion failed (NPP error code: {})",
@@ -922,8 +944,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status =
-          nppiNV12ToRGB_709CSC_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
+      status = nppiNV12ToRGB_709CSC_8u_P2C3R_Ctx(
+          in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("NV12 BT.709CSC to rgb888 conversion failed (NPP error code: {})",
@@ -942,7 +964,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiNV12ToRGB_8u_P2C3R(in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi);
+      status = nppiNV12ToRGB_8u_P2C3R_Ctx(
+          in_y_uv_ptrs, in_y_uv_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(
             fmt::format("NV12 BT.601 full range to rgb888 conversion failed (NPP error code: {})",
@@ -957,7 +980,8 @@ void FormatConverterOp::convertTensorFormat(
 
       const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
 
-      status = nppiYUV422ToRGB_8u_C2C3R(in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi);
+      status = nppiYUV422ToRGB_8u_C2C3R_Ctx(
+          in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "yuyv to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));

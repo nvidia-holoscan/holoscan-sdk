@@ -53,7 +53,7 @@ class PyMultiThreadScheduler : public MultiThreadScheduler {
   using MultiThreadScheduler::MultiThreadScheduler;
 
   // Define a constructor that fully initializes the object.
-  explicit PyMultiThreadScheduler(Fragment* fragment, std::shared_ptr<Clock> clock = nullptr,
+  explicit PyMultiThreadScheduler(Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
                                   int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
                                   double check_recession_period_ms = 5.0,
                                   int64_t max_duration_ms = -1LL,
@@ -91,7 +91,7 @@ void init_multithread_scheduler(py::module_& m) {
              std::shared_ptr<MultiThreadScheduler>>(
       m, "MultiThreadScheduler", doc::MultiThreadScheduler::doc_MultiThreadScheduler)
       .def(py::init<Fragment*,
-                    std::shared_ptr<Clock>,
+                    std::shared_ptr<gxf::Clock>,
                     int64_t,
                     bool,
                     double,

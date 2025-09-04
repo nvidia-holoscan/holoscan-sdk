@@ -15,11 +15,13 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_RESOURCES_CUDA_STREAM_POOL_HPP
-#define HOLOSCAN_CORE_RESOURCES_CUDA_STREAM_POOL_HPP
+#ifndef HOLOSCAN_CORE_RESOURCES_GXF_CUDA_STREAM_POOL_HPP
+#define HOLOSCAN_CORE_RESOURCES_GXF_CUDA_STREAM_POOL_HPP
 
+#include <memory>
 #include <string>
 
+#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
 #include <gxf/cuda/cuda_stream_pool.hpp>
 
 #include "./allocator.hpp"
@@ -60,19 +62,25 @@ class CudaStreamPool : public Allocator {
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaStreamPool, Allocator)
   CudaStreamPool() = default;
   CudaStreamPool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
-                 uint32_t reserved_size, uint32_t max_size)
+                 uint32_t reserved_size, uint32_t max_size,
+                 std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr)
       : dev_id_(dev_id),
         stream_flags_(stream_flags),
         stream_priority_(stream_priority),
         reserved_size_(reserved_size),
-        max_size_(max_size) {}
+        max_size_(max_size),
+        cuda_green_context_(cuda_green_context) {}
   CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::CudaStreamPool"; }
 
   void setup(ComponentSpec& spec) override;
 
+  void initialize() override;
+
   nvidia::gxf::CudaStreamPool* get() const;
+
+  int32_t get_dev_id() const { return dev_id_.get(); }
 
  private:
   Parameter<int32_t> dev_id_;
@@ -80,8 +88,9 @@ class CudaStreamPool : public Allocator {
   Parameter<int32_t> stream_priority_;
   Parameter<uint32_t> reserved_size_;
   Parameter<uint32_t> max_size_;
+  Parameter<std::shared_ptr<CudaGreenContext>> cuda_green_context_;
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_RESOURCES_CUDA_STREAM_POOL_HPP */
+#endif /* HOLOSCAN_CORE_RESOURCES_GXF_CUDA_STREAM_POOL_HPP */

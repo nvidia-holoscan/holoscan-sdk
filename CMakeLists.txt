@@ -252,6 +252,8 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     holoinfer
     infer_utils
     logger
+    matx
+    holoscan_matx
     nvtx3-c
     nvtx3-cpp
     data_loggers_async_console_logger
@@ -269,6 +271,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_ping_tensor_tx
     op_ping_tensor_rx
     op_segmentation_postprocessor
+    op_test_ops
     op_video_stream_recorder
     op_video_stream_replayer
     op_v4l2
@@ -496,6 +499,8 @@ endif()
 set(GXF_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
 set(GXF_EXTENSIONS_DIR "${PACKAGE_PREFIX_DIR}/lib/gxf_extensions")
 
+# Add the directory containing cmake files such as WrapAsGXFComponent.cmake
+# to the search paths so that find_dependency can find it.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 
 ]=])

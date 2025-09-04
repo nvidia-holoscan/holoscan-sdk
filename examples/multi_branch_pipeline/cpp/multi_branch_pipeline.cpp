@@ -218,8 +218,8 @@ int main([[maybe_unused]] int argc, char** argv) {
         "greedy-scheduler", app->from_config("greedy_scheduler")));
   } else if (scheduler != "default") {
     throw std::runtime_error(fmt::format(
-        "unrecognized scheduler option '{}', should be one of {'multi_thread', 'event_based', "
-        "'greedy', 'default'}",
+        "unrecognized scheduler option '{}', should be one of {{'multi_thread', 'event_based', "
+        "'greedy', 'default'}}",
         scheduler));
   }
 

@@ -162,3 +162,15 @@ v4l2_video_capture:
   device: "/dev/video0"
   exposure_time: 500
   gain: 100
+
+realtime_threadpool_enum:
+  sched_policy: 2
+  pin_operator: true
+  pin_cores: [0, 2]
+  sched_priority: 2
+
+realtime_threadpool_string:
+  sched_policy: "SCHED_FIFO"
+  pin_operator: true
+  pin_cores: [0, 2]
+  sched_priority: 2

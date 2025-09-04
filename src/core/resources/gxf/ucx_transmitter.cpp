@@ -34,45 +34,49 @@ namespace holoscan {
 
 UcxTransmitter::UcxTransmitter(const std::string& name, nvidia::gxf::Transmitter* component)
     : Transmitter(name, component) {
+  if (!component) {
+    throw std::invalid_argument("UcxTransmitter component cannot be null");
+  }
   auto maybe_capacity = component->getParameter<uint64_t>("capacity");
   if (!maybe_capacity) {
-    throw std::runtime_error("Failed to get capacity");
+    throw std::runtime_error("Failed to get capacity parameter from GXF UcxTransmitter");
   }
   capacity_ = maybe_capacity.value();
 
   auto maybe_policy = component->getParameter<uint64_t>("policy");
   if (!maybe_policy) {
-    throw std::runtime_error("Failed to get policy");
+    throw std::runtime_error("Failed to get policy parameter from GXF UcxTransmitter");
   }
   policy_ = maybe_policy.value();
 
   auto maybe_receiver_address = component->getParameter<std::string>("receiver_address");
   if (!maybe_receiver_address) {
-    throw std::runtime_error("Failed to get receiver_address");
+    throw std::runtime_error("Failed to get receiver_address parameter from GXF UcxTransmitter");
   }
   receiver_address_ = maybe_receiver_address.value();
 
   auto maybe_port = component->getParameter<uint32_t>("port");
   if (!maybe_port) {
-    throw std::runtime_error("Failed to get port");
+    throw std::runtime_error("Failed to get port parameter from GXF UcxTransmitter");
   }
   port_ = maybe_port.value();
 
   auto maybe_local_address = component->getParameter<std::string>("local_address");
   if (!maybe_local_address) {
-    throw std::runtime_error("Failed to get local_address");
+    throw std::runtime_error("Failed to get local_address parameter from GXF UcxTransmitter");
   }
   local_address_ = maybe_local_address.value();
 
   auto maybe_local_port = component->getParameter<uint32_t>("local_port");
   if (!maybe_local_port) {
-    throw std::runtime_error("Failed to get local_port");
+    throw std::runtime_error("Failed to get local_port parameter from GXF UcxTransmitter");
   }
   local_port_ = maybe_local_port.value();
 
   auto maybe_max_retry = component->getParameter<uint32_t>("max_retry");
   if (!maybe_max_retry) {
-    throw std::runtime_error("Failed to get maximum_connection_retries");
+    throw std::runtime_error(
+        "Failed to get maximum_connection_retries parameter from GXF UcxTransmitter");
   }
   maximum_connection_retries_ = maybe_max_retry.value();
 
@@ -80,7 +84,7 @@ UcxTransmitter::UcxTransmitter(const std::string& name, nvidia::gxf::Transmitter
   auto maybe_buffer =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::UcxSerializationBuffer>>("buffer");
   if (!maybe_buffer) {
-    throw std::runtime_error("Failed to get buffer");
+    throw std::runtime_error("Failed to get buffer parameter from GXF UcxTransmitter");
   }
   auto buffer_handle = maybe_buffer.value();
   buffer_ = std::make_shared<holoscan::UcxSerializationBuffer>(std::string{buffer_handle->name()},

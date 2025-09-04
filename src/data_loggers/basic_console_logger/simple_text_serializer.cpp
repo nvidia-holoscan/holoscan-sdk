@@ -29,8 +29,12 @@
 #include <vector>
 
 #include <magic_enum.hpp>
+#include "gxf/core/entity.hpp"
+#include "gxf/core/handle.hpp"
+#include "gxf/multimedia/video.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/domain/tensor_map.hpp"
+#include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "holoscan/logger/logger.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
@@ -52,6 +56,11 @@ void SimpleTextSerializer::setup(ComponentSpec& spec) {
              "Maximum Metadata Items",
              "Maximum number of metadata dictionary items to display before truncation",
              static_cast<int64_t>(10));
+  spec.param(log_video_buffer_content_,
+             "log_video_buffer_content",
+             "Log Video Buffer Content",
+             "Whether to log the actual pixel data content of video buffers",
+             false);
 
   // Initialize the default type encoders
   initialize_default_encoders();
@@ -158,6 +167,13 @@ void SimpleTextSerializer::initialize_default_encoders() {
   encoders_[std::type_index(typeid(std::vector<bool>))] = [this](const std::any& value) {
     return format_vector(std::any_cast<std::vector<bool>>(value));
   };
+
+  // Handle<VideoBuffer> type
+  encoders_[std::type_index(typeid(nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>))] =
+      [this](const std::any& value) {
+        return serialize_video_buffer_to_string(
+            std::any_cast<nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>>(value));
+      };
 }
 
 // Helper to convert std::any to string for common types
@@ -355,15 +371,17 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
         oss << "[";
 
         const T* data_ptr;
-        std::vector<T> host_data;  // Only used for CUDA device memory
-
-        if (device.device_type == DLDeviceType::kDLCUDA) {
+        std::vector<T> host_data;  // Only used for CUDA device or managed memory
+        bool is_device_memory = device.device_type == DLDeviceType::kDLCUDA;
+        bool is_cuda_managed = device.device_type == DLDeviceType::kDLCUDAManaged;
+        if (is_device_memory || is_cuda_managed) {
           // For CUDA device memory, copy only the elements we need to show
           host_data.resize(elements_to_show);
-          cudaError_t result = HOLOSCAN_CUDA_CALL(cudaMemcpy(host_data.data(),
-                                                             tensor->data(),
-                                                             elements_to_show * sizeof(T),
-                                                             cudaMemcpyDeviceToHost));
+          cudaError_t result = HOLOSCAN_CUDA_CALL(
+              cudaMemcpy(host_data.data(),
+                         tensor->data(),
+                         elements_to_show * sizeof(T),
+                         is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
           if (cudaSuccess != result) {
             HOLOSCAN_LOG_ERROR(
                 "Copy of GPU data back to host failed... cannot log the data values");
@@ -387,7 +405,7 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
           } else if constexpr (std::is_same_v<T, uint8_t>) {
             oss << static_cast<unsigned int>(data_ptr[i]);
           } else if constexpr (std::is_floating_point_v<T>) {
-            oss << std::fixed << std::setprecision(6) << data_ptr[i];  // Special float formatting
+            oss << std::fixed << std::setprecision(6) << std::showpoint << data_ptr[i];
           } else {
             oss << data_ptr[i];
           }
@@ -492,6 +510,280 @@ std::string SimpleTextSerializer::serialize_tensormap_to_string(const TensorMap&
   }
 
   oss << "}";
+  return oss.str();
+}
+
+std::string SimpleTextSerializer::serialize_video_buffer_to_string(
+    const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video_buffer) {
+  std::ostringstream oss;
+
+  auto maybe_frame_ptr = video_buffer.try_get();
+  if (!maybe_frame_ptr) {
+    oss << "VideoBuffer(null)";
+    return oss.str();
+  }
+
+  auto frame = maybe_frame_ptr.value();
+  const auto& buffer_info = frame->video_frame_info();
+
+  // Basic video buffer information
+  oss << "VideoBuffer(";
+  oss << "width=" << buffer_info.width << ", ";
+  oss << "height=" << buffer_info.height << ", ";
+  oss << "color_format=" << magic_enum::enum_name(buffer_info.color_format) << ", ";
+  oss << "storage_type=" << magic_enum::enum_name(frame->storage_type()) << ", ";
+  oss << "surface_layout=" << magic_enum::enum_name(buffer_info.surface_layout) << ", ";
+  oss << "num_planes=" << buffer_info.color_planes.size();
+
+  // For single plane interleaved formats, show plane details
+  if (buffer_info.color_planes.size() == 1) {
+    const auto& plane = buffer_info.color_planes[0];
+    oss << ", plane_info={";
+    oss << "width=" << plane.width << ", ";
+    oss << "height=" << plane.height << ", ";
+    oss << "stride=" << plane.stride << ", ";
+    oss << "size=" << plane.size << ", ";
+    oss << "bytes_per_pixel=" << static_cast<int>(plane.bytes_per_pixel);
+    oss << "}";
+
+    // Only support single plane formats for data logging
+    if (log_video_buffer_content_.get() && plane.size > 0) {
+      oss << ", data=";
+
+      // Get format information using extracted function
+      const auto format_info = get_video_format_info(buffer_info.color_format);
+
+      if (!format_info.supported) {
+        oss << "<Unsupported color format for data display: "
+            << magic_enum::enum_name(buffer_info.color_format) << ">";
+      } else if (frame->storage_type() != nvidia::gxf::MemoryStorageType::kHost &&
+                 frame->storage_type() != nvidia::gxf::MemoryStorageType::kSystem &&
+                 frame->storage_type() != nvidia::gxf::MemoryStorageType::kCudaManaged &&
+                 frame->storage_type() != nvidia::gxf::MemoryStorageType::kDevice) {
+        oss << "<Unsupported memory storage type for data display: "
+            << magic_enum::enum_name(frame->storage_type()) << ">";
+      } else {
+        // Show first few pixels
+        size_t max_pixels = static_cast<size_t>(max_elements_.get());
+        size_t total_pixels = buffer_info.width * buffer_info.height;
+        size_t pixels_to_show = std::min(total_pixels, max_pixels);
+
+        // Determine element size based on data type
+        size_t element_size = 1;
+        switch (format_info.element_type) {
+          case VideoElementType::kUINT8:
+            element_size = sizeof(uint8_t);
+            break;
+          case VideoElementType::kUINT16:
+            element_size = sizeof(uint16_t);
+            break;
+          case VideoElementType::kUINT32:
+            element_size = sizeof(uint32_t);
+            break;
+          case VideoElementType::kFLOAT32:
+            element_size = sizeof(float);
+            break;
+          case VideoElementType::kFLOAT64:
+            element_size = sizeof(double);
+            break;
+        }
+
+        const void* data_ptr;
+        std::vector<uint8_t> host_data;  // Only used for CUDA device memory
+        bool is_device_memory = frame->storage_type() == nvidia::gxf::MemoryStorageType::kDevice;
+        bool is_cuda_managed =
+            frame->storage_type() == nvidia::gxf::MemoryStorageType::kCudaManaged;
+        if (is_device_memory || is_cuda_managed) {
+          // For CUDA device memory, copy only the data we need to show
+          size_t bytes_to_copy = pixels_to_show * format_info.channels * element_size;
+          host_data.resize(bytes_to_copy);
+          cudaError_t result = HOLOSCAN_CUDA_CALL(
+              cudaMemcpy(host_data.data(),
+                         frame->pointer(),
+                         bytes_to_copy,
+                         is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
+          if (cudaSuccess != result) {
+            HOLOSCAN_LOG_ERROR(
+                "Copy of GPU video buffer data back to host failed... cannot log the data values");
+            oss << "...cudaMemcpy error...]";
+            return oss.str();
+          }
+          data_ptr = host_data.data();
+        } else {
+          // For host-accessible memory, directly access the data pointer
+          data_ptr = frame->pointer();
+        }
+
+        // serialize the pixel data
+        oss << serialize_pixel_data(
+            data_ptr, format_info.element_type, format_info.channels, pixels_to_show, total_pixels);
+      }
+    }
+  } else {
+    // Multi-plane formats not supported for data logging
+    if (log_video_buffer_content_.get()) {
+      oss << ", data=<Multi-plane formats not supported for data display>";
+    }
+  }
+
+  oss << ")";
+  return oss.str();
+}
+
+SimpleTextSerializer::VideoFormatInfo SimpleTextSerializer::get_video_format_info(
+    nvidia::gxf::VideoFormat format) const {
+  VideoFormatInfo info{0, VideoElementType::kUINT8, false};
+
+  switch (format) {
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR:
+      info.channels = 3;
+      info.element_type = VideoElementType::kUINT8;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB16:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR16:
+      info.channels = 3;
+      info.element_type = VideoElementType::kUINT16;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB32:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR32:
+      info.channels = 3;
+      info.element_type = VideoElementType::kUINT32;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBA:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRA:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ARGB:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_ABGR:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBX:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGRX:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XRGB:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_XBGR:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBD8:
+      info.channels = 4;
+      info.element_type = VideoElementType::kUINT8;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBD16:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RAW16_RGGB:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RAW16_BGGR:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RAW16_GRBG:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RAW16_GBRG:
+      info.channels = 4;
+      info.element_type = VideoElementType::kUINT16;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGBD32:
+      info.channels = 4;
+      info.element_type = VideoElementType::kUINT32;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY:
+      info.channels = 1;
+      info.element_type = VideoElementType::kUINT8;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY16:
+      info.channels = 1;
+      info.element_type = VideoElementType::kUINT16;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY32:
+      info.channels = 1;
+      info.element_type = VideoElementType::kUINT32;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_GRAY32F:
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D32F:
+      info.channels = 1;
+      info.element_type = VideoElementType::kFLOAT32;
+      info.supported = true;
+      break;
+    case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_D64F:
+      info.channels = 1;
+      info.element_type = VideoElementType::kFLOAT64;
+      info.supported = true;
+      break;
+    default:
+      info.channels = 0;
+      info.element_type = VideoElementType::kUINT8;
+      info.supported = false;
+      break;
+  }
+
+  return info;
+}
+
+std::string SimpleTextSerializer::serialize_pixel_data(const void* data_ptr,
+                                                       VideoElementType element_type, int channels,
+                                                       size_t pixels_to_show,
+                                                       size_t total_pixels) const {
+  std::ostringstream oss;
+  oss << "[";
+
+  // Templated helper function to print pixel values efficiently
+  auto print_pixels_typed = [&](auto typed_data_ptr) {
+    using T = std::remove_pointer_t<std::decay_t<decltype(typed_data_ptr)>>;
+    for (size_t pixel = 0; pixel < pixels_to_show; ++pixel) {
+      if (pixel > 0)
+        oss << ", ";
+
+      if (channels == 1) {
+        // Grayscale
+        if constexpr (std::is_same_v<T, uint8_t>) {
+          oss << static_cast<unsigned int>(typed_data_ptr[pixel]);
+        } else if constexpr (std::is_floating_point_v<T>) {
+          oss << std::fixed << std::setprecision(6) << std::showpoint << typed_data_ptr[pixel];
+        } else {
+          oss << typed_data_ptr[pixel];
+        }
+      } else {
+        // RGB or RGBA
+        oss << "(";
+        for (int c = 0; c < channels; ++c) {
+          if (c > 0)
+            oss << ",";
+          if constexpr (std::is_same_v<T, uint8_t>) {
+            oss << static_cast<unsigned int>(typed_data_ptr[pixel * channels + c]);
+          } else if constexpr (std::is_floating_point_v<T>) {
+            oss << std::fixed << std::setprecision(6) << std::showpoint
+                << typed_data_ptr[pixel * channels + c];
+          } else {
+            oss << typed_data_ptr[pixel * channels + c];
+          }
+        }
+        oss << ")";
+      }
+    }
+  };  // NOLINT(readability/braces)
+
+  // Dispatch to the appropriate templated function based on element type
+  switch (element_type) {
+    case VideoElementType::kUINT8:
+      print_pixels_typed(static_cast<const uint8_t*>(data_ptr));
+      break;
+    case VideoElementType::kUINT16:
+      print_pixels_typed(static_cast<const uint16_t*>(data_ptr));
+      break;
+    case VideoElementType::kUINT32:
+      print_pixels_typed(static_cast<const uint32_t*>(data_ptr));
+      break;
+    case VideoElementType::kFLOAT32:
+      print_pixels_typed(static_cast<const float*>(data_ptr));
+      break;
+    case VideoElementType::kFLOAT64:
+      print_pixels_typed(static_cast<const double*>(data_ptr));
+      break;
+  }
+
+  if (total_pixels > static_cast<size_t>(max_elements_.get())) {
+    oss << ", ... (" << (total_pixels - static_cast<size_t>(max_elements_.get()))
+        << " more pixels)";
+  }
+  oss << "]";
+
   return oss.str();
 }
 

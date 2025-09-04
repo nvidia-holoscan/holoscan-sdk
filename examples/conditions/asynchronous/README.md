@@ -29,7 +29,7 @@ Then, run the following command.
 
 ```bash
 # C++
-./examples/ping_async/cpp/ping_async
+./examples/conditions/asynchronous/cpp/ping_async
 ```
 
 The three boolean values in the YAML file can be set as desired to control which operators run
@@ -38,15 +38,15 @@ asynchronously and whether the multi-threaded scheduler is used.
 For example, to run with asynchronous receive and asynchronous transmit operators with the multi-threaded scheduler.
 
 ```bash
-sed -i -e 's#^async_receive:.*#async_receive: true#' ./examples/ping_async/cpp/ping_async.yaml
-sed -i -e 's#^async_transmit:.*#async_transmit: true#' ./examples/ping_async/cpp/ping_async.yaml
-sed -i -e 's#^multithreaded:.*#multithreaded: true#' ./examples/ping_async/cpp/ping_async.yaml
-./examples/ping_async/cpp/ping_async
+sed -i -e 's#^async_receive:.*#async_receive: true#' ./examples/conditions/asynchronous/cpp/ping_async.yaml
+sed -i -e 's#^async_transmit:.*#async_transmit: true#' ./examples/conditions/asynchronous/cpp/ping_async.yaml
+sed -i -e 's#^multithreaded:.*#multithreaded: true#' ./examples/conditions/asynchronous/cpp/ping_async.yaml
+./examples/conditions/asynchronous/cpp/ping_async
 ```
 
 # Python
 ```bash
-python ./examples/ping_async/python/ping_async.py
+python ./examples/conditions/asynchronous/python/ping_async.py
 ```
 
 By default, both transmit and receive are asynchronous. To see the available options run the
@@ -56,7 +56,7 @@ For example, to send 5 messages, waiting 500 ms between messages and use async t
 synchronous receive:
 
 ```bash
-python ./examples/ping_async/python/ping_async.py --delay=500 --count=5 --sync_rx
+python ./examples/conditions/asynchronous/python/ping_async.py --delay=500 --count=5 --sync_rx
 ```
 
 > ℹ️ Python apps can run outside those folders if `HOLOSCAN_INPUT_PATH` is set in your environment (automatically done by `./run launch`).

@@ -36,6 +36,13 @@
 #include "./component.hpp"
 #include "./resource.hpp"
 
+namespace holoscan {
+
+// Forward declaration
+class Clock;
+
+}  // namespace holoscan
+
 #define HOLOSCAN_SCHEDULER_FORWARD_TEMPLATE()                                                     \
   template <typename ArgT,                                                                        \
             typename... ArgsT,                                                                    \
@@ -227,6 +234,13 @@ class Scheduler : public Component {
   std::unordered_map<std::string, std::shared_ptr<Resource>>& resources() { return resources_; }
 
   /**
+   * @brief Get the Clock used by the scheduler.
+   *
+   * @return The Clock used by the scheduler.
+   */
+  virtual std::shared_ptr<Clock> clock() = 0;
+
+  /**
    * @brief Define the scheduler specification.
    *
    * @param spec The reference to the component specification.
@@ -248,10 +262,10 @@ class Scheduler : public Component {
    */
   YAML::Node to_yaml_node() const override;
 
- protected:
-  /// Reset the GXF GraphEntity of any components associated with the scheduler
-  void reset_graph_entities() override;
+  /// Reset any backend-specific objects
+  void reset_backend_objects() override;
 
+ protected:
   std::unordered_map<std::string, std::shared_ptr<Resource>>
       resources_;  ///< The resources used by the scheduler.
 };

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,7 +14,6 @@
 # limitations under the License.
 
 if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
-    find_package(CUDAToolkit)
     configure_file(target.yaml.in target.yaml @ONLY)
     configure_file(ping_installable.yaml.in ping_installable.yaml @ONLY)
 

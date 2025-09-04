@@ -102,11 +102,13 @@ def filter_archs_for_platform(archs: list[str]) -> list[str]:
 
     # Potential iGPU architectures (adjust if necessary for future hardware)
     igpu_archs: set[str] = {
-        "72",
-        "87",
-        "101",
-        "101a",
-    }  # Xavier, Orin, Thor, DGX Spark (placeholders)
+        "72",  # Xavier
+        "87",  # Orin
+        "88",  # Switch 2
+        "101",  # Thor (< cu13, deprecated)
+        "110",  # Thor (>= cu13)
+        "121",  # DGX Spark
+    }
 
     # Log iGPU architectures to be removed
     if removed_igpus := list(set(archs) & igpu_archs):
@@ -119,17 +121,19 @@ def filter_archs_for_platform(archs: list[str]) -> list[str]:
     return filtered_list
 
 
-def filter_feature_specific_archs(archs: list[str]) -> list[str]:
-    """Filters out architectures like sm_89 and those with 'a' or 'f' suffixes by default.
+def remove_excluded_archs(archs: list[str]) -> list[str]:
+    """Filters out unwanted architectures."""
 
-    sm_89 is excluded based on information like that found in PyTorch discussions
-    (e.g., https://github.com/pytorch/pytorch/issues/152690#issuecomment-2847723785),
-    where it's noted that sm_89 is SASS compatible with sm_86 and typically only
-    required for specific features like FP8.
-    Architectures with 'a' or 'f' suffixes usually denote specific hardware
-    sub-variants not intended for a general 'all' selection.
-    """
-    excluded_values: tuple[str, ...] = "89"
+    # sm_88 is Nintendo Switch 2. No need to support it.
+    # sm_89 is excluded based on information like that found in PyTorch discussions
+    #   (e.g., https://github.com/pytorch/pytorch/issues/152690#issuecomment-2847723785),
+    #   where it's noted that sm_89 is SASS compatible with sm_86 and typically only
+    #   required for specific features like FP8.
+    # sm_101 is deprecated, sm_110 should be used for Thor.
+    # sm_121 (Spark) is excluded because it's the exact same binary as sm_120.
+    excluded_values: tuple[str, ...] = ("88", "89", "101", "121")
+    # Architectures with 'a' or 'f' suffixes denote specific hardware sub-variants
+    # not intended for a general 'all' selection.
     excludes_suffixes: tuple[str, ...] = ("a", "f")
 
     filtered_archs: list[str] = []
@@ -145,9 +149,9 @@ def filter_feature_specific_archs(archs: list[str]) -> list[str]:
 
     if excluded_archs:
         removed_str = ", ".join(sorted(excluded_archs, key=get_arch_sort_key))
-        logging.debug(f"Removed feature-specific targets: {removed_str}")
+        logging.debug(f"Removed unwanted architectures: {removed_str}")
 
-    logging.debug(f"Non-feature-specific architectures: {', '.join(filtered_archs)}")
+    logging.debug(f"Filtered architectures: {', '.join(filtered_archs)}")
     return filtered_archs
 
 
@@ -163,9 +167,9 @@ def validate_user_archs(
     nvcc_supported_archs: list[str],
     min_filtered_archs: list[str],
     platform_filtered_archs: list[str],
-    non_specific_archs: list[str],
+    final_filtered_archs: list[str],
     min_arch_value: int | None,
-    allow_specific_archs: bool,
+    force: bool,
 ) -> list[str]:
     """Validates user-provided architectures against supported and filtered lists."""
     if not user_archs:
@@ -174,9 +178,9 @@ def validate_user_archs(
     nvcc_supported_set = set(nvcc_supported_archs)
     min_filtered_set = set(min_filtered_archs)
     platform_filtered_set = set(platform_filtered_archs)
-    non_specific_set = set(non_specific_archs)
+    final_filtered_set = set(final_filtered_archs)
 
-    final_valid_archs = platform_filtered_set if allow_specific_archs else non_specific_set
+    final_valid_archs = platform_filtered_set if force else final_filtered_set
     final_valid_archs_str = ", ".join(sorted(list(final_valid_archs), key=get_arch_sort_key))
     if not final_valid_archs_str:
         final_valid_archs_str = "<None>"
@@ -198,14 +202,21 @@ def validate_user_archs(
                 f"Requested architecture '{arch}' corresponds to an iGPU not supported "
                 f"on this platform (x86_64). Valid architectures: {final_valid_archs_str}"
             )
-        if arch not in non_specific_set:
+        if arch not in final_filtered_set:
             # Prepare reason for specific architecture exclusion
             reason = ""
-            if arch == "89":
+            if arch == "88":
+                reason = "is Nintendo Switch 2, which is not supported"
+            elif arch == "89":
                 reason = (
                     "is typically only needed for fp8 support, sm_86 is compatible on "
-                    "Ada Lovelace for general usecases"
+                    "Ada Lovelace for general usecases. It is recommended to only use it for "
+                    "specific cuda kernels that could need said features instead of globally."
                 )
+            elif arch == "101":
+                reason = "is deprecated, sm_110 should be used for Thor"
+            elif arch == "121":
+                reason = "is exactly the same binary as sm_120"
             else:
                 variant_type = (
                     "family-"
@@ -215,19 +226,20 @@ def validate_user_archs(
                     else ""
                 )
                 reason = (
-                    f"is a {variant_type}variant needed for features "
-                    "which are not generally needed for all cuda kernels"
+                    f"is a {variant_type}variant needed for features which are not generally "
+                    "needed for all cuda kernels. It is recommended to only use it for "
+                    "specific cuda kernels that could need said features instead of globally."
                 )
-            if not allow_specific_archs:
+            if not force:
                 die(
                     f"Requested architecture '{arch}' is filtered out by default as it {reason} "
-                    f"\nUse --allow-specific-archs to allow it."
+                    f"\nUse --force to allow it."
                     f"\nValid architectures: {final_valid_archs_str}"
                 )
             else:
                 logging.warning(
                     f"Requested architecture '{arch}' {reason}. It is recommended to only use it "
-                    f"for specific cuda kernels that need said features instead of globally."
+                    f"for specific cuda kernels that could need said features instead of globally."
                 )
         validated_user_archs.append(arch)
     return validated_user_archs
@@ -291,7 +303,7 @@ def main() -> None:
         "--verbose", "-v", action="store_true", help="Enable verbose debug logging to stderr."
     )
     parser.add_argument(
-        "--allow-specific-archs",
+        "--force",
         "-f",
         action="store_true",
         help=(
@@ -335,15 +347,15 @@ def main() -> None:
     nvcc_supported_archs = get_nvcc_archs(nvcc_path)
     min_filtered_archs = filter_archs_with_min_arch(nvcc_supported_archs, args.min_arch)
     platform_filtered_archs = filter_archs_for_platform(min_filtered_archs)
-    non_specific_archs = filter_feature_specific_archs(platform_filtered_archs)
+    final_filtered_archs = remove_excluded_archs(platform_filtered_archs)
 
     # Filter based on requested architectures
     target_archs: list[str] = []
     if req_lower == "all":
-        target_archs = non_specific_archs
+        target_archs = final_filtered_archs
         logging.debug(f"Using all default-filtered CUDA architectures: {', '.join(target_archs)}")
     elif req_lower == "all-major":
-        target_archs = filter_major_archs(non_specific_archs)
+        target_archs = filter_major_archs(final_filtered_archs)
     else:
         user_archs = parse_requested_archs(args.requested_archs)
         target_archs = validate_user_archs(
@@ -351,9 +363,9 @@ def main() -> None:
             nvcc_supported_archs,
             min_filtered_archs,
             platform_filtered_archs,
-            non_specific_archs,
+            final_filtered_archs,
             args.min_arch,
-            args.allow_specific_archs,
+            args.force,
         )
 
     # Error if no valid architectures
@@ -361,7 +373,7 @@ def main() -> None:
         error_msg = (
             f"No valid CUDA architectures could be determined for request '{args.requested_archs}' "
             f"with current filters (min_arch={args.min_arch}, platform={platform.machine()}, "
-            f"allow_specific_archs={args.allow_specific_archs})."
+            f"force={args.force})."
         )
         die(error_msg)
 

@@ -32,28 +32,31 @@ constexpr int32_t kDefaultDeviceId = 0;
 
 BlockMemoryPool::BlockMemoryPool(const std::string& name, nvidia::gxf::BlockMemoryPool* component)
     : Allocator(name, component) {
+  if (!component) {
+    throw std::invalid_argument("BlockMemoryPool component cannot be null");
+  }
   auto maybe_storage_type = component->getParameter<int32_t>("storage_type");
   if (!maybe_storage_type) {
-    throw std::runtime_error("Failed to get storage_type");
+    throw std::runtime_error("Failed to get storage_type parameter from GXF BlockMemoryPool");
   }
   storage_type_ = maybe_storage_type.value();
 
   auto maybe_block_size = component->getParameter<uint64_t>("block_size");
   if (!maybe_block_size) {
-    throw std::runtime_error("Failed to get block_size");
+    throw std::runtime_error("Failed to get block_size parameter from GXF BlockMemoryPool");
   }
   block_size_ = maybe_block_size.value();
 
   auto maybe_num_blocks = component->getParameter<uint64_t>("num_blocks");
   if (!maybe_num_blocks) {
-    throw std::runtime_error("Failed to get num_blocks");
+    throw std::runtime_error("Failed to get num_blocks parameter from GXF BlockMemoryPool");
   }
   num_blocks_ = maybe_num_blocks.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
   if (!maybe_gpu_device) {
-    throw std::runtime_error("Failed to get dev_id");
+    throw std::runtime_error("Failed to get dev_id parameter from GXF BlockMemoryPool");
   }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();

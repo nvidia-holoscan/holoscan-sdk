@@ -231,6 +231,32 @@ TEST(PoseTree, create_frames) {
   ASSERT_EQ(pg.create_frame().error(), PoseTree::Error::kOutOfMemory);
 }
 
+TEST(PoseTree, set_multithreading_info) {
+  PoseTree pg;
+  ASSERT_TRUE(pg.init(8, 256, 1024, 4, 4, 4, 4));
+  ASSERT_TRUE(pg.set_multithreading_info(42, 15));
+  for (int i = 0; i < 8; i++) {
+    auto uid = pg.create_frame();
+    ASSERT_TRUE(uid);
+    EXPECT_EQ(uid.value(), 42 + i * 15);
+  }
+}
+
+TEST(PoseTree, create_frame_with_id) {
+  PoseTree pg;
+  ASSERT_TRUE(pg.init(8, 256, 1024, 4, 4, 4, 4));
+  ASSERT_EQ(pg.create_frame_with_id(42, "a"), 42);
+  ASSERT_EQ(pg.create_frame_with_id(2, "b"), 2);
+  ASSERT_EQ(pg.create_frame_with_id(23, "c"), 23);
+  ASSERT_EQ(pg.create_frame_with_id(4, "d"), 4);
+  ASSERT_EQ(pg.create_frame("e"), 1);
+  ASSERT_EQ(pg.create_frame("f"), 3);
+  ASSERT_EQ(pg.create_frame("g"), 5);
+  ASSERT_FALSE(pg.create_frame_with_id(1, "h"));
+  ASSERT_EQ(pg.create_frame("h"), 6);
+  ASSERT_EQ(pg.create_frame("z").error(), PoseTree::Error::kOutOfMemory);
+}
+
 TEST(PoseTree, create_edges) {
   PoseTree pg;
   ASSERT_TRUE(pg.init(8, 256, 1024, 4, 4, 1, 1));

@@ -53,16 +53,16 @@ class AsyncConsoleBackend : public AsyncDataLoggerBackend {
   std::string get_statistics() const override;
 
   // Configuration methods
-  void set_log_metadata(bool enable) { log_metadata_ = enable; }
-  void set_log_tensor_data_content(bool enable) { log_tensor_data_content_ = enable; }
+  void set_log_metadata(bool enable) { log_metadata_.store(enable); }
+  void set_log_tensor_data_content(bool enable) { log_tensor_data_content_.store(enable); }
 
  private:
   std::shared_ptr<SimpleTextSerializer> serializer_;
-  std::atomic<size_t> entries_written_{0};
-  std::atomic<size_t> large_entries_written_{0};
+  std::atomic<uint64_t> entries_written_{0};
+  std::atomic<uint64_t> large_entries_written_{0};
   std::atomic<bool> initialized_{false};
-  bool log_metadata_{true};
-  bool log_tensor_data_content_{false};
+  std::atomic<bool> log_metadata_{true};
+  std::atomic<bool> log_tensor_data_content_{true};
 
   /**
    * @brief Format and log a data entry (metadata)

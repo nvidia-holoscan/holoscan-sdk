@@ -54,6 +54,7 @@ struct PoseTreeUCXServer::ServerImpl {
   std::list<std::unique_ptr<ClientSession>> clients;
   std::mutex clients_mtx;
   int next_client_id{0};
+  int64_t maximum_clients_;
 
   struct PendingRequest {
     std::shared_ptr<ucxx::Request> request;
@@ -154,6 +155,7 @@ struct PoseTreeUCXServer::ServerImpl {
     void handle_subscribe(bool want_snap);
     void handle_delta_message(const DeltaMessage& delta_msg);
     void send_snapshot();
+    void send_config();
 
     std::shared_ptr<ucxx::Endpoint> ep_;
     ServerImpl* server_impl_;
@@ -172,11 +174,14 @@ struct PoseTreeUCXServer::ServerImpl {
   }
 };
 
+// NOLINTBEGIN(whitespace/indent_namespace)
 PoseTreeUCXServer::ServerImpl::ClientSession::ClientSession(
     std::shared_ptr<ucxx::Endpoint> ep, PoseTreeUCXServer::ServerImpl* server_impl, int client_id)
     : ep_{std::move(ep)}, server_impl_{server_impl}, client_id_{client_id} {}
+// NOLINTEND(whitespace/indent_namespace)
 
 void PoseTreeUCXServer::ServerImpl::ClientSession::handle_subscribe(bool want_snap) {
+  send_config();
   if (want_snap) {
     send_snapshot();
   }
@@ -185,7 +190,7 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_subscribe(bool want_sn
 void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
     const DeltaMessage& delta_msg) {
   std::string frame_name_str;
-  holoscan::PoseTree::frame_t new_frame_id;
+  holoscan::PoseTree::frame_t frame_id;
   bool frame_created = false;
 
   holoscan::PoseTree::frame_t lhs, rhs;
@@ -199,12 +204,13 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
   switch (delta_msg.delta_type) {
     case DELTA_FRAME_CREATED: {
       frame_name_str = delta_msg.data.frame_data.name;
+      frame_id = delta_msg.data.frame_data.frame_id;
 
       auto find_result = server_impl_->pose_tree->find_frame(frame_name_str);
       if (!find_result.has_value()) {
-        auto result = server_impl_->pose_tree->create_frame(frame_name_str);
+        auto result = server_impl_->pose_tree->create_frame_with_id(frame_id, frame_name_str);
         if (result) {
-          new_frame_id = result.value();
+          frame_id = result.value();
           frame_created = true;
         }
       }
@@ -230,7 +236,7 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
   }
 
   if (frame_created) {
-    server_impl_->broadcast_frame_created(new_frame_id, frame_name_str, this);
+    server_impl_->broadcast_frame_created(frame_id, frame_name_str, this);
   }
   if (edge_set) {
     server_impl_->broadcast_edge_set(lhs, rhs, time, pose, this);
@@ -274,9 +280,23 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::send_snapshot() {
   auto buf = std::make_shared<std::vector<char>>(serialize_snapshot(frames, edges));
   ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_SNAPSHOT_DATA);
   auto request = ep_->amSend(buf->data(), buf->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
-  server_impl_->addPendingRequest(request, client_id_, buf, ep_);
+  server_impl_->addPendingRequest(std::move(request), client_id_, buf, ep_);
   HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: send_snapshot: frames.size() = {}", frames.size());
   HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: send_snapshot: edges.size() = {}", edges.size());
+}
+
+void PoseTreeUCXServer::ServerImpl::ClientSession::send_config() {
+  DistributedConfig msg;
+  msg.start_frame_id = client_id_ + 1;
+  msg.increment = server_impl_->maximum_clients_;
+
+  auto msg_buffer = std::make_shared<std::vector<char>>(sizeof(msg));
+  std::memcpy(msg_buffer->data(), &msg, sizeof(msg));
+
+  ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_DISTRIBUTED_CONFIG);
+  auto request =
+      ep_->amSend(msg_buffer->data(), msg_buffer->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
+  server_impl_->addPendingRequest(std::move(request), client_id_, msg_buffer, ep_);
 }
 
 void PoseTreeUCXServer::ServerImpl::broadcast_frame_created(holoscan::PoseTree::frame_t frame_id,
@@ -304,7 +324,7 @@ void PoseTreeUCXServer::ServerImpl::broadcast_frame_created(holoscan::PoseTree::
                        client->client_id_);
     auto request = client->ep_->amSend(
         msg_buffer->data(), msg_buffer->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
-    addPendingRequest(request, client->client_id_, msg_buffer, client->ep_);
+    addPendingRequest(std::move(request), client->client_id_, msg_buffer, client->ep_);
   }
 }
 
@@ -336,7 +356,7 @@ void PoseTreeUCXServer::ServerImpl::broadcast_edge_set(holoscan::PoseTree::frame
     HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: Broadcasting edge set to client {}", client->client_id_);
     auto request = client->ep_->amSend(
         msg_buffer->data(), msg_buffer->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
-    addPendingRequest(request, client->client_id_, msg_buffer, client->ep_);
+    addPendingRequest(std::move(request), client->client_id_, msg_buffer, client->ep_);
   }
 }
 
@@ -366,6 +386,7 @@ PoseTreeUCXServer::PoseTreeUCXServer(std::shared_ptr<PoseTree> pose_tree,
                    pose_tree_init_params_.history_chunk_size);
   impl_->pose_tree = pose_tree_;
   impl_->pose_tree_init_params = pose_tree_init_params_;
+  impl_->maximum_clients_ = config_.maximum_clients;
 }
 PoseTreeUCXServer::~PoseTreeUCXServer() {
   if (running_) {  // best-effort safety net
@@ -518,14 +539,16 @@ void PoseTreeUCXServer::run() {
 
   ucxx::AmReceiverCallbackInfo subscribe_callback_info("AMServer", MSG_SUBSCRIBE);
   impl_->worker->registerAmReceiverCallback(
-      subscribe_callback_info,
-      [am_receiver](auto req, auto ep) { am_receiver(req, ep, MSG_SUBSCRIBE); });
+      std::move(subscribe_callback_info),
+      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_SUBSCRIBE); });
   ucxx::AmReceiverCallbackInfo delta_callback_info("AMServer", MSG_DELTA);
   impl_->worker->registerAmReceiverCallback(
-      delta_callback_info, [am_receiver](auto req, auto ep) { am_receiver(req, ep, MSG_DELTA); });
+      std::move(delta_callback_info),
+      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_DELTA); });
   ucxx::AmReceiverCallbackInfo close_callback_info("AMServer", MSG_CLOSE);
   impl_->worker->registerAmReceiverCallback(
-      close_callback_info, [am_receiver](auto req, auto ep) { am_receiver(req, ep, MSG_CLOSE); });
+      std::move(close_callback_info),
+      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_CLOSE); });
 
   {
     std::lock_guard<std::mutex> lk(ready_mutex_);
@@ -548,7 +571,7 @@ void PoseTreeUCXServer::run() {
       for (auto& client : impl_->clients) {
         if (!client->disconnected_) {
           auto request = client->ep_->amSend(nullptr, 0, UCS_MEMORY_TYPE_HOST, close_info);
-          impl_->addPendingRequest(request, client->client_id_, nullptr, client->ep_);
+          impl_->addPendingRequest(std::move(request), client->client_id_, nullptr, client->ep_);
         }
       }
     }

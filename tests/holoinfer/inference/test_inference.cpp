@@ -152,114 +152,114 @@ void HoloInferTests::inference_tests() {
       status, test_module, 16, test_identifier_infer.at(16), HoloInfer::holoinfer_code::H_ERROR);
   inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
 
-  if (use_onnxruntime) {
-    backend = "onnxrt";
+#if defined(HOLOINFER_ORT_ENABLED)
+  backend = "onnxrt";
 
-    // Test: ONNX backend, Basic parallel end-to-end cuda inference
-    input_on_cuda = true;
-    output_on_cuda = true;
-    infer_on_cpu = false;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     34,
-                     test_identifier_infer.at(34),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Basic parallel end-to-end cuda inference
+  input_on_cuda = true;
+  output_on_cuda = true;
+  infer_on_cpu = false;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    34,
+                    test_identifier_infer.at(34),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Input on host, cuda inference
-    input_on_cuda = false;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     35,
-                     test_identifier_infer.at(35),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Input on host, cuda inference
+  input_on_cuda = false;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    35,
+                    test_identifier_infer.at(35),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Output on host, cuda inference
-    input_on_cuda = true;
-    output_on_cuda = false;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     36,
-                     test_identifier_infer.at(36),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Output on host, cuda inference
+  input_on_cuda = true;
+  output_on_cuda = false;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    36,
+                    test_identifier_infer.at(36),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Basic parallel inference on CPU
-    input_on_cuda = false;
-    output_on_cuda = false;
-    infer_on_cpu = true;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     17,
-                     test_identifier_infer.at(17),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Basic parallel inference on CPU
+  input_on_cuda = false;
+  output_on_cuda = false;
+  infer_on_cpu = true;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    17,
+                    test_identifier_infer.at(17),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Input and output on device, CPU inference
-    input_on_cuda = true;
-    output_on_cuda = true;
-    infer_on_cpu = true;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     37,
-                     test_identifier_infer.at(37),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Input and output on device, CPU inference
+  input_on_cuda = true;
+  output_on_cuda = true;
+  infer_on_cpu = true;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    37,
+                    test_identifier_infer.at(37),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Basic sequential inference on CPU
-    input_on_cuda = false;
-    output_on_cuda = false;
-    parallel_inference = false;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     18,
-                     test_identifier_infer.at(18),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Basic sequential inference on CPU
+  input_on_cuda = false;
+  output_on_cuda = false;
+  parallel_inference = false;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    18,
+                    test_identifier_infer.at(18),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Basic sequential inference on GPU
-    infer_on_cpu = false;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     19,
-                     test_identifier_infer.at(19),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Basic sequential inference on GPU
+  infer_on_cpu = false;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    19,
+                    test_identifier_infer.at(19),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Basic parallel inference on GPU
-    parallel_inference = true;
-    status = prepare_for_inference();
-    status = do_inference();
-    holoinfer_assert(status,
-                     test_module,
-                     20,
-                     test_identifier_infer.at(20),
-                     HoloInfer::holoinfer_code::H_SUCCESS);
+  // Test: ONNX backend, Basic parallel inference on GPU
+  parallel_inference = true;
+  status = prepare_for_inference();
+  status = do_inference();
+  holoinfer_assert(status,
+                    test_module,
+                    20,
+                    test_identifier_infer.at(20),
+                    HoloInfer::holoinfer_code::H_SUCCESS);
 
-    // Test: ONNX backend, Empty host input
-    dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
-    inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(0);
-    status = do_inference();
-    holoinfer_assert(
-        status, test_module, 21, test_identifier_infer.at(21), HoloInfer::holoinfer_code::H_ERROR);
-    inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
+  // Test: ONNX backend, Empty host input
+  dbs = inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->size();
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(0);
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 21, test_identifier_infer.at(21), HoloInfer::holoinfer_code::H_ERROR);
+  inference_specs_->data_per_tensor_.at("m1_pre_proc")->host_buffer_->resize(dbs);
 
-    // Test: ONNX backend, Empty host output
-    dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
-    inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(0);
-    status = do_inference();
-    holoinfer_assert(
-        status, test_module, 22, test_identifier_infer.at(22), HoloInfer::holoinfer_code::H_ERROR);
-    inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
-  }
+  // Test: ONNX backend, Empty host output
+  dbs = inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->size();
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(0);
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 22, test_identifier_infer.at(22), HoloInfer::holoinfer_code::H_ERROR);
+  inference_specs_->output_per_model_.at("m2_infer")->host_buffer_->resize(dbs);
+#endif
 
   // Multi-GPU tests
   cudaDeviceProp device_prop;
@@ -391,90 +391,90 @@ void HoloInferTests::inference_tests() {
   in_tensor_dimensions["m1_pre_proc"] = original_dim;
   in_tensor_dimensions["m2_pre_proc"] = original_dim;
 
-  if (use_torch) {
-    auto backup_path_map = std::move(model_path_map);
-    auto backup_pre_map = std::move(pre_processor_map);
-    auto backup_infer_map = std::move(inference_map);
-    auto backup_in_tensor_dimensions = std::move(in_tensor_dimensions);
-    auto backup_device_map = std::move(device_map);
-    auto backup_out_tensor_names = std::move(out_tensor_names);
-    auto backup_in_tensor_names = std::move(in_tensor_names);
+#if defined(HOLOINFER_TORCH_ENABLED)
+  auto backup_path_map = std::move(model_path_map);
+  auto backup_pre_map = std::move(pre_processor_map);
+  auto backup_infer_map = std::move(inference_map);
+  auto backup_in_tensor_dimensions = std::move(in_tensor_dimensions);
+  auto backup_device_map = std::move(device_map);
+  auto backup_out_tensor_names = std::move(out_tensor_names);
+  auto backup_in_tensor_names = std::move(in_tensor_names);
 
-    // Test: torch backend, Basic inference
-    backend = "torch";
+  // Test: torch backend, Basic inference
+  backend = "torch";
 
-    std::vector<std::pair<int, std::string>> test_policies = {
-        {38, "simple_policy"},
-        {39, "dict_input_policy"},
-        {40, "list_input_policy"},
-        {41, "tuple_output_policy"},
-        {42, "nested_list_policy"},
-        {43, "nested_dict_policy"},
-        {44, "nested_list_and_dict_policy"},
-        {45, "heterogeneous_io_policy"},
-    };
+  std::vector<std::pair<int, std::string>> test_policies = {
+      {38, "simple_policy"},
+      {39, "dict_input_policy"},
+      {40, "list_input_policy"},
+      {41, "tuple_output_policy"},
+      {42, "nested_list_policy"},
+      {43, "nested_dict_policy"},
+      {44, "nested_list_and_dict_policy"},
+      {45, "heterogeneous_io_policy"},
+  };
 
-    for (const auto& [test_id, policy_name] : test_policies) {
-      in_tensor_dimensions.clear();
-      out_tensor_names.clear();
-      in_tensor_names.clear();
-      std::string model_path = model_folder + "test_torch_backend/" + policy_name + ".pt";
-      std::string policy_yaml = model_folder + "test_torch_backend/" + policy_name + ".yaml";
-      if (!std::filesystem::exists(policy_yaml) || !std::filesystem::exists(model_path)) {
-        HOLOSCAN_LOG_ERROR("Files do not exist: {}", policy_name);
-        holoinfer_assert(HoloInfer::holoinfer_code::H_ERROR,
-                         test_module,
-                         test_id,
-                         test_identifier_infer.at(test_id),
-                         HoloInfer::holoinfer_code::H_SUCCESS);
-        continue;
-      }
-      YAML::Node policy_yaml_node = YAML::LoadFile(policy_yaml);
-
-      for (const auto& input_node : policy_yaml_node["inference"]["input_nodes"]) {
-        std::string node_name = input_node.first.as<std::string>();
-        in_tensor_names.push_back(node_name);
-        // Parse dim string like "2 2" or "3 10 10"
-        std::string dim_str = input_node.second["dim"].as<std::string>();
-        std::vector<int> dimensions;
-
-        if (dim_str.length() > 0) {
-          std::istringstream iss(dim_str);
-          std::string token;
-          while (iss >> token) {
-            int dim_val = std::stoi(token);
-            dimensions.push_back(dim_val);
-          }
-        }
-        in_tensor_dimensions[node_name] = dimensions;
-      }
-
-      for (const auto& output_node : policy_yaml_node["inference"]["output_nodes"]) {
-        out_tensor_names.push_back(output_node.first.as<std::string>());
-      }
-
-      model_path_map = {{policy_name, model_path}};
-      inference_map = {{policy_name, out_tensor_names}};
-      pre_processor_map = {{policy_name, in_tensor_names}};
-      device_map = {};
-
-      status = prepare_for_inference();
-      status = do_inference();
-      holoinfer_assert(status,
-                       test_module,
-                       test_id,
-                       test_identifier_infer.at(test_id),
-                       HoloInfer::holoinfer_code::H_SUCCESS);
+  for (const auto& [test_id, policy_name] : test_policies) {
+    in_tensor_dimensions.clear();
+    out_tensor_names.clear();
+    in_tensor_names.clear();
+    std::string model_path = model_folder + "test_torch_backend/" + policy_name + ".pt";
+    std::string policy_yaml = model_folder + "test_torch_backend/" + policy_name + ".yaml";
+    if (!std::filesystem::exists(policy_yaml) || !std::filesystem::exists(model_path)) {
+      HOLOSCAN_LOG_ERROR("Files do not exist: {}", policy_name);
+      holoinfer_assert(HoloInfer::holoinfer_code::H_ERROR,
+                        test_module,
+                        test_id,
+                        test_identifier_infer.at(test_id),
+                        HoloInfer::holoinfer_code::H_SUCCESS);
+      continue;
     }
-    // Restore all changes to previous state
-    model_path_map = std::move(backup_path_map);
-    pre_processor_map = std::move(backup_pre_map);
-    inference_map = std::move(backup_infer_map);
-    in_tensor_dimensions = std::move(backup_in_tensor_dimensions);
-    device_map = std::move(backup_device_map);
-    out_tensor_names = std::move(backup_out_tensor_names);
-    in_tensor_names = std::move(backup_in_tensor_names);
+    YAML::Node policy_yaml_node = YAML::LoadFile(policy_yaml);
+
+    for (const auto& input_node : policy_yaml_node["inference"]["input_nodes"]) {
+      std::string node_name = input_node.first.as<std::string>();
+      in_tensor_names.push_back(node_name);
+      // Parse dim string like "2 2" or "3 10 10"
+      std::string dim_str = input_node.second["dim"].as<std::string>();
+      std::vector<int> dimensions;
+
+      if (dim_str.length() > 0) {
+        std::istringstream iss(dim_str);
+        std::string token;
+        while (iss >> token) {
+          int dim_val = std::stoi(token);
+          dimensions.push_back(dim_val);
+        }
+      }
+      in_tensor_dimensions[node_name] = dimensions;
+    }
+
+    for (const auto& output_node : policy_yaml_node["inference"]["output_nodes"]) {
+      out_tensor_names.push_back(output_node.first.as<std::string>());
+    }
+
+    model_path_map = {{policy_name, model_path}};
+    inference_map = {{policy_name, out_tensor_names}};
+    pre_processor_map = {{policy_name, in_tensor_names}};
+    device_map = {};
+
+    status = prepare_for_inference();
+    status = do_inference();
+    holoinfer_assert(status,
+                      test_module,
+                      test_id,
+                      test_identifier_infer.at(test_id),
+                      HoloInfer::holoinfer_code::H_SUCCESS);
   }
+  // Restore all changes to previous state
+  model_path_map = std::move(backup_path_map);
+  pre_processor_map = std::move(backup_pre_map);
+  inference_map = std::move(backup_infer_map);
+  in_tensor_dimensions = std::move(backup_in_tensor_dimensions);
+  device_map = std::move(backup_device_map);
+  out_tensor_names = std::move(backup_out_tensor_names);
+  in_tensor_names = std::move(backup_in_tensor_names);
+#endif
 
   // cleaning engine files
   for (const auto& file : std::filesystem::directory_iterator(model_folder)) {

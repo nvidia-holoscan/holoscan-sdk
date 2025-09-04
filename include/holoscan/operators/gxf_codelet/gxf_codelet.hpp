@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,9 +89,9 @@ class GXFCodeletOp : public holoscan::ops::GXFOperator {
 
   void setup(OperatorSpec& spec) override;
 
- protected:
   void set_parameters() override;
 
+ protected:
   std::shared_ptr<gxf::ComponentInfo> gxf_component_info_;  ///< The GXF component info.
   std::list<Parameter<void*>> parameters_;  ///< The fake parameters for the description.
 };

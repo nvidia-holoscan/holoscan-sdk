@@ -52,7 +52,9 @@ namespace data_loggers {
  * - **log_inputs**: bool (optional, default: true)
  * - **log_outputs**: bool (optional, default: true)
  * - **log_metadata**: bool (optional, default: true)
- * - **log_tensor_data_content**: bool (optional, default: false)
+ * - **log_tensor_data_content**: bool (optional, default: true)
+ * - **use_scheduler_clock**: bool (optional, default: false)
+ * - **clock**: std::shared_ptr<Clock> (optional, default: nullptr)
  * - **allowlist_patterns**: std::vector<std::string> (optional, default: empty)
  * - **denylist_patterns**: std::vector<std::string> (optional, default: empty)
  *

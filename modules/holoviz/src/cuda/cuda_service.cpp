@@ -25,9 +25,29 @@
 
 namespace holoscan::viz {
 
+// Green context was introduced with CUDA 12.4, it is not supported by all driver versions.
+// Therefore dynamically get the symbol to avoid runtime link errors when the symbol is not
+// exposed by libcuda.so.
+static CUresult (*fnCuStreamGetGreenCtx)(CUstream, CUgreenCtx*) = nullptr;
+static CUresult (*fnCuCtxFromGreenCtx)(CUcontext*, CUgreenCtx) = nullptr;
+
 static void cu_init() {
   static std::once_flag flag1;
-  std::call_once(flag1, []() { CudaCheck(cuInit(0)); });
+  std::call_once(flag1, []() {
+    CudaCheck(cuInit(0));
+    int driver_version = 0;
+    CudaCheck(cuDriverGetVersion(&driver_version));
+    CudaCheck(cuGetProcAddress("cuStreamGetGreenCtx",
+                               reinterpret_cast<void**>(&fnCuStreamGetGreenCtx),
+                               driver_version,
+                               0,
+                               nullptr));
+    CudaCheck(cuGetProcAddress("cuCtxFromGreenCtx",
+                              reinterpret_cast<void**>(&fnCuCtxFromGreenCtx),
+                              driver_version,
+                              0,
+                              nullptr));
+  });
 }
 
 void cuMemFreeAsyncHelper(const std::pair<CUdeviceptr, CUstream>& args) {
@@ -150,10 +170,22 @@ CudaService::ScopedPush CudaService::PushContext(CUcontext context) {
 }
 
 CUstream CudaService::select_cuda_stream(CUstream stream) {
-  // on single GPU or with special streams we can use the provided stream
-  if (!IsMultiGPU() || (stream == 0) || (stream == CU_STREAM_LEGACY) ||
-      (stream == CU_STREAM_PER_THREAD)) {
-    return stream;
+  // Workaround
+  // Symptom: synchronization with external semaphores fails with CUDA_ERROR_INVALID_HANDLE
+  // when using streams created with a green context.
+  // Cause: External semaphores are not yet supported in green contexts (CUDA 13.0, Bug 5439433).
+  // Solution: Use the internal stream and synchronize with the external green context stream.
+  CUgreenCtx stream_green_context = 0;
+  if (fnCuStreamGetGreenCtx) {
+    CudaCheck(fnCuStreamGetGreenCtx(stream, &stream_green_context));
+  }
+
+  if (!stream_green_context) {
+    // on single GPU or with special streams we can use the provided stream
+    if (!IsMultiGPU() || (stream == 0) || (stream == CU_STREAM_LEGACY) ||
+        (stream == CU_STREAM_PER_THREAD)) {
+      return stream;
+    }
   }
 
   // On MGPU we need to use the internal stream
@@ -165,7 +197,11 @@ CUstream CudaService::select_cuda_stream(CUstream stream) {
   // When recording an event, the event needs to be created with the same context it's recorded
   // with. Therefore get the context from the stream passed in.
   CUcontext stream_context;
-  CudaCheck(cuStreamGetCtx(stream, &stream_context));
+  if (stream_green_context && fnCuCtxFromGreenCtx) {
+    CudaCheck(fnCuCtxFromGreenCtx(&stream_context, stream_green_context));
+  } else {
+    CudaCheck(cuStreamGetCtx(stream, &stream_context));
+  }
 
   {
     // make the stream context current

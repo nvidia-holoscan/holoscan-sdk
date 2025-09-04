@@ -47,20 +47,16 @@ YAML::Node Scheduler::to_yaml_node() const {
   return node;
 }
 
-void Scheduler::reset_graph_entities() {
-  HOLOSCAN_LOG_TRACE("Scheduler '{}'::reset_graph_entities", name_);
+void Scheduler::reset_backend_objects() {
+  HOLOSCAN_LOG_TRACE("Scheduler '{}'::reset_backend_objects", name_);
   for (auto& [_, resource] : resources_) {
     if (resource) {
-      auto gxf_resource = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(resource);
-      if (gxf_resource) {
-        gxf_resource->reset_gxf_graph_entity();
-      }
-      resource->reset_graph_entities();
+      resource->reset_backend_objects();
     }
   }
   // Clear the resources map to enable subsequent executions
   resources_.clear();
-  Component::reset_graph_entities();
+  Component::reset_backend_objects();
 }
 
 }  // namespace holoscan

@@ -558,36 +558,30 @@ Only types registered with the SDK can be specified by name in this third argume
 
 #### Table of types registered by the core SDK
 
-The list of types that are registered with the SDK's `EmitterReceiverRegistry` are given in the table below.
+The list of basic types that are registered with the SDK's `EmitterReceiverRegistry` are given in the {ref}`C++ vs Python types table here<cpp-python-data-type-interop>`. In addition to those basic numeric/string/vector types, there is dedicated handling for the following types.
 
-C++ Type                                               | name in the EmitterReceiverRegistry
--------------------------------------------------------|-------------------------------------------
-holoscan::TensorMap (with single tensor)               | "holoscan::Tensor"
-std::shared_ptr&lt;holoscan::GILGuardedPyObject&gt;    | "PyObject"
-std::string                                            | "std::string"
-pybind11::dict                                         | "pybind11::dict"
-holoscan::gxf::Entity                                  | "holoscan::gxf::Entity"
-holoscan::PyEntity                                     | "holoscan::PyEntity"
-nullptr_t                                              | "nullptr_t"
-CloudPickleSerializedObject                            | "CloudPickleSerializedObject"
-std::array&lt;float, 3&gt;                             | "std::array&lt;float, 3&gt;"
-std::shared_ptr&lt;std::array&lt;float, 16&gt;&gt;     | "std::shared_ptr&lt;std::array&lt;float, 16&gt;&gt;"
-std::shared_ptr&lt;nvidia::gxf::Pose3D&gt;             | "std::shared_ptr&lt;nvidia::gxf::Pose3D&gt;"
-std::vector&lt;holoscan::ops::HolovizOp::InputSpec&gt; | "std::vector&lt;HolovizOp::InputSpec&gt;"
+| C++ Type                                            | name in the EmitterReceiverRegistry |
+| ----------------------------------------------------|-------------------------------------|
+| holoscan::TensorMap (with single tensor)            | "holoscan::Tensor"                  |
+| std::shared_ptr&lt;holoscan::GILGuardedPyObject&gt; | "PyObject"                          |
+| pybind11::dict                                      | "pybind11::dict"                    |
+| holoscan::gxf::Entity                               | "holoscan::gxf::Entity"             |
+| holoscan::PyEntity                                  | "holoscan::PyEntity"                |
+| CloudPickleSerializedObject                         | "CloudPickleSerializedObject"       |
 
 :::{note}
-There is no requirement that the registered name match any particular convention. We generally used
-the C++ type as the name to avoid ambiguity, but that is not required.
+There is no requirement that the registered name match any particular convention. We generally used the C++ type as the name to avoid ambiguity, but that is not required.
 :::
 
 The sections above explain how a `register_types` function can be added to bindings to expand this list. It is also possible to get a list of all currently registered types, including those that have been registered by any additional imported third-party modules. This can be done via.
-
-:::{note}
-For more details on emit/receive behavior for tensor-like types see {ref}`this dedicated section <cpp-python-tensor-interop>`.
-:::
 
 ```py
 from holoscan.core import io_type_registry
 
 print(io_type_registry.registered_types())
 ```
+
+:::{note}
+For more details on emit/receive behavior for tensor-like types see {ref}`this dedicated section <cpp-python-tensor-interop>`.
+:::
+

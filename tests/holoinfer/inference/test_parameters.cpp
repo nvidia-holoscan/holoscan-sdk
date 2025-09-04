@@ -171,7 +171,7 @@ void HoloInferTests::parameter_setup_test() {
   holoinfer_assert(
       status, test_module, 18, test_identifier_params.at(18), HoloInfer::holoinfer_code::H_ERROR);
 
-#if use_torch
+#if defined(HOLOINFER_TORCH_ENABLED)
   // Test: Torch backend, incorrect model file format
   backend = "torch";
   status = create_specifications();
@@ -299,7 +299,7 @@ void HoloInferTests::parameter_setup_test() {
   device_map = std::move(backup_device_map);
 #endif
 
-  if (use_onnxruntime) {
+#if defined(HOLOINFER_ORT_ENABLED)
     // Test: ONNX backend, Input/Output cuda buffer test
     backend = "onnxrt";
     status = create_specifications();
@@ -340,7 +340,7 @@ void HoloInferTests::parameter_setup_test() {
                      23,
                      test_identifier_params.at(23),
                      HoloInfer::holoinfer_code::H_SUCCESS);
-  }
+#endif
 
   // Test: TRT backend, Default check 1
   backend = "trt";

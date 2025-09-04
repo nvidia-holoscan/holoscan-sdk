@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ import pytest
 from holoscan.core import Scheduler
 from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.gxf import GXFScheduler
-from holoscan.resources import ManualClock, RealtimeClock
+from holoscan.resources import ManualClock, RealtimeClock, SyntheticClock
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
 
 
@@ -31,7 +31,7 @@ class TestGreedyScheduler:
         assert isinstance(scheduler, Scheduler)
         assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
-    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
+    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock, SyntheticClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
         name = "greedy-scheduler"
         scheduler = GreedyScheduler(
@@ -46,12 +46,10 @@ class TestGreedyScheduler:
         assert isinstance(scheduler, GXFScheduler)
         assert f"name: {name}" in repr(scheduler)
 
-    def test_clock(self, app):
+    def test_clock_default(self, app):
         scheduler = GreedyScheduler(app)
-        with pytest.raises(RuntimeError) as err:
-            # value will only be initialized by executor once app.run() is called
-            scheduler.clock  # noqa: B018
-        assert "'clock' is not set" in str(err.value)
+        # the default clock is not initialized by the executor until app.run() is called
+        assert scheduler.clock is None
 
     def test_max_duration_ms(self, app):
         scheduler = GreedyScheduler(app)
@@ -84,7 +82,7 @@ class TestMultiThreadScheduler:
         assert isinstance(scheduler, Scheduler)
         assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
-    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
+    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock, SyntheticClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
         name = "multithread-scheduler"
         scheduler = MultiThreadScheduler(
@@ -103,10 +101,8 @@ class TestMultiThreadScheduler:
 
     def test_clock(self, app):
         scheduler = MultiThreadScheduler(app)
-        with pytest.raises(RuntimeError) as err:
-            # value will only be initialized by executor once app.run() is called
-            scheduler.clock  # noqa: B018
-        assert "'clock' is not set" in str(err.value)
+        # the default clock is not initialized by the executor until app.run() is called
+        assert scheduler.clock is None
 
     def test_worker_thread_number(self, app):
         scheduler = MultiThreadScheduler(app)
@@ -146,7 +142,7 @@ class TestEventBasedScheduler:
         assert isinstance(scheduler, Scheduler)
         assert issubclass(ComponentSpecBase, type(scheduler.spec))
 
-    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock])
+    @pytest.mark.parametrize("ClockClass", [ManualClock, RealtimeClock, SyntheticClock])
     def test_init_kwargs(self, app, ClockClass):  # noqa: N803
         name = "event-based-scheduler"
         scheduler = EventBasedScheduler(
@@ -156,6 +152,7 @@ class TestEventBasedScheduler:
             stop_on_deadlock=True,
             max_duration_ms=10000,
             stop_on_deadlock_timeout=10,
+            pin_cores=[0, 1],
             name=name,
         )
         assert isinstance(scheduler, GXFScheduler)
@@ -163,10 +160,8 @@ class TestEventBasedScheduler:
 
     def test_clock(self, app):
         scheduler = EventBasedScheduler(app)
-        with pytest.raises(RuntimeError) as err:
-            # value will only be initialized by executor once app.run() is called
-            scheduler.clock  # noqa: B018
-        assert "'clock' is not set" in str(err.value)
+        # the default clock is not initialized by the executor until app.run() is called
+        assert scheduler.clock is None
 
     def test_worker_thread_number(self, app):
         scheduler = EventBasedScheduler(app)
@@ -179,6 +174,12 @@ class TestEventBasedScheduler:
 
         # max_duration_ms is optional and will report -1 if not set
         assert scheduler.max_duration_ms == -1
+
+    def test_pin_cores(self, app):
+        scheduler = EventBasedScheduler(app)
+
+        # pin_cores is optional and will report an empty list if not set
+        assert scheduler.pin_cores == []
 
     def test_stop_on_deadlock(self, app):
         scheduler = EventBasedScheduler(app)

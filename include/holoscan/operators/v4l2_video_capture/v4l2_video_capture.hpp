@@ -22,6 +22,7 @@
 
 #include <list>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -166,6 +167,9 @@ class V4L2VideoCaptureOp : public Operator {
   };
   /// allocated capture buffers
   std::vector<Buffer> buffers_;
+  /// The file descriptor is closed in stop() and accessed in the callback, so we need to protect it
+  /// with a mutex.
+  std::mutex fd_mutex_;
   /// device file descriptor
   int fd_ = -1;
 

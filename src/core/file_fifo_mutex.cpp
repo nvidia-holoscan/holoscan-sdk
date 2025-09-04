@@ -117,7 +117,10 @@ ScopedFlock::~ScopedFlock() {
     if (ret < 0) {
       // This is a severe error as we have locked a file descriptor but failed
       // to unlock it.
-      HOLOSCAN_LOG_ERROR("FATAL: Failed to unlock file descriptor: {}", strerror(errno));
+      try {
+        HOLOSCAN_LOG_ERROR("FATAL: Failed to unlock file descriptor: {}", strerror(errno));
+      } catch (...) {
+      }
     }
   }
 }

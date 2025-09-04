@@ -76,6 +76,7 @@ class Scheduler;
 
 // holoscan::gxf
 namespace gxf {
+class Clock;
 class CodecRegistry;
 class Endpoint;
 class Entity;
@@ -142,9 +143,10 @@ class AsyncBufferTransmitter;
 class AsyncDataLoggerResource;
 enum class AsyncQueuePolicy;
 class BlockMemoryPool;
-class Clock;
 class ConditionCombiner;
 class CudaAllocator;
+class CudaGreenContext;
+class CudaGreenContextPool;
 class CudaStreamPool;
 class CPUThread;
 class DataLoggerResource;
@@ -164,6 +166,7 @@ class SerializationBuffer;
 class StdComponentSerializer;
 class StdEntitySerializer;
 class StreamOrderedAllocator;
+class SyntheticClock;
 class ThreadPool;
 class Transmitter;
 class UcxComponentSerializer;

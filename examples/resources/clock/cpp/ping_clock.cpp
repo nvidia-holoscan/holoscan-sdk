@@ -49,13 +49,7 @@ void TimedPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputConte
 
   // retrieve the scheduler used for this application via it's fragment
   auto scheduler = fragment_->scheduler();
-
-  // To get the clock we currently have to cast the scheduler to gxf::GXFScheduler.
-  // TODO(unknown): Refactor C++ lib so the clock method is on Scheduler rather than GXFScheduler.
-  //   That would allow us to avoid this dynamic_pointer_cast, but might require renaming
-  //   Clock->GXFClock and then adding a new holoscan::Clock independent of GXF.
-  auto gxf_scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(scheduler);
-  auto clock = gxf_scheduler->clock();
+  auto clock = scheduler->clock();
 
   // # The scheduler's clock is available as a parameter.
   // # The clock object has methods to retrieve timestamps and to sleep
@@ -79,7 +73,8 @@ void TimedPingRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputConte
 
   // The set_time_scale method is on the RealtimeClock class, but not the base Clock class
   // returned by gxf_scheduler->clock so a dynamic_pointer_class is required to use it.
-  auto realtime_clock = std::dynamic_pointer_cast<RealtimeClock>(clock);
+  auto realtime_clock = clock->cast_to<RealtimeClock>();
+
   HOLOSCAN_LOG_INFO("\tnow adjusting time scale to 4.0 (time runs 4x faster)");
   realtime_clock->set_time_scale(4.0);
   HOLOSCAN_LOG_INFO("\ttimestamp = {}", realtime_clock->timestamp());

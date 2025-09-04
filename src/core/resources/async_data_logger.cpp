@@ -71,7 +71,15 @@ DataEntry::DataEntry(holoscan::TensorMap tensor_map, const std::string& id, int6
 
 // AsyncDataLoggerResource implementation
 AsyncDataLoggerResource::~AsyncDataLoggerResource() {
-  stop_worker_threads();
+  try {
+    stop_worker_threads();
+  } catch (const std::exception& e) {
+    try {
+      HOLOSCAN_LOG_ERROR("Excedtion raised in stop_worker_threads(): {}", e.what());
+    } catch (...) {
+      // discard any exception from fmt::format
+    }
+  }
 }
 
 void AsyncDataLoggerResource::setup(ComponentSpec& spec) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,7 +19,11 @@
 
 #include <string>
 
+#include <gxf/std/clock.hpp>
+
 namespace holoscan {
+
+namespace gxf {
 
 Clock::Clock(const std::string& name, nvidia::gxf::Clock* component)
     : GXFResource(name, component) {}
@@ -27,5 +31,7 @@ Clock::Clock(const std::string& name, nvidia::gxf::Clock* component)
 nvidia::gxf::Clock* Clock::get() const {
   return static_cast<nvidia::gxf::Clock*>(gxf_cptr_);
 }
+
+}  // namespace gxf
 
 }  // namespace holoscan

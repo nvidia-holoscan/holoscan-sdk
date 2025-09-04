@@ -28,4 +28,4 @@ void init_data_logger(py::module_& m);
 
 }  // namespace holoscan
 
-#endif  // PYHOLOSCAN_CORE_DATA_LOGGER_HPP
+#endif /* PYHOLOSCAN_CORE_DATA_LOGGER_HPP */

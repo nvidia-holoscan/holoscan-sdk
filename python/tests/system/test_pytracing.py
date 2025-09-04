@@ -361,9 +361,51 @@ def yappi_main(scheduler_type="greedy"):
             )
 
 
+def test_profile():
+    """Test profiling functionality with cProfile."""
+    import platform  # noqa: PLC0415
+
+    import pytest  # noqa: PLC0415
+
+    # Check Python version and skip if 3.12 or above
+    python_version = platform.python_version_tuple()
+    if int(python_version[0]) >= 3 and int(python_version[1]) >= 12:
+        pytest.skip(f"Skipping test on Python {platform.python_version()}")
+
+    profile_main("greedy")
+
+
+def test_trace():
+    """Test tracing functionality with trace module."""
+    import platform  # noqa: PLC0415
+
+    import pytest  # noqa: PLC0415
+
+    # Check Python version and skip if 3.12 or above
+    python_version = platform.python_version_tuple()
+    if int(python_version[0]) >= 3 and int(python_version[1]) >= 12:
+        pytest.skip(f"Skipping test on Python {platform.python_version()}")
+
+    trace_main("greedy")
+
+
+def test_coverage():
+    """Test coverage functionality with coverage module."""
+    import platform  # noqa: PLC0415
+
+    import pytest  # noqa: PLC0415
+
+    # Check Python version and skip if 3.12 or above
+    python_version = platform.python_version_tuple()
+    if int(python_version[0]) >= 3 and int(python_version[1]) >= 12:
+        pytest.skip(f"Skipping test on Python {platform.python_version()}")
+
+    coverage_main("greedy")
+
+
 if __name__ == "__main__":
-    import argparse
-    import platform
+    import argparse  # noqa: PLC0415
+    import platform  # noqa: PLC0415
 
     # Check Python version and exit with code 12 if version is 3.12 or above
     python_version = platform.python_version_tuple()

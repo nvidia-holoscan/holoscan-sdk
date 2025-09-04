@@ -54,22 +54,22 @@ class PerReceiverRxOp : public Operator {
     std::string msg3{};
     std::string msg4{};
     auto in_value1 = op_input.receive<std::shared_ptr<std::string>>("in1");
-    if (in_value1) {
+    if (in_value1 && in_value1.value()) {
       msg1 = *in_value1.value();
     }
 
     // receive twice from in2 because there are 2 messages due to size = 2
     auto in_value2 = op_input.receive<std::shared_ptr<std::string>>("in2");
-    if (in_value2) {
+    if (in_value2 && in_value2.value()) {
       msg2 = *in_value2.value();
     }
     auto in_value3 = op_input.receive<std::shared_ptr<std::string>>("in2");
-    if (in_value3) {
+    if (in_value3 && in_value3.value()) {
       msg3 = *in_value3.value();
     }
 
     auto in_value4 = op_input.receive<std::shared_ptr<std::string>>("in3");
-    if (in_value4) {
+    if (in_value4 && in_value4.value()) {
       msg4 = *in_value4.value();
     }
 

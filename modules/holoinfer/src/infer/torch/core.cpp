@@ -472,42 +472,43 @@ InferStatus TorchInferImpl::torch_struct_to_map(
   node_torch_struct_pair.push({node, torch_struct});
 
   while (!node_torch_struct_pair.empty()) {
-    auto [node, torch_struct] = node_torch_struct_pair.front();
+    auto [current_node, current_torch_struct] = node_torch_struct_pair.front();
     node_torch_struct_pair.pop();
 
     // Skip null nodes
-    if (node.IsNull()) {
+    if (current_node.IsNull()) {
       continue;
     }
 
-    if (node.IsScalar() && torch_struct.isTensor()) {
-      std::string key = node.as<std::string>();
-      data_map.emplace(key, torch_struct.toTensor());
-    } else if (node.IsSequence() && torch_struct.isList()) {
-      auto list = torch_struct.toList();
-      if (node.size() != list.size()) {
-        HOLOSCAN_LOG_ERROR(
-            "Torch core: List size mismatch. Expected: {}, Got: {}", node.size(), list.size());
+    if (current_node.IsScalar() && current_torch_struct.isTensor()) {
+      std::string key = current_node.as<std::string>();
+      data_map.emplace(key, current_torch_struct.toTensor());
+    } else if (current_node.IsSequence() && current_torch_struct.isList()) {
+      auto list = current_torch_struct.toList();
+      if (current_node.size() != list.size()) {
+        HOLOSCAN_LOG_ERROR("Torch core: List size mismatch. Expected: {}, Got: {}",
+                           current_node.size(),
+                           list.size());
         return InferStatus(holoinfer_code::H_ERROR, "Torch core: List size mismatch.");
       }
       for (size_t i = 0; i < list.size(); ++i) {
-        node_torch_struct_pair.push({node[i], list[i]});
+        node_torch_struct_pair.push({current_node[i], list[i]});
       }
-    } else if (node.IsSequence() && torch_struct.isTuple()) {
-      auto tuple = torch_struct.toTuple();
-      if (node.size() != tuple->elements().size()) {
+    } else if (current_node.IsSequence() && current_torch_struct.isTuple()) {
+      auto tuple = current_torch_struct.toTuple();
+      if (current_node.size() != tuple->elements().size()) {
         HOLOSCAN_LOG_ERROR("Torch core: Tuple size mismatch. Expected: {}, Got: {}",
-                           node.size(),
+                           current_node.size(),
                            tuple->elements().size());
         return InferStatus(holoinfer_code::H_ERROR, "Torch core: Tuple size mismatch.");
       }
       for (size_t i = 0; i < tuple->elements().size(); ++i) {
-        node_torch_struct_pair.push({node[i], tuple->elements()[i]});
+        node_torch_struct_pair.push({current_node[i], tuple->elements()[i]});
       }
-    } else if (node.IsMap() && torch_struct.isGenericDict()) {
-      auto dict = torch_struct.toGenericDict();
+    } else if (current_node.IsMap() && current_torch_struct.isGenericDict()) {
+      auto dict = current_torch_struct.toGenericDict();
       for (const auto& item : dict) {
-        node_torch_struct_pair.push({node[item.key().toString()->string()], item.value()});
+        node_torch_struct_pair.push({current_node[item.key().toString()->string()], item.value()});
       }
     } else {
       HOLOSCAN_LOG_ERROR(
@@ -691,7 +692,7 @@ InferStatus TorchInferImpl::populate_model_details() {
     HOLOSCAN_LOG_INFO("Torch core: input format: \n{}", YAML::Dump(input_format));
 
     std::vector<std::string> input_type_structs;
-    for (auto input_argument : input_format) {
+    for (const auto& input_argument : input_format) {
       std::string input_type_stream;
       status = get_io_schema(input_argument, input_type_stream);
       if (status.get_code() != holoinfer_code::H_SUCCESS) {

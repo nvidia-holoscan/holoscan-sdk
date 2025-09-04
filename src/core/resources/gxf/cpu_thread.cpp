@@ -90,7 +90,7 @@ void CPUThread::initialize() {
     YAML::Node policy_node;
 
     if (find_it->arg_type().element_type() == ArgElementType::kString) {
-      SchedulingPolicy policy;
+      SchedulingPolicy policy = SchedulingPolicy::kFirstInFirstOut;
       auto policy_string = std::any_cast<std::string>(find_it->value());
       if (YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(YAML::Node(policy_string), policy)) {
         policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy);
@@ -138,9 +138,16 @@ std::vector<uint32_t> CPUThread::pin_cores() const {
 
 holoscan::expected<SchedulingPolicy, holoscan::RuntimeError> CPUThread::sched_policy() const {
   if (sched_policy_.has_value()) {
-    SchedulingPolicy policy;
-    YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(sched_policy_.get(), policy);
-    return policy;
+    SchedulingPolicy policy = SchedulingPolicy::kFirstInFirstOut;
+    if (YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(sched_policy_.get(), policy)) {
+      return policy;
+    } else {
+      std::string err_msg =
+          fmt::format("Unable to decode 'sched_policy' argument '{}' to a SchedulingPolicy enum",
+                      sched_policy_.get().Scalar());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      return make_unexpected(RuntimeError(ErrorCode::kFailure, err_msg));
+    }
   }
   return make_unexpected(RuntimeError(ErrorCode::kFailure, "Scheduling policy not set"));
 }
@@ -175,10 +182,15 @@ holoscan::expected<uint64_t, holoscan::RuntimeError> CPUThread::sched_period() c
 
 bool CPUThread::is_realtime() const {
   if (sched_policy_.has_value()) {
-    SchedulingPolicy policy;
-    YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(sched_policy_.get(), policy);
-    return policy == SchedulingPolicy::kFirstInFirstOut ||
-           policy == SchedulingPolicy::kRoundRobin || policy == SchedulingPolicy::kDeadline;
+    SchedulingPolicy policy = SchedulingPolicy::kFirstInFirstOut;
+    if (YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(sched_policy_.get(), policy)) {
+      return policy == SchedulingPolicy::kFirstInFirstOut ||
+             policy == SchedulingPolicy::kRoundRobin || policy == SchedulingPolicy::kDeadline;
+    } else {
+      HOLOSCAN_LOG_ERROR("Unable to decode 'sched_policy_' value '{}' to a SchedulingPolicy enum",
+                         sched_policy_.get().Scalar());
+      return false;
+    }
   }
   return false;
 }

@@ -23,6 +23,7 @@
 #include <mutex>
 #include <string>
 #include <typeindex>
+#include <utility>
 
 #include "gxf/core/entity.hpp"
 #include "holoscan/core/domain/tensor.hpp"
@@ -38,24 +39,27 @@ namespace data_loggers {
 // (to be used as needed to prevent interleaved output from separate loggers)
 extern std::mutex console_output_mutex;
 
+// Note: currently this function is nearly the same as the one on AsyncConsoleLogger, but
+// in this case it is not necessary to copy metadata since the processing is done
+// synchronously.
 bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::string& unique_id,
                                             int64_t acquisition_timestamp,
                                             const std::shared_ptr<MetadataDictionary>& metadata,
                                             IOSpec::IOType io_type) {
-  HOLOSCAN_LOG_TRACE("GXFConsoleLogger: log_backend_specific called for unique_id: {}", unique_id);
+  HOLOSCAN_LOG_TRACE("{}: log_backend_specific called for unique_id: {}", name(), unique_id);
   // Check if this message should be logged based on allowlist/denylist patterns
   if (!should_log_message(unique_id)) {
     HOLOSCAN_LOG_DEBUG(
-        "GXFConsoleLogger: Backend-specific message '{}' filtered out by allowlist/denylist "
-        "patterns",
+        "{}: Backend-specific message '{}' filtered out by allowlist/denylist patterns",
+        name(),
         unique_id);
     return true;  // Consider filtered messages as successfully "handled"
   }
 
   // Check for empty data
   if (!data.has_value()) {
-    HOLOSCAN_LOG_DEBUG("GXFConsoleLogger: Skipping empty backend-specific data for message '{}'",
-                       unique_id);
+    HOLOSCAN_LOG_DEBUG(
+        "{}: Skipping empty backend-specific data for message '{}'", name(), unique_id);
     return true;
   }
 
@@ -80,13 +84,19 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
       } else {
         // holoscan::gxf::Entity inherits from nvidia::gxf::Entity
         auto holoscan_entity = std::any_cast<holoscan::gxf::Entity>(data);
-        gxf_entity = static_cast<nvidia::gxf::Entity>(holoscan_entity);
+        gxf_entity = static_cast<nvidia::gxf::Entity>(std::move(holoscan_entity));
       }
+
+      // Note: This function currently logs Tensors and VideoBuffers via separate data logging
+      // calls, so if both types are present in the entity, there will be separate log entries for
+      // each type. This can be revisited in the future as needed if we need to combine both into
+      // a single log entry.
 
       // Find and log tensor components within the entity
       auto tensor_components_expected = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
       if (!tensor_components_expected) {
-        HOLOSCAN_LOG_ERROR("Failed to enumerate tensor components: {}",
+        HOLOSCAN_LOG_ERROR("{}: Failed to enumerate tensor components: {}",
+                           name(),
                            GxfResultStr(tensor_components_expected.error()));
         return false;
       }
@@ -97,7 +107,9 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
           auto maybe_dl_ctx = (*gxf_tensor->get()).toDLManagedTensorContext();
           if (!maybe_dl_ctx) {
             HOLOSCAN_LOG_ERROR(
-                "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
+                "{}: Failed to get std::shared_ptr<DLManagedTensorContext> from "
+                "nvidia::gxf::Tensor",
+                name());
             continue;
           }
           auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
@@ -106,24 +118,38 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
 
         if (tensor_map.size() > 0) {
           // Log the tensor map found in the entity
-
-          // TODO(grelee): If we want to log other components then we shouldn't call this logging
-          // function directly here to avoid multiple log entries for the entity.
-          // (We would use serializer_->serialize_tensormap_to_string(), etc. directly instead.)
           if (!log_tensormap_data(
                   tensor_map, unique_id, acquisition_timestamp, metadata, io_type)) {
-            HOLOSCAN_LOG_ERROR("Logging of TensorMap data from Entity failed");
+            HOLOSCAN_LOG_ERROR("{}: Logging of TensorMap data from Entity failed", name());
             return false;
           }
         }
       }
-      // Get current timestamp
-      int64_t current_timestamp = get_timestamp();
-      (void)current_timestamp;
 
-      // TODO: handle any other component types (VideoBuffer, etc.)?
+      // Find and log any VideoBuffer components within the entity
+      auto video_buffer_components_expected = gxf_entity.findAllHeap<nvidia::gxf::VideoBuffer>();
+      if (!video_buffer_components_expected) {
+        HOLOSCAN_LOG_ERROR("{}: Failed to enumerate VideoBuffer components: {}",
+                           name(),
+                           GxfResultStr(video_buffer_components_expected.error()));
+        return false;
+      }
+      if (!video_buffer_components_expected->empty()) {
+        for (const auto& maybe_buffer_handle : video_buffer_components_expected.value()) {
+          if (!maybe_buffer_handle) {
+            continue;
+          }
+          auto buffer_handle = maybe_buffer_handle.value();
+          if (!log_data(buffer_handle, unique_id, acquisition_timestamp, metadata, io_type)) {
+            HOLOSCAN_LOG_ERROR("{}: Logging of VideoBuffer data from Entity failed", name());
+            return false;
+          }
+        }
+      }
+      // TODO(unknown): handle any other component types we want to log (AudioBuffer, etc.)?
     } catch (const std::bad_any_cast& e) {
-      HOLOSCAN_LOG_ERROR("GXFConsoleLogger: Failed to cast entity data to expected type '{}': {}",
+      HOLOSCAN_LOG_ERROR("{}: Failed to cast entity data to expected type '{}': {}",
+                         name(),
                          entity_type_str,
                          e.what());
       return false;
@@ -131,7 +157,7 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
 
     return true;
   } else {
-    HOLOSCAN_LOG_ERROR("GXFConsoleLogger: Unsupported data type: {}", data.type().name());
+    HOLOSCAN_LOG_ERROR("{}: Unsupported data type: {}", name(), data.type().name());
     return false;
   }
 }

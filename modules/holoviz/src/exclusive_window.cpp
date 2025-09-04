@@ -58,9 +58,7 @@ ExclusiveWindow::ExclusiveWindow(const char* display_name, uint32_t width, uint3
 void ExclusiveWindow::init_im_gui() {}
 
 const char** ExclusiveWindow::get_required_instance_extensions(uint32_t* count) {
-  static char const* extensions[]{VK_KHR_SURFACE_EXTENSION_NAME,
-                                  VK_KHR_DISPLAY_EXTENSION_NAME,
-                                  VK_EXT_DIRECT_MODE_DISPLAY_EXTENSION_NAME};
+  static char const* extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_DISPLAY_EXTENSION_NAME};
 
   *count = sizeof(extensions) / sizeof(extensions[0]);
   return extensions;

@@ -18,14 +18,16 @@ include(GNUInstallDirs)
 
 find_package(Vulkan REQUIRED)
 
+set(imgui_TAG "f3373780668fba1f9bd64c208d05c20b781c9a39")
 FetchContent_Declare(
   imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
-  GIT_TAG f3373780668fba1f9bd64c208d05c20b781c9a39
+  GIT_TAG "${imgui_TAG}"
   GIT_PROGRESS TRUE
   PATCH_COMMAND git apply "${CMAKE_CURRENT_SOURCE_DIR}/imgui.patch" || true
   )
 
+message(STATUS "Fetching imgui@${imgui_TAG}")
 FetchContent_MakeAvailable(imgui)
 
 add_library(imgui_backend STATIC)

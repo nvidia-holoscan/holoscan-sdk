@@ -19,8 +19,10 @@
 
 #include <memory>
 
+#include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/resources/gxf/realtime_clock.hpp"
 
 namespace holoscan {
 
@@ -74,6 +76,14 @@ nvidia::gxf::MultiThreadScheduler* MultiThreadScheduler::get() const {
   return static_cast<nvidia::gxf::MultiThreadScheduler*>(gxf_cptr_);
 }
 
+std::shared_ptr<Clock> MultiThreadScheduler::clock() {
+  if (clock_.has_value()) {
+    // Create a Clock resource that wraps the gxf::Clock implementation
+    return std::make_shared<Clock>(std::static_pointer_cast<ClockInterface>(clock_.get()));
+  }
+  return nullptr;
+}
+
 void MultiThreadScheduler::initialize() {
   // Set up prerequisite parameters before calling Scheduler::initialize()
   auto frag = fragment();
@@ -93,6 +103,13 @@ void MultiThreadScheduler::initialize() {
 
   // parent class initialize() call must be after the argument additions above
   Scheduler::initialize();
+}
+
+void* MultiThreadScheduler::clock_gxf_cptr() const {
+  if (clock_.has_value() && clock_.get() != nullptr) {
+    return clock_.get()->gxf_cptr();
+  }
+  return nullptr;
 }
 
 }  // namespace holoscan

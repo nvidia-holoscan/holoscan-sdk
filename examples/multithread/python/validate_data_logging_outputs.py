@@ -16,6 +16,7 @@ limitations under the License.
 """  # noqa: E501
 
 import argparse
+import os.path
 import re
 import subprocess
 import sys
@@ -87,8 +88,16 @@ def main():
     # use parse_known_args so additional arguments can be passed to multithread.py
     args, additional_args = parser.parse_known_args()
 
+    # Validate the target script path
+    if not os.path.isfile(args.multithread_py):
+        print(f"Error: Script not found: {args.multithread_py}")
+        return 1
+
+    # Normalize the path
+    script_path = os.path.abspath(args.multithread_py)
+
     # Build command line arguments for the multithread.py script
-    cmd_args = ["python", args.multithread_py] + additional_args
+    cmd_args = ["python", script_path] + additional_args
 
     # Run the multithread example and capture output
     try:
@@ -97,6 +106,7 @@ def main():
             capture_output=True,
             text=True,
             check=True,
+            timeout=30,  # 30 second timeout
         )
         output = result.stderr  # Holoscan logs go to stderr
         output += result.stdout  # Data flow tracking and Python print statements go to stdout

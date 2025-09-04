@@ -9,6 +9,7 @@ The Holoscan SDK relies on multiple core technologies to achieve low latency and
 - {ref}`cuda_rendering_interop`
 - {ref}`npp`
 - {ref}`ucx`
+- {ref}`matx`
 
 (gpudirect_rdma)=
 ## Rivermax and GPUDirect RDMA
@@ -58,3 +59,21 @@ Streaming image processing often requires common 2D operations like resizing, co
 ## Unified Communications X
 
 The [Unified Communications X](https://openucx.org/) (UCX) framework is an open-source communication framework developed as a collaboration between industry and academia. It provides high-performance point-to-point communication for data-centric applications. Holoscan SDK uses UCX to send data between fragments in distributed applications. UCX's high level protocols attempt to automatically select an optimal transport layer depending on the hardware available. For example technologies such as [TCP](https://en.wikipedia.org/wiki/Transmission_Control_Protocol), CUDA memory copy, [CUDA IPC](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#interprocess-communication) and [GPUDirect RDMA](https://docs.nvidia.com/cuda/gpudirect-rdma/index.html) are supported.
+
+(matx)=
+## MatX Accelerated Computing
+
+The Holoscan SDK integrates the [MatX](https://github.com/NVIDIA/MatX) library, a high-performance C++17 library for numerical computing on NVIDIA GPUs.
+
+The library is accessible in C++ applications through the `holoscan::matx` interface library. It enables zero-copy data exchange between MatX tensors (`matx::tensor`) and `holoscan::Tensor` via the DLPack standard.
+
+To use MatX in a C++ application, link against the `holoscan::matx` target in `CMakeLists.txt`:
+```cmake
+target_link_libraries(my_application
+  PRIVATE
+  holoscan::core
+  holoscan::matx
+)
+```
+
+A new C++ example, `matx_basic`, is available in the `examples/matx/matx_basic` directory to demonstrate creating, sharing, and performing GPU-accelerated operations on MatX tensors within a Holoscan pipeline.

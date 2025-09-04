@@ -61,7 +61,8 @@ class PySimpleTextSerializer : public SimpleTextSerializer {
 
   // Define a constructor that fully initializes the object.
   PySimpleTextSerializer(Fragment* fragment, int64_t max_elements = 10,
-                         int64_t max_metadata_items = 10, bool log_python_object_contents = true,
+                         int64_t max_metadata_items = 10, bool log_video_buffer_content = false,
+                         bool log_python_object_contents = true,
                          const std::string& name = "simple_text_serializer");
 
   void initialize() override;
@@ -80,8 +81,9 @@ class PyBasicConsoleLogger : public BasicConsoleLogger {
   // Define a constructor that fully initializes the object.
   PyBasicConsoleLogger(Fragment* fragment,
                        std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
-                       bool log_inputs = true, bool log_outputs = true,
-                       bool log_tensor_data_content = false, bool log_metadata = true,
+                       bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
+                       bool log_tensor_data_content = true, bool use_scheduler_clock = true,
+                       std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
                        const std::vector<std::string>& allowlist_patterns = {},
                        const std::vector<std::string>& denylist_patterns = {},
                        const std::string& name = "basic_console_logger");
@@ -96,8 +98,9 @@ class PyGXFConsoleLogger : public GXFConsoleLogger {
 
   // Define a constructor that fully initializes the object.
   PyGXFConsoleLogger(Fragment* fragment, std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
-                     bool log_inputs = true, bool log_outputs = true,
-                     bool log_tensor_data_content = false, bool log_metadata = true,
+                     bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
+                     bool log_tensor_data_content = true, bool use_scheduler_clock = true,
+                     std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
                      const std::vector<std::string>& allowlist_patterns = {},
                      const std::vector<std::string>& denylist_patterns = {},
                      const std::string& name = "gxf_basic_console_logger");

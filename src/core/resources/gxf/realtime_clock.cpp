@@ -19,28 +19,32 @@
 
 #include <string>
 
+#include <gxf/std/clock.hpp>
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
 
 namespace holoscan {
 
 RealtimeClock::RealtimeClock(const std::string& name, nvidia::gxf::RealtimeClock* component)
-    : Clock(name, component) {
+    : gxf::Clock(name, component) {
+  if (!component) {
+    throw std::invalid_argument("RealtimeClock component cannot be null");
+  }
   auto maybe_offset = component->getParameter<double>("offset");
   if (!maybe_offset) {
-    throw std::runtime_error("Failed to get initial_time_offset");
+    throw std::runtime_error("Failed to get initial_time_offset parameter from GXF RealtimeClock");
   }
   initial_time_offset_ = maybe_offset.value();
 
   auto maybe_scale = component->getParameter<double>("scale");
   if (!maybe_scale) {
-    throw std::runtime_error("Failed to get initial_time_scale");
+    throw std::runtime_error("Failed to get initial_time_scale parameter from GXF RealtimeClock");
   }
   initial_time_scale_ = maybe_scale.value();
 
   auto maybe_use_epoch = component->getParameter<bool>("use_epoch");
   if (!maybe_use_epoch) {
-    throw std::runtime_error("Failed to get use_time_since_epoch");
+    throw std::runtime_error("Failed to get use_time_since_epoch parameter from GXF RealtimeClock");
   }
   use_time_since_epoch_ = maybe_use_epoch.value();
 }

@@ -824,8 +824,14 @@ void PyOperator::initialize() {
                        name(),
                        py_context_->cuda_object_handler() == nullptr ? "" : "not ");
   } else {
-    HOLOSCAN_LOG_ERROR("PyOperator: py_op_ is not set");
-    throw std::runtime_error("PyOperator: py_op_ is not set");
+    std::string err_msg = fmt::format("PyOperator '{}': py_op_ is not set", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
+  if (py_initialize_.is_none()) {
+    std::string err_msg = fmt::format("PyOperator '{}': initialize method is set to None", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   py_initialize_.operator()();
@@ -838,7 +844,11 @@ void PyOperator::start() {
 #if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
 #endif
-
+  if (py_start_.is_none()) {
+    std::string err_msg = fmt::format("PyOperator '{}': start method is set to None", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   py_start_.operator()();
 }
 
@@ -850,6 +860,15 @@ void PyOperator::stop() {
   set_py_tracing();
 #endif
 
+  // Guard: if the Python callable has been cleared during release_internal_resources(),
+  // skip invoking it.
+  if (py_stop_.is_none()) {
+    HOLOSCAN_LOG_DEBUG(
+        "PyOperator '{}' stop() skipped: py_stop_ is None (this might occur during "
+        "application shutdown for some schedulers)",
+        name());
+    return;
+  }
   py_stop_.operator()();
 }
 
@@ -863,6 +882,16 @@ void PyOperator::compute(InputContext& op_input, OutputContext& op_output,
 #if PY_VERSION_HEX < 0x030C0000  // < 3.12
   set_py_tracing();
 #endif
+
+  // Guard: if the Python callable has been cleared during release_internal_resources(),
+  // skip invoking it.
+  if (py_compute_.is_none()) {
+    HOLOSCAN_LOG_DEBUG(
+        "PyOperator '{}' compute() skipped: py_compute_ is None (this might occur during "
+        "application shutdown for some schedulers)",
+        name());
+    return;
+  }
 
   py_compute_.operator()(py::cast(py_op_input_), py::cast(py_op_output_), py::cast(py_context_));
 }

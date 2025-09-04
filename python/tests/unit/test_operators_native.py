@@ -32,6 +32,7 @@ from holoscan.core import (
     _Operator,
 )
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
+from holoscan.data_loggers import AsyncConsoleLogger, SimpleTextSerializer
 from holoscan.gxf import Entity
 from holoscan.operators import (
     BayerDemosaicOp,
@@ -1094,6 +1095,72 @@ def test_holoviz_depth_map_app(capfd, depth_data_type):
     assert captured.err.count("[error]") == 0
 
 
+def test_holoviz_op_video_buffer_data_logging(capfd):
+    """Test data logging of VideoBuffer components within a raw GXF Entity.
+
+    HolovizOp's `render_buffer_output` and `depth_buffer_output` ports emit a raw GXF Entity that
+    contains a VideoBuffer.
+    """
+    pytest.importorskip("cupy")
+    app = MyHolovizDepthMapApp(np.float32)
+
+    app.add_data_logger(
+        AsyncConsoleLogger(
+            app,
+            name="async_console_logger",
+            log_tensor_data_content=True,
+            log_metadata=False,
+            # set max_elements to limit the number of data elements printed for each video buffer
+            serializer=SimpleTextSerializer(
+                app,
+                name="simple_text_serializer",
+                max_elements=8,
+                log_video_buffer_content=True,
+            ),
+        )
+    )
+    app.run()
+
+    captured = capfd.readouterr()
+
+    # assert VideoBuffer entries are logged by AsyncConsoleLogger
+    msgs = (
+        "AsyncConsoleLogger[ID:holoviz.render_buffer_output]",
+        "VideoBuffer(width=32, height=32, color_format=GXF_VIDEO_FORMAT_RGBA, storage_type=kDevice, surface_layout=GXF_SURFACE_LAYOUT_PITCH_LINEAR, num_planes=1, plane_info={width=32, height=32, stride=256, size=8192, bytes_per_pixel=4}, data=",  # noqa E501
+        "AsyncConsoleLogger[ID:holoviz.depth_buffer_output]",
+        "VideoBuffer(width=32, height=32, color_format=GXF_VIDEO_FORMAT_D32F, storage_type=kDevice, surface_layout=GXF_SURFACE_LAYOUT_PITCH_LINEAR, num_planes=1, plane_info={width=32, height=32, stride=256, size=8192, bytes_per_pixel=4}, data=",  # noqa E501
+    )
+    tx_count = 1  # the CountCondition value used in the application
+    for msg in msgs:
+        # VideoBuffers are only logged on emit and not receive because
+        # HolovizDepthMapSinkOp never calls receive
+        assert captured.err.count(msg) == tx_count
+
+    # assert no errors were logged
+    assert captured.err.count("error") == 0
+
+
+if __name__ == "__main__":
+    app = MyHolovizDepthMapApp(np.float32)
+
+    app.add_data_logger(
+        AsyncConsoleLogger(
+            app,
+            name="async_console_logger",
+            log_tensor_data_content=True,
+            log_metadata=False,
+            # set max_elements to limit the number of data elements printed for each video buffer
+            serializer=SimpleTextSerializer(
+                app,
+                name="simple_text_serializer",
+                max_elements=8,
+                log_video_buffer_content=True,
+            ),
+        )
+    )
+    app.run()
+
+
 class HolovizCallbackSourceOp(Operator):
     def setup(self, spec: OperatorSpec):
         spec.output("out")
@@ -1262,6 +1329,23 @@ class TestV4L2VideoCaptureOp:
 
 
 class TestPingTensorRxOp:
+    def test_kwarg_initialization(self, app, capfd):
+        name = "tensor_rx"
+        op = PingTensorRxOp(
+            fragment=app,
+            receive_as_tensormap=False,
+            name=name,
+        )
+        assert isinstance(op, _Operator)
+        assert op.operator_type == Operator.OperatorType.NATIVE
+        assert f"name: {name}" in repr(op)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+        assert "warning" not in captured.err
+
     def test_default_initialization(self, app, capfd):
         name = "tensor_rx"
         op = PingTensorRxOp(

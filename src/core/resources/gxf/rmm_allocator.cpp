@@ -42,34 +42,40 @@ constexpr int32_t kDefaultDeviceId = 0;
 
 RMMAllocator::RMMAllocator(const std::string& name, nvidia::gxf::RMMAllocator* component)
     : CudaAllocator(name, component) {
+  if (!component) {
+    throw std::invalid_argument("RMMAllocator component cannot be null");
+  }
   auto maybe_device_initial = component->getParameter<std::string>("device_memory_initial_size");
   if (!maybe_device_initial) {
-    throw std::runtime_error("Failed to get device_memory_initial_size");
+    throw std::runtime_error(
+        "Failed to get device_memory_initial_size parameter from GXF RMMAllocator");
   }
   device_memory_initial_size_ = maybe_device_initial.value();
 
   auto maybe_device_max = component->getParameter<std::string>("device_memory_max_size");
   if (!maybe_device_max) {
-    throw std::runtime_error("Failed to get device_memory_max_size");
+    throw std::runtime_error(
+        "Failed to get device_memory_max_size parameter from GXF RMMAllocator");
   }
   device_memory_max_size_ = maybe_device_max.value();
 
   auto maybe_host_initial = component->getParameter<std::string>("host_memory_initial_size");
   if (!maybe_host_initial) {
-    throw std::runtime_error("Failed to get host_memory_initial_size");
+    throw std::runtime_error(
+        "Failed to get host_memory_initial_size parameter from GXF RMMAllocator");
   }
   host_memory_initial_size_ = maybe_host_initial.value();
 
   auto maybe_host_max = component->getParameter<std::string>("host_memory_max_size");
   if (!maybe_host_max) {
-    throw std::runtime_error("Failed to get host_memory_max_size");
+    throw std::runtime_error("Failed to get host_memory_max_size parameter from GXF RMMAllocator");
   }
   host_memory_max_size_ = maybe_host_max.value();
 
   auto maybe_gpu_device =
       component->getParameter<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>>("dev_id");
   if (!maybe_gpu_device) {
-    throw std::runtime_error("Failed to get dev_id");
+    throw std::runtime_error("Failed to get dev_id parameter from GXF RMMAllocator");
   }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();

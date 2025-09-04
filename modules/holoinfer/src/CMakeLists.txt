@@ -19,8 +19,6 @@ project(holoinfer VERSION ${HOLOSCAN_BUILD_VERSION} LANGUAGES CXX CUDA)
 
 add_subdirectory(infer)
 
-find_package(CUDAToolkit REQUIRED)
-
 set(holoinfer_src
     infer/trt/core.cpp
     infer/trt/utils.cpp
@@ -65,11 +63,11 @@ target_link_libraries(${PROJECT_NAME}
 
 if(HOLOSCAN_BUILD_LIBTORCH)
     # no target_link_libraries to holoinfer_torch: we dlopen it as a plugin
-    target_compile_definitions(${PROJECT_NAME} PUBLIC "use_torch=true")
+    target_compile_definitions(${PROJECT_NAME} PUBLIC "HOLOINFER_TORCH_ENABLED")
 endif()
 if(HOLOSCAN_BUILD_ORT)
     # no target_link_libraries to holoinfer_ort: we dlopen it as a plugin
-    target_compile_definitions(${PROJECT_NAME} PUBLIC "use_onnxruntime=true")
+    target_compile_definitions(${PROJECT_NAME} PUBLIC "HOLOINFER_ORT_ENABLED")
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

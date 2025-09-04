@@ -24,7 +24,10 @@
 #include <string>
 #include <vector>
 
+#include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/fragment.hpp"
+#include "holoscan/core/scheduler.hpp"
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
@@ -36,13 +39,28 @@ void DataLoggerResource::setup(ComponentSpec& spec) {
   // logging parameters
   spec.param(log_outputs_, "log_outputs", "Log Outputs", "Whether to log output ports", true);
   spec.param(log_inputs_, "log_inputs", "Log Inputs", "Whether to log input ports", true);
+  spec.param(log_metadata_, "log_metadata", "Log Metadata", "Whether to log metadata", true);
   spec.param(log_tensor_data_content_,
              "log_tensor_data_content",
              "Log Tensor Data Content",
              "Whether to log the actual tensor data (if false, only some Tensor header info will "
              "be logged. When true the full data is also logged)",
-             false);
-  spec.param(log_metadata_, "log_metadata", "Log Metadata", "Whether to log metadata", true);
+             true);
+  spec.param(use_scheduler_clock_,
+             "use_scheduler_clock",
+             "Use Scheduler Clock",
+             "Whether to use the scheduler's clock for timestamps (if false, uses a steady clock"
+             "with time offset relative to epoch). If the `clock` parameter is instead specified, "
+             "that explicitly provided clock is always used instead.",
+             true);
+  spec.param(clock_,
+             "clock",
+             "Clock",
+             "An optional, custom clock to be used by the data logger to define the emit/receive "
+             "timestamps. The clock->timestamp() value is returned directly when this is "
+             "provided. When provided, this clock takes precedence and `use_scheduler_clock` is "
+             "ignored.",
+             ParameterFlag::kOptional);
 
   // Filtering parameters
   spec.param(allowlist_patterns_,
@@ -77,13 +95,66 @@ void DataLoggerResource::initialize() {
 
   // Compile regex patterns during initialization to avoid overhead during runtime
   compile_patterns();
+
+  if (!use_scheduler_clock_.get()) {
+    // get_timestamp will use steady_clock time added to the epoch time offset from system_clock
+    time_reference_ = std::chrono::steady_clock::now();
+
+    // use system clock to reliably get an offset relative to epoch
+    auto epoch_time = std::chrono::system_clock::now().time_since_epoch();
+    time_offset_ = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch_time).count();
+  } else {
+    if (clock_.has_value() && clock_.get() != nullptr) {
+      HOLOSCAN_LOG_INFO(
+          "`use_scheduler_clock` is set to true, but a custom clock was also provided. The "
+          "provided `clock` will be used.");
+    }
+  }
+
+  if (clock_.has_value() && clock_.get() != nullptr) {
+    try {
+      clock_interface_ = std::dynamic_pointer_cast<ClockInterface>(clock_.get());
+      if (!clock_interface_) {
+        clock_interface_ = std::dynamic_pointer_cast<holoscan::Clock>(clock_.get())->clock_impl();
+      }
+    } catch (const std::bad_cast& e) {
+      std::string error_message = fmt::format(
+          "DataLoggerResource: Failed to cast clock parameter to either "
+          "std::shared_ptr<holoscan::Clock> or std::shared_ptr<holoscan::ClockInterface>: {}",
+          e.what());
+      HOLOSCAN_LOG_ERROR(error_message);
+      throw std::runtime_error(error_message);
+    }
+  }
 }
 
 int64_t DataLoggerResource::get_timestamp() const {
-  auto now = std::chrono::high_resolution_clock::now();
-  auto micros =
-      std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count();
-  return micros;
+  // First priority is the clock parameter if one was explicitly set
+  if (clock_interface_) {
+    return clock_interface_->timestamp();
+  }
+
+  // Fallback to the scheduler clock if requested
+  if (use_scheduler_clock_.get()) {
+    const auto fragment_ptr = fragment();
+    if (fragment_ptr) {
+      // Use const_cast since getting timestamp is logically const but scheduler() isn't const
+      const auto scheduler_ptr = fragment_ptr->scheduler();
+      if (scheduler_ptr) {
+        const auto clock_ptr = scheduler_ptr->clock();
+        if (clock_ptr) {
+          return clock_ptr->timestamp();
+        }
+      }
+    }
+    HOLOSCAN_LOG_DEBUG("{}: No scheduler clock found, falling back to system clock", name());
+  }
+
+  // Fallback to steady clock with epoch offset
+  auto now = std::chrono::steady_clock::now();
+  auto delta_ns =
+      std::chrono::duration_cast<std::chrono::nanoseconds>(now - time_reference_).count();
+  return time_offset_ + delta_ns;
 }
 
 bool DataLoggerResource::should_log_message(const std::string& unique_id) const {

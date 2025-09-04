@@ -27,9 +27,17 @@
 #include <iostream>
 
 #include "data_processor.hpp"
+#include "holoinfer.hpp"
+#include "holoinfer_constants.hpp"
 
 namespace holoscan {
 namespace inference {
+
+// Green context was introduced with CUDA 12.4, it is not supported by all driver versions.
+// Therefore dynamically get the symbol to avoid runtime link errors when the symbol is not
+// exposed by libcuda.so.
+static CUresult (*fnCuStreamGetGreenCtx)(CUstream, CUgreenCtx*) = nullptr;
+static CUresult (*fnCuCtxFromGreenCtx)(CUcontext*, CUgreenCtx) = nullptr;
 
 /**
  * This class implements an iterator which skips `step` elements between each iteration.
@@ -42,10 +50,18 @@ class step_iterator {
   using pointer = float*;
   using reference = float&;
 
-  explicit step_iterator(pointer cur, size_t step) : cur_(cur), step_(step) {}
+  explicit __host__ __device__ __forceinline__ step_iterator(pointer cur, size_t step)
+      : cur_(cur), step_(step) {}
+
   template <typename Distance>
   __host__ __device__ __forceinline__ reference operator[](Distance offset) const {
     return cur_[offset * step_];
+  }
+
+  template <typename Distance>
+  __host__ __device__ __forceinline__ step_iterator operator+(Distance n) {
+    step_iterator retval(cur_ + n * step_, step_);
+    return retval;
   }
 
  private:
@@ -53,23 +69,34 @@ class step_iterator {
   size_t step_;
 };
 
+#if CUB_VERSION >= 280000
+// Type aliases and index extraction for CUB 2.8.0+
+using cubResultType = cuda::std::int64_t;
+#define GET_INDEX(result, idx) ((result)[(idx)])
+#else
+// Type aliases and index extraction for older CUB versions
+using cubResultType = cub::KeyValuePair<int, float>;
+#define GET_INDEX(result, idx) ((result)[(idx)].key)
+#endif  // CUB_VERSION >= 280000
+
 /**
- * CUDA kernel normalizing the coordinates stored in the `key` member.
+ * CUDA kernel normalizing the coordinates stored in the result array.
+ * Works with both CUB versions through conditional index extraction.
  *
  * @param rows
  * @param cols
  * @param channels
- * @param d_argmax
+ * @param d_result - either d_index (CUB 2.8.0+) or d_argmax (older CUB)
  * @param out
  */
-static __global__ void normalize(size_t rows, size_t cols, size_t channels,
-                                 cub::KeyValuePair<int, float>* d_argmax, float* out) {
+static __global__ void normalize(size_t rows, size_t cols, size_t channels, cubResultType* d_result,
+                                 float* out) {
   const uint index = blockIdx.x * blockDim.x + threadIdx.x;
   if (index >= channels) {
     return;
   }
 
-  const int src_index = d_argmax[index].key;
+  const int src_index = GET_INDEX(d_result, index);
   int row = src_index / cols;
   int col = src_index - (row * cols);
   out[index * 2 + 0] = (float)row / (float)rows;
@@ -83,33 +110,71 @@ void DataProcessor::max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t
   /// without state. This should be an object with state so we can avoid re-allocating the temporary
   /// storage at each invocation.
 
+#if CUB_VERSION >= 280000
   // Allocate result storage
+  float* d_max_out = nullptr;
+  cuda::std::int64_t* d_index_out = nullptr;
+  check_cuda(cudaMallocAsync(&d_max_out, sizeof(float) * channels, cuda_stream));
+  check_cuda(cudaMallocAsync(&d_index_out, sizeof(cuda::std::int64_t) * channels, cuda_stream));
+#else
   cub::KeyValuePair<int, float>* d_argmax = nullptr;
   check_cuda(
       cudaMallocAsync(&d_argmax, sizeof(cub::KeyValuePair<int, float>) * channels, cuda_stream));
+#endif
 
   // get temp storage size
   void* d_temp_storage = nullptr;
   size_t temp_storage_bytes = 0;
-  cub::DeviceReduce::ArgMax(d_temp_storage, temp_storage_bytes, indata, d_argmax, rows * cols);
+  cub::DeviceReduce::ArgMax(d_temp_storage,
+                            temp_storage_bytes,
+                            indata,
+#if CUB_VERSION >= 280000
+                            d_max_out,
+                            d_index_out,
+#else
+                            d_argmax,
+#endif
+                            rows * cols);
 
   // Allocate temporary storage
   check_cuda(cudaMallocAsync(&d_temp_storage, temp_storage_bytes, cuda_stream));
 
   for (size_t channel = 0; channel < channels; ++channel) {
     step_iterator iterator((float*)(indata + channel), channels);
-    cub::DeviceReduce::ArgMax(
-        d_temp_storage, temp_storage_bytes, iterator, &d_argmax[channel], rows * cols, cuda_stream);
+    cub::DeviceReduce::ArgMax(d_temp_storage,
+                              temp_storage_bytes,
+                              iterator,
+#if CUB_VERSION >= 280000
+                              &d_max_out[channel],
+                              &d_index_out[channel],
+#else
+                              &d_argmax[channel],
+#endif
+                              rows * cols,
+                              cuda_stream);
   }
 
   check_cuda(cudaFreeAsync(d_temp_storage, cuda_stream));
 
   dim3 block(32, 1, 1);
   dim3 grid((channels + block.x - 1) / block.x, 1, 1);
-  normalize<<<grid, block, 0, cuda_stream>>>(rows, cols, channels, d_argmax, outdata);
+  normalize<<<grid, block, 0, cuda_stream>>>(rows,
+                                             cols,
+                                             channels,
+#if CUB_VERSION >= 280000
+                                             d_index_out,
+#else
+                                             d_argmax,
+#endif
+                                             outdata);
   check_cuda(cudaPeekAtLastError());
 
+#if CUB_VERSION >= 280000
+  check_cuda(cudaFreeAsync(d_max_out, cuda_stream));
+  check_cuda(cudaFreeAsync(d_index_out, cuda_stream));
+#else
   check_cuda(cudaFreeAsync(d_argmax, cuda_stream));
+#endif
 }
 
 InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& ids,
@@ -140,11 +205,51 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
   size_t dimensionZ = dimensions[2];
 
   int kernel_count = ids.size();
+  const char* error_string;
 
-  CUresult result = cuCtxPushCurrent(context_);
+  // Check if the cuda stream is associated with a green context
+  CUcontext context = nullptr;
+  CUresult result;
+
+  if (fnCuStreamGetGreenCtx) {
+    CUgreenCtx green_ctx = nullptr;
+
+    result = fnCuStreamGetGreenCtx(cuda_stream, &green_ctx);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR("CUDA stream get green context failed in launchKernel: {}", error_string);
+      return InferStatus(holoinfer_code::H_ERROR,
+                         "Data processor, CUDA stream get green context failed.");
+    }
+
+    if (green_ctx && fnCuCtxFromGreenCtx) {
+      result = fnCuCtxFromGreenCtx(&context, green_ctx);
+      if (result != CUDA_SUCCESS) {
+        cuGetErrorString(result, &error_string);
+        HOLOSCAN_LOG_ERROR("CUDA context from green context failed in launchKernel: {}",
+                           error_string);
+        return InferStatus(holoinfer_code::H_ERROR,
+                           "Data processor, CUDA context from green context failed.");
+      }
+    }
+  }
+  if (!context) {
+    result = cuStreamGetCtx(cuda_stream, &context);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR("CUDA context from stream failed in launchKernel: {}", error_string);
+      return InferStatus(holoinfer_code::H_ERROR,
+                         "Data processor, Cuda context from stream failed.");
+    }
+  }
+
+  // Successfully get the context from the stream
+  result = cuCtxPushCurrent(context);
   if (result != CUDA_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Cuda Context push failed in launchKernel.");
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context push failed.");
+    cuGetErrorString(result, &error_string);
+    HOLOSCAN_LOG_ERROR("CUDA context push failed in launchKernel: {}", error_string);
+    return InferStatus(holoinfer_code::H_ERROR,
+                       "Data processor, CUDA context push failed with stream.");
   }
 
   if (first_time_kernel_launch_map_.find(out_tensor_name) == first_time_kernel_launch_map_.end()) {
@@ -191,7 +296,6 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
   }
 
   int buffer_count = 0;
-  const char* error_string;
 
   for (auto id : ids) {
     if (dynamic_output_dim_ && buffer_count > 0) {
@@ -345,7 +449,7 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
                               threadsPerBlocky,
                               threadsPerBlockz,
                               0,
-                              cuda_stream,
+                              reinterpret_cast<CUstream>(cuda_stream),
                               args.data(),
                               0);
 
@@ -372,7 +476,8 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
                            "Data processor, CUDA graph instantiation failed.");
       }
     }
-    result = cuGraphLaunch(cuda_graph_instance_[out_tensor_name], cuda_stream);
+    result = cuGraphLaunch(cuda_graph_instance_[out_tensor_name],
+                           reinterpret_cast<CUstream>(cuda_stream));
     if (result != CUDA_SUCCESS) {
       cuGetErrorString(result, &error_string);
 
@@ -383,7 +488,7 @@ InferStatus DataProcessor::launchCustomKernel(const std::vector<std::string>& id
     cuda_graph_instantiated_[out_tensor_name] = true;
   }
 
-  result = cuCtxPopCurrent(&context_);
+  result = cuCtxPopCurrent(nullptr);
   if (result != CUDA_SUCCESS) {
     cuGetErrorString(result, &error_string);
 
@@ -474,12 +579,22 @@ InferStatus DataProcessor::prepareCustomKernel() {
   }
 
   result = cuDeviceGet(&device_, 0);
+  CUcontext context = nullptr;
   if (result == CUDA_SUCCESS) {
-    result = cuCtxCreate(&context_, 0, device_);
+    // Retain the device primary context so it matches streams from CudaStreamPool
+    result = cuDevicePrimaryCtxRetain(&context, device_);
   }
   if (result != CUDA_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Cuda Context creation failed.");
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context creation failed.");
+    HOLOSCAN_LOG_ERROR("Cuda primary context retain failed.");
+    return InferStatus(holoinfer_code::H_ERROR,
+                       "Data processor, Cuda primary context retain failed.");
+  }
+
+  // Make the retained primary context current while loading module/functions
+  result = cuCtxPushCurrent(context);
+  if (result != CUDA_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("Cuda Context push failed in prepareKernel.");
+    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context push failed.");
   }
 
   result = cuModuleLoadData(&module_, ptx.data());
@@ -504,12 +619,46 @@ InferStatus DataProcessor::prepareCustomKernel() {
     }
   }
 
-  result = cuCtxPopCurrent(&context_);
-  if (result != CUDA_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Cuda Context setting failed in prepareKernel.");
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context setting failed.");
-  }
+  // get CUDA green context functions
+  static std::once_flag flag1;
+  std::call_once(flag1, []() {
+    const char* error_string;
+    CUresult result;
 
+    int driver_version = 0;
+    result = cuDriverGetVersion(&driver_version);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR("CUDA driver get version failed in prepareCustomKernel: {}", error_string);
+    }
+    result = cuGetProcAddress("cuStreamGetGreenCtx",
+                              reinterpret_cast<void**>(&fnCuStreamGetGreenCtx),
+                              driver_version,
+                              0,
+                              nullptr);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR(
+          "CUDA get proc address of 'cuStreamGetGreenCtx' failed in prepareCustomKernel: {}",
+          error_string);
+    }
+    result = cuGetProcAddress("cuCtxFromGreenCtx",
+                              reinterpret_cast<void**>(&fnCuCtxFromGreenCtx),
+                              driver_version,
+                              0,
+                              nullptr);
+    if (result != CUDA_SUCCESS) {
+      cuGetErrorString(result, &error_string);
+      HOLOSCAN_LOG_ERROR(
+          "CUDA get proc address of 'cuCtxFromGreenCtx' failed in prepareCustomKernel: {}",
+          error_string);
+    }
+  });
+
+  if (cuCtxPopCurrent(nullptr) != CUDA_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("cuCtxPopCurrent failed in prepareCustomKernel.");
+    return InferStatus(holoinfer_code::H_ERROR, "Data processor, cuCtxPopCurrent failed.");
+  }
   return InferStatus();
 }
 

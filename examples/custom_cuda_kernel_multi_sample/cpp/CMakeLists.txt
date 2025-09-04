@@ -68,10 +68,19 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add the test and make sure it runs
   add_test(NAME EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_multi_sample ${CONFIG_FILE}
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_multi_sample -c ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_TEST PROPERTIES
+    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+  )
+
+  # Add the test and make sure it runs
+  add_test(NAME EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_GREEN_CONTEXT_TEST
+    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_multi_sample -c ${CONFIG_FILE} -g
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_GREEN_CONTEXT_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
 endif()

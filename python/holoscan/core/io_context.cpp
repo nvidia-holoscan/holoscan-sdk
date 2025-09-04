@@ -501,12 +501,11 @@ void init_io_context(py::module_& m) {
   // types. For user-defined operators that need to add additional types, the registry can be
   // imported from holoscan.core. See the holoscan.operators.HolovizOp source for an example.
   m.def("register_types", [](EmitterReceiverRegistry& registry) {
-    registry.add_emitter_receiver<std::nullptr_t>("nullptr_t"s, true);
+    registry.add_emitter_receiver<std::nullptr_t>("nullptr_t"s, true);  // (deprecated name)
+    registry.add_emitter_receiver<std::nullptr_t>("std::nullptr_t"s, true);
+
     registry.add_emitter_receiver<CloudPickleSerializedObject>("CloudPickleSerializedObject"s,
                                                                true);
-    registry.add_emitter_receiver<std::string>("std::string"s, true);
-    registry.add_emitter_receiver<std::shared_ptr<holoscan::GILGuardedPyObject>>("PyObject"s, true);
-
     // receive-only case (emit occurs via holoscan::PyEntity instead)
     registry.add_emitter_receiver<holoscan::gxf::Entity>("holoscan::gxf::Entity"s, true);
 
@@ -515,6 +514,167 @@ void init_io_context(py::module_& m) {
     registry.add_emitter_receiver<pybind11::dict>("pybind11::dict"s, true);
     // Note: The holoscan::Tensor emitter actually emits a TensorMap containing a single tensor
     registry.add_emitter_receiver<holoscan::Tensor>("holoscan::Tensor"s, true);
+
+    // Python objects
+    registry.add_emitter_receiver<std::shared_ptr<holoscan::GILGuardedPyObject>>("PyObject"s, true);
+
+    // Note: The types below are relevant to transmit between wrapped C++ operators and native
+    // Python operators for both within fragment and inter-fragment communication. In the case of
+    // inter-fragment communication (distributed apps), corresponding types must also be registered
+    // with the GXF UCX serialization components in `core/gxf/codec_registry.hpp`.
+
+    // Unordered map types
+    registry.add_emitter_receiver<std::unordered_map<std::string, std::string>>(
+        "std::unordered_map<std::string, std::string>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::unordered_map<std::string, std::string>>>(
+        "std::shared_ptr<std::unordered_map<std::string, std::string>>"s, true);
+
+    // register various basic numeric and string types
+    registry.add_emitter_receiver<std::string>("std::string"s, true);
+    registry.add_emitter_receiver<float>("float"s, true);
+    registry.add_emitter_receiver<double>("double"s, true);
+    registry.add_emitter_receiver<std::complex<float>>("std::complex<float>"s, true);
+    registry.add_emitter_receiver<std::complex<double>>("std::complex<double>"s, true);
+    registry.add_emitter_receiver<bool>("bool"s, true);
+    registry.add_emitter_receiver<int8_t>("int8_t"s, true);
+    registry.add_emitter_receiver<uint8_t>("uint8_t"s, true);
+    registry.add_emitter_receiver<int16_t>("int16_t"s, true);
+    registry.add_emitter_receiver<uint16_t>("uint16_t"s, true);
+    registry.add_emitter_receiver<int32_t>("int32_t"s, true);
+    registry.add_emitter_receiver<uint32_t>("uint32_t"s, true);
+    registry.add_emitter_receiver<int64_t>("int64_t"s, true);
+    registry.add_emitter_receiver<uint64_t>("uint64_t"s, true);
+
+    // register shared_ptr ofvarious basic numeric and string types
+    registry.add_emitter_receiver<std::shared_ptr<std::string>>("std::shared_ptr<std::string>"s,
+                                                                true);
+    registry.add_emitter_receiver<std::shared_ptr<float>>("std::shared_ptr<float>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<double>>("std::shared_ptr<double>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::complex<float>>>(
+        "std::shared_ptr<std::complex<float>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::complex<double>>>(
+        "std::shared_ptr<std::complex<double>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<bool>>("std::shared_ptr<bool>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<int8_t>>("std::shared_ptr<int8_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<uint8_t>>("std::shared_ptr<uint8_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<int16_t>>("std::shared_ptr<int16_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<uint16_t>>("std::shared_ptr<uint16_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<int32_t>>("std::shared_ptr<int32_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<uint32_t>>("std::shared_ptr<uint32_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<int64_t>>("std::shared_ptr<int64_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<uint64_t>>("std::shared_ptr<uint64_t>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::complex<float>>>(
+        "std::shared_ptr<std::complex<float>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::complex<double>>>(
+        "std::shared_ptr<std::complex<double>>"s, true);
+
+    // register vector of numeric and string types
+    registry.add_emitter_receiver<std::vector<std::string>>("std::vector<std::string>"s, true);
+    registry.add_emitter_receiver<std::vector<float>>("std::vector<float>"s, true);
+    registry.add_emitter_receiver<std::vector<double>>("std::vector<double>"s, true);
+    registry.add_emitter_receiver<std::vector<std::complex<float>>>(
+        "std::vector<std::complex<float>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::complex<double>>>(
+        "std::vector<std::complex<double>>"s, true);
+    registry.add_emitter_receiver<std::vector<bool>>("std::vector<bool>"s, true);
+    registry.add_emitter_receiver<std::vector<int8_t>>("std::vector<int8_t>"s, true);
+    registry.add_emitter_receiver<std::vector<uint8_t>>("std::vector<uint8_t>"s, true);
+    registry.add_emitter_receiver<std::vector<int16_t>>("std::vector<int16_t>"s, true);
+    registry.add_emitter_receiver<std::vector<uint16_t>>("std::vector<uint16_t>"s, true);
+    registry.add_emitter_receiver<std::vector<int32_t>>("std::vector<int32_t>"s, true);
+    registry.add_emitter_receiver<std::vector<uint32_t>>("std::vector<uint32_t>"s, true);
+    registry.add_emitter_receiver<std::vector<int64_t>>("std::vector<int64_t>"s, true);
+    registry.add_emitter_receiver<std::vector<uint64_t>>("std::vector<uint64_t>"s, true);
+
+    // shared_ptr<vector<T>> types
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::string>>>(
+        "std::shared_ptr<std::vector<std::string>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<float>>>(
+        "std::shared_ptr<std::vector<float>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<double>>>(
+        "std::shared_ptr<std::vector<double>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::complex<float>>>>(
+        "std::shared_ptr<std::vector<std::complex<float>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::complex<double>>>>(
+        "std::shared_ptr<std::vector<std::complex<double>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<bool>>>(
+        "std::shared_ptr<std::vector<bool>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<int8_t>>>(
+        "std::shared_ptr<std::vector<int8_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<uint8_t>>>(
+        "std::shared_ptr<std::vector<uint8_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<int16_t>>>(
+        "std::shared_ptr<std::vector<int16_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<uint16_t>>>(
+        "std::shared_ptr<std::vector<uint16_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<int32_t>>>(
+        "std::shared_ptr<std::vector<int32_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<uint32_t>>>(
+        "std::shared_ptr<std::vector<uint32_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<int64_t>>>(
+        "std::shared_ptr<std::vector<int64_t>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<uint64_t>>>(
+        "std::shared_ptr<std::vector<uint64_t>>"s, true);
+
+    // vector<vector<T>> types
+    registry.add_emitter_receiver<std::vector<std::vector<std::string>>>(
+        "std::vector<std::vector<std::string>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<float>>>(
+        "std::vector<std::vector<float>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<double>>>(
+        "std::vector<std::vector<double>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<std::complex<float>>>>(
+        "std::vector<std::vector<std::complex<float>>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<std::complex<double>>>>(
+        "std::vector<std::vector<std::complex<double>>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<bool>>>("std::vector<std::vector<bool>>"s,
+                                                                  true);
+    registry.add_emitter_receiver<std::vector<std::vector<int8_t>>>(
+        "std::vector<std::vector<int8_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<uint8_t>>>(
+        "std::vector<std::vector<uint8_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<int16_t>>>(
+        "std::vector<std::vector<int16_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<uint16_t>>>(
+        "std::vector<std::vector<uint16_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<int32_t>>>(
+        "std::vector<std::vector<int32_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<uint32_t>>>(
+        "std::vector<std::vector<uint32_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<int64_t>>>(
+        "std::vector<std::vector<int64_t>>"s, true);
+    registry.add_emitter_receiver<std::vector<std::vector<uint64_t>>>(
+        "std::vector<std::vector<uint64_t>>"s, true);
+
+    // shared_ptr<vector<vector<T>>> types
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<std::string>>>>(
+        "std::shared_ptr<std::vector<std::vector<std::string>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<float>>>>(
+        "std::shared_ptr<std::vector<std::vector<float>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<double>>>>(
+        "std::shared_ptr<std::vector<std::vector<double>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<std::complex<float>>>>>(
+        "std::shared_ptr<std::vector<std::vector<std::complex<float>>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<std::complex<double>>>>>(
+        "std::shared_ptr<std::vector<std::vector<std::complex<double>>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<bool>>>>(
+        "std::shared_ptr<std::vector<std::vector<bool>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<int8_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<int8_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<uint8_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<uint8_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<int16_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<int16_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<uint16_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<uint16_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<int32_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<int32_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<uint32_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<uint32_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<int64_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<int64_t>>>"s, true);
+    registry.add_emitter_receiver<std::shared_ptr<std::vector<std::vector<uint64_t>>>>(
+        "std::shared_ptr<std::vector<std::vector<uint64_t>>>"s, true);
   });
 
   m.def(

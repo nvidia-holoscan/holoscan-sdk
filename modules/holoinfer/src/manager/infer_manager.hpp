@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,11 +32,11 @@
 #include <infer/infer.hpp>
 #include <utils/work_queue.hpp>
 
-#if use_onnxruntime
+#if defined(HOLOINFER_ORT_ENABLED)
 #include <infer/onnx/core.hpp>
 #endif
 
-#if use_torch
+#if defined(HOLOINFER_TORCH_ENABLED)
 #include <infer/torch/core.hpp>
 #endif
 

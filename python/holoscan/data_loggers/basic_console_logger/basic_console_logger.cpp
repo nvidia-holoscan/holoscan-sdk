@@ -59,10 +59,12 @@ namespace holoscan::data_loggers {
 
 PySimpleTextSerializer::PySimpleTextSerializer(Fragment* fragment, int64_t max_elements,
                                                int64_t max_metadata_items,
+                                               bool log_video_buffer_content,
                                                bool log_python_object_contents,
                                                const std::string& name)
     : SimpleTextSerializer(ArgList{Arg{"max_elements", max_elements},
                                    Arg{"max_metadata_items", max_metadata_items},
+                                   Arg{"log_video_buffer_content", log_video_buffer_content},
                                    Arg{"log_python_object_contents", log_python_object_contents}}) {
   name_ = name;
   fragment_ = fragment;
@@ -152,19 +154,24 @@ void PySimpleTextSerializer::register_gil_guarded_pyobject_encoder() {
 
 PyBasicConsoleLogger::PyBasicConsoleLogger(Fragment* fragment,
                                            std::shared_ptr<SimpleTextSerializer> serializer,
-                                           bool log_inputs, bool log_outputs,
-                                           bool log_tensor_data_content, bool log_metadata,
+                                           bool log_inputs, bool log_outputs, bool log_metadata,
+                                           bool log_tensor_data_content, bool use_scheduler_clock,
+                                           std::optional<std::shared_ptr<Resource>> clock,
                                            const std::vector<std::string>& allowlist_patterns,
                                            const std::vector<std::string>& denylist_patterns,
                                            const std::string& name)
     : BasicConsoleLogger(ArgList{Arg{"log_inputs", log_inputs},
                                  Arg{"log_outputs", log_outputs},
-                                 Arg{"log_tensor_data_content", log_tensor_data_content},
                                  Arg{"log_metadata", log_metadata},
+                                 Arg{"log_tensor_data_content", log_tensor_data_content},
+                                 Arg{"use_scheduler_clock", use_scheduler_clock},
                                  Arg{"allowlist_patterns", allowlist_patterns},
                                  Arg{"denylist_patterns", denylist_patterns}}) {
   if (serializer) {
     this->add_arg(Arg{"serializer", serializer});
+  }
+  if (clock.has_value()) {
+    this->add_arg(Arg{"clock", clock.value()});
   }
   name_ = name;
   fragment_ = fragment;
@@ -189,19 +196,24 @@ void PyBasicConsoleLogger::initialize() {
 
 PyGXFConsoleLogger::PyGXFConsoleLogger(Fragment* fragment,
                                        std::shared_ptr<SimpleTextSerializer> serializer,
-                                       bool log_inputs, bool log_outputs,
-                                       bool log_tensor_data_content, bool log_metadata,
+                                       bool log_inputs, bool log_outputs, bool log_metadata,
+                                       bool log_tensor_data_content, bool use_scheduler_clock,
+                                       std::optional<std::shared_ptr<Resource>> clock,
                                        const std::vector<std::string>& allowlist_patterns,
                                        const std::vector<std::string>& denylist_patterns,
                                        const std::string& name)
     : GXFConsoleLogger(ArgList{Arg{"log_inputs", log_inputs},
                                Arg{"log_outputs", log_outputs},
-                               Arg{"log_tensor_data_content", log_tensor_data_content},
                                Arg{"log_metadata", log_metadata},
+                               Arg{"log_tensor_data_content", log_tensor_data_content},
+                               Arg{"use_scheduler_clock", use_scheduler_clock},
                                Arg{"allowlist_patterns", allowlist_patterns},
                                Arg{"denylist_patterns", denylist_patterns}}) {
   if (serializer) {
     this->add_arg(Arg{"serializer", serializer});
+  }
+  if (clock.has_value()) {
+    this->add_arg(Arg{"clock", clock.value()});
   }
   name_ = name;
   fragment_ = fragment;
@@ -238,10 +250,11 @@ PYBIND11_MODULE(_basic_console_logger, m) {
              Resource,
              std::shared_ptr<SimpleTextSerializer>>(
       m, "SimpleTextSerializer", doc::SimpleTextSerializer::doc_SimpleTextSerializer)
-      .def(py::init<Fragment*, int64_t, int64_t, bool, const std::string&>(),
+      .def(py::init<Fragment*, int64_t, int64_t, bool, bool, const std::string&>(),
            "fragment"_a,
            "max_elements"_a = 10,
            "max_metadata_items"_a = 10,
+           "log_video_buffer_content"_a = false,
            "log_python_object_contents"_a = true,
            "name"_a = "simple_text_serializer"s,
            doc::SimpleTextSerializer::doc_SimpleTextSerializer);
@@ -257,6 +270,8 @@ PYBIND11_MODULE(_basic_console_logger, m) {
                     bool,
                     bool,
                     bool,
+                    bool,
+                    std::optional<std::shared_ptr<Resource>>,
                     const std::vector<std::string>&,
                     const std::vector<std::string>&,
                     const std::string&>(),
@@ -264,8 +279,10 @@ PYBIND11_MODULE(_basic_console_logger, m) {
            "serializer"_a = py::none(),
            "log_inputs"_a = true,
            "log_outputs"_a = true,
-           "log_tensor_data_content"_a = false,
            "log_metadata"_a = true,
+           "log_tensor_data_content"_a = true,
+           "use_scheduler_clock"_a = true,
+           "clock"_a = py::none(),
            "allowlist_patterns"_a = py::list(),
            "denylist_patterns"_a = py::list(),
            "name"_a = "basic_console_logger"s,
@@ -282,6 +299,8 @@ PYBIND11_MODULE(_basic_console_logger, m) {
                     bool,
                     bool,
                     bool,
+                    bool,
+                    std::optional<std::shared_ptr<Resource>>,
                     const std::vector<std::string>&,
                     const std::vector<std::string>&,
                     const std::string&>(),
@@ -289,8 +308,10 @@ PYBIND11_MODULE(_basic_console_logger, m) {
            "serializer"_a = py::none(),
            "log_inputs"_a = true,
            "log_outputs"_a = true,
-           "log_tensor_data_content"_a = false,
            "log_metadata"_a = true,
+           "log_tensor_data_content"_a = true,
+           "use_scheduler_clock"_a = true,
+           "clock"_a = py::none(),
            "allowlist_patterns"_a = py::list(),
            "denylist_patterns"_a = py::list(),
            "name"_a = "gxf_basic_console_logger"s,

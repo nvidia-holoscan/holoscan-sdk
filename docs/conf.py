@@ -274,7 +274,7 @@ def skip(app, what, name, obj, would_skip, options):  # noqa: ARG001
 def setup(app):
     if not app.tags.has("noapi"):
         try:
-            from holoscan.core import ExecutionContext, InputContext, OutputContext
+            from holoscan.core import ExecutionContext, InputContext, OutputContext  # noqa: PLC0415
 
             # Trick: replace __name__ to make sure that Sphinx `autosummary`:
             #   - documents all PyExecutionContext methods in the ExecutionContext docs

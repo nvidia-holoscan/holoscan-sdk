@@ -18,6 +18,7 @@ holoscan_pybind11_module(
     application.cpp
     arg.cpp
     cli.cpp
+    clock.cpp
     component.cpp
     condition.cpp
     core.cpp

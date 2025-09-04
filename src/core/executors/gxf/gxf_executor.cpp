@@ -2597,7 +2597,7 @@ void GXFExecutor::run_gxf_graph() {
   HOLOSCAN_LOG_INFO("{}Graph execution finished.", frag_name_display);
 
   // clean up any shared pointers to graph entities within operators, scheulder, network context
-  fragment->reset_graph_entities();
+  fragment->reset_backend_objects();
 
   if (wait_result != GXF_SUCCESS) {
     const std::string error_msg =

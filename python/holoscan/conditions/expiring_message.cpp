@@ -58,7 +58,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
   // Define a constructor that fully initializes the object.
   explicit PyExpiringMessageAvailableCondition(
       Fragment* fragment, int64_t max_batch_size, int64_t max_delay_ns,
-      std::shared_ptr<Clock> clock = nullptr,
+      std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, max_delay_ns) {
@@ -80,7 +80,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
   PyExpiringMessageAvailableCondition(
       Fragment* fragment, int64_t max_batch_size,
       std::chrono::duration<Rep, Period> recess_period_duration,
-      std::shared_ptr<Clock> clock = nullptr,
+      std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, recess_period_duration) {
@@ -114,7 +114,7 @@ void init_expiring_message_available(py::module_& m) {
       .def(py::init<Fragment*,
                     int64_t,
                     int64_t,
-                    std::shared_ptr<Clock>,
+                    std::shared_ptr<gxf::Clock>,
                     std::optional<const std::string>,
                     const std::string&>(),
            "fragment"_a,
@@ -126,7 +126,7 @@ void init_expiring_message_available(py::module_& m) {
       .def(py::init<Fragment*,
                     int64_t,
                     std::chrono::nanoseconds,
-                    std::shared_ptr<Clock>,
+                    std::shared_ptr<gxf::Clock>,
                     std::optional<const std::string>,
                     const std::string&>(),
            "fragment"_a,

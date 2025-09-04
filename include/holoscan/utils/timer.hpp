@@ -167,9 +167,9 @@ class Timer {
    */
   void print(const char* message = nullptr) {
     if (message) {
-      fmt::print(stderr, message, elapsed_seconds_);
+      fmt::vprint(stderr, message, fmt::make_format_args(elapsed_seconds_));
     } else {
-      fmt::print(stderr, message_, elapsed_seconds_);
+      fmt::vprint(stderr, message_, fmt::make_format_args(elapsed_seconds_));
     }
   }
 

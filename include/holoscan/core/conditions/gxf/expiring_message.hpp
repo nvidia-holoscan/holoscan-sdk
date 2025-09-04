@@ -139,7 +139,7 @@ class ExpiringMessageAvailableCondition : public gxf::GXFCondition {
   Parameter<std::shared_ptr<Receiver>> receiver_;
   Parameter<int64_t> max_batch_size_;
   Parameter<int64_t> max_delay_ns_;
-  Parameter<std::shared_ptr<Clock>> clock_;
+  Parameter<std::shared_ptr<gxf::Clock>> clock_;
 };
 
 }  // namespace holoscan

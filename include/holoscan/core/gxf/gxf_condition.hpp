@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,11 @@ class GXFCondition : public holoscan::Condition, public gxf::GXFComponent {
    * properties.
    */
   YAML::Node to_yaml_node() const override;
+
+  /**
+   * @brief Reset any backend-specific state
+   */
+  void reset_backend_objects() override;
 };
 
 }  // namespace holoscan::gxf

@@ -348,6 +348,70 @@ struct codec<std::shared_ptr<typeT>> {
     return std::make_shared<typeT>(value.value());
   }
 };
+
+// codec for std::unordered_map<KeyType, ValueType>
+template <typename KeyType, typename ValueType>
+struct codec<std::unordered_map<KeyType, ValueType>> {
+  static expected<size_t, RuntimeError> serialize(
+      const std::unordered_map<KeyType, ValueType>& value, Endpoint* endpoint) {
+    size_t total_size = 0;
+
+    // header is the number of key-value pairs
+    size_t num_pairs = value.size();
+    auto size = endpoint->write_trivial_type<size_t>(&num_pairs);
+    if (!size) {
+      return forward_error(size);
+    }
+    total_size += size.value();
+
+    // serialize each key-value pair
+    for (const auto& pair : value) {
+      // serialize the key
+      size = codec<KeyType>::serialize(pair.first, endpoint);
+      if (!size) {
+        return forward_error(size);
+      }
+      total_size += size.value();
+
+      // serialize the value
+      size = codec<ValueType>::serialize(pair.second, endpoint);
+      if (!size) {
+        return forward_error(size);
+      }
+      total_size += size.value();
+    }
+    return total_size;
+  }
+
+  static expected<std::unordered_map<KeyType, ValueType>, RuntimeError> deserialize(
+      Endpoint* endpoint) {
+    size_t num_pairs;
+    auto size = endpoint->read_trivial_type<size_t>(&num_pairs);
+    if (!size) {
+      return forward_error(size);
+    }
+
+    std::unordered_map<KeyType, ValueType> data;
+    data.reserve(num_pairs);
+
+    for (size_t i = 0; i < num_pairs; i++) {
+      // deserialize the key
+      auto key = codec<KeyType>::deserialize(endpoint);
+      if (!key) {
+        return forward_error(key);
+      }
+
+      // deserialize the value
+      auto value = codec<ValueType>::deserialize(endpoint);
+      if (!value) {
+        return forward_error(value);
+      }
+
+      data[key.value()] = value.value();
+    }
+    return data;
+  }
+};
 }  // namespace holoscan
 
 #endif /* HOLOSCAN_CORE_CODECS_HPP */

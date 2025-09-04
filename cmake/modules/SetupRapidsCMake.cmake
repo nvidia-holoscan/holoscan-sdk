@@ -13,11 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Note: The MatX library requires rapids-cmake version 24.12, which has a minimum CMake version
+# requirement of 3.26.4 (see https://github.com/rapidsai/rapids-cmake/pull/627).
+
 # https://github.com/rapidsai/rapids-cmake#installation
-file(DOWNLOAD https://gitlab.com/nvidia/rapidsai/rapids-cmake/-/raw/branch-24.04/RAPIDS.cmake
+file(DOWNLOAD https://gitlab.com/nvidia/rapidsai/rapids-cmake/-/raw/branch-24.12/RAPIDS.cmake
     ${CMAKE_BINARY_DIR}/RAPIDS.cmake
 )
+
 include(${CMAKE_BINARY_DIR}/RAPIDS.cmake)
+
 include(rapids-cmake)
 include(rapids-cpm)
 include(rapids-cuda)

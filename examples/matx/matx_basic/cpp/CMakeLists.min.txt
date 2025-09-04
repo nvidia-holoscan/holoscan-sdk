@@ -1,0 +1,69 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the \"License\");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an \"AS IS\" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+cmake_minimum_required(VERSION 3.20)
+# Note: CUDA is required to build matx_basic.cu
+project(matx_basic CUDA CXX)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  message(STATUS "CMAKE_CUDA_ARCHITECTURES not defined, setting it to `native`")
+  set(CMAKE_CUDA_ARCHITECTURES "native")
+elseif(CMAKE_CUDA_ARCHITECTURES LESS 70)
+  message(STATUS "MatX requires CUDA compute capability 7.0 or newer. Setting to 7.0")
+  # Note: atomicCas() used in matx/transforms/reduce.h requires compute capability 7.0 or newer
+  set(CMAKE_CUDA_ARCHITECTURES "70")
+endif()
+
+# Finds the package holoscan
+find_package(holoscan REQUIRED CONFIG
+             PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+
+# Fetch CCCL if not already found (for standalone builds)
+find_package(CCCL 2.8 QUIET)
+if(NOT CCCL_FOUND)
+  message(STATUS "MatX requires CCCL > 2.8.0. Fetching version 2.8.0 since no suitable version found.")
+  include(FetchContent)
+  FetchContent_Declare(
+    CCCL
+    GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
+    GIT_TAG 6d02e11  # corresponds to version 2.8.0, matching MatX requirement
+    GIT_SHALLOW ON
+  )
+  set(CCCL_TOPLEVEL_PROJECT OFF)
+  set(CCCL_ENABLE_INSTALL_RULES ON)
+  FetchContent_MakeAvailable(CCCL)
+endif()
+
+add_executable(matx_basic
+  matx_basic.cu
+)
+
+target_link_libraries(matx_basic
+  PRIVATE
+  holoscan::core
+  holoscan::matx
+)
+
+# Testing
+if(BUILD_TESTING)
+  add_test(NAME EXAMPLE_CPP_MATX_BASIC
+           COMMAND matx_basic
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_MATX_BASIC PROPERTIES
+                       PASS_REGULAR_EXPRESSION "000009:  2\\.1000e\\+01"
+                       FAIL_REGULAR_EXPRESSION "error"
+                      )
+endif()

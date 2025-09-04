@@ -50,10 +50,16 @@ namespace data_loggers {
  *   - Globally enable or disable logging on output ports (`OutputContext::emit` calls)
  * - **log_metadata**: bool (optional, default: true)
  *   - Globally enable or disable logging of MetadataDictionary contents
- * - **log_tensor_data_contents**: bool (optional, default: false)
+ * - **log_tensor_data_contents**: bool (optional, default: true)
  *   - Enable logging of the contents of tensors, not just basic description information. The
  *     `max_elements` parameter of the `SimpleTextSerialzier` provided to `serializer` can be
- *     used to control how many elements are logged.
+ *     used to control how many elements are logged.  Note that logging GPU tensor contents will
+ *     have the overhead of a device to host data transfer.
+ * - **use_scheduler_clock**: bool (optional, default: false)
+ *   - Whether to use the scheduler's clock for timestamps (if false, uses a steady clock).
+ *     This value is ignored if a `clock` argument is provided.
+ * - **clock**: std::shared_ptr<Clock> (optional, default: nullptr)
+ *   - An explicitly provided clock to be used for timestamps.*
  * - **allowlist_patterns**: std::vector<std::string> (optional, default: empty vector)
  * - **denylist_patterns**: std::vector<std::string> (optional, default: empty vector)
  *

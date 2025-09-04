@@ -231,10 +231,11 @@ void PoseTreeUCXClient::run() {
     // Register AM receiver callbacks
     ucxx::AmReceiverCallbackInfo delta_callback_info("AMClient", MSG_DELTA);
     impl_->worker->registerAmReceiverCallback(
-        delta_callback_info, [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(delta_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received delta message");
-          if (!running_)
+          if (!running_) {
             return;
+          }
           try {
             req->checkError();
             auto buffer = req->getRecvBuffer();
@@ -246,17 +247,16 @@ void PoseTreeUCXClient::run() {
               switch (delta_msg.delta_type) {
                 case DELTA_FRAME_CREATED: {
                   is_external_pose_tree_update_ = true;
-                  auto result =
-                      impl_->pose_tree->find_or_create_frame(delta_msg.data.frame_data.name);
+                  auto result = impl_->pose_tree->create_frame_with_id(
+                      delta_msg.data.frame_data.frame_id, delta_msg.data.frame_data.name);
                   if (result) {
-                    if (result.value() != delta_msg.data.frame_data.frame_id) {
-                      HOLOSCAN_LOG_DEBUG("Frame ID mismatch, mapping remote {} to local {}",
-                                         delta_msg.data.frame_data.frame_id,
-                                         result.value());
-                    }
                     std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
                     impl_->remote_to_local_frame_id[delta_msg.data.frame_data.frame_id] =
                         result.value();
+                  } else {
+                    HOLOSCAN_LOG_ERROR("Could not create frame '{}'' with id {}",
+                                       delta_msg.data.frame_data.name,
+                                       delta_msg.data.frame_data.frame_id);
                   }
                   is_external_pose_tree_update_ = false;
                   break;
@@ -299,10 +299,11 @@ void PoseTreeUCXClient::run() {
         });
     ucxx::AmReceiverCallbackInfo snapshot_callback_info("AMClient", MSG_SNAPSHOT_DATA);
     impl_->worker->registerAmReceiverCallback(
-        snapshot_callback_info, [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(snapshot_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received snapshot message");
-          if (!running_)
+          if (!running_) {
             return;
+          }
           try {
             req->checkError();
             auto buffer = req->getRecvBuffer();
@@ -320,10 +321,13 @@ void PoseTreeUCXClient::run() {
             }
 
             for (const auto& frame : frames) {
-              auto result = impl_->pose_tree->find_or_create_frame(frame.name);
+              auto result = impl_->pose_tree->create_frame_with_id(frame.frame_id, frame.name);
               if (result) {
                 std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
                 impl_->remote_to_local_frame_id[frame.frame_id] = result.value();
+              } else {
+                HOLOSCAN_LOG_ERROR(
+                    "Could not create frame '{}'' with id {}", frame.name, frame.frame_id);
               }
             }
             for (const auto& edge : edges) {
@@ -358,9 +362,10 @@ void PoseTreeUCXClient::run() {
 
     ucxx::AmReceiverCallbackInfo close_callback_info("AMClient", MSG_CLOSE);
     impl_->worker->registerAmReceiverCallback(
-        close_callback_info, [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
-          if (!running_)
+        std::move(close_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+          if (!running_) {
             return;
+          }
           try {
             req->checkError();
             HOLOSCAN_LOG_DEBUG("PoseTreeUCXClient: Received shutdown from server.");
@@ -373,6 +378,29 @@ void PoseTreeUCXClient::run() {
           }
         });
 
+    ucxx::AmReceiverCallbackInfo config_callback_info("AMClient", MSG_DISTRIBUTED_CONFIG);
+    impl_->worker->registerAmReceiverCallback(
+        std::move(config_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+          if (!running_) {
+            return;
+          }
+          req->checkError();
+          auto buffer = req->getRecvBuffer();
+          auto data = static_cast<const uint8_t*>(buffer->data());
+          auto size = buffer->getSize();
+          if (size == sizeof(DistributedConfig)) {
+            DistributedConfig msg;
+            std::memcpy(&msg, data, sizeof(DistributedConfig));
+            auto result =
+                impl_->pose_tree->set_multithreading_info(msg.start_frame_id, msg.increment);
+            if (!result) {
+              HOLOSCAN_LOG_ERROR("Failed to initialize the pose_tree");
+            }
+          } else {
+            HOLOSCAN_LOG_ERROR("Failed to receive a proper message");
+          }
+        });
+
     impl_->endpoint = impl_->worker->createEndpointFromHostname(host_, port_, true);
 
     SubscribeMessage subscribe_msg{};
@@ -381,7 +409,7 @@ void PoseTreeUCXClient::run() {
     auto subscribe_request = impl_->endpoint->amSend(
         &subscribe_msg, sizeof(subscribe_msg), UCS_MEMORY_TYPE_HOST, subscribe_info);
     waitSingleRequest(impl_->worker,
-                      subscribe_request,
+                      std::move(subscribe_request),
                       config_.request_timeout_ms,
                       config_.request_poll_sleep_us);
 
@@ -450,8 +478,10 @@ void PoseTreeUCXClient::run() {
         ucxx::AmReceiverCallbackInfo delta_info("AMServer", MSG_DELTA);
         auto send_request =
             impl_->endpoint->amSend(&msg, sizeof(msg), UCS_MEMORY_TYPE_HOST, delta_info);
-        waitSingleRequest(
-            impl_->worker, send_request, config_.request_timeout_ms, config_.request_poll_sleep_us);
+        waitSingleRequest(impl_->worker,
+                          std::move(send_request),
+                          config_.request_timeout_ms,
+                          config_.request_poll_sleep_us);
       }
       impl_->worker->progress();  // always keep UCX moving
     }
@@ -490,8 +520,10 @@ void PoseTreeUCXClient::run() {
     if (impl_ && impl_->endpoint && !impl_->server_initiated_shutdown) {
       ucxx::AmReceiverCallbackInfo close_info("AMServer", MSG_CLOSE);
       auto close_request = impl_->endpoint->amSend(nullptr, 0, UCS_MEMORY_TYPE_HOST, close_info);
-      waitSingleRequest(
-          impl_->worker, close_request, config_.request_timeout_ms, config_.request_poll_sleep_us);
+      waitSingleRequest(impl_->worker,
+                        std::move(close_request),
+                        config_.request_timeout_ms,
+                        config_.request_poll_sleep_us);
     }
   } catch (const std::exception& e) {
     // This can happen if the server is already down, log and ignore

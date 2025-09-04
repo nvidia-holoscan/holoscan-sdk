@@ -144,7 +144,12 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
   if (network_options.use_fp16) {
+    // TensorRT 10.12 deprecated the BuilderFlag::kFP16 flag, but we want to keep the feature
+    // until it is removed from the API. Therefore disabled the warning.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     config->setFlag(nvinfer1::BuilderFlag::kFP16);
+#pragma GCC diagnostic pop
   }
   if (network_options.dla_core > -1) {
     const int32_t available_dla_cores = builder->getNbDLACores();
@@ -155,7 +160,12 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
       return false;
     }
     config->setDefaultDeviceType(nvinfer1::DeviceType::kDLA);
+    // TensorRT 10.12 deprecated the BuilderFlag::kPREFER_PRECISION_CONSTRAINTS flag, but we want
+    // to keep the feature until it is removed from the API. Therefore disabled the warning.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     config->setFlag(nvinfer1::BuilderFlag::kPREFER_PRECISION_CONSTRAINTS);
+#pragma GCC diagnostic pop
     config->setDLACore(network_options.dla_core);
     // if requested, enable GPU fallback. If this is not set and a layer is not supported by DLA,
     // building the engine will fail with an error.

@@ -94,13 +94,22 @@ void init_pose_tree_geometry(py::module_& m) {
       .def_static("identity", &SO3d::identity)
       .def_static("from_scaled_axis", &SO3d::from_scaled_axis)
       .def_static("from_axis_angle", &SO3d::from_axis_angle)
-      .def_static("from_quaternion", &SO3d::from_quaternion)
-      .def_static("from_normalized_quaternion", &SO3d::from_normalized_quaternion)
+      .def_static("from_quaternion",
+                  [](const Eigen::Vector4d& quaternion) {
+                    return SO3d::from_quaternion(Quaterniond(quaternion.data()));
+                  })
+      .def_static("from_normalized_quaternion",
+                  [](const Eigen::Vector4d& quaternion) {
+                    return SO3d::from_normalized_quaternion(Quaterniond(quaternion.data()));
+                  })
       .def_static("from_so2_xy", &SO3d::from_so2_xy)
       .def_static("from_matrix", &SO3d::from_matrix)
       .def("axis", &SO3d::axis)
       .def("angle", &SO3d::angle)
-      .def("quaternion", &SO3d::quaternion)
+      .def_property(
+          "quaternion",
+          [](SO3d& q) { return q.quaternion().coeffs(); },
+          [](SO3d& q, const Vector4d& v) { q = SO3d::from_quaternion(Quaterniond(v.data())); })
       .def("matrix", &SO3d::matrix)
       .def("euler_angles_rpy", &SO3d::euler_angles_rpy)
       .def("inverse", &SO3d::inverse)
@@ -194,6 +203,16 @@ void init_pose_tree(py::module_& m) {
           py::arg("edges_chunk_size") = 4,
           py::arg("history_chunk_size") = 64)
       .def("deinit", &PoseTree::deinit)
+      .def(
+          "set_multithreading_info",
+          [](PoseTree& self, PoseTree::frame_t start_id, PoseTree::frame_t increment) {
+            auto ret = self.set_multithreading_info(start_id, increment);
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
+          },
+          py::arg("start_id") = 1,
+          py::arg("increment") = 1)
 
       // Version methods
       .def("get_pose_tree_version", &PoseTree::get_pose_tree_version)
@@ -210,6 +229,18 @@ void init_pose_tree(py::module_& m) {
           },
           py::arg("name") = "",
           py::arg("number_edges") = 16)
+
+      .def(
+          "create_frame_with_id",
+          [](PoseTree& self, PoseTree::frame_t id, std::string_view name) {
+            auto ret = self.create_frame_with_id(id, name);
+            if (!ret) {
+              throw std::runtime_error(PoseTree::error_to_str(ret.error()));
+            }
+            return ret.value();
+          },
+          py::arg("id"),
+          py::arg("name") = "")
 
       .def(
           "find_frame",
@@ -619,7 +650,8 @@ void init_pose_tree_ucx(py::module_& m) {
       .def(py::init<>())
       .def_readwrite("worker_progress_sleep_us", &PoseTreeUCXServerConfig::worker_progress_sleep_us)
       .def_readwrite("shutdown_timeout_ms", &PoseTreeUCXServerConfig::shutdown_timeout_ms)
-      .def_readwrite("shutdown_poll_sleep_ms", &PoseTreeUCXServerConfig::shutdown_poll_sleep_ms);
+      .def_readwrite("shutdown_poll_sleep_ms", &PoseTreeUCXServerConfig::shutdown_poll_sleep_ms)
+      .def_readwrite("maximum_clients", &PoseTreeUCXServerConfig::maximum_clients);
 
   // Bind PoseTreeUCXServer Error enum
   py::enum_<PoseTreeUCXServer::Error>(m, "PoseTreeUCXServerError")

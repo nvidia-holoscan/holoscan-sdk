@@ -85,17 +85,17 @@ class OrbitSetterOp(Operator):
             )
             moon_rot = SO3.from_axis_angle(np.array([0.0, 0.0, 1.0]), theta_m)
             self.pose_tree.set("earth", "moon", now, Pose3(moon_rot, moon_pos))
+
+            print(
+                f"[day {now / DAY_SEC:4.0f}]  Sun → Earth  : pose translation = "
+                f"({earth_pos[0]:.8f}, {earth_pos[1]:.8f}, {earth_pos[2]:.8f})"
+            )
+            print(
+                f"[day {now / DAY_SEC:4.0f}]  Earth → Moon : pose translation = "
+                f"({moon_pos[0]:.8f}, {moon_pos[1]:.8f}, {moon_pos[2]:.8f})"
+            )
         else:
             logging.error("PoseTree not found")
-
-        print(
-            f"[day {now / DAY_SEC:4.0f}]  Sun → Earth  : pose translation = "
-            f"({earth_pos[0]:.8f}, {earth_pos[1]:.8f}, {earth_pos[2]:.8f})"
-        )
-        print(
-            f"[day {now / DAY_SEC:4.0f}]  Earth → Moon : pose translation = "
-            f"({moon_pos[0]:.8f}, {moon_pos[1]:.8f}, {moon_pos[2]:.8f})"
-        )
 
         op_output.emit(now, "sim_time")
 

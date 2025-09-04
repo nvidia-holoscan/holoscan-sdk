@@ -15,6 +15,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
+import platform
+
 import pytest
 
 try:
@@ -27,7 +29,7 @@ except ImportError:
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, ConditionType, Operator, OperatorSpec
 from holoscan.operators import PingTensorTxOp
-from holoscan.resources import CudaStreamPool
+from holoscan.resources import CudaGreenContext, CudaGreenContextPool, CudaStreamPool
 
 
 class StreamRxOp(Operator):
@@ -84,6 +86,30 @@ class MyStreamTestApp(Application):
         super().__init__(*args, **kwargs)
 
     def compose(self):
+        arch = platform.machine().lower()
+        if arch in ["x86_64", "amd64"]:
+            partitions = [8, 4]
+        elif arch in ["aarch64", "arm64"]:
+            partitions = [8, 8]
+        else:
+            raise ValueError(f"Unsupported platform architecture: {arch}")
+
+        cuda_green_context_pool = CudaGreenContextPool(
+            self,
+            name="cuda_green_context_pool",
+            dev_id=0,
+            flags=0,
+            num_partitions=2,
+            sms_per_partition=partitions,
+            default_context_index=-1,
+            min_sm_size=2,
+        )
+        cuda_green_context = CudaGreenContext(
+            self,
+            name="cuda_green_context",
+            cuda_green_context_pool=cuda_green_context_pool,
+            index=0,
+        )
         stream_pool = CudaStreamPool(
             self,
             name="stream_pool",
@@ -92,6 +118,7 @@ class MyStreamTestApp(Application):
             stream_priority=0,
             reserved_size=1,
             max_size=5,
+            cuda_green_context=cuda_green_context,
         )
         # tx op will only add the stream if all three of these are true
         #    1.) storage_type == "device"
@@ -123,6 +150,51 @@ class MyCuPyExternalStreamApp(Application):
             stream_priority=0,
             reserved_size=1,
             max_size=5,
+        )
+        tx = PingTensorTxOp(
+            self,
+            CountCondition(self, self.count),
+            storage_type="device",
+            dtype="int32_t",
+            cuda_stream_pool=stream_pool,
+            async_device_allocation=True,
+            name="tx",
+        )
+        rx = CuPyExternalStreamOp(self, stream_pool, name="stream_rx")
+        self.add_flow(tx, rx)
+
+
+class MyCuPyExternalStreamWithGreenContextApp(Application):
+    def __init__(self, *args, count=10, **kwargs):
+        self.count = count
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        cuda_green_context_pool = CudaGreenContextPool(
+            self,
+            name="cuda_green_context_pool",
+            dev_id=0,
+            flags=0,
+            num_partitions=1,
+            sms_per_partition=[16],
+            default_context_index=-1,
+            min_sm_size=2,
+        )
+        cuda_green_context = CudaGreenContext(
+            self,
+            name="cuda_green_context",
+            cuda_green_context_pool=cuda_green_context_pool,
+            index=0,
+        )
+        stream_pool = CudaStreamPool(
+            self,
+            name="stream_pool",
+            dev_id=0,
+            stream_flags=0,
+            stream_priority=0,
+            reserved_size=1,
+            max_size=5,
+            cuda_green_context=cuda_green_context,
         )
         tx = PingTensorTxOp(
             self,
@@ -227,6 +299,16 @@ def test_cupy_external_stream():
     except RuntimeError:
         pytest.skip("no available CUDA device: skipping stream test")
     app = MyCuPyExternalStreamApp()
+    app.run()
+
+
+@pytest.mark.skipif(not has_cupy, reason="CuPy is not installed")
+def test_cupy_external_stream_with_green_context():
+    try:
+        cp.cuda.Device()
+    except RuntimeError:
+        pytest.skip("no available CUDA device: skipping stream test")
+    app = MyCuPyExternalStreamWithGreenContextApp()
     app.run()
 
 

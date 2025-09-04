@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "common/assert.hpp"
 #include "holoscan/core/arg.hpp"
@@ -129,6 +130,7 @@ TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithArgs) {
       Arg{"stop_on_deadlock", false},
       Arg{"max_duration_ms", 10000L},
       Arg{"stop_on_deadlock_timeout", 100LL},
+      Arg{"pin_cores", std::vector<uint32_t>{0, 1, 2, 3}},
   };
   auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
   EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);

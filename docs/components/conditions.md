@@ -383,9 +383,9 @@ def compute(self, op_input, op_output, context):
 ## PeriodicCondition
 
 An operator associated with `PeriodicCondition` ({cpp:class}`C++ <holoscan::PeriodicCondition>`/{py:class}`Python <holoscan.conditions.PeriodicCondition>`) is executed after periodic time intervals specified using its `recess_period` parameter. The scheduling status of the operator associated with this condition can either be in `READY` or `WAIT_TIME` state.
-For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed. After the operator is executed, the scheduling status is set to `WAIT_TIME`, and the operator is not executed until the `recess_period` time interval. The `PeriodicConditionPolicy` specifies how the scheduler handles the recess period: `CatchUpMissedTicks (default)`,`MinTimeBetweenTicks`, or `NoCatchUpMissedTicks`.
+For the first time or after periodic time intervals, the scheduling status of the operator associated with this condition is set to `READY` and the operator is executed. After the operator is executed, the scheduling status is set to `WAIT_TIME`, and the operator is not executed until the `recess_period` time interval. The `PeriodicConditionPolicy` ({cpp:enum}`C++ <holoscan::PeriodicConditionPolicy>`/{py:class}`Python <holoscan.conditions.PeriodicConditionPolicy>`) specifies how the scheduler handles the recess period: `CatchUpMissedTicks (default)`,`MinTimeBetweenTicks`, or `NoCatchUpMissedTicks`.
 
-The `PeriodicSchedulingPolicy` enum defines three different policies for handling periodic tasks:
+The `PeriodicConditionPolicy` enum defines three different policies for handling periodic tasks:
 
 `CatchUpMissedTicks`:
 - Tries to catch up on any missed ticks by executing them as quickly as possible

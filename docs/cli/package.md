@@ -7,7 +7,7 @@
 ## Synopsis
 
 `holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-add) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-add-host) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-holoscan-sdk-file) [](#cli-package-includes) [](#cli-package-input-data) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-source) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
-                     
+
 
 ## Examples
 
@@ -191,7 +191,7 @@ An optional version number of the application. When specified, it overrides the 
 
 #### `[--add-host ADD_HOSTS]`
 
-Optionally add one or more host-to-IP mapping (format: host:ip). 
+Optionally add one or more host-to-IP mapping (format: host:ip).
 
 (#cli-package-base-image)=
 
@@ -239,8 +239,8 @@ To reduce the size of the packaged application container, the CLI Packager, by d
 
 - `debug`: includes debugging tools, such as `gdb`
 - `holoviz`: includes dependencies for Holoviz rendering on x11 and Wayland
-- `torch`: includes `libtorch` and `torchvision` runtime dependencies
-- `onnx`: includes `onnxruntime` runtime, `libnvinfer-plugin8`, `libnconnxparser8` dependencies.
+- `torch`: includes `libtorch` runtime dependencies
+- `onnx`: includes `onnxruntime` runtime, `libnvinfer-plugin8`, `libnvonnxparser8` dependencies.
 
 :::{note}
 Refer to [Developer Resources](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/DEVELOP.md#advanced-local-environment--cmake) for dependency versions.

@@ -95,7 +95,7 @@ PoseTree::expected_t<void> PoseTree::init(const int32_t number_frames, const int
     }
   }
   {  // Initialize the frame map
-    const auto result = frame_map_.initialize(number_frames);
+    const auto result = frame_map_.initialize(number_frames, number_frames * 2);
     if (!result) {
       return unexpected_t(Error::kOutOfMemory);
     }
@@ -129,14 +129,14 @@ PoseTree::expected_t<void> PoseTree::init(const int32_t number_frames, const int
     }
   }
   {  // Initialize the edges map
-    const auto result1 = edges_map_.reserve(number_edges, 2 * number_edges);
+    const auto result1 = edges_map_.initialize(number_edges, 2 * number_edges);
     const auto result2 = edges_map_keys_.reserve(number_edges);
     if (!result1 || !result2) {
       return unexpected_t(Error::kOutOfMemory);
     }
   }
   {  // Initialize the edges map
-    const auto result1 = name_to_uid_map_.reserve(number_frames, 2 * number_frames);
+    const auto result1 = name_to_uid_map_.initialize(number_frames, 2 * number_frames);
     const auto result2 = name_to_uid_map_keys_.reserve(number_frames);
     if (!result1 || !result2) {
       return unexpected_t(Error::kOutOfMemory);
@@ -152,14 +152,34 @@ PoseTree::expected_t<void> PoseTree::init(const int32_t number_frames, const int
   version_ = 1;
   frame_cb_latest_uid_ = 0;
   edge_cb_latest_uid_ = 0;
+  next_frame_id_ = 1;
+  frame_id_increment_ = 1;
 
   return expected_t<void>{};
+}
+
+PoseTree::expected_t<void> PoseTree::set_multithreading_info(const frame_t start_frame_id,
+                                                             const frame_t increment) {
+  if (start_frame_id == 0) {
+    HOLOSCAN_LOG_DEBUG("Invalid start_frame_id: {}. Value must be greater than 0 since frame ID 0 "
+                       "is reserved for invalid frames", start_frame_id);
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  if (increment == 0 || std::numeric_limits<uint64_t>::max() / increment <
+                        static_cast<uint64_t>(frame_map_.capacity())) {
+    HOLOSCAN_LOG_DEBUG("Invalid increment: {}. Value must be between 1 and {}",
+                       increment,
+                       std::numeric_limits<uint64_t>::max() / frame_map_.capacity());
+    return unexpected_t(Error::kInvalidArgument);
+  }
+  next_frame_id_ = start_frame_id;
+  frame_id_increment_ = increment;
+  return {};
 }
 
 void PoseTree::deinit() {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
   frames_stack_.reset(nullptr);
-  frame_map_ = nvidia::UniqueIndexMap<FrameInfo>();
   histories_map_ = nvidia::UniqueIndexMap<PoseTreeEdgeHistory>();
   histories_management_ = FirstFitAllocator<history_t>();
   poses_management_ = FirstFitAllocator<PoseTreeEdgeHistory::TimedPose>();
@@ -203,29 +223,36 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::find_or_create_frame_impl(
   if (auto uid = find_frame_impl(name)) {
     return uid;
   }
-  return create_frame_impl(name, number_edges);
+  return create_frame_impl(name, number_edges, nullptr);
+}
+
+PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_with_id(const frame_t id,
+                                                                       std::string_view name) {
+  std::unique_lock<std::shared_timed_mutex> lock(mutex_);
+  return create_frame_impl(name, default_number_edges_, &id);
 }
 
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame(std::string_view name,
                                                                const int32_t number_edges) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
-  return create_frame_impl(name, number_edges);
+  return create_frame_impl(name, number_edges, nullptr);
 }
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame(std::string_view name) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
-  return create_frame_impl(name, default_number_edges_);
+  return create_frame_impl(name, default_number_edges_, nullptr);
 }
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame(const int32_t number_edges) {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
-  return create_frame_impl({}, number_edges);
+  return create_frame_impl({}, number_edges, nullptr);
 }
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame() {
   std::unique_lock<std::shared_timed_mutex> lock(mutex_);
-  return create_frame_impl({}, default_number_edges_);
+  return create_frame_impl({}, default_number_edges_, nullptr);
 }
 
 PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_view name,
-                                                                    const int32_t number_edges) {
+                                                                    const int32_t number_edges,
+                                                                    const frame_t* id) {
   if (frame_map_.size() == frame_map_.capacity()) {
     return unexpected_t(Error::kOutOfMemory);
   }
@@ -240,29 +267,45 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
       return unexpected_t(Error::kAlreadyExists);
     }
   }
+  frame_t uid{};
+  if (id == nullptr) {
+    for (int i = 0; i <= frame_map_.size(); i++) {
+      uid = next_frame_id_;
+      next_frame_id_ += frame_id_increment_;
+      if (!frame_map_.has(uid)) {
+        break;
+      }
+      if (i == frame_map_.size()) {
+        // This can only happen if the increment * number_frames is bigger than 2^64
+        return unexpected_t(Error::kLogicError);
+      }
+    }
+  } else {
+    if (*id != 0 && frame_map_.has(*id)) {
+      HOLOSCAN_LOG_DEBUG("ID {} requested for '{}' conflicts with existing frame '{}'",
+                         *id, name, frame_map_.get(*id).value().name);
+      return unexpected_t(Error::kAlreadyExists);
+    }
+    uid = *id;
+  }
   const auto history = histories_management_.acquire(number_edges);
   if (!history) {
     return unexpected_t(Error::kOutOfMemory);
   }
-  const auto uid = frame_map_.emplace();
-  if (!uid) {
-    histories_management_.release(history.value().first);
-    return unexpected_t(Error::kOutOfMemory);
-  }
-  const auto maybe_frame = frame_map_.try_get(uid.value());
+  const auto maybe_frame = frame_map_.insert(uid, {});
   if (!maybe_frame) {
     histories_management_.release(history.value().first);
-    frame_map_.erase(uid.value());
+    frame_map_.erase(uid);
     return unexpected_t(Error::kLogicError);
   }
-  auto* frame = maybe_frame.value();
+  FrameInfo* frame = maybe_frame.value();
   frame->history = history.value().first;
   frame->maximum_number_edges = history.value().second;
   frame->number_edges = 0;
   frame->hint_version = version_;
   frame->distance_to_root = 0;
-  frame->node_to_root = uid.value();
-  frame->uid = uid.value();
+  frame->node_to_root = uid;
+  frame->uid = uid;
   frame->root = frame->uid;
   if (!name.empty()) {
     for (size_t index = 0; index < name.size(); index++) {
@@ -275,14 +318,14 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
         snprintf(nullptr, 0, "%s%zu", kAutoGeneratedFrameNamePrefix, frame->uid);
     if (length_required > kFrameNameMaximumLength) {
       histories_management_.release(history.value().first);
-      frame_map_.erase(uid.value());
+      frame_map_.erase(uid);
       return unexpected_t(Error::kOutOfMemory);
     }
     const int length_used = snprintf(
         frame->name, length_required + 1, "%s%zu", kAutoGeneratedFrameNamePrefix, frame->uid);
     if (length_required != length_used) {
       histories_management_.release(history.value().first);
-      frame_map_.erase(uid.value());
+      frame_map_.erase(uid);
       return unexpected_t(Error::kLogicError);
     }
     frame->name_view = std::string_view(frame->name, length_used);

@@ -51,6 +51,8 @@
 #include "holoscan/operators/inference_processor/inference_processor.hpp"
 #include "holoscan/operators/ping_rx/ping_rx.hpp"
 #include "holoscan/operators/ping_tx/ping_tx.hpp"
+#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
@@ -338,6 +340,32 @@ TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOp) {
                                                              << log_output << "\n===========\n";
 }
 
+TEST_F(OperatorClassesWithGXFContext, TestInferenceProcessorOpWithGreenContext) {
+  const std::string name{"processor"};
+
+  // load most arguments from the YAML file
+  ArgList kwargs = F.from_config("processor");
+  kwargs.add(Arg{"allocator", F.make_resource<UnboundedAllocator>("pool")});
+  std::vector<uint32_t> partitions = {4, 4};
+  auto cuda_green_context_pool = F.make_resource<CudaGreenContextPool>(
+      "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
+  auto cuda_green_context =
+      F.make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 0);
+  auto cuda_stream_pool =
+      F.make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 10, cuda_green_context);
+  kwargs.add(Arg{"cuda_stream_pool", cuda_stream_pool});
+
+  testing::internal::CaptureStderr();
+  auto op = F.make_operator<ops::InferenceProcessorOp>(name, kwargs);
+  EXPECT_EQ(op->name(), name);
+  EXPECT_EQ(typeid(op), typeid(std::make_shared<ops::InferenceProcessorOp>(kwargs)));
+  EXPECT_TRUE(op->description().find("name: " + name) != std::string::npos);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
 TEST_F(OperatorClassesWithGXFContext, TestBayerDemosaicOp) {
   const std::string name{"bayer_demosaic"};
 
@@ -393,6 +421,69 @@ TEST_F(OperatorClassesWithGXFContext, TestPingRxOp) {
   testing::internal::CaptureStderr();
 
   auto op = F.make_operator<ops::PingRxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTensorTxOp) {
+  const std::string name{"rx_tensor"};
+
+  testing::internal::CaptureStderr();
+
+  auto allocator = F.make_resource<UnboundedAllocator>("allocator");
+
+  auto op = F.make_operator<ops::PingTensorTxOp>(name,
+                                                 Arg("allocator", allocator),
+                                                 Arg("storage_type", "system"),
+                                                 Arg("batch_size", int32_t(0)),
+                                                 Arg("rows", int32_t(128)),
+                                                 Arg("columns", int32_t(64)),
+                                                 Arg("channels", int32_t(0)),
+                                                 Arg("data_type", std::string("uint16_t")),
+                                                 Arg("tensor_name", std::string("image")),
+                                                 Arg("async_device_allocation", false));
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTensorTxOpDefault) {
+  const std::string name{"rx_tensor"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingTensorTxOp>(name);
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTensorRxOp) {
+  const std::string name{"rx_tensor"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingTensorRxOp>(name, Arg("receive_as_tensormap", false));
+  EXPECT_EQ(op->name(), name);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestPingTensorRxOpDefault) {
+  const std::string name{"rx_tensor"};
+
+  testing::internal::CaptureStderr();
+
+  auto op = F.make_operator<ops::PingTensorRxOp>(name);
   EXPECT_EQ(op->name(), name);
 
   std::string log_output = testing::internal::GetCapturedStderr();

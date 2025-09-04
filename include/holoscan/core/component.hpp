@@ -281,12 +281,11 @@ class ComponentBase {
   std::shared_ptr<FragmentService> get_service_by_type_info(const std::type_info& service_type,
                                                             std::string_view id = "") const;
 
- protected:
-  friend class holoscan::Executor;
-  // Make GXFExecutor a friend class so it can call protected initialization methods
-  friend class holoscan::gxf::GXFExecutor;
+  /// Reset any backend-specific objects (e.g. GXF GraphEntity)
+  virtual void reset_backend_objects();
 
-  // Make Fragment a friend class so it can call reset_graph_entities
+ protected:
+  // Make Fragment a friend class so it can call `fragment` and `service_provider`
   friend class holoscan::Fragment;
 
   /**
@@ -301,9 +300,6 @@ class ComponentBase {
 
   /// Update parameters based on the specified arguments
   void update_params_from_args(std::unordered_map<std::string, ParameterWrapper>& params);
-
-  /// Reset the GXF GraphEntity of any arguments that have one
-  virtual void reset_graph_entities();
 
   /// Set the fragment that owns this component
   void fragment(Fragment* frag);
@@ -329,17 +325,15 @@ class ComponentBase {
  * instead of `holoscan::ComponentSpec`.
  */
 class Component : public ComponentBase {
- protected:
-  // Make GXFExecutor a friend class so it can call protected initialization methods
-  friend class holoscan::gxf::GXFExecutor;
+ public:
+  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
+  virtual void set_parameters() {}
 
+ protected:
   using ComponentBase::update_params_from_args;
 
   /// Update parameters based on the specified arguments
   void update_params_from_args();
-
-  /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
-  virtual void set_parameters() {}
 
   std::shared_ptr<ComponentSpec> spec_;  ///< The component specification.
 };

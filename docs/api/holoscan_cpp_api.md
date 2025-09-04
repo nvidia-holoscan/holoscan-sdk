@@ -169,6 +169,7 @@
 - {ref}`exhale_class_classholoscan_1_1StdComponentSerializer`
 - {ref}`exhale_class_classholoscan_1_1StdEntitySerializer`
 - {ref}`exhale_class_classholoscan_1_1StreamOrderedAllocator`
+- {ref}`exhale_class_classholoscan_1_1SyntheticClock`
 - {ref}`exhale_class_classholoscan_1_1ThreadPool`
 - {ref}`exhale_class_classholoscan_1_1Transmitter`
 - {ref}`exhale_class_classholoscan_1_1UcxComponentSerializer`
