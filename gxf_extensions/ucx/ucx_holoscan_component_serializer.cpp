@@ -264,7 +264,7 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeMessageLabel(
         "%zu bytes. You can try to increase the buffer capacity by setting the "
         "HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE environment variable, but the limit it is "
         "possible to set will depend on the maximum header size supported by the underlying "
-        "ucp_send_am_nbx function of UCX.",
+        "ucp_am_send_nbx function of UCX.",
         total_size,
         buffer_capacity);
     return Unexpected{GXF_FAILURE};
