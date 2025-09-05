@@ -399,7 +399,7 @@ ARG ONNX_RUNTIME_VERSION
 WORKDIR /opt/onnxruntime
 RUN CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2) \
     && curl -S -L -# -o ort.tgz \
-        https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
 RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 --no-same-owner --no-same-permissions
 
@@ -519,7 +519,7 @@ RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
         GXF_VERSION="${GXF_CU12_VERSION}"; \
     fi; \
     curl -S -# -L -o gxf.tgz \
-        "https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
+        "https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
     if [ $(stat -c %s gxf.tgz) -lt 1000 ]; then \
         echo "ERROR: Downloaded gxf.tgz is too small. Download may have failed."; \
         exit 1; \
