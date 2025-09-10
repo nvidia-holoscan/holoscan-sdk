@@ -323,7 +323,7 @@ get_image_tag_flags() {
 
 install_python_dev_deps() {
     if [ -n "${VIRTUAL_ENV-}" ] || [ -n "${CONDA_PREFIX-}" ]; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.cu${CUDA_MAJOR}.txt
         run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
     else
         c_echo_err R "You must be in a virtual environment to install dependencies."
@@ -1177,7 +1177,15 @@ launch() {
     # - Add the GXF module to PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_git_sha)"
-    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+')
+    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
+    ld_library_path=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
+
+    # Workaround: Required to support cuda-compat-13-0 on Jetpack 7.0 platform.
+    # Expected library mount path from Jetpack 7.0 with nvidia-container-toolkit
+    if [ "${CUDA_MAJOR}" -eq 13 ] && [ -e /usr/lib/aarch64-linux-gnu/nvidia ]; then
+        ld_library_path="/usr/lib/aarch64-linux-gnu/nvidia:${ld_library_path}"
+    fi
+
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
@@ -1195,6 +1203,7 @@ launch() {
         --gpus all \
         ${display_server_opt} \
         ${mount_device_opt} \
+        -e LD_LIBRARY_PATH=${ld_library_path} \
         -e PYTHONPATH=${pythonpath}:${container_top}/${working_dir}/python/lib \
         -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
         -e HOLOSCAN_INPUT_PATH=${container_top}/data \

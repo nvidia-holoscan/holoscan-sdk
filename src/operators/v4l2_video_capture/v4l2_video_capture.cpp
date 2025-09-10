@@ -567,18 +567,30 @@ void V4L2VideoCaptureOp::v4l2_request_buffers() {
 
     // when running on L4T and managed memory is supported, then output is managed memory
     // which has the best combination of CPU and GPU access performance
-    if (std::filesystem::exists("/etc/nv_tegra_release")) {
-      const int device = 0;
-      int managed_memory = 0;
-      HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&managed_memory, cudaDevAttrManagedMemory, device));
-      // Workaround: frames are not updated when running bare metal on IGX with dGPU so enabled
-      // this on iGPU only for now
-      int integrated = 0;
-      HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&integrated, cudaDevAttrIntegrated, device));
-      if (managed_memory && integrated) {
-        memory_storage_type_ = nvidia::gxf::MemoryStorageType::kDevice;
-      }
-    }
+    //
+    // TODO: Observed an issue with device memory on Jetson AGX Thor (unified SBSA):
+    // ```
+    // RuntimeError: Call `ioctl(fd_, VIDIOC_QBUF, &buf)` in line 1002 of file
+    // /workspace/holoscan-sdk/src/operators/v4l2_video_capture/v4l2_video_capture.cpp
+    // failed with 'Bad address' (errno 14)
+    // ```
+    //
+    // Workaround: always use host memory for now.
+    // https://nvbugspro.nvidia.com/bug/5427678
+    //
+    // if (std::filesystem::exists("/etc/nv_tegra_release")) {
+    //   const int device = 0;
+    //   int managed_memory = 0;
+    //   HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&managed_memory,
+    //      cudaDevAttrManagedMemory, device));
+    //   // Workaround: frames are not updated when running bare metal on IGX with dGPU so enabled
+    //   // this on iGPU only for now
+    //   int integrated = 0;
+    //   HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&integrated, cudaDevAttrIntegrated, device));
+    //   if (managed_memory && integrated) {
+    //     memory_storage_type_ = nvidia::gxf::MemoryStorageType::kDevice;
+    //   }
+    // }
   }
 
   // Request V4L2 buffers

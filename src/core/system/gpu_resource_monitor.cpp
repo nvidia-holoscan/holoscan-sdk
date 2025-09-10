@@ -18,7 +18,11 @@
 
 #include <dlfcn.h>
 
+#include <fstream>
 #include <iostream>
+#include <sstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/logger/logger.hpp"
@@ -134,6 +138,55 @@
 
 namespace holoscan {
 
+// Helper function to get system memory information from /proc/meminfo
+// Returns memory info in bytes, or 0 if unable to read
+static std::pair<size_t, size_t> get_system_memory_info() {
+  std::ifstream meminfo("/proc/meminfo");
+  if (!meminfo.is_open()) {
+    HOLOSCAN_LOG_DEBUG("Could not open /proc/meminfo for system memory information");
+    return {0, 0};
+  }
+
+  std::string line;
+  size_t total_memory = 0;
+  size_t available_memory = 0;
+
+  while (std::getline(meminfo, line)) {
+    std::istringstream iss(line);
+    std::string key;
+    size_t value;
+    std::string unit;
+
+    if (iss >> key >> value >> unit) {
+      if (key == "MemTotal:") {
+        if (unit == "kB") {
+          total_memory = value * 1024;  // Convert from KB to bytes
+        } else {
+          HOLOSCAN_LOG_ERROR("Unexpected unit '{}' for MemTotal in /proc/meminfo, expected 'kB'",
+                             unit);
+        }
+      } else if (key == "MemAvailable:") {
+        if (unit == "kB") {
+          available_memory = value * 1024;  // Convert from KB to bytes
+        } else {
+          HOLOSCAN_LOG_ERROR(
+              "Unexpected unit '{}' for MemAvailable in /proc/meminfo, expected 'kB'", unit);
+        }
+      }
+    }
+  }
+
+  if (total_memory > 0 && available_memory > 0) {
+    HOLOSCAN_LOG_DEBUG("System memory: {} MB total, {} MB available",
+                       total_memory / (1024 * 1024),
+                       available_memory / (1024 * 1024));
+    return {total_memory, available_memory};
+  } else {
+    HOLOSCAN_LOG_DEBUG("Could not read system memory information from /proc/meminfo");
+    return {0, 0};
+  }
+}
+
 namespace {
 constexpr char kDefaultNvmlLibraryPath[] = "libnvidia-ml.so.1";  // /usr/lib/x86_64-linux-gnu/
 constexpr const char* kDefaultCudaRuntimeLibraryPaths[] = {
@@ -158,12 +211,27 @@ void GPUResourceMonitor::init() {
     HOLOSCAN_LOG_DEBUG("NVML library loaded from '{}'", kDefaultNvmlLibraryPath);
   }
 
-  if (!init_nvml()) {
-    // If NVML initialization fails (e.g., iGPU case: nvml is not fully supported),
-    // try to use CUDA Runtime API.
-    if (!init_cuda_runtime()) {
-      return;
-    }
+  bool nvml_initialized = false;
+  if (handle_) {
+    nvml_initialized = init_nvml();
+  }
+
+  // Always try to initialize CUDA Runtime API as fallback for NVML limitations
+  // (e.g., on Jetson platforms where NVML doesn't support memory/power metrics)
+  bool cuda_initialized = init_cuda_runtime();
+
+  if (!nvml_initialized && !cuda_initialized) {
+    HOLOSCAN_LOG_ERROR(
+        "Neither NVML nor CUDA Runtime API could be initialized. GPU monitoring will not be "
+        "available.");
+    return;
+  }
+
+  // Use the GPU count from whichever library initialized successfully
+  if (nvml_initialized) {
+    gpu_count_ = nvml_devices_.size();
+  } else if (cuda_initialized) {
+    // gpu_count_ is already set by init_cuda_runtime()
   }
 
   // Initialize the GPU info vector
@@ -231,6 +299,14 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
           "Could not get the device name for GPU {}",
           index);
 
+      // Check if this is an integrated GPU by looking for common integrated GPU names
+      // or by testing if memory/power APIs return "Not Supported"
+      if (strstr(gpu_info.name, "nvgpu") != nullptr || strstr(gpu_info.name, "iGPU") != nullptr ||
+          strstr(gpu_info.name, "integrated") != nullptr) {
+        gpu_info.is_integrated = true;
+        HOLOSCAN_LOG_DEBUG("Detected integrated GPU: {}", gpu_info.name);
+      }
+
       // The following information is optional.
       if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPciInfo(device, &gpu_info.pci)) != 0) {
         gpu_info.pci = {};
@@ -238,7 +314,7 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
 
       if (HOLOSCAN_NVML_CALL_WARN(
               nvmlDeviceGetSerial(device, gpu_info.serial, NVML_DEVICE_SERIAL_BUFFER_SIZE)) != 0) {
-        strncpy(gpu_info.serial, "Not Supported", NVML_DEVICE_SERIAL_BUFFER_SIZE - 1);
+        gpu_info.serial[0] = '\0';
       }
 
       if (HOLOSCAN_NVML_CALL_WARN(
@@ -260,35 +336,103 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
 
     if (metric_flags & GPUMetricFlag::MEMORY_USAGE) {
       nvml::nvmlMemory_t memory{};
+      nvml::nvmlReturn_t mem_result =
+          HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetMemoryInfo(device, &memory));
 
-      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetMemoryInfo(device, &memory)) != 0) {
-        HOLOSCAN_LOG_DEBUG("Could not get the memory info for GPU {}", index);
+      if (mem_result == 0) {
+        // NVML memory info successful
+        gpu_info.memory_total = memory.total;
+        gpu_info.memory_free = memory.free;
+        gpu_info.memory_used = memory.used;
+        gpu_info.memory_usage = memory.total ? 100.0 * memory.used / memory.total : 0.0F;
+      } else if (mem_result == 3) {  // NVML_ERROR_NOT_SUPPORTED
+        gpu_info.is_integrated = true;
+        HOLOSCAN_LOG_DEBUG(
+            "NVML memory info not supported for GPU {} (likely integrated GPU), trying CUDA "
+            "Runtime API",
+            index);
+        // Fall back to CUDA Runtime API for memory info
+        bool cuda_memory_success = false;
+        if (cuda_handle_ != nullptr) {
+          size_t free_bytes = 0, total_bytes = 0;
+          auto cuda_err =
+              HOLOSCAN_CUDA_CALL_CHECK_HANDLE(cudaMemGetInfo(&free_bytes, &total_bytes));
+          if (cuda_err == 0 && total_bytes > 0) {
+            gpu_info.memory_total = total_bytes;
+            gpu_info.memory_free = free_bytes;
+            gpu_info.memory_used = total_bytes - free_bytes;
+            gpu_info.memory_usage = 100.0 * (total_bytes - free_bytes) / total_bytes;
+            cuda_memory_success = true;
+          }
+        }
+
+        // If CUDA Runtime also fails, try system memory for integrated GPUs
+        if (!cuda_memory_success) {
+          HOLOSCAN_LOG_DEBUG("CUDA Runtime API failed for GPU {}, trying system memory info",
+                             index);
+          auto [sys_total, sys_available] = get_system_memory_info();
+          if (sys_total > 0 && sys_available > 0) {
+            gpu_info.memory_total = sys_total;
+            gpu_info.memory_free = sys_available;
+            gpu_info.memory_used = sys_total - sys_available;
+            gpu_info.memory_usage = 100.0 * (sys_total - sys_available) / sys_total;
+            HOLOSCAN_LOG_DEBUG("Using system memory info for GPU {} (integrated GPU)", index);
+          } else {
+            HOLOSCAN_LOG_DEBUG("System memory info not available for GPU {}", index);
+          }
+        }
+      } else {
+        HOLOSCAN_LOG_DEBUG(
+            "Could not get the memory info for GPU {} via NVML (error {})", index, mem_result);
       }
-      gpu_info.memory_total = memory.total;
-      gpu_info.memory_free = memory.free;
-      gpu_info.memory_used = memory.used;
-      gpu_info.memory_usage = memory.total ? 100.0 * memory.used / memory.total : 0.0F;
     }
 
     if (metric_flags & GPUMetricFlag::POWER_LIMIT) {
-      if (HOLOSCAN_NVML_CALL_WARN(
-              nvmlDeviceGetPowerManagementLimit(device, &gpu_info.power_limit)) != 0) {
-        HOLOSCAN_LOG_DEBUG("Could not get the power limit for GPU {}", index);
+      nvml::nvmlReturn_t power_limit_result =
+          HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPowerManagementLimit(device, &gpu_info.power_limit));
+
+      if (power_limit_result != 0) {
+        if (power_limit_result == 3) {  // NVML_ERROR_NOT_SUPPORTED
+          HOLOSCAN_LOG_DEBUG("NVML power limit not supported for GPU {} (likely integrated GPU)",
+                             index);
+        } else {
+          HOLOSCAN_LOG_DEBUG("Could not get the power limit for GPU {} via NVML (error {})",
+                             index,
+                             power_limit_result);
+        }
         gpu_info.power_limit = 0;
       }
     }
 
     if (metric_flags & GPUMetricFlag::POWER_USAGE) {
-      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPowerUsage(device, &gpu_info.power_usage)) != 0) {
-        HOLOSCAN_LOG_DEBUG("Could not get the power usage for GPU {}", index);
+      nvml::nvmlReturn_t power_usage_result =
+          HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetPowerUsage(device, &gpu_info.power_usage));
+
+      if (power_usage_result != 0) {
+        if (power_usage_result == 3) {  // NVML_ERROR_NOT_SUPPORTED
+          HOLOSCAN_LOG_DEBUG("NVML power usage not supported for GPU {} (likely integrated GPU)",
+                             index);
+        } else {
+          HOLOSCAN_LOG_DEBUG("Could not get the power usage for GPU {} via NVML (error {})",
+                             index,
+                             power_usage_result);
+        }
         gpu_info.power_usage = 0;
       }
     }
 
     if (metric_flags & GPUMetricFlag::TEMPERATURE) {
-      if (HOLOSCAN_NVML_CALL_WARN(nvmlDeviceGetTemperature(
-              device, nvml::NVML_TEMPERATURE_GPU, &gpu_info.temperature)) != 0) {
-        HOLOSCAN_LOG_DEBUG("Could not get the temperature for GPU {}", index);
+      nvml::nvmlReturn_t temp_result = HOLOSCAN_NVML_CALL_WARN(
+          nvmlDeviceGetTemperature(device, nvml::NVML_TEMPERATURE_GPU, &gpu_info.temperature));
+
+      if (temp_result != 0) {
+        if (temp_result == 3) {  // NVML_ERROR_NOT_SUPPORTED
+          HOLOSCAN_LOG_DEBUG("NVML temperature not supported for GPU {} (likely integrated GPU)",
+                             index);
+        } else {
+          HOLOSCAN_LOG_DEBUG(
+              "Could not get the temperature for GPU {} via NVML (error {})", index, temp_result);
+        }
         gpu_info.temperature = 0;
       }
     }
@@ -377,15 +521,29 @@ GPUInfo& GPUResourceMonitor::update(uint32_t index, GPUInfo& gpu_info, uint64_t 
 
     if (metric_flags & GPUMetricFlag::MEMORY_USAGE) {
       // Use cudaMemGetInfo for getting memory usage
-      size_t free, total;
-      HOLOSCAN_CUDA_CALL_RETURN_VALUE_MSG(cudaMemGetInfo(&free, &total),
-                                          gpu_info,
-                                          "Could not get the memory info for GPU {}",
-                                          index);
-      gpu_info.memory_total = total;
-      gpu_info.memory_free = free;
-      gpu_info.memory_used = total - free;
-      gpu_info.memory_usage = 100.0 * (total - free) / total;
+      size_t free = 0, total = 0;
+      auto cuda_err = HOLOSCAN_CUDA_CALL_CHECK_HANDLE(cudaMemGetInfo(&free, &total));
+      if (cuda_err == 0 && total > 0) {
+        gpu_info.memory_total = total;
+        gpu_info.memory_free = free;
+        gpu_info.memory_used = total - free;
+        gpu_info.memory_usage = 100.0 * (total - free) / total;
+      } else {
+        // CUDA Runtime failed, try system memory for integrated GPUs
+        HOLOSCAN_LOG_DEBUG("CUDA Runtime memory info failed for GPU {}, trying system memory",
+                           index);
+        auto [sys_total, sys_available] = get_system_memory_info();
+        if (sys_total > 0 && sys_available > 0) {
+          gpu_info.memory_total = sys_total;
+          gpu_info.memory_free = sys_available;
+          gpu_info.memory_used = sys_total - sys_available;
+          gpu_info.memory_usage = 100.0 * (sys_total - sys_available) / sys_total;
+          gpu_info.is_integrated = true;  // Mark as integrated since we're using system memory
+          HOLOSCAN_LOG_DEBUG("Using system memory info for GPU {} (integrated GPU)", index);
+        } else {
+          HOLOSCAN_LOG_DEBUG("System memory info not available for GPU {}", index);
+        }
+      }
     }
 
     if (metric_flags & GPUMetricFlag::POWER_LIMIT) {

@@ -143,7 +143,7 @@ Running an application in a distributed setting requires launching the applicati
 The address of the driver node must be specified for each process (both the driver and worker(s)) to identify the appropriate network interface for communication. This can be done via the `--address` command-line option, which takes a value in the form of `[<IPv4/IPv6 address or hostname>][:<port>]` (e.g., `--address 192.168.50.68:10000`):
 - The driver's IP (or hostname) **MUST** be set for each process (driver and worker(s)) when running distributed applications on multiple nodes (default: `0.0.0.0`). It can be set without the port (e.g., `--address 192.168.50.68`).
 - In a single-node application, the driver's IP (or hostname) can be omitted, allowing any network interface (`0.0.0.0`) to be selected by the [UCX](https://openucx.readthedocs.io/en/master/faq.html#which-network-devices-does-ucx-use) library.
-- The port is always optional (default: `8765`). It can be set without the IP (e.g., `--address :10000`).
+- The port is always optional (default: `57777`). It can be set without the IP (e.g., `--address :10000`).
 
 The worker node's address can be defined using the `--worker-address` command-line option (`[<IPv4/IPv6 address or hostname>][:<port>]`). If it's not specified, the application worker will default to the host address (`0.0.0.0`) with a randomly chosen port number between `10000` and `32767` that is not currently in use.
 This argument automatically sets the `HOLOSCAN_UCX_SOURCE_ADDRESS` environment variable if the worker address is a local IP address. Refer to [this section](#creating-holoscan-distributed-application-env-vars) for details.
@@ -240,8 +240,10 @@ Given a CMake project, a pre-built executable, or a Python application, you can 
 
 You can set environment variables to modify the default actions of services and the scheduler when executing a distributed application.
 
+- **HOLOSCAN_APP_DRIVER_PORT**: overrides the default port number (57777) used by the App Driver service. This environment variable is only used when the distributed application is launched with `--driver` or `--worker` options and no explicit port is specified via the `--address` option. The value must be a valid port number (1-65535).
+
 - **HOLOSCAN_ENABLE_HEALTH_CHECK**: determines whether the health check service should be active for distributed applications. Accepts values such as "true," "1," or "on" (case-insensitive) as true, enabling the health check. If unspecified, it defaults to "false." When enabled, the [gRPC Health Checking Service](https://github.com/grpc/grpc/blob/master/doc/health-checking.md) is activated, allowing tools like [grpc-health-probe](https://github.com/grpc-ecosystem/grpc-health-probe) to monitor liveness and readiness.
-This environment variable is only used when the distributed application is launched with `--driver` or `--worker` options. The health check service in a distributed application runs on the same port as the App Driver (default: `8765`) and/or the App Worker.
+This environment variable is only used when the distributed application is launched with `--driver` or `--worker` options. The health check service in a distributed application runs on the same port as the App Driver (default: `57777`) and/or the App Worker.
 
 - **HOLOSCAN_DISTRIBUTED_APP_SCHEDULER** : controls which scheduler is used for distributed applications. It can be set to either `greedy`, `multi_thread` or `event_based`. `multithread` is also allowed as a synonym for `multi_thread` for backwards compatibility. If unspecified, the default scheduler is `event_based` (prior to Holoscan v3.6 the default was `multi_thread`).
 

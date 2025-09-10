@@ -45,13 +45,13 @@ Name and tag of the Docker container image to execute.
 
 ### `[--address ADDRESS]`
 
-Address (`[<IP or hostname>][:<port>]`) of the *App Driver*. If not specified, the *App Driver* uses the default host address (`0.0.0.0`) with the default port number (`8765`).
+Address (`[<IP or hostname>][:<port>]`) of the *App Driver*. If not specified, the *App Driver* uses the default host address (`0.0.0.0`) with the default port number (`57777`).
 
 For example:
 
 ```bash
 --address my_app_network
---address my_app_network:8765
+--address my_app_network:57777
 ```
 
 :::{note}

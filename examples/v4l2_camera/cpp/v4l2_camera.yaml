@@ -26,7 +26,7 @@ source:  # V4L2VideoCaptureOp
 
   # | App will auto-select the default "pixel_format" for your device if not provided.
   # | See this app's readme file for details.
-  # pixel_format: "AB24"
+  pixel_format: "YUYV"
 
   # | These properties might not be supported for all v4l2 nodes.
   # | The app will attempt to do auto exposure and gain if not provided. If auto is not supported,
@@ -36,3 +36,7 @@ source:  # V4L2VideoCaptureOp
   # gain: 100
 
 visualizer:  # Holoviz
+
+format_converter:
+  in_dtype: "yuyv"
+  out_dtype: "rgb888"

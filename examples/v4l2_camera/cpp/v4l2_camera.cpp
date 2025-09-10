@@ -22,6 +22,7 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
+#include <holoscan/operators/format_converter/format_converter.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
 
@@ -125,13 +126,16 @@ class App : public holoscan::Application {
       }
     }
 
+    auto pool = make_resource<UnboundedAllocator>("pool");
+    auto format_converter = make_operator<ops::FormatConverterOp>(
+        "format_converter", from_config("format_converter"), Arg("pool") = pool);
+
     auto visualizer = make_operator<ops::HolovizOp>(
         "visualizer", viz_args, Arg("cuda_stream_pool", cuda_stream_pool));
 
     // Flow definition
-    add_flow(source, format_translate, {{"signal", "input"}});
-    add_flow(format_translate, visualizer, {{"output_specs", "input_specs"}});
-    add_flow(source, visualizer, {{"signal", "receivers"}});
+    add_flow(source, format_converter, {{"signal", "source_video"}});
+    add_flow(format_converter, visualizer, {{"", "receivers"}});
 
     // need metadata so V4L2FormatTranslateOp can translate the format
 

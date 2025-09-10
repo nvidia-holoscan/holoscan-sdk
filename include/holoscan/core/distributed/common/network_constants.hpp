@@ -25,7 +25,7 @@ namespace holoscan::distributed {
 constexpr uint32_t kMinNetworkPort = 10000;
 constexpr uint32_t kMaxNetworkPort = 32767;
 
-constexpr int32_t kDefaultAppDriverPort = 8765;
+constexpr int32_t kDefaultAppDriverPort = 57777;
 
 }  // namespace holoscan::distributed
 

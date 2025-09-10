@@ -23,6 +23,7 @@ target_link_libraries(v4l2_camera
   holoscan::core
   holoscan::ops::v4l2
   holoscan::ops::holoviz
+  holoscan::ops::format_converter
 )
 
 # Copy config file

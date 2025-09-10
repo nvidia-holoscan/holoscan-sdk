@@ -18,6 +18,7 @@
 ############################################################
 # SDK Build Image, used to copy installs
 ############################################################
+ARG CUDA_MAJOR=12
 ARG BUILD_IMAGE
 FROM ${BUILD_IMAGE} AS build
 
@@ -231,8 +232,8 @@ FROM runtime_cpp_pip_mkl AS runtime_cpp_py
 #    pip - 20.3+ needed for PEP 600
 #    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
-COPY python/requirements.txt /tmp/requirements.txt
-RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.txt
+COPY python/requirements.cu${CUDA_MAJOR}.txt /tmp/requirements.cu${CUDA_MAJOR}.txt
+RUN python3 -m pip install --no-cache-dir -r /tmp/requirements.cu${CUDA_MAJOR}.txt
 # Ensure NumPy 2.x was selected over any previously existing NumPy 1.x
 RUN python3 -m pip install "numpy>2.0"
 

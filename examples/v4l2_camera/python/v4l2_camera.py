@@ -19,7 +19,8 @@ import os
 
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.core._core import Tensor as TensorBase
-from holoscan.operators import HolovizOp, V4L2VideoCaptureOp
+from holoscan.operators import FormatConverterOp, HolovizOp, V4L2VideoCaptureOp
+from holoscan.resources import UnboundedAllocator
 
 
 # This operator uses the metadata provided by the V4L2VideoCaptureOp and translates it to a
@@ -93,13 +94,16 @@ class App(Application):
             **source_args,
         )
 
-        format_translate = V4L2FormatTranslateOp(self, name="format_translate")
-
         viz_args = self.kwargs("visualizer")
         if "width" in source_args and "height" in source_args:
             # Set Holoviz width and height from source resolution
             viz_args["width"] = source_args["width"]
             viz_args["height"] = source_args["height"]
+
+        allocator = UnboundedAllocator(self, name="allocator")
+        format_converter = FormatConverterOp(
+            self, name="format_converter", pool=allocator, **self.kwargs("format_converter")
+        )
 
         visualizer = HolovizOp(
             self,
@@ -107,9 +111,8 @@ class App(Application):
             **viz_args,
         )
 
-        self.add_flow(source, format_translate, {("signal", "input")})
-        self.add_flow(format_translate, visualizer, {("output_specs", "input_specs")})
-        self.add_flow(source, visualizer, {("signal", "receivers")})
+        self.add_flow(source, format_converter, {("signal", "source_video")})
+        self.add_flow(format_converter, visualizer, {("", "receivers")})
 
         # enable metadata so V4L2FormatTranslateOp can translate the format
 

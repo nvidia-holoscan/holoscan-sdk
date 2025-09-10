@@ -822,11 +822,15 @@ bool AppDriver::check_configuration() {
   // Set the default driver server address if not specified.
   auto& server_address = options()->driver_address;
 
+  // Get the default port, allowing override via environment variable
+  int32_t default_port = get_int_env_var("HOLOSCAN_APP_DRIVER_PORT",
+                                         distributed::kDefaultAppDriverPort);
+
   // Parse the server address using the parse_address method.
   auto [server_ip, server_port] = CLIOptions::parse_address(
       server_address,
-      "0.0.0.0",                                           // default IP address
-      std::to_string(distributed::kDefaultAppDriverPort),  // default port, converted to string
+      "0.0.0.0",                    // default IP address
+      std::to_string(default_port),  // default port, converted to string
       true);  // enclose IPv6 address in square brackets if port is not empty
 
   server_address = server_ip + (server_port.empty() ? "" : ":" + server_port);
