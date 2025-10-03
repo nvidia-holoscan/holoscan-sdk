@@ -74,10 +74,10 @@ struct NetworkOptions {
   bool use_fp16 = true;
 
   /// @brief Batch sizes supported
-  std::vector<int32_t> batch_sizes = {1, 1, 1};
+  std::vector<std::vector<int32_t>> batch_sizes = {{1, 1, 1}};
 
   /// @brief Max batch size allowed
-  int32_t max_batch_size = 1;
+  int32_t max_batch_size = 256;
 
   /// @brief Maximum GPU memory allocated for model conversion
   size_t max_memory = 10000000000;

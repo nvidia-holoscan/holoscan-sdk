@@ -161,12 +161,14 @@ PoseTree::expected_t<void> PoseTree::init(const int32_t number_frames, const int
 PoseTree::expected_t<void> PoseTree::set_multithreading_info(const frame_t start_frame_id,
                                                              const frame_t increment) {
   if (start_frame_id == 0) {
-    HOLOSCAN_LOG_DEBUG("Invalid start_frame_id: {}. Value must be greater than 0 since frame ID 0 "
-                       "is reserved for invalid frames", start_frame_id);
+    HOLOSCAN_LOG_DEBUG(
+        "Invalid start_frame_id: {}. Value must be greater than 0 since frame ID 0 "
+        "is reserved for invalid frames",
+        start_frame_id);
     return unexpected_t(Error::kInvalidArgument);
   }
   if (increment == 0 || std::numeric_limits<uint64_t>::max() / increment <
-                        static_cast<uint64_t>(frame_map_.capacity())) {
+                            static_cast<uint64_t>(frame_map_.capacity())) {
     HOLOSCAN_LOG_DEBUG("Invalid increment: {}. Value must be between 1 and {}",
                        increment,
                        std::numeric_limits<uint64_t>::max() / frame_map_.capacity());
@@ -283,7 +285,9 @@ PoseTree::expected_t<PoseTree::frame_t> PoseTree::create_frame_impl(std::string_
   } else {
     if (*id != 0 && frame_map_.has(*id)) {
       HOLOSCAN_LOG_DEBUG("ID {} requested for '{}' conflicts with existing frame '{}'",
-                         *id, name, frame_map_.get(*id).value().name);
+                         *id,
+                         name,
+                         frame_map_.get(*id).value().name);
       return unexpected_t(Error::kAlreadyExists);
     }
     uid = *id;

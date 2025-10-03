@@ -137,17 +137,20 @@ InferStatus tensor_dimension_check(const MultiMappings& pre_processor_map,
       }
 
       for (size_t j = 0; j < tensor_dim.size(); ++j) {
-        if (tensor_dim[j] != input_model_dim[j + batch_flag]) {
-          log_tensor_dimension(tensor_dim, input_model_dim, current_tensor);
+        if (input_model_dim[j + batch_flag] > 0) {
+          if (tensor_dim[j] != input_model_dim[j + batch_flag]) {
+            log_tensor_dimension(tensor_dim, input_model_dim, current_tensor);
 
-          HOLOSCAN_LOG_ERROR(
-              "Input tensor {} dimension mismatch: Input tensor has value {}. Model expects it to "
-              "be {}.",
-              current_tensor,
-              tensor_dim[j],
-              input_model_dim[j + batch_flag]);
-          status.set_message("Dimension mismatch for input tensor.");
-          return status;
+            HOLOSCAN_LOG_ERROR(
+                "Input tensor {} dimension mismatch: Input tensor has value {}. Model expects it "
+                "to "
+                "be {}.",
+                current_tensor,
+                tensor_dim[j],
+                input_model_dim[j + batch_flag]);
+            status.set_message("Dimension mismatch for input tensor.");
+            return status;
+          }
         }
       }
     }

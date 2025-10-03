@@ -22,6 +22,8 @@
 #include <utility>
 #include <vector>
 
+#include <holoinfer_utils.hpp>
+
 #include "holoscan/core/execution_context.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_context.hpp"

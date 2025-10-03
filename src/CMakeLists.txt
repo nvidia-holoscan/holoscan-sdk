@@ -238,6 +238,7 @@ add_holoscan_library(core
     core/gxf/gxf_scheduling_term_wrapper.cpp
     core/gxf/gxf_utils.cpp
     core/gxf/gxf_wrapper.cpp
+    core/io_context.cpp
     core/io_spec.cpp
     core/messagelabel.cpp
     core/metadata.cpp
@@ -351,7 +352,7 @@ add_holoscan_library(infer_utils
 target_link_libraries(infer_utils
     PUBLIC
         holoscan::core
-        holoscan::infer
+        holoscan::holoinfer_utils
 )
 
 # ##############################################################################
@@ -363,4 +364,3 @@ add_subdirectory(operators)
 # # Add libraries: holoscan::data_loggers::...
 # ##############################################################################
 add_subdirectory(data_loggers)
-

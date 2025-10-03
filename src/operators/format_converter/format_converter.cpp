@@ -30,12 +30,9 @@
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
 namespace {
-
 bool has_c_ordered_memory_layout(const nvidia::gxf::Tensor& in_tensor_gxf, int rank,
                                  int n_channels) {
   // Could use in_tensor_gxf.isContiguous() to check contiguity, but we want to support cases
@@ -82,6 +79,10 @@ static FormatDType toFormatDType(const std::string& str) {
     return FormatDType::kNV12BT601Full;
   } else if (str == "yuyv") {
     return FormatDType::kYUYV;
+  } else if (str == "rgb161616") {
+    return FormatDType::kRGB161616;
+  } else if (str == "rgba16161616") {
+    return FormatDType::kRGBA16161616;
   } else {
     return FormatDType::kUnknown;
   }
@@ -114,6 +115,12 @@ static constexpr FormatConversionType getFormatConversionType(FormatDType from, 
     return FormatConversionType::kNV12BT709CSCToRGB888;
   } else if (from == FormatDType::kYUYV && to == FormatDType::kUnsigned8) {
     return FormatConversionType::kYUYVToRGB888;
+  } else if (from == FormatDType::kRGBA16161616 &&
+             (to == FormatDType::kUnsigned8 || to == FormatDType::kRGB888)) {
+    return FormatConversionType::kRGBA16161616ToRGB888;
+  } else if (from == FormatDType::kRGB161616 &&
+             (to == FormatDType::kUnsigned8 || to == FormatDType::kRGB888)) {
+    return FormatConversionType::kRGB161616ToRGB888;
   } else {
     return FormatConversionType::kUnknown;
   }
@@ -139,6 +146,9 @@ static constexpr nvidia::gxf::PrimitiveType primitiveTypeFromFormatDType(FormatD
     case FormatDType::kNV12BT709CSC:
     case FormatDType::kYUYV:
       return nvidia::gxf::PrimitiveType::kUnsigned8;
+    case FormatDType::kRGB161616:
+    case FormatDType::kRGBA16161616:
+      return nvidia::gxf::PrimitiveType::kUnsigned16;
     case FormatDType::kFloat32:
       return nvidia::gxf::PrimitiveType::kFloat32;
     default:
@@ -150,6 +160,8 @@ static constexpr FormatDType FormatDTypeFromPrimitiveType(nvidia::gxf::Primitive
   switch (type) {
     case nvidia::gxf::PrimitiveType::kUnsigned8:
       return FormatDType::kUnsigned8;
+    case nvidia::gxf::PrimitiveType::kUnsigned16:
+      return FormatDType::kUnsigned16;
     case nvidia::gxf::PrimitiveType::kFloat32:
       return FormatDType::kFloat32;
     default:
@@ -159,9 +171,21 @@ static constexpr FormatDType FormatDTypeFromPrimitiveType(nvidia::gxf::Primitive
 
 static gxf_result_t verifyFormatDTypeChannels(FormatDType dtype, int channel_count) {
   switch (dtype) {
+    case FormatDType::kRGB161616:
+      if (channel_count != 3) {
+        HOLOSCAN_LOG_ERROR("Invalid channel count for RGB161616 {} != 3\n", channel_count);
+        return GXF_FAILURE;
+      }
+      break;
     case FormatDType::kRGB888:
       if (channel_count != 3) {
         HOLOSCAN_LOG_ERROR("Invalid channel count for RGB888 {} != 3\n", channel_count);
+        return GXF_FAILURE;
+      }
+      break;
+    case FormatDType::kRGBA16161616:
+      if (channel_count != 4) {
+        HOLOSCAN_LOG_ERROR("Invalid channel count for RGBA16161616 {} != 4\n", channel_count);
         return GXF_FAILURE;
       }
       break;
@@ -185,7 +209,7 @@ void FormatConverterOp::initialize() {
 
   cudaDeviceProp prop{};
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGetDeviceProperties(&prop, device),
-    "Failed to get CUDA device properties");
+                                 "Failed to get CUDA device properties");
 
   npp_stream_ctx_.nCudaDeviceId = device;
   npp_stream_ctx_.nMultiProcessorCount = prop.multiProcessorCount;
@@ -200,7 +224,6 @@ void FormatConverterOp::initialize() {
     throw std::runtime_error("Failed to get NPP CUDA stream context");
   }
 #endif
-
   Operator::initialize();
 }
 
@@ -326,6 +349,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
         break;
       case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB:
         in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned8;
+        in_channels = 3;  // RGB
+        out_channels = in_channels;
+        out_shape = nvidia::gxf::Shape{
+            static_cast<int32_t>(buffer_info.height), static_cast<int32_t>(buffer_info.width), 3};
+        break;
+      case nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB16:
+        in_primitive_type = nvidia::gxf::PrimitiveType::kUnsigned16;
         in_channels = 3;  // RGB
         out_channels = in_channels;
         out_shape = nvidia::gxf::Shape{
@@ -544,6 +574,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
       out_shape = nvidia::gxf::Shape{out_shape.dimension(0), out_shape.dimension(1), out_channels};
       break;
     }
+    case FormatConversionType::kRGBA16161616ToRGB888:
+    case FormatConversionType::kRGB161616ToRGB888:
     case FormatConversionType::kRGBA8888ToRGB888:
     case FormatConversionType::kNV12BT601FullToRGB888:
     case FormatConversionType::kNV12BT709CSCToRGB888:
@@ -789,6 +821,72 @@ void FormatConverterOp::convertTensorFormat(
           in_tensor_ptr, src_step, out_tensor_ptr, dst_step, roi, dst_order, npp_stream_ctx_);
       break;
     }
+    case FormatConversionType::kRGB161616ToRGB888: {
+      const auto in_tensor_ptr = static_cast<const uint16_t*>(in_tensor_data);
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+      // Convert RGBA16 to RGB888 (4 channels -> 3 channels, uint8_t)
+      status = nppiScale_16u8u_C3R_Ctx(in_tensor_ptr,
+                                       src_step,
+                                       out_tensor_ptr,
+                                       dst_step,
+                                       roi,
+                                       NPP_ALG_HINT_NONE,
+                                       npp_stream_ctx_);
+      break;
+    }
+    case FormatConversionType::kRGBA16161616ToRGB888: {
+      const auto in_tensor_ptr = static_cast<const uint16_t*>(in_tensor_data);
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+
+      if (channel_buffer_->size() == 0) {
+        auto frag = fragment();
+
+        // get Handle to underlying nvidia::gxf::Allocator from std::shared_ptr<holoscan::Allocator>
+        auto pool = nvidia::gxf::Handle<nvidia::gxf::Allocator>::Create(frag->executor().context(),
+                                                                        pool_->gxf_cid());
+
+        uint64_t buffer_size = static_cast<size_t>(rows) * columns * 4;  // 16 bits -> 8 bits
+        channel_buffer_->resize(pool.value(), buffer_size, nvidia::gxf::MemoryStorageType::kDevice);
+      }
+
+      const auto converted_tensor_ptr = channel_buffer_->pointer();
+      if (converted_tensor_ptr == nullptr) {
+        throw std::runtime_error("Failed to allocate memory for the channel conversion");
+      }
+
+      int dst_order[3]{0, 1, 2};
+      if (!out_channel_order.empty()) {
+        if (out_channel_order.size() != 3) {
+          throw std::runtime_error("Invalid channel order for RGB888");
+        }
+        for (int i = 0; i < 3; i++) {
+          dst_order[i] = out_channel_order[i];
+        }
+      }
+
+      const int32_t channel_buffer_step = columns * 4 * dst_typesize;
+      status = nppiScale_16u8u_C4R_Ctx(in_tensor_ptr,
+                                       src_step,
+                                       converted_tensor_ptr,
+                                       channel_buffer_step,
+                                       roi,
+                                       NPP_ALG_HINT_NONE,
+                                       npp_stream_ctx_);
+
+      if (status == NPP_SUCCESS) {
+        status = nppiSwapChannels_8u_C4C3R_Ctx(converted_tensor_ptr,
+                                               channel_buffer_step,
+                                               out_tensor_ptr,
+                                               dst_step,
+                                               roi,
+                                               dst_order,
+                                               npp_stream_ctx_);
+      } else {
+        throw std::runtime_error(fmt::format("Failed to convert channel order (NPP error code: {})",
+                                             static_cast<int>(status)));
+      }
+      break;
+    }
     case FormatConversionType::kRGBA8888ToFloat32: {
       const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
       const auto out_tensor_ptr = static_cast<float*>(out_tensor_data);
@@ -871,8 +969,8 @@ void FormatConverterOp::convertTensorFormat(
       // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420>
       //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
-      const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
+      const auto in_u_ptr = in_y_ptr + in_color_planes[1].offset;
+      const auto in_v_ptr = in_y_ptr + in_color_planes[2].offset;
       const uint8_t* in_yuv_ptrs[3] = {in_y_ptr, in_u_ptr, in_v_ptr};
 
       const int32_t in_y_step = in_color_planes[0].stride;
@@ -894,8 +992,8 @@ void FormatConverterOp::convertTensorFormat(
       // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_YUV420>
       //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_u_ptr = in_y_ptr + in_color_planes[0].size;
-      const auto in_v_ptr = in_u_ptr + in_color_planes[1].size;
+      const auto in_u_ptr = in_y_ptr + in_color_planes[1].offset;
+      const auto in_v_ptr = in_y_ptr + in_color_planes[2].offset;
       const uint8_t* in_yuv_ptrs[3] = {in_y_ptr, in_u_ptr, in_v_ptr};
 
       const int32_t in_y_step = in_color_planes[0].stride;
@@ -917,7 +1015,7 @@ void FormatConverterOp::convertTensorFormat(
       // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709_ER>
       //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
+      const auto in_uv_ptr = in_y_ptr + in_color_planes[1].offset;
       const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
 
       const int32_t in_y_uv_step = in_color_planes[0].stride;
@@ -937,7 +1035,7 @@ void FormatConverterOp::convertTensorFormat(
       // nvidia::gxf::VideoFormatSize<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV12_709>
       //     color_format;
       const auto in_y_ptr = static_cast<const uint8_t*>(in_tensor_data);
-      const auto in_uv_ptr = in_y_ptr + in_color_planes[0].size;
+      const auto in_uv_ptr = in_y_ptr + in_color_planes[1].offset;
       const uint8_t* in_y_uv_ptrs[2] = {in_y_ptr, in_uv_ptr};
 
       const int32_t in_y_uv_step = in_color_planes[0].stride;

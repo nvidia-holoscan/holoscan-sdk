@@ -30,8 +30,6 @@
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 
 #include <holoinfer.hpp>
-#include <holoinfer_buffer.hpp>
-#include <holoinfer_utils.hpp>
 
 namespace HoloInfer = holoscan::inference;
 
@@ -177,7 +175,7 @@ class InferenceOp : public holoscan::Operator {
   Parameter<std::vector<std::string>> out_tensor_names_;
 
   /// @brief Optimization profile for models with dynamic input shapes
-  Parameter<std::vector<int32_t>> trt_opt_profile_;
+  Parameter<std::vector<std::vector<int32_t>>> trt_opt_profile_;
 
   ///  @brief Memory allocator
   Parameter<std::shared_ptr<Allocator>> allocator_;
@@ -197,6 +195,9 @@ class InferenceOp : public holoscan::Operator {
 
   ///  @brief Flag showing if data transmission is on CUDA. Default is True.
   Parameter<bool> transmit_on_cuda_;
+
+  ///  @brief Flag showing if input dimensions are dynamic. Default is False.
+  Parameter<bool> dynamic_input_dims_;
 
   ///  @brief Flag showing if trt engine file conversion will use FP16. Default is False.
   Parameter<bool> enable_fp16_;

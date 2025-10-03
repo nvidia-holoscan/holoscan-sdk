@@ -16,13 +16,10 @@
  */
 
 #include <gtest/gtest.h>
-#include <gxf/core/gxf.h>
 
 #include <string>
 
 #include <holoscan/holoscan.hpp>
-
-#include "common/assert.hpp"
 
 #include "ping_rx_op.hpp"
 #include "ping_tx_op.hpp"
@@ -133,6 +130,11 @@ TEST(RealtimePingDeadlineApp, TestRealtimePingDeadlineApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
+  if (log_output.find("Failed to set SCHED_DEADLINE policy") != std::string::npos) {
+    GTEST_SKIP() << "Deadline test case skipped. Environment has insufficient permissions to set "
+                    " the SCHED_DEADLINE policy.";
+  }
+
   EXPECT_TRUE(log_output.find("value1: 1") != std::string::npos) << "=== LOG ===\n"
                                                                  << log_output << "\n===========\n";
   EXPECT_TRUE(log_output.find("value2: 100") != std::string::npos)

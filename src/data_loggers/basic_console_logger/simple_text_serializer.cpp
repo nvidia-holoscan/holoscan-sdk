@@ -69,7 +69,6 @@ void SimpleTextSerializer::setup(ComponentSpec& spec) {
 void SimpleTextSerializer::initialize_default_encoders() {
   // String types
   encoders_[std::type_index(typeid(std::string))] = [](const std::any& value) {
-    HOLOSCAN_LOG_INFO("SimpleTextSerializer: any_cast<std::string>");
     return std::any_cast<std::string>(value);
   };
   encoders_[std::type_index(typeid(const char*))] = [](const std::any& value) {
@@ -78,10 +77,12 @@ void SimpleTextSerializer::initialize_default_encoders() {
   encoders_[std::type_index(typeid(char*))] = [](const std::any& value) {
     return std::string(std::any_cast<char*>(value));
   };
+  encoders_[std::type_index(typeid(std::shared_ptr<std::string>))] = [](const std::any& value) {
+    return *std::any_cast<std::shared_ptr<std::string>>(value);
+  };
 
   // Integer types
   encoders_[std::type_index(typeid(int))] = [](const std::any& value) {
-    HOLOSCAN_LOG_INFO("SimpleTextSerializer: any_cast<int>");
     return std::to_string(std::any_cast<int>(value));
   };
   encoders_[std::type_index(typeid(int8_t))] = [](const std::any& value) {

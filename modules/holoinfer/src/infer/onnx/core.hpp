@@ -23,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <string>
@@ -113,6 +114,18 @@ class OnnxInfer : public InferBase {
    * @return Vector of values as datatype per input tensor
    * */
   std::vector<holoinfer_datatype> get_input_datatype() const;
+
+  /**
+   * @brief Updates the dimensions per tensor in case of dynamic inputs.
+   * Using the input Holoscan tensors and their dimension mapping, the internal input size vector is
+   * updated
+   *
+   * @param input_tensors Vector of input Holoscan tensor names
+   * @param dims_per_tensor Map storing the dimensions as values and Holoscan tensor names as keys.
+   * @return true if the dynamic input dimensions were successfully updated, false otherwise
+   */
+  bool set_dynamic_input_dimension(const std::vector<std::string>& input_tensors,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
   /**
    * @brief Get output data types from the model

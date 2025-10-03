@@ -40,7 +40,7 @@ namespace holoscan {
  * - `--worker`: Run the App Worker.
  * - `--address`: The address (`[<IPv4 address or hostname>][:<port>]`) of the App Driver. If not
  * specified, the App Driver uses the default host address (0.0.0.0) with the default port number
- * (8765).
+ * (57777).
  * - `--worker-address`: The address (`[<IP or hostname>][:<port>]`) of the App Worker. If
  * not specified, the App Worker uses the default host address (0.0.0.0) with a randomly chosen port
  * number between 10000 and 32767 that is not currently in use.

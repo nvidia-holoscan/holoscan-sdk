@@ -302,7 +302,7 @@ class PoseTreeManager : public holoscan::Resource, public holoscan::DistributedA
       worker_progress_sleep_us_;  ///< Sleep duration between worker progress calls in microseconds
   Parameter<int64_t> server_shutdown_timeout_ms_;  ///< Timeout for server shutdown in milliseconds
   Parameter<int64_t>
-      server_shutdown_poll_sleep_ms_;  ///< Sleep duration between shutdown polls in milliseconds
+      server_shutdown_poll_sleep_ms_;   ///< Sleep duration between shutdown polls in milliseconds
   Parameter<int64_t> maximum_clients_;  ///< Maximum number of clients
 
   std::shared_ptr<PoseTree> pose_tree_instance_;  ///< The managed PoseTree instance

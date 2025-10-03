@@ -35,10 +35,11 @@ namespace holoscan::ops {
  * ==Named Outputs==
  *
  * - **out** : nvidia::gxf::Tensor
- *   - A generated 1D (H), 2D (HW), 3D (HWC) or 4D (NHWC) tensor (with uninitialized data values).
- *     Depending on the parameters set, this tensor can be in system memory, pinned host memory or
- *     device memory. Setting `batch_size`, `columns` or `channels` to 0 will omit the
- *     corresponding dimension. Notation used: N = batch, H = rows, W = columns, C = channels.
+ *   - A generated 1D (H), 2D (HW), 3D (HWC) or 4D (NHWC) tensor (initialized with the data provided
+ *     or uninitialized). Depending on the parameters set, this tensor can be in system memory,
+ *     pinned host memory or device memory. Setting `batch_size`, `columns` or `channels` to 0 will
+ *     omit the corresponding dimension. Notation used: N = batch, H = rows, W = columns, C =
+ *     channels.
  *
  * ==Parameters==
  *
@@ -58,6 +59,8 @@ namespace holoscan::ops {
  *   "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
  *   "float", "double", "complex<float", or "complex<double>". The default is "uint8_t".
  * - **tensor_name**: The name of the generated tensor. The default name is "tensor".
+ * - **data**: The data to be transmitted. If provided, the tensor will be initialized with this
+ * data.
  *
  * ==Device Memory Requirements==
  *
@@ -100,6 +103,7 @@ class PingTensorTxOp : public Operator {
   Parameter<std::string> tensor_name_{"tensor"};
   Parameter<std::shared_ptr<CudaStreamPool>> cuda_stream_pool_{};
   Parameter<bool> async_device_allocation_{false};
+  Parameter<std::vector<uint8_t>> data_{};
 };
 
 }  // namespace holoscan::ops

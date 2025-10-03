@@ -94,6 +94,12 @@ gxf_result_t GXFWrapper::tick() {
     exec_context_->clear_received_streams();
   }
 
+  // reset acquisition timestamps for all ports to std::nullopt
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_clear_acquisition_timestamps);
+    op_input_->reset_acquisition_timestamps();
+  }
+
   // Handle the signal if the operator has input execution port
   if (auto& input_exec_spec = op_->input_exec_spec()) {
     HOLOSCAN_LOG_TRACE("Handling input execution port for operator: '{}'", op_->name());

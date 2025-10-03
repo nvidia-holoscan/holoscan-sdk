@@ -25,6 +25,7 @@
 #include <iostream>
 #include <limits>
 #include <list>
+#include <map>
 #include <memory>
 #include <numeric>
 #include <sstream>
@@ -53,7 +54,8 @@ class TorchInfer : public InferBase {
    * @param cuda_buf_out Flag to demonstrate if output data buffer will be on cuda
    * */
   TorchInfer(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
-             bool cuda_buf_out);
+             bool cuda_buf_out, int device_id,
+             std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
 
   /**
    * @brief Destructor
@@ -77,9 +79,16 @@ class TorchInfer : public InferBase {
                            cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference);
 
   /**
-   * @brief Populate class parameters with model details and values
-   * */
-  InferStatus populate_model_details();
+   * @brief Updates the dimensions per tensor in case of dynamic inputs.
+   * Using the input Holoscan tensors and their dimension mapping, the internal input size vector is
+   * updated
+   *
+   * @param input_tensors Vector of input Holoscan tensor names
+   * @param dims_per_tensor Map storing the dimensions as values and Holoscan tensor names as keys.
+   * @return true if the dynamic input dimensions were successfully updated, false otherwise
+   */
+  bool set_dynamic_input_dimension(const std::vector<std::string>& input_tensors,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
   /**
    * @brief Print model details

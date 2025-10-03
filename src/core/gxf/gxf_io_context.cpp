@@ -39,6 +39,7 @@
 
 #include "gxf/core/gxf.h"
 #include "gxf/std/receiver.hpp"
+#include "gxf/std/timestamp.hpp"
 #include "gxf/std/transmitter.hpp"
 
 namespace holoscan::gxf {
@@ -259,6 +260,30 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     retrieve_cuda_streams(entity, input_name);
   }
 
+  // Handle any acquisition timestamps found in the entity
+  {
+    PROF_SCOPED_EVENT(op_->id(), event_receive_acquisition_timestamps);
+    // Get first timestamp encountered or use findAllHeap to get all timestamps in the Entity?
+    // auto maybe_timestamp = entity.get<nvidia::gxf::Timestamp>();
+    auto timestamp_components = entity.findAllHeap<nvidia::gxf::Timestamp>();
+    int64_t gxf_acquisition_timestamp = 0;
+    if (0 == timestamp_components->size()) {
+      // Requires Timestamp instance for message age
+      HOLOSCAN_LOG_TRACE("Message received on input port '{}' carries no Timestamp.", input_name);
+    } else {
+      gxf_acquisition_timestamp = timestamp_components->front().value()->acqtime;
+      HOLOSCAN_LOG_TRACE("Message received on input port '{}' has GXF Timestamp with acqtime: {}.",
+                         input_name,
+                         gxf_acquisition_timestamp);
+      // Truncate the port name to the base name without :0, etc. in the multi-receiver case.
+      auto colon_pos = input_name.find(':');
+      if (colon_pos != std::string::npos) {
+        input_name = input_name.substr(0, colon_pos);
+      }
+      acquisition_timestamp_map_[input_name].push_back(gxf_acquisition_timestamp);
+    }
+  }
+
   // If the input type is GXFEntity, return the entity directly
   if (in_type == InputType::kGXFEntity) {
     if (!omit_data_logging && !data_loggers.empty()) {
@@ -412,7 +437,7 @@ gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t 
 }  // namespace
 
 void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
-                                 const int64_t acq_timestamp) {
+                                 const int64_t acq_timestamp, bool omit_data_logging) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
   PROF_SCOPED_EVENT(op_->id(), event_emit_impl);
   HOLOSCAN_LOG_TRACE("GXFOutputContext::emit_impl for op: {}, output_name: {}, out_type: {}",
@@ -534,55 +559,20 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           }
         }
       }
+      if (!omit_data_logging) {
+        auto& data_loggers = op_->fragment()->data_loggers();
+        HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
 
-      auto& data_loggers = op_->fragment()->data_loggers();
-      HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
+        if (!data_loggers.empty()) {
+          PROF_SCOPED_EVENT(op_->id(), event_data_logging);
+          auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+          const std::string unique_id = output_spec->unique_id();
 
-      if (!data_loggers.empty()) {
-        PROF_SCOPED_EVENT(op_->id(), event_data_logging);
-        enum class DataType { Tensor, TensorMap, Other };
-        DataType data_type = DataType::Other;
-        std::shared_ptr<Tensor> tensor_ptr;
-        TensorMap tensor_map;
-        if (data.type() == typeid(std::shared_ptr<Tensor>)) {
-          try {
-            tensor_ptr = std::any_cast<std::shared_ptr<Tensor>>(data);
-            data_type = DataType::Tensor;
-          } catch (const std::bad_any_cast& e) {
-            HOLOSCAN_LOG_WARN("Failed to cast data to std::shared_ptr<Tensor>: {}", e.what());
-            data_type = DataType::Other;
-          }
-        } else if (data.type() == typeid(TensorMap)) {
-          try {
-            tensor_map = std::any_cast<TensorMap>(data);
-            data_type = DataType::TensorMap;
-          } catch (const std::bad_any_cast& e) {
-            HOLOSCAN_LOG_WARN("Failed to cast data to TensorMap: {}", e.what());
-            data_type = DataType::Other;
-          }
-        }
-        auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
-        const std::string unique_id = output_spec->unique_id();
-
-        for (auto& data_logger : data_loggers) {
-          if (data_logger->should_log_output()) {
-            switch (data_type) {
-              case DataType::Tensor: {
-                PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
-                data_logger->log_tensor_data(
-                    tensor_ptr, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-              } break;
-              case DataType::TensorMap: {
-                PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
-                data_logger->log_tensormap_data(
-                    tensor_map, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-              } break;
-              case DataType::Other:
-              default: {
-                PROF_SCOPED_EVENT(op_->id(), event_log_data);
-                data_logger->log_data(
-                    data, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
-              } break;
+          for (auto& data_logger : data_loggers) {
+            if (data_logger->should_log_output()) {
+              PROF_SCOPED_EVENT(op_->id(), event_log_data);
+              data_logger->log_data(
+                  data, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
             }
           }
         }
@@ -632,28 +622,30 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           }
         }
 
-        auto& data_loggers = op_->fragment()->data_loggers();
-        HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
-        if (!data_loggers.empty()) {
-          HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
-          auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
-          const std::string unique_id = output_spec->unique_id();
+        if (!omit_data_logging) {
+          auto& data_loggers = op_->fragment()->data_loggers();
+          HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
+          if (!data_loggers.empty()) {
+            HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
+            auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+            const std::string unique_id = output_spec->unique_id();
 
-          for (auto& data_logger : data_loggers) {
-            if (data_logger->should_log_output()) {
-              // Create a shared entity to ensure proper lifetime management for async logging
-              auto shared_entity_expected = gxf_entity.clone();
-              if (shared_entity_expected) {
-                HOLOSCAN_LOG_TRACE("\t\t calling log_backend_specific");
-                PROF_SCOPED_EVENT(op_->id(), event_log_backend_specific);
-                data_logger->log_backend_specific(shared_entity_expected.value(),
-                                                  unique_id,
-                                                  acq_timestamp,
-                                                  metadata_ptr,
-                                                  IOSpec::IOType::kOutput);
-              } else {
-                HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
-                                   GxfResultStr(shared_entity_expected.error()));
+            for (auto& data_logger : data_loggers) {
+              if (data_logger->should_log_output()) {
+                // Create a shared entity to ensure proper lifetime management for async logging
+                auto shared_entity_expected = gxf_entity.clone();
+                if (shared_entity_expected) {
+                  HOLOSCAN_LOG_TRACE("\t\t calling log_backend_specific");
+                  PROF_SCOPED_EVENT(op_->id(), event_log_backend_specific);
+                  data_logger->log_backend_specific(shared_entity_expected.value(),
+                                                    unique_id,
+                                                    acq_timestamp,
+                                                    metadata_ptr,
+                                                    IOSpec::IOType::kOutput);
+                } else {
+                  HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+                                     GxfResultStr(shared_entity_expected.error()));
+                }
               }
             }
           }

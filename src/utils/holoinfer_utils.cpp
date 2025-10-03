@@ -14,7 +14,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <holoinfer_utils.hpp>
 
 #include <cuda_fp16.h>
 
@@ -26,8 +25,8 @@
 #include <utility>
 #include <vector>
 
-#include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
+#include <holoinfer_utils.hpp>
 
 #include "gxf/std/tensor.hpp"
 #include "holoscan/core/io_context.hpp"
@@ -575,7 +574,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
                           nvidia::gxf::Shape::kMaxRank);
         return report_error(
-              module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
+            module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
       }
 
       std::vector<int32_t> dimarray(dims.begin(), dims.end());
@@ -790,7 +789,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
                           nvidia::gxf::Shape::kMaxRank);
         return report_error(
-              module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
+            module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
       }
 
       std::vector<int32_t> dimarray(dims.begin(), dims.end());

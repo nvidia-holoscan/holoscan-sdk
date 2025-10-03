@@ -6,7 +6,7 @@
 
 ## Synopsis
 
-`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-add) [](#cli-package-config) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-add-host) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-holoscan-sdk-file) [](#cli-package-includes) [](#cli-package-input-data) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-source) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
+`holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-add) [](#cli-package-config) [](#cli-package-cuda) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-add-host) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-holoscan-sdk-file) [](#cli-package-includes) [](#cli-package-input-data) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-source) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
 
 
 ## Examples
@@ -156,6 +156,14 @@ my-models/
 └── model-2
     └── my-other-model.ts
 ```
+(#cli-package-cuda)=
+
+#### `--cuda CUDA_VERSION`
+
+The CUDA version used to build the application is specified. If not specified, CUDA `13` would be used.
+
+
+`CUDA_VERSION` must be one of: `12`, `13`. 
 
 (#cli-package-platform)=
 
@@ -288,11 +296,18 @@ Set the version of the SDK that is used to build and package the Application. If
 
 (#cli-package-source)=
 
-#### `[--source URL|FILE]`
+#### `[--source URL|DIR|FILE]`
 
 Override the artifact manifest source with a securely hosted file or from the local file system.
 
-E.g. https://my.domain.com/my-file.json
+If the value is a valid directory, the Package scans it for `artifacts.json` or `artifacts-cu12.json` if `--cuda` is 12 or 13, respectively.
+
+For example:
+
+- *URL*: https://my.domain.com/my-file.json
+- *DIR*: /home/me/path/to/artifact-json-files/
+- *FILE*: /home/me/path/to/artifact.json
+
 
 ### Output Options
 

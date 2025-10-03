@@ -187,6 +187,9 @@ max_size : int
     The maximum number of streams that can be allocated, unlimited by default.
 cuda_green_context : holoscan.resources.CudaGreenContext, optional
     The green context to use for the stream pool.
+nvtx_identifier : str, optional
+    The NVTX identifier of the stream pool. This identifier will be used in NSight captures to
+    identify the stream pool.
 name : str, optional
     The name of the stream pool.
 
@@ -222,6 +225,9 @@ default_context_index : int, optional
     be used.
 min_sm_size : int, optional
     The minimum number of SMs per partition of the green context pool.
+nvtx_identifier : str, optional
+    The NVTX identifier of the green context pool. This identifier will be used in NSight captures to
+    identify the green context.
 name : str, optional
     The name of the green context pool.
 

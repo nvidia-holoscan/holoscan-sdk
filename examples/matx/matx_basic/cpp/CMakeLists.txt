@@ -23,6 +23,11 @@ target_link_libraries(matx_basic
   holoscan::matx
 )
 
+# Suppress NVCC warning from CLI11 third-party library
+target_compile_options(matx_basic PRIVATE
+  $<$<COMPILE_LANGUAGE:CUDA>:-diag-suppress=2361>
+)
+
 # Install examples
 
 # Set the install RPATH based on the location of the Holoscan SDK libraries

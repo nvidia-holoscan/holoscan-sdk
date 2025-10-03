@@ -134,6 +134,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=TRUE to set
   # enable_async=true for UcxContext
+  # TODO(Holoscan v4.0): remove HOLOSCAN_UCX_ASYNCHRONOUS environment variable and this test case
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_ASYNCHRONOUS_MODE_TEST
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}

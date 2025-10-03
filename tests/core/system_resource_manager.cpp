@@ -121,26 +121,28 @@ TEST(SystemResourceManager, TestReportGPUResourceInfo) {
     EXPECT_NE(*gpuinfo.uuid, 0);
     EXPECT_NE(*gpuinfo.pci.busId, 0);
     EXPECT_NE(*gpuinfo.pci.busIdLegacy, 0);
-    EXPECT_GT(gpuinfo.memory_total, 0);
-    EXPECT_GT(gpuinfo.memory_free, 0);
-    EXPECT_GT(gpuinfo.memory_used, 0);
-    EXPECT_GT(gpuinfo.memory_usage, 0);
 
     if (gpuinfo.is_integrated) {
-      // No PCI, serial, gpu_utilization, memory_utilization, power_limit, power_usage, temperature
-      // are available
-      EXPECT_EQ(gpuinfo.pci.domain, 0);
-      EXPECT_EQ(gpuinfo.pci.bus, 0);
-      EXPECT_EQ(gpuinfo.pci.device, 0);
-      EXPECT_EQ(gpuinfo.pci.pciDeviceId, 0);
-      EXPECT_EQ(gpuinfo.pci.pciSubSystemId, 0);
-      EXPECT_EQ(*gpuinfo.serial, 0);
+      // For integrated GPUs (like Jetson Thor), memory values may be 0 or use system memory
+      // NVML returns "Not Supported" for memory APIs on integrated GPUs
+      EXPECT_GE(gpuinfo.memory_total, 0);  // Can be 0 for unsupported or use system memory
+      EXPECT_GE(gpuinfo.memory_free, 0);
+      EXPECT_GE(gpuinfo.memory_used, 0);
+      EXPECT_GE(gpuinfo.memory_usage, 0.0F);
+      // Note: Some integrated GPUs (like Jetson Thor) may still have PCI info available
+      // The key indicator of integrated GPU is that memory/power APIs return "Not Supported"
+      // We don't enforce PCI/serial being 0 for integrated GPUs with valid PCI info
       EXPECT_EQ(gpuinfo.gpu_utilization, 0);
       EXPECT_EQ(gpuinfo.memory_utilization, 0);
       EXPECT_EQ(gpuinfo.power_limit, 0);
       EXPECT_EQ(gpuinfo.power_usage, 0);
       EXPECT_EQ(gpuinfo.temperature, 0);
     } else {
+      // For non-integrated GPUs, memory values should be available
+      EXPECT_GT(gpuinfo.memory_total, 0);
+      EXPECT_GT(gpuinfo.memory_free, 0);
+      EXPECT_GT(gpuinfo.memory_used, 0);
+      EXPECT_GT(gpuinfo.memory_usage, 0.0F);
       // PCI, serial, gpu_utilization, memory_utilization, power_limit, power_usage, temperature
       // are available
       // EXPECT_GE(gpuinfo.pci.domain, 0);
@@ -152,7 +154,8 @@ TEST(SystemResourceManager, TestReportGPUResourceInfo) {
       // EXPECT_GE(gpuinfo.gpu_utilization, 0);
       // EXPECT_GE(gpuinfo.memory_utilization, 0);
       EXPECT_NE(gpuinfo.power_limit, 0);
-      EXPECT_NE(gpuinfo.power_usage, 0);
+      // power_usage is not available for some GPUs or it can be zero
+      // EXPECT_NE(gpuinfo.power_usage, 0);
       EXPECT_NE(gpuinfo.temperature, 0);
     }
   }
@@ -235,26 +238,28 @@ TEST(SystemResourceManager, TestGetGPUInfo) {
     EXPECT_NE(*gpuinfo.uuid, 0);
     EXPECT_NE(*gpuinfo.pci.busId, 0);
     EXPECT_NE(*gpuinfo.pci.busIdLegacy, 0);
-    EXPECT_GT(gpuinfo.memory_total, 0);
-    EXPECT_GT(gpuinfo.memory_free, 0);
-    EXPECT_GT(gpuinfo.memory_used, 0);
-    EXPECT_GT(gpuinfo.memory_usage, 0);
 
     if (gpuinfo.is_integrated) {
-      // No PCI, serial, gpu_utilization, memory_utilization, power_limit, power_usage, temperature
-      // are available
-      EXPECT_EQ(gpuinfo.pci.domain, 0);
-      EXPECT_EQ(gpuinfo.pci.bus, 0);
-      EXPECT_EQ(gpuinfo.pci.device, 0);
-      EXPECT_EQ(gpuinfo.pci.pciDeviceId, 0);
-      EXPECT_EQ(gpuinfo.pci.pciSubSystemId, 0);
-      EXPECT_EQ(*gpuinfo.serial, 0);
+      // For integrated GPUs (like Jetson Thor), memory values may be 0 or use system memory
+      // NVML returns "Not Supported" for memory APIs on integrated GPUs
+      EXPECT_GE(gpuinfo.memory_total, 0);  // Can be 0 for unsupported or use system memory
+      EXPECT_GE(gpuinfo.memory_free, 0);
+      EXPECT_GE(gpuinfo.memory_used, 0);
+      EXPECT_GE(gpuinfo.memory_usage, 0.0F);
+      // Note: Some integrated GPUs (like Jetson Thor) may still have PCI info available
+      // The key indicator of integrated GPU is that memory/power APIs return "Not Supported"
+      // We don't enforce PCI/serial being 0 for integrated GPUs with valid PCI info
       EXPECT_EQ(gpuinfo.gpu_utilization, 0);
       EXPECT_EQ(gpuinfo.memory_utilization, 0);
       EXPECT_EQ(gpuinfo.power_limit, 0);
       EXPECT_EQ(gpuinfo.power_usage, 0);
       EXPECT_EQ(gpuinfo.temperature, 0);
     } else {
+      // For non-integrated GPUs, memory values should be available
+      EXPECT_GT(gpuinfo.memory_total, 0);
+      EXPECT_GT(gpuinfo.memory_free, 0);
+      EXPECT_GT(gpuinfo.memory_used, 0);
+      EXPECT_GT(gpuinfo.memory_usage, 0.0F);
       // PCI, serial, gpu_utilization, memory_utilization, power_limit, power_usage, temperature
       // are available
       // EXPECT_GE(gpuinfo.pci.domain, 0);
@@ -266,7 +271,8 @@ TEST(SystemResourceManager, TestGetGPUInfo) {
       // EXPECT_GE(gpuinfo.gpu_utilization, 0);
       // EXPECT_GE(gpuinfo.memory_utilization, 0);
       EXPECT_NE(gpuinfo.power_limit, 0);
-      EXPECT_NE(gpuinfo.power_usage, 0);
+      // power_usage is not available for some GPUs or it can be zero
+      // EXPECT_NE(gpuinfo.power_usage, 0);
       EXPECT_NE(gpuinfo.temperature, 0);
     }
 

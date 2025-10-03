@@ -105,6 +105,8 @@ def test_my_realtime_ping_app(ping_config_file, sched_policy, capfd):
     # assert that the expected number of messages were received
     captured = capfd.readouterr()
 
+    if "Failed to set SCHED_DEADLINE policy" in captured.err:
+        pytest.skip("Environment has insufficient permissions to set the SCHED_DEADLINE policy")
     assert f"received message {count}" in captured.out
     assert f"received message {count + 1}" not in captured.out
     assert "error" not in captured.out

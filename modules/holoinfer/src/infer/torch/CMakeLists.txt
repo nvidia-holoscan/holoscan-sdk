@@ -65,6 +65,7 @@ set_target_properties(holoinfer_torch PROPERTIES
 target_link_libraries(holoinfer_torch
     PRIVATE
         torch
+        holoscan::holoinfer_utils
         holoscan::logger
         yaml-cpp
         holoscan_security_flags

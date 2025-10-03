@@ -29,26 +29,57 @@ A3: The Holoscan SDK is a domain and sensor agnostic SDK optimized for the easy 
 A1: There are multiple ways to  install the Holoscan SDK:
 
 * Using NGC containers :
-  * For **dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
+  * For **CUDA 13** (x86_64, Jetson Thor)
 
-```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-dgpu
-```
+  ```sh
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda13
+  ```
 
-  * For **iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
+  * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
-```
-docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.6.0-igpu
-```
+  ```sh
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda12-dgpu
+  ```
+
+  * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
+
+  ```sh
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda12-igpu
+  ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
 * Using Debian packages
 
-```
-sudo apt update
-sudo apt install holoscan
-```
+  ```sh
+  sudo apt update
+  ```
+
+* For **CUDA 13**
+  * x86_64, GB200
+
+    ```sh
+    sudo apt install holoscan-cuda-13
+    ```
+
+  * Jetson Thor
+
+    ```sh
+    sudo apt install holoscan
+    ```
+
+* For **CUDA 12**
+  * x86_64, GH200
+
+    ```sh
+    sudo apt install holoscan-cuda-12
+    ```
+
+  * IGX Orin, Jetson Orin
+
+    ```sh
+    sudo apt install holoscan
+    ```
 
 If `holoscan` is not found, try the following before repeating the steps above:
 
@@ -65,9 +96,17 @@ export PYTHONPATH="/opt/nvidia/holoscan/python/lib"
 
 * Using Python wheels
 
-```
-pip install holoscan
-```
+  * For **CUDA 12**
+
+    ```sh
+    pip install holoscan-cu12
+    ```
+
+  * For **CUDA 13**
+
+    ```sh
+    pip install holoscan-cu13
+    ```
 
 For more details and troubleshooting , please refer to  [PyPI](https://pypi.org/project/holoscan).For x86_64, ensure that the [CUDA Toolkit is installed](https://developer.nvidia.com/cuda-12-6-3-download-archive?target_os=Linux&target_arch=x86_64&Distribution=Ubuntu&target_version=22.04&target_type=deb_network).
 

@@ -129,7 +129,7 @@ resize_mode : int, optional
 
     Default value is ``0`` (NPPI_INTER_UNDEFINED) which would be equivalent to ``4``
     (NPPI_INTER_CUBIC).
-channel_order : sequence of int
+out_channel_order : sequence of int
     Sequence of integers describing how channel values are permuted.
     Default value is ``[0, 1, 2]`` for 3-channel images and ``[0, 1, 2, 3]`` for 4-channel images.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

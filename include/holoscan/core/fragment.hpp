@@ -529,6 +529,26 @@ class Fragment : public FragmentServiceProvider {
   std::shared_ptr<ThreadPool> make_thread_pool(const std::string& name, int64_t initial_size = 1);
 
   /**
+   * @brief Add default green context pool.
+   *
+   * @param dev_id The device id.
+   * @param sms_per_partition The number of SMs per partition.
+   * @param default_context_index The index of the default green context.
+   * @param min_sm_size The minimum number of SMs per partition.
+   * @return The shared pointer to the green context pool resource.
+   */
+  std::shared_ptr<CudaGreenContextPool> add_default_green_context_pool(
+      int32_t dev_id, std::vector<uint32_t> sms_per_partition = {},
+      int32_t default_context_index = -1, uint32_t min_sm_size = 2);
+
+  /**
+   * @brief Get the default green context pool.
+   *
+   * @return The shared pointer to the default green context pool.
+   */
+  std::shared_ptr<CudaGreenContextPool> get_default_green_context_pool();
+
+  /**
    * @brief Get a fragment service by type information and identifier.
    *
    * Implementation of the FragmentServiceProvider interface method for retrieving
@@ -1149,6 +1169,9 @@ class Fragment : public FragmentServiceProvider {
       fragment_resource_services_by_name_;  ///< service resource registry map
   std::unordered_map<std::shared_ptr<Resource>, ServiceKey>
       fragment_resource_to_service_key_map_;  ///< service resource registry map
+
+  // The default green context pool in the fragment.
+  std::vector<std::shared_ptr<CudaGreenContextPool>> green_context_pools_;
 };
 
 }  // namespace holoscan

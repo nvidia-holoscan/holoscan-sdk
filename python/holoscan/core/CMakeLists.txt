@@ -42,11 +42,11 @@ holoscan_pybind11_module(
     ../gxf/entity.cpp
 )
 
-# needed for the Holoviz InputSpec, Inference ActivationSpec workaround in PyOutputContext::py_emit()
+# Needed for the Holoviz InputSpec, Inference ActivationSpec workaround in PyOutputContext::py_emit()
 target_link_libraries(core_python
     PRIVATE
         holoscan::ops::holoviz
-        holoscan::ops::inference
+        holoscan::infer::headers
 )
 
 # Copy headers

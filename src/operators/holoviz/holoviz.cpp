@@ -1145,7 +1145,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
       // is available on the host
       if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged) {
         HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(stream),
-                                        "Failed to synchronize CUDA stream");
+                                       "Failed to synchronize CUDA stream");
       }
       src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
     }
@@ -1368,7 +1368,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
           // data is available on the host
           if (buffer_info.storage_type == nvidia::gxf::MemoryStorageType::kCudaManaged) {
             HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(stream),
-                                            "Failed to synchronize CUDA stream");
+                                           "Failed to synchronize CUDA stream");
           }
           src_coord = reinterpret_cast<uintptr_t>(buffer_info.buffer_ptr);
         }

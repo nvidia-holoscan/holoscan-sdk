@@ -77,6 +77,14 @@ CudaStreamPool::CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamP
   }
   auto gpu_device_handle = maybe_gpu_device.value();
   dev_id_ = gpu_device_handle->device_id();
+
+  auto maybe_nvtx_identifier = component->getParameter<std::string>("nvtx_identifier");
+  if (!maybe_nvtx_identifier) {
+    // Use the name of this CudaStreamPool as the NVTX identifier
+    nvtx_identifier_ = name;
+  } else {
+    nvtx_identifier_ = maybe_nvtx_identifier.value();
+  }
 }
 
 nvidia::gxf::CudaStreamPool* CudaStreamPool::get() const {
@@ -122,6 +130,11 @@ void CudaStreamPool::setup(ComponentSpec& spec) {
              "Cuda Green Context",
              "The green context to use for the CUDA streams in the pool.",
              static_cast<std::shared_ptr<CudaGreenContext>>(nullptr));
+  spec.param(nvtx_identifier_,
+             "nvtx_identifier",
+             "NVTX Identifier",
+             "The NVTX identifier of the stream pool.",
+             std::string("defaultStreamPool"));
 }
 
 void CudaStreamPool::initialize() {

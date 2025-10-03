@@ -48,15 +48,13 @@ install(FILES CMakeLists.min.txt
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_ACTIVATION_MAP_TEST
-  COMMAND python3 activation_map.py --config ${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-)
-
-  set_tests_properties(EXAMPLE_PYTHON_ACTIVATION_MAP_TEST PROPERTIES
-    DEPENDS "activation_map.py"
-    PASS_REGULAR_EXPRESSION "Model first, second, third was selected to infer"
-    PASS_REGULAR_EXPRESSION "7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7"
-    PASS_REGULAR_EXPRESSION "8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8"
-    PASS_REGULAR_EXPRESSION "9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9"
+    COMMAND bash -c
+      "python3 activation_map.py --config ${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml 2>&1 | \
+       python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+         --pass-pattern 'Model first, second, third was selected to infer' \
+         --pass-pattern '7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7' \
+         --pass-pattern '8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8' \
+         --pass-pattern '9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 endif()

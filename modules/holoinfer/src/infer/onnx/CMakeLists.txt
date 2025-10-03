@@ -30,7 +30,7 @@ target_link_libraries(holoinfer_ort
         ONNXRuntime::ONNXRuntime
         CUDA::cudart
         holoscan::logger
-        holoscan::infer
+        holoscan::holoinfer_utils
         holoscan_security_flags
 )
 target_include_directories(holoinfer_ort

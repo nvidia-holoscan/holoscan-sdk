@@ -257,6 +257,16 @@ get_install_dir() {
     echo -n "${SDK_INSTALL_DIR}-$(get_build_flavor_str)"
 }
 
+get_driver_version() {
+    if command -v nvidia-smi >/dev/null 2>&1; then
+        # Pick the first unique driver version reported (covers multi-GPU setups).
+        nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null \
+            | head -n1 | tr -d ' \n'
+    else
+        echo -n ""   # No driver found – let the caller decide what to do.
+    fi
+}
+
 # CUDA =========================================================================
 
 get_cuda_archs() {
@@ -323,7 +333,7 @@ get_image_tag_flags() {
 
 install_python_dev_deps() {
     if [ -n "${VIRTUAL_ENV-}" ] || [ -n "${CONDA_PREFIX-}" ]; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.cu${CUDA_MAJOR}.txt
         run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
     else
         c_echo_err R "You must be in a virtual environment to install dependencies."
@@ -945,6 +955,20 @@ test() {
     esac
     done
 
+    # Workaround for a bug of the 550 driver where TLS resources are not released and the Vulkan
+    # driver fails to initialize after a certain number of calls to vkCreateInstance.
+    local preload=""
+    if checkif_aarch64; then
+        local driver_version=$(get_driver_version)
+        local driver_major_version=$(echo "$driver_version" | cut -d'.' -f1)
+        if [ "$driver_major_version" = 550 ]; then
+            local candidate="/usr/lib/aarch64-linux-gnu/libnvidia-tls.so.${driver_version}"
+            if [ -e "$candidate" ]; then
+                preload="LD_PRELOAD=$candidate"
+            fi
+        fi
+    fi
+
 	# --init
 	#   Use tini as entrypoint to forward proper signals to xvfb (below)
 	#
@@ -959,11 +983,33 @@ test() {
 	#   that could reliably set the `-e DISPLAY` parameter using this approach.
 	#
     local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
+
+    # Run ctest and capture output while also displaying it in real-time
+    local ctest_output
+    local ctest_exit_code
+
+    # Use a temporary file to capture output while still displaying it
+    local temp_output=$(mktemp)
+
+    # Run ctest and tee output to both console and temp file
     launch $(get_build_dir) \
         --init \
         --cap-drop=NET_BIND_SERVICE \
         ${extra_args[@]} \
-        --run-cmd "$run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options"
+        --run-cmd "$preload $run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options" 2>&1 | tee "$temp_output"
+    
+    ctest_exit_code=${PIPESTATUS[0]}
+    ctest_output=$(cat "$temp_output")
+    rm -f "$temp_output"
+    
+    # Check if ctest output contains "No tests were found"
+    if echo "$ctest_output" | grep -q "No tests were found"; then
+        c_echo_err R "Error: No tests were found!"
+        return 1
+    fi
+    
+    # Return the original ctest exit code
+    return $ctest_exit_code
 }
 
 #===============================================================================
@@ -1177,7 +1223,15 @@ launch() {
     # - Add the GXF module to PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_git_sha)"
-    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+')
+    pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
+    ld_library_path=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
+
+    # Workaround: Required to support cuda-compat-13-0 on Jetpack 7.0 platform.
+    # Expected library mount path from Jetpack 7.0 with nvidia-container-toolkit
+    if [ "${CUDA_MAJOR}" -eq 13 ] && [ -e /usr/lib/aarch64-linux-gnu/nvidia ]; then
+        ld_library_path="/usr/lib/aarch64-linux-gnu/nvidia:${ld_library_path}"
+    fi
+
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
@@ -1195,6 +1249,7 @@ launch() {
         --gpus all \
         ${display_server_opt} \
         ${mount_device_opt} \
+        -e LD_LIBRARY_PATH=${ld_library_path} \
         -e PYTHONPATH=${pythonpath}:${container_top}/${working_dir}/python/lib \
         -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
         -e HOLOSCAN_INPUT_PATH=${container_top}/data \

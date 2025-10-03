@@ -92,6 +92,12 @@ class PingRxOp(Operator):
             print(f"ExpiringMessageAvailable ping: {message}")
             message = op_input.receive("in")
 
+        # can get the timestamp emitted by PingTxOp if it is needed
+        # (must be called after the receive call for this port)
+        timestamp = op_input.get_acquisition_timestamp("in")
+        assert timestamp is not None
+        assert isinstance(timestamp, int)
+
 
 # Now define a simple application using the operators defined above
 

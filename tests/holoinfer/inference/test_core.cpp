@@ -50,6 +50,8 @@ void HoloInferTests::holoinfer_assert(const HoloInfer::InferStatus& status,
     } else {
       std::cerr << "Test " << current_test << ": " << test_name << " in " << module
                 << " -> FAIL.\n";
+      auto failed_String = "Test " + std::to_string(current_test) + " " + module + " " + test_name;
+      failed_tests.push_back(failed_String);
     }
   } else {
     std::cout << "Test: " << current_test
@@ -91,6 +93,10 @@ void HoloInferTests::print_summary() {
   std::cout << "Tests passed     :\t" << pass_test_count << " ("
             << 100.0 * (float(pass_test_count) / float(total_test_count)) << "%)\n";
   std::cout << "Tests failed     :\t" << fail_test_count << "\n\n";
+
+  for (auto ftest : failed_tests) {
+    std::cout << ftest << std::endl;
+  }
 }
 
 int HoloInferTests::get_status() {
@@ -123,6 +129,7 @@ void HoloInferTests::setup_specifications() {
                                                   temporal_map,
                                                   activation_map,
                                                   batch_sizes,
+                                                  dynamic_inputs,
                                                   is_engine_path,
                                                   infer_on_cpu,
                                                   parallel_inference,
@@ -165,6 +172,9 @@ HoloInfer::InferStatus HoloInferTests::prepare_for_inference() {
     db->device_buffer_->resize(buffer_size);
     db->host_buffer_->resize(buffer_size);
     inference_specs_->data_per_tensor_.insert({td.first, std::move(db)});
+    auto dims = td.second;
+    dims.insert(dims.begin(), 1);
+    inference_specs_->dims_per_tensor_.insert({td.first, dims});
   }
 
   return status;
@@ -181,5 +191,18 @@ HoloInfer::InferStatus HoloInferTests::do_inference() {
   } catch (...) {
     std::cout << "Exception occurred in inference.\n";
     return status;
+  }
+}
+
+void HoloInferTests::cleanup_engines() {
+  // cleaning engine files
+  for (const auto& file : std::filesystem::directory_iterator(model_folder)) {
+    if (file.is_regular_file()) {
+      const auto filename = file.path().filename().string();
+      if (filename.find(".engine.") != std::string::npos) {
+        std::filesystem::remove(file.path());
+        HOLOSCAN_LOG_INFO("Cleaning up engine file: {}", filename);
+      }
+    }
   }
 }

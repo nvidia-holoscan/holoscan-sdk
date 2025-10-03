@@ -117,6 +117,8 @@ void DataProcessor::max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t
   check_cuda(cudaMallocAsync(&d_max_out, sizeof(float) * channels, cuda_stream));
   check_cuda(cudaMallocAsync(&d_index_out, sizeof(cuda::std::int64_t) * channels, cuda_stream));
 #else
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
   cub::KeyValuePair<int, float>* d_argmax = nullptr;
   check_cuda(
       cudaMallocAsync(&d_argmax, sizeof(cub::KeyValuePair<int, float>) * channels, cuda_stream));
@@ -174,6 +176,7 @@ void DataProcessor::max_per_channel_scaled_cuda(size_t rows, size_t cols, size_t
   check_cuda(cudaFreeAsync(d_index_out, cuda_stream));
 #else
   check_cuda(cudaFreeAsync(d_argmax, cuda_stream));
+#pragma GCC diagnostic pop
 #endif
 }
 

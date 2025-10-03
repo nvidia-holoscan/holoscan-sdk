@@ -20,25 +20,6 @@ set(HOLOSCAN_PYTHON_MODULE_BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/../${HOLOSCAN_
 file(MAKE_DIRECTORY ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR})
 
 ################################################################################
-# Pybind11 ABI config
-################################################################################
-# Prevent strict ABI protection in pybind11
-# https://github.com/pybind/pybind11/pull/2602
-add_library(pybind11_abi_config INTERFACE)
-target_compile_definitions(pybind11_abi_config
-    INTERFACE
-        PYBIND11_COMPILER_TYPE=""
-        PYBIND11_STDLIB=""
-        PYBIND11_BUILD_ABI=""
-)
-
-# Use it as holoscan::pybind11 in this build and projects importing holoscan
-add_library(holoscan::pybind11 ALIAS pybind11_abi_config)
-set_target_properties(pybind11_abi_config PROPERTIES
-    EXPORT_NAME pybind11
-)
-
-################################################################################
 # Utility function to generate pybind11 modules
 ################################################################################
 function(holoscan_pybind11_module pybind11_module_name)

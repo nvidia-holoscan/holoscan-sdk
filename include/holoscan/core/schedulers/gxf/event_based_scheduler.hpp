@@ -80,7 +80,7 @@ class EventBasedScheduler : public gxf::GXFScheduler {
   Parameter<bool> stop_on_deadlock_;
   Parameter<int64_t> max_duration_ms_;
   Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
-  Parameter<std::vector<uint32_t>> pin_cores_;  // CPU core IDs to pin the worker threads to
+  Parameter<std::vector<uint32_t>> pin_cores_;   // CPU core IDs to pin the worker threads to
   // The following parameter needs to wait on ThreadPool support
   // Parameter<bool> thread_pool_allocation_auto_;
 

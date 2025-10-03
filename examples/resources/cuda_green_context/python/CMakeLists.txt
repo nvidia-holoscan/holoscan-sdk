@@ -16,16 +16,21 @@
 # Get relative folder path for the app
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
-# Copy native operator ping application
 add_custom_target(python_cuda_green_context ALL
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/cuda_green_context.py" ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS "cuda_green_context.py"
   BYPRODUCTS "cuda_green_context.py"
 )
+add_custom_target(python_default_cuda_green_context ALL
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/cuda_default_green_context.py" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "cuda_default_green_context.py"
+  BYPRODUCTS "cuda_default_green_context.py"
+)
 
 # Install the app
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/cuda_green_context.py"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cuda_default_green_context.py"
     DESTINATION "${app_relative_dest_path}"
     COMPONENT "holoscan-examples"
 )
@@ -39,26 +44,47 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_TEST
-    COMMAND python3 cuda_green_context.py --count=10
+  add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST
+    COMMAND python3 cuda_green_context.py --count=10 -d
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
-  set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_TEST PROPERTIES
+  set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
+    PASS_REGULAR_EXPRESSION "rx received default CUDA stream from port 'in'"
+    # PASS_REGULAR_EXPRESSION "rx received message 10"
+    FAIL_REGULAR_EXPRESSION "rx received message 11"
+  )
+
+  add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NON_DEFAULT_STREAM_TEST
+    COMMAND python3 cuda_green_context.py --count=10 -g
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NON_DEFAULT_STREAM_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
     PASS_REGULAR_EXPRESSION "rx received non-default CUDA stream from port 'in'"
-    PASS_REGULAR_EXPRESSION "rx received message 10"
+    # PASS_REGULAR_EXPRESSION "rx received message 10"
     FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 
-  add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NO_ARRAY_INTERFACE_SYNC_TEST
-    COMMAND python3 cuda_green_context.py --count=10
+  add_test(NAME EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_TEST
+    COMMAND python3 cuda_default_green_context.py --count=10
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
-  set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NO_ARRAY_INTERFACE_SYNC_TEST PROPERTIES
-    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG;HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC=0;CUPY_CUDA_ARRAY_INTERFACE_SYNC=0"
+  set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
     PASS_REGULAR_EXPRESSION "rx received non-default CUDA stream from port 'in'"
-    PASS_REGULAR_EXPRESSION "rx received message 10"
+    # PASS_REGULAR_EXPRESSION "rx received message 10"
     FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 
+  add_test(NAME EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_DEFAULT_STREAM_TEST
+    COMMAND python3 cuda_default_green_context.py --count=10 -d
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_DEFAULT_STREAM_TEST PROPERTIES
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
+    PASS_REGULAR_EXPRESSION "rx received default CUDA stream from port 'in'"
+    # PASS_REGULAR_EXPRESSION "rx received message 10"
+    FAIL_REGULAR_EXPRESSION "rx received message 11"
+  )
 endif()

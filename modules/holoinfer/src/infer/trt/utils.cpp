@@ -87,10 +87,13 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
       "minutes depending on your model size and GPU!",
       engine_path);
 
-  if (network_options.batch_sizes.size() != 3) {
-    HOLOSCAN_LOG_ERROR("Size of batches for optimization profile must be 3. Size provided: {}",
-                       network_options.batch_sizes.size());
-    return false;
+  for (auto opt_profile : network_options.batch_sizes) {
+    if (opt_profile.size() % 3 != 0) {
+      HOLOSCAN_LOG_ERROR(
+          "Size of batches for optimization profile must be a multiple of 3. Size provided: {}",
+          opt_profile.size());
+      return false;
+    }
   }
 
   auto builder = std::unique_ptr<nvinfer1::IBuilder>(nvinfer1::createInferBuilder(logger));
@@ -98,9 +101,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     return false;
   }
 
-  auto explicit_batch = 1;
-  auto network =
-      std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(explicit_batch));
+  auto network = std::unique_ptr<nvinfer1::INetworkDefinition>(builder->createNetworkV2(0));
   if (!network) {
     return false;
   }
@@ -129,11 +130,47 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     nvinfer1::ITensor* input = network->getInput(i);
     const auto input_name = input->getName();
     nvinfer1::Dims dims = input->getDimensions();
+
     std::vector<nvinfer1::Dims> profile_batch_dims = {dims, dims, dims};
 
-    profile_batch_dims[0].d[0] = network_options.batch_sizes[0];
-    profile_batch_dims[1].d[0] = network_options.batch_sizes[1];
-    profile_batch_dims[2].d[0] = network_options.batch_sizes[2];
+    auto num_of_opt_profiles = network_options.batch_sizes.size();
+
+    // if num_of_opt_profiles is 1 but number of dynamic inputs are more, same opt profile is
+    // applied for all dynamic inputs. Otherwise num_of_opt_profiles must be equal to model input
+    // size. If some intermediate input is not dynamic user must provide default profile for that
+    // in the trt profile in the parameter set.
+
+    if (num_of_opt_profiles != 1 && num_of_opt_profiles != network->getNbInputs()) {
+      HOLOSCAN_LOG_ERROR(
+          "Size of TRT optimization profile must either be 1 or equal to the number of inputs.");
+      return false;
+    }
+
+    auto current_opt_profile_index = 0;
+    if (num_of_opt_profiles > 1) {
+      current_opt_profile_index = i;
+    }
+    auto opt_profile_size = network_options.batch_sizes[current_opt_profile_index].size() / 3;
+
+    for (auto nd = 0; nd < opt_profile_size; ++nd) {
+      profile_batch_dims[0].d[nd] = network_options.batch_sizes[current_opt_profile_index][3 * nd];
+      profile_batch_dims[1].d[nd] =
+          network_options.batch_sizes[current_opt_profile_index][3 * nd + 1];
+      profile_batch_dims[2].d[nd] =
+          network_options.batch_sizes[current_opt_profile_index][3 * nd + 2];
+
+      if (nd == 0) {
+        for (auto prof_d = 0; prof_d < 3; ++prof_d) {
+          if (profile_batch_dims[prof_d].d[nd] > network_options.max_batch_size) {
+            HOLOSCAN_LOG_INFO("Max batch size supported is {}", network_options.max_batch_size);
+            HOLOSCAN_LOG_ERROR("Input batch size for tensor {} is {}",
+                               input_name,
+                               profile_batch_dims[prof_d].d[nd]);
+            return false;
+          }
+        }
+      }
+    }
 
     profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kMIN, profile_batch_dims[0]);
     profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kOPT, profile_batch_dims[1]);
@@ -141,6 +178,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
   }
 
   config->addOptimizationProfile(profile);
+
   config->setMemoryPoolLimit(nvinfer1::MemoryPoolType::kWORKSPACE, network_options.max_memory);
 
   if (network_options.use_fp16) {

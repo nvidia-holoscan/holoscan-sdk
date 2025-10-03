@@ -122,9 +122,16 @@ Required parameters and related features available with the Holoscan Inference M
                     "model_3_unique_identifier": "torch"
             ```
     - `trt_opt_profile`: This parameter is optional and is activated with TensorRT backend. This parameter is applicable on models with dynamic input shapes.
-        - Parameter is specified as a vector of 3 integers. First is the minimum batch size for the input, second is the optimum batch size and third value is the maximum batch size.
-        - Users can specify a batch profile for dynamic input. This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
-        - Default value: {1,1,1}
+        - Parameter is specified as a vector of vectors. Each input parameter is specific with one set of vectors. 
+        - For example if the model has only one input with shape of `[c, h, w]`, and `c` is dynamic, then optimization profile is specified as: `{{i, j, k}}`. First value is the minimum batch size for dimension c, second is the optimum batch size and third value is the maximum batch size. Each dynamic dimension must be accompanied by 3 values for minimum, optimum and maximum value. In the same example if dimension `c` and `h` both are dynamic, then the 3 values for the second dimension must follow the 3 values of the first dimension. Optimization profile in this case will look like `{{i, j, k, p, q, r}}`, where `i, j, k` are optimization profile for dimension `c` and `p, q, r` are optimization profiles for dimension `h`.
+        - If there are multiple dynamic inputs, we must use another vector in the optimization profile. For example, if a model has 2 inputs and both are dynamic, then optimization profile must be specified as `{{profile_for_first_input}, {profile_for_second_input}}`
+        - This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
+    - `dynamic_input_dims`: This parameter is optional and if activated, allows the Inference Operator to ingest dynamic inputs. The parameter is supported for all the backends. It must be set to `true` in the inference parameter set.
+        - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested. 
+        - For `onnx` and `torch` backend, maximum allowed buffer size in bytes for each input is 2GB.
+        - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `{1,1,1}` will be used.
+        - Maximum allowed batch size for `tensorRT` backend is 256
+        - Current limitation is that `tensorRT` backend: with multiple models, multiple optimization profiles are not supported. This enhancement will come in future releases. 
 
 - Other features: The table below illustrates other features and supported values in the current release.
 

@@ -44,7 +44,7 @@ struct PoseTreeUCXServerConfig {
       100};  ///< Sleep duration in microseconds between worker progress calls
   int64_t shutdown_timeout_ms{1000};   ///< Maximum time in milliseconds to wait for clean shutdown
   int64_t shutdown_poll_sleep_ms{10};  ///< Sleep duration in milliseconds between shutdown polls
-  int64_t maximum_clients{1024};      ///< Maximum number of clients expected.
+  int64_t maximum_clients{1024};       ///< Maximum number of clients expected.
 };
 
 /**

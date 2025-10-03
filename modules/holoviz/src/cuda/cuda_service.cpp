@@ -43,10 +43,10 @@ static void cu_init() {
                                0,
                                nullptr));
     CudaCheck(cuGetProcAddress("cuCtxFromGreenCtx",
-                              reinterpret_cast<void**>(&fnCuCtxFromGreenCtx),
-                              driver_version,
-                              0,
-                              nullptr));
+                               reinterpret_cast<void**>(&fnCuCtxFromGreenCtx),
+                               driver_version,
+                               0,
+                               nullptr));
   });
 }
 

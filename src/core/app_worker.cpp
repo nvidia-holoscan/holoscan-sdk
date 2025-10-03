@@ -123,18 +123,7 @@ bool AppWorker::execute_fragments(
   const auto& driver_address = options()->driver_address;
   auto [driver_ip, driver_port_str] = CLIOptions::parse_address(
       driver_address, "0.0.0.0", std::to_string(kDefaultFragmentServiceDriverPort));
-  int driver_port = 0;
-  try {
-    driver_port = std::stoi(driver_port_str);
-  } catch (const std::invalid_argument& e) {
-    HOLOSCAN_LOG_ERROR("Invalid port number '{}': {}. Using default port {}.",
-                       driver_port_str,
-                       e.what(),
-                       kDefaultFragmentServiceDriverPort);
-  }
-  if (driver_port == 0) {
-    driver_port = kDefaultFragmentServiceDriverPort;
-  }
+  (void)driver_port_str;  // unused
 
   // Initialize fragment services
   app_->executor().initialize_fragment_services();
@@ -168,6 +157,11 @@ bool AppWorker::execute_fragments(
 
   // Add the UCX network context
   bool enable_async = AppDriver::get_bool_env_var("HOLOSCAN_UCX_ASYNCHRONOUS", false);
+  if (enable_async) {
+    HOLOSCAN_LOG_WARN(
+        "HOLOSCAN_UCX_ASYNCHRONOUS mode is deprecated as of Holoscan v3.7 and will be removed in "
+        "v4.0");
+  }
   for (auto& fragment : scheduled_fragments) {
     auto network_context = fragment->make_network_context<holoscan::UcxContext>(
         "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));

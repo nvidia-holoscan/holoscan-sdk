@@ -18,7 +18,9 @@
 #define _HOLOSCAN_INFER_CORE_H
 
 #include <iostream>
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <holoinfer_buffer.hpp>
@@ -51,6 +53,21 @@ class InferBase {
                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
                                    cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference) {
     return InferStatus();
+  }
+
+  /**
+   * @brief Updates the dimensions per tensor in case of dynamic inputs.
+   * Using the input Holoscan tensors and their dimension mapping, the internal input size vector is
+   * updated
+   *
+   * @param input_tensors Vector of input Holoscan tensor names
+   * @param dims_per_tensor Map storing the dimensions as values and Holoscan tensor names as keys.
+   * @return true if the dynamic input dimensions were successfully updated, false otherwise
+   */
+  virtual bool set_dynamic_input_dimension(
+      const std::vector<std::string>& input_tensors,
+      const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+    return true;
   }
 
   /**

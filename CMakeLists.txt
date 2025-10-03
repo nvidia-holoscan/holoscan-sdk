@@ -190,6 +190,29 @@ endif()
 # ##############################################################################
 # # Build Python module
 # ##############################################################################
+
+# Pybind11 ABI config
+#
+# Prevent strict ABI protection in pybind11
+# https://github.com/pybind/pybind11/pull/2602
+#
+# Intentionally defined even in C++-only builds that may be mixed with Python
+# bindings at a later time, such as in the case of Debian development packages
+# and non-development Python wheels.
+add_library(pybind11_abi_config INTERFACE)
+target_compile_definitions(pybind11_abi_config
+    INTERFACE
+        PYBIND11_COMPILER_TYPE=""
+        PYBIND11_STDLIB=""
+        PYBIND11_BUILD_ABI=""
+)
+
+# Use it as holoscan::pybind11 in this build and projects importing holoscan
+add_library(holoscan::pybind11 ALIAS pybind11_abi_config)
+set_target_properties(pybind11_abi_config PROPERTIES
+    EXPORT_NAME pybind11
+)
+
 if(HOLOSCAN_BUILD_PYTHON)
     if(HOLOSCAN_BUILD_TESTS)
        include(CTest)
@@ -250,6 +273,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     holoviz
     holoviz_imgui
     holoinfer
+    holoinfer_utils
     infer_utils
     logger
     matx
@@ -286,9 +310,7 @@ endif()
 if(HOLOSCAN_BUILD_ORT)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
 endif()
-if(HOLOSCAN_BUILD_PYTHON)
-    list(APPEND HOLOSCAN_INSTALL_TARGETS pybind11_abi_config)
-endif()
+list(APPEND HOLOSCAN_INSTALL_TARGETS pybind11_abi_config)
 
 # Copy library files
 # Note: ucxx is handled separately since it's only available in build targets, not install targets
@@ -355,6 +377,48 @@ install(DIRECTORY
 DESTINATION "include/gxf"
 COMPONENT "holoscan-gxf_libs"
 )
+
+set(HOLOSCAN_GXF_INSTALL_HOOK [=[
+include(CMakeFindDependencyMacro)
+find_dependency(CUDAToolkit)
+
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0)
+  set(CCCL_MIN_VERSION 3.0)
+else()
+  set(CCCL_MIN_VERSION 2.5)
+endif()
+
+if(CCCL_FOUND OR TARGET CCCL::CCCL)
+  if(NOT CCCL_VERSION)
+    message(DEBUG "CCCL_VERSION not found, skipping compatibility check")
+  elseif(${CCCL_VERSION} VERSION_LESS ${CCCL_MIN_VERSION})
+    message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${CCCL_MIN_VERSION} for the Holoscan SDK.
+Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
+and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.")
+  else()
+    message(DEBUG "Found CCCL ${CCCL_VERSION} which is compatible with Holoscan SDK")
+  endif()
+else()
+  if(CCCL_MIN_VERSION VERSION_GREATER_EQUAL 3.0)
+    find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
+  else()
+    # Allow compatibility across CCCL major versions
+    find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
+    if(NOT CCCL_FOUND)
+      find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
+    endif()
+  endif()
+endif()
+
+if(NOT TARGET GXF::common)
+  add_library(GXF::common INTERFACE IMPORTED)
+  set_target_properties(GXF::common PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/gxf")
+endif()
+
+if(TARGET GXF::std)
+  set_target_properties(GXF::std PROPERTIES INTERFACE_LINK_LIBRARIES "CCCL::libcudacxx")
+endif()
+]=])
 foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
     string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
     get_target_property(GXF_${_component}_LOCATION GXF::${_component} IMPORTED_LOCATION_${_build_type})
@@ -442,6 +506,8 @@ foreach(gxf_component IN LISTS _GXF_components)
     )
   endif()
 endforeach()
+
+@HOLOSCAN_GXF_INSTALL_HOOK@
 
 if(TARGET GXF::ucx)
     # GXF UCX classes publicly depend on UCX headers.

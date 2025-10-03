@@ -348,7 +348,12 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           HOLOSCAN_LOG_INFO("Found libtorch libraries");
-          using NewTorchInfer = TorchInfer* (*)(const std::string&, bool, bool, bool);
+          using NewTorchInfer = TorchInfer* (*)(const std::string&,
+                                                bool,
+                                                bool,
+                                                bool,
+                                                int,
+                                                std::function<cudaStream_t(int32_t device_id)>);
           auto new_torch_infer = reinterpret_cast<NewTorchInfer>(dlsym(handle, "NewTorchInfer"));
           if (!new_torch_infer) {
             HOLOSCAN_LOG_ERROR(dlerror());
@@ -357,8 +362,12 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
           dlclose(handle);
-          auto context = new_torch_infer(
-              model_path, inference_specs->oncuda_, cuda_buffer_in_, cuda_buffer_out_);
+          auto context = new_torch_infer(model_path,
+                                         inference_specs->oncuda_,
+                                         cuda_buffer_in_,
+                                         cuda_buffer_out_,
+                                         device_id,
+                                         inference_specs->allocate_cuda_stream_);
           holo_infer_context_[model_name] = std::unique_ptr<TorchInfer>(context);
 #else
           HOLOSCAN_LOG_ERROR("Torch backend not supported.");
@@ -398,6 +407,11 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
       for (unsigned int d = 0; d < out_tensor_names.size(); d++) {
         std::vector<int64_t> dims = holo_infer_context_.at(model_name)->get_output_dims()[d];
+        for (int td = 0; td < dims.size(); td++) {
+          if (dims[td] < 1) {
+            dims[td] = 1;
+          }
+        }
         auto datatype = holo_infer_context_.at(model_name)->get_output_datatype()[d];
         if (datatype == holoinfer_datatype::h_Unsupported) {
           status.set_message("Unsupported datatype for tensor" + out_tensor_names[d]);
@@ -781,6 +795,23 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   s_time = std::chrono::steady_clock::now();
   for (const auto& [model_instance, _] : infer_param_) {
     bool process_model = true;
+
+    // for this particular model, set the input dimensions (for dynamic inputs)
+    // get the sequence of holoscan tensors for this particular model
+
+    if (inference_specs->dynamic_input_dims_) {
+      auto input_tensors = inference_specs->pre_processor_map_.at(model_instance);
+
+      bool set_dynamic_input =
+          holo_infer_context_.at(model_instance)
+              ->set_dynamic_input_dimension(input_tensors, inference_specs->dims_per_tensor_);
+
+      if (!set_dynamic_input) {
+        HOLOSCAN_LOG_ERROR("Setting up of dynamic input failed for model {}", model_instance);
+        status.set_code(holoinfer_code::H_ERROR);
+        return status;
+      }
+    }
 
     if (activation_map.find(model_instance) != activation_map.end()) {
       try {

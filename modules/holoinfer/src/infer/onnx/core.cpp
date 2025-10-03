@@ -20,6 +20,7 @@
 
 #include <cassert>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -46,6 +47,9 @@ class OnnxInferImpl {
   const bool use_cuda_;
   const bool cuda_buf_in_;
   const bool cuda_buf_out_;
+  bool is_output_dynamic_ = false;
+  size_t max_dynamic_input_size = 2000000000;
+
   const std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
 
   std::unique_ptr<Ort::Env> env_;
@@ -85,6 +89,9 @@ class OnnxInferImpl {
 
   Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& data_buffer,
                            const std::vector<int64_t>& dims, bool cuda_buf);
+
+  bool set_dynamic_input_dimension(const std::vector<std::string>& input_holoscan_tensors,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
   // Wrapped Public APIs
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffer,
@@ -162,6 +169,44 @@ static ONNXTensorElementDataType get_onnx_datatype(holoinfer_datatype data_type)
   }
 }
 
+bool OnnxInfer::set_dynamic_input_dimension(
+    const std::vector<std::string>& input_holoscan_tensors,
+    const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  return impl_->set_dynamic_input_dimension(input_holoscan_tensors, dims_per_tensor);
+}
+
+bool OnnxInferImpl::set_dynamic_input_dimension(
+    const std::vector<std::string>& input_holoscan_tensors,
+    const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  input_dims_.clear();
+
+  for (int i = 0; i < input_nodes_; i++) {
+    auto holoscan_tensor_name = input_holoscan_tensors[i];
+    auto dims = dims_per_tensor.at(holoscan_tensor_name);
+
+    const size_t tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
+
+    auto input_node_type_size = get_element_size(input_type_[i]);
+    size_t buffer_size = tensor_size * input_node_type_size;
+
+    if (buffer_size > max_dynamic_input_size) {
+      HOLOSCAN_LOG_INFO("Allowed buffer size in bytes: {}", max_dynamic_input_size);
+      HOLOSCAN_LOG_INFO("Input buffer size in bytes: {}", buffer_size);
+      HOLOSCAN_LOG_ERROR(
+          "Input buffer size exceeded the total buffer size supported by the Inference module.");
+      return false;
+    }
+
+    std::vector<int64_t> indim;
+    for (size_t in = 0; in < dims.size(); in++) {
+      indim.push_back(dims[in]);
+    }
+    input_dims_.push_back(std::move(indim));
+  }
+
+  return true;
+}
+
 void OnnxInfer::populate_model_details() {
   impl_->populate_model_details();
 }
@@ -181,9 +226,13 @@ void OnnxInferImpl::populate_model_details() {
     ONNXTensorElementDataType tensor_element_type = input_tensor_info.GetElementType();
     input_type_.push_back(get_holoinfer_datatype(tensor_element_type));
     auto indim = input_tensor_info.GetShape();
-    if (indim[0] <= 0) {
-      indim[0] = 1;
+
+    for (auto& dim : indim) {
+      if (dim <= 0) {
+        dim = 1;
+      }
     }
+
     input_dims_.push_back(indim);
   }
 
@@ -199,9 +248,14 @@ void OnnxInferImpl::populate_model_details() {
 
     output_type_.push_back(get_holoinfer_datatype(tensor_element_type));
     auto outdim = output_tensor_info.GetShape();
-    if (outdim[0] <= 0) {
-      outdim[0] = 1;
+
+    for (auto& dim : outdim) {
+      if (dim <= 0) {
+        dim = 1;
+        is_output_dynamic_ = true;
+      }
     }
+
     output_dims_.push_back(outdim);
   }
 
@@ -490,28 +544,70 @@ InferStatus OnnxInferImpl::do_inference(
       input_tensors_.push_back(std::move(i_tensor));
     }
 
-    for (unsigned int a = 0; a < output_buffer.size(); a++) {
-      Ort::Value o_tensor = create_tensor(output_buffer[a], output_dims_[a], cuda_buf_out_);
-
-      if (!o_tensor) {
-        status.set_message("Onnxruntime: Error creating output Ort tensor.");
-        return status;
-      }
-      output_tensors_.push_back(std::move(o_tensor));
-    }
-
     if (!use_cuda_) {
       // synchronize CUDA with CPU if using CPU inference
       check_cuda(cudaStreamSynchronize(cuda_stream_));
     }
 
-    session_->Run(Ort::RunOptions{nullptr},
-                  input_names_.data(),
-                  input_tensors_.data(),
-                  input_tensors_.size(),
-                  output_names_.data(),
-                  output_tensors_.data(),
-                  output_tensors_.size());
+    if (!is_output_dynamic_) {
+      for (unsigned int a = 0; a < output_buffer.size(); a++) {
+        Ort::Value o_tensor = create_tensor(output_buffer[a], output_dims_[a], cuda_buf_out_);
+
+        if (!o_tensor) {
+          status.set_message("Onnxruntime: Error creating output Ort tensor.");
+          return status;
+        }
+        output_tensors_.push_back(std::move(o_tensor));
+      }
+      session_->Run(Ort::RunOptions{nullptr},
+                    input_names_.data(),
+                    input_tensors_.data(),
+                    input_tensors_.size(),
+                    output_names_.data(),
+                    output_tensors_.data(),
+                    output_tensors_.size());
+    } else {
+      output_tensors_ = session_->Run(Ort::RunOptions{nullptr},
+                                      input_names_.data(),
+                                      input_tensors_.data(),
+                                      input_tensors_.size(),
+                                      output_names_.data(),
+                                      output_nodes_);
+
+      output_dims_.clear();
+      for (size_t a = 0; a < output_nodes_; a++) {
+        auto output_type_info = output_tensors_[a].GetTensorTypeAndShapeInfo();
+        auto outdim = output_type_info.GetShape();
+
+        output_dims_.push_back(outdim);
+
+        const size_t tensor_size =
+            accumulate(outdim.begin(), outdim.end(), 1, std::multiplies<size_t>());
+
+        if (cuda_buf_out_) {
+          if (output_buffer[a]->device_buffer_->size() != tensor_size) {
+            output_buffer[a]->device_buffer_->resize(tensor_size);
+          }
+          if (use_cuda_) {
+            // with the above inference API, output is always on host
+            void* outdata = const_cast<void*>(output_tensors_[a].GetTensorRawData());
+            check_cuda(cudaMemcpyAsync(output_buffer[a]->device_buffer_->data(),
+                                       outdata,
+                                       output_buffer[a]->device_buffer_->get_bytes(),
+                                       cudaMemcpyHostToDevice,
+                                       cuda_stream_));
+          }
+        } else {
+          if (output_buffer[a]->host_buffer_->size() != tensor_size) {
+            output_buffer[a]->host_buffer_->resize(tensor_size);
+          }
+          // no need for use_cuda_ check here since output from the above API is on host
+          memcpy(output_buffer[a]->host_buffer_->data(),
+                 output_tensors_[a].GetTensorRawData(),
+                 output_buffer[a]->host_buffer_->get_bytes());
+        }
+      }
+    }
 
     if (cuda_buf_out_ && !use_cuda_) {
       for (size_t index = 0; index < output_buffer.size(); ++index) {

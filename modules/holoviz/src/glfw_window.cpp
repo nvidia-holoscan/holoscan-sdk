@@ -25,7 +25,6 @@
 #include <iostream>
 #include <list>
 #include <mutex>
-#include <set>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -205,6 +204,9 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
     if (!monitor) {
       monitor = glfwGetPrimaryMonitor();
     }
+    // although the GLFW documentation says that fullscreen windows ignore this hint it is needed
+    // for fullscreen windows to switch to flip mode and enable GSync
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
   }
 
   {

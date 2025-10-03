@@ -16,6 +16,7 @@
  */
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -37,9 +38,9 @@ class TrtInfer : public InferBase {
    * @brief Constructor
    */
   TrtInfer(const std::string& model_path, const std::string& model_name,
-           const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-           bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback,
-           bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
+           const std::vector<std::vector<int32_t>>& trt_opt_profile, int device_id,
+           int device_id_dt, bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
+           bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
            std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
 
   /**
@@ -68,6 +69,18 @@ class TrtInfer : public InferBase {
    * @return Vector of values as dimension
    * */
   std::vector<std::vector<int64_t>> get_input_dims() const;
+
+  /**
+   * @brief Updates the dimensions per tensor in case of dynamic inputs.
+   * Using the input Holoscan tensors and their dimension mapping, the internal input size vector is
+   * updated
+   *
+   * @param input_tensors Vector of input Holoscan tensor names
+   * @param dims_per_tensor Map storing the dimensions as values and Holoscan tensor names as keys.
+   * @return true if the dynamic input dimensions were successfully updated, false otherwise
+   */
+  bool set_dynamic_input_dimension(const std::vector<std::string>& input_tensors,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
   /**
    * @brief Get output data dimensions from the model
@@ -111,7 +124,7 @@ class TrtInfer : public InferBase {
   std::vector<holoinfer_datatype> out_data_types_;
 
   /// @brief Vector of trt optimization profile
-  std::vector<int32_t> trt_opt_profile_;
+  std::vector<std::vector<int32_t>> trt_opt_profile_;
 
   /// @brief Use FP16 in TRT engine file generation
   bool enable_fp16_;

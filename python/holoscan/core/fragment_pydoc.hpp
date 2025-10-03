@@ -279,6 +279,25 @@ initialize_size : 1
     The initial number of threads in the pool.
 )doc")
 
+PYDOC(add_default_green_context_pool, R"doc(
+Add a default green context pool to the fragment.
+
+Parameters
+----------
+dev_id : int
+    The device ID to use for the green context pool.
+sms_per_partition : list[int], optional
+    The number of SMs per partition to use for the green context pool.
+default_context_index : int, optional
+    The index of the default context to use for the green context pool.
+min_sm_size : int, optional
+    The minimum size of the SM to use for the green context pool.
+)doc")
+
+PYDOC(get_default_green_context_pool, R"doc(
+Get the default green context pool associated with the fragment.
+)doc")
+
 PYDOC(run, R"doc(
 The run method of the Fragment.
 

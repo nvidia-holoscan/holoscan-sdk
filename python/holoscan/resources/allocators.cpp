@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 
-
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -115,8 +114,7 @@ class PyCudaGreenContextPool : public CudaGreenContextPool {
   explicit PyCudaGreenContextPool(Fragment* fragment, int32_t dev_id = 0, uint32_t flags = 0,
                                   uint32_t num_partitions = 0,
                                   const std::vector<uint32_t>& sms_per_partition = {},
-                                  int32_t default_context_index = -1,
-                                  uint32_t min_sm_size = 2,
+                                  int32_t default_context_index = -1, uint32_t min_sm_size = 2,
                                   const std::string& name = "cuda_green_context_pool")
       : CudaGreenContextPool(ArgList{
             Arg{"dev_id", dev_id},
@@ -141,13 +139,11 @@ class PyCudaGreenContext : public CudaGreenContext {
   // Define a constructor that fully initializes the object.
   explicit PyCudaGreenContext(
       Fragment* fragment, std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool = nullptr,
-      int32_t index = -1, const std::string& name = "cuda_green_context")
-      : CudaGreenContext(cuda_green_context_pool, index) {
+      int32_t index = -1, const std::string& nvtx_identifier = "defaultGreenContext",
+      const std::string& name = "cuda_green_context")
+      : CudaGreenContext(cuda_green_context_pool, index, nvtx_identifier) {
     name_ = name;
     fragment_ = fragment;
-    if (cuda_green_context_pool) {
-      cuda_green_context_pool->initialize();
-    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -163,14 +159,12 @@ class PyCudaStreamPool : public CudaStreamPool {
                             int32_t stream_priority = 0, uint32_t reserved_size = 1,
                             uint32_t max_size = 0,
                             std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr,
+                            const std::string& nvtx_identifier = "nvtx_stream_pool",
                             const std::string& name = "cuda_stream_pool")
       : CudaStreamPool(dev_id, stream_flags, stream_priority, reserved_size, max_size,
-                       cuda_green_context) {
+                       cuda_green_context, nvtx_identifier) {
     name_ = name;
     fragment_ = fragment;
-    if (cuda_green_context) {
-      cuda_green_context->initialize();
-    }
     spec_ = std::make_shared<ComponentSpec>(fragment);
     setup(*spec_);
   }
@@ -283,10 +277,12 @@ void init_allocators(py::module_& m) {
       .def(py::init<Fragment*,
                     std::shared_ptr<CudaGreenContextPool>,
                     int32_t,
+                    const std::string&,
                     const std::string&>(),
            "fragment"_a,
            "cuda_green_context_pool"_a = nullptr,
            "index"_a = -1,
+           "nvtx_identifier"_a = "nvtx_green_context",
            "name"_a = "cuda_green_context",
            doc::CudaGreenContext::doc_CudaGreenContext);
 
@@ -299,6 +295,7 @@ void init_allocators(py::module_& m) {
                     uint32_t,
                     uint32_t,
                     std::shared_ptr<CudaGreenContext>,
+                    const std::string&,
                     const std::string&>(),
            "fragment"_a,
            "dev_id"_a = 0,
@@ -307,6 +304,7 @@ void init_allocators(py::module_& m) {
            "reserved_size"_a = 1U,
            "max_size"_a = 0U,
            "cuda_green_context"_a = nullptr,
+           "nvtx_identifier"_a = "nvtx_stream_pool",
            "name"_a = "cuda_stream_pool"s,
            doc::CudaStreamPool::doc_CudaStreamPool);
 

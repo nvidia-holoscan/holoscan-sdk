@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,6 +95,40 @@ Returns
 stream_ptrs : list[int]
 	The memory addresses of the underlying cudaStream_t for each message. For any messages without
 	a stream, the list will contain None.
+
+)doc")
+
+PYDOC(get_acquisition_timestamp, R"doc(
+Get the acquisition timestamp corresponding to a given input port.
+
+Parameters
+----------
+input_port_name : str, optional
+	The name of the input port to receive the object from. Can be left empty if there is only
+	one input port on the operator.
+
+Returns
+-------
+timestamp : int or None
+	Returns the timestamp (in nanoseconds). If the upstream operator did not emit a timestamp or
+	the input port name does not exist, this timestamp will be ``None``.
+
+)doc")
+
+PYDOC(get_acquisition_timestamps, R"doc(
+Get the acquisition timestamsp corresponding to all messages received on a given input port.
+
+Parameters
+----------
+input_port_name : str, optional
+	The name of the input port to receive the object from. Can be left empty if there is only
+	one input port on the operator.
+
+Returns
+-------
+timestamps : list[int or None]
+	Returns the timestamps (in nanoseconds). Values of None will be present for any of the
+	received messages that did not contain a timestamp.
 
 )doc")
 

@@ -33,6 +33,7 @@
 #include <vector>
 #include <functional>
 
+#include "holoinfer_activation_spec.hpp"
 #include "holoinfer_constants.hpp"
 
 #define _HOLOSCAN_EXTERNAL_API_ __attribute__((visibility("default")))
@@ -255,28 +256,6 @@ using DimType = std::map<std::string, std::vector<std::vector<int64_t>>>;
 using MultiMappings = std::map<std::string, std::vector<std::string>>;
 
 /**
- * @brief Activation specification struct, using along with activation_map parameter to
- * select a subset models at runtime.
- */
-struct ActivationSpec {
-  ActivationSpec() = default;
-
-  /**
-   * @brief Construct a new Activation Spec object.
-   * @param model_name: Name of model which defined in model_path_map parameter.
-   * @param active: Active model flag (true or false), default true.
-   */
-  explicit ActivationSpec(const std::string& model_name, bool active = true)
-      : model_name_(model_name), active_(active) {}
-
-  bool is_active() const { return active_; }
-  std::string model() const { return model_name_; }
-  void set_active(bool value = true) { active_ = value; }
-  std::string model_name_;
-  bool active_;
-};
-
-/**
  * @brief Struct that holds specifications related to inference, along with input and
  * output data buffer.
  */
@@ -296,6 +275,7 @@ struct InferenceSpecs {
    * @param activation_map Map with key as model name and activation state for inference as value
    * @param trt_opt_profile Vector of values for TensorRT optimization profile during engine
    * creation
+   * @param dynamic_input_dims Input dimensions to the model is dynamic
    * @param is_engine_path Input path to model is trt engine
    * @param oncpu Perform inference on CPU
    * @param parallel_proc Perform parallel inference of multiple models
@@ -312,7 +292,8 @@ struct InferenceSpecs {
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
                  const Mappings& dla_core_map, const Mappings& temporal_map,
-                 const Mappings& activation_map, const std::vector<int32_t>& trt_opt_profile,
+                 const Mappings& activation_map,
+                 const std::vector<std::vector<int32_t>>& trt_opt_profile, bool dynamic_input_dims,
                  bool is_engine_path, bool oncpu, bool parallel_proc, bool use_fp16,
                  bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs, int32_t dla_core,
                  bool dla_gpu_fallback, std::function<cudaStream_t(int32_t)> allocate_cuda_stream)
@@ -326,6 +307,7 @@ struct InferenceSpecs {
         temporal_map_(temporal_map),
         activation_map_(activation_map),
         trt_opt_profile_(trt_opt_profile),
+        dynamic_input_dims_(dynamic_input_dims),
         is_engine_path_(is_engine_path),
         oncuda_(!oncpu),
         parallel_processing_(parallel_proc),
@@ -411,8 +393,15 @@ struct InferenceSpecs {
   /// @brief Map with key as model name and activation state for inference as value
   Mappings activation_map_;
 
+  /// Map holding dimensions per tensor. Key is tensor name and value is a vector with
+  /// dimensions.
+  std::map<std::string, std::vector<int>> dims_per_tensor_;
+
   /// @brief TensorRT optimization profile during engine creation for dynamic inputs
-  std::vector<int32_t> trt_opt_profile_;
+  std::vector<std::vector<int32_t>> trt_opt_profile_;
+
+  /// @brief Flag showing if the the inputs to the models are dynamic
+  bool dynamic_input_dims_ = false;
 
   /// @brief Flag showing if input model path is path to engine files
   bool is_engine_path_ = false;

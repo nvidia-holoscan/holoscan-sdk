@@ -457,7 +457,7 @@ class Fragment(_Fragment):
     def __del__(self):
         # This is best-effort cleanup, not guaranteed to be called reliably.
         # Avoid potentially blocking calls or complex logic here.
-        if self._async_executor is not None:
+        if getattr(self, "_async_executor", None):
             # Non-blocking shutdown is safer in __del__ if possible,
             # but might leave work unfinished or resources dangling longer.
             # Using wait=False might be preferable here, but check implications.

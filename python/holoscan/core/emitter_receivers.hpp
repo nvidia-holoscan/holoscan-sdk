@@ -219,18 +219,15 @@ struct emitter_receiver<holoscan::Tensor> {
   static void emit(py::object& data, const std::string& name, PyOutputContext& op_output,
                    const int64_t acq_timestamp = -1) {
     HOLOSCAN_LOG_DEBUG("py_emit: tensor-like over UCX connector");
-    // For tensor-like data, we should create an entity and transmit using the holoscan::Tensor
+    // For tensor-like data, we should create a TensorMap and transmit using the holoscan::Tensor
     // serializer. cloudpickle fails to serialize PyTensor and we want to avoid using it anyways
     // as it would be inefficient to serialize the tensor to a string.
-    py::gil_scoped_release release;
-    auto entity = nvidia::gxf::Entity::New(op_output.gxf_context());
-    if (!entity) {
-      throw std::runtime_error("Failed to create entity");
-    }
-    auto py_entity = static_cast<PyEntity>(entity.value());
 
-    py::gil_scoped_acquire acquire;
+    TensorMap tensor_map;
     auto py_tensor_obj = PyTensor::as_tensor(data);
+    std::shared_ptr<Tensor> tensor =
+        std::static_pointer_cast<Tensor>(py::cast<std::shared_ptr<PyTensor>>(py_tensor_obj));
+
     if (py::hasattr(data, "__cuda_array_interface__")) {
       // checking with __cuda_array_interface__ instead of
       // if (py::isinstance(value, cupy.attr("ndarray")))
@@ -238,16 +235,16 @@ struct emitter_receiver<holoscan::Tensor> {
       // This way we don't have to add try/except logic around importing the CuPy module.
       // One consequence of this is that Non-CuPy arrays having __cuda_array_interface__ will be
       // cast to CuPy arrays on deserialization.
-      py_entity.py_add(py_tensor_obj, "#cupy: tensor");
+      tensor_map["#cupy: tensor"] = tensor;
     } else if (py::hasattr(data, "__array_interface__")) {
       // objects with __array_interface__ defined will be cast to NumPy array on
       // deserialization.
-      py_entity.py_add(py_tensor_obj, "#numpy: tensor");
+      tensor_map["#numpy: tensor"] = tensor;
     } else {
-      py_entity.py_add(py_tensor_obj, "#holoscan: tensor");
+      tensor_map["#holoscan: tensor"] = tensor;
     }
-    py::gil_scoped_release release2;
-    op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str(), acq_timestamp);
+    py::gil_scoped_release release;
+    op_output.emit(tensor_map, name.c_str(), acq_timestamp);
     return;
   }
   static py::object receive(std::any result, const std::string& name, PyInputContext& op_input) {
@@ -280,25 +277,19 @@ struct emitter_receiver<pybind11::dict> {
       }
     }
     if (is_tensormap) {
-      // Create an Entity containing the TensorMap
-      auto dict_obj = data.cast<py::dict>();
-      py::gil_scoped_release release;
-      auto entity = nvidia::gxf::Entity::New(op_output.gxf_context());
-      if (!entity) {
-        throw std::runtime_error("Failed to create entity");
-      }
-      auto py_entity = static_cast<PyEntity>(entity.value());
-
-      py::gil_scoped_acquire acquire;
+      // Create a TensorMap from the Python dictionary
+      TensorMap tensor_map;
       for (auto& item : dict_obj) {
         std::string key = item.first.cast<std::string>();
         auto& value = item.second;
         auto value_obj = py::reinterpret_borrow<py::object>(value);
         auto py_tensor_obj = PyTensor::as_tensor(value_obj);
-        py_entity.py_add(py_tensor_obj, key.c_str());
+        std::shared_ptr<Tensor> tensor =
+            std::static_pointer_cast<Tensor>(py::cast<std::shared_ptr<PyTensor>>(py_tensor_obj));
+        tensor_map[key] = tensor;
       }
-      py::gil_scoped_release release2;
-      op_output.emit<holoscan::gxf::Entity>(py_entity, name.c_str(), acq_timestamp);
+      py::gil_scoped_release release;
+      op_output.emit(tensor_map, name.c_str(), acq_timestamp);
       return;
     } else {
       // If the dict is not a TensorMap, pass it as a Python object

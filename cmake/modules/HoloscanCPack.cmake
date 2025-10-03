@@ -70,12 +70,24 @@ set(CPACK_COMPONENTS_ALL
 # - cuda-nvcc: needed to find Holoscan with CMake (FindCUDAToolkit requirement)
 #   Note: not needed at runtime
 # - cuda-cudart-dev: needed for holoscan core and some operators at build time and by Cupy at runtime
-# - cuda-nvrtc-dev-12-6: needed to import Holoinfer target with CMake
-set(CPACK_DEBIAN_PACKAGE_DEPENDS
-  "cuda-nvcc-12-6 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-2 |cuda-nvcc-12-1 | cuda-nvcc-12-0, \
-  cuda-cudart-dev-12-6 | libcudart.so.12-dev, \
-  cuda-nvrtc-dev-12-6 | cuda-nvrtc-dev-12-9 | cuda-nvrtc-dev-12-8 | cuda-nvrtc-dev-12-7 | cuda-nvrtc-dev-12-5 | cuda-nvrtc-dev-12-4 | cuda-nvrtc-dev-12-3 | cuda-nvrtc-dev-12-2 | cuda-nvrtc-dev-12-1 | cuda-nvrtc-dev-12-0"
-)
+# - cuda-nvrtc-dev: needed to import Holoinfer target with CMake
+# - cuda-cccl: needed for development with GXF, MatX
+find_package(CUDAToolkit REQUIRED)
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "cuda-nvcc-13-0 | cuda-nvcc-13, \
+    cuda-cudart-dev-13-0 | libcudart.so.13-dev, \
+    cuda-nvrtc-dev-13-0 | libnvrtc.so.13-dev, \
+    cuda-cccl-13-0"
+  )
+elseif(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12")
+  set(CPACK_DEBIAN_PACKAGE_DEPENDS
+    "cuda-nvcc-12-6 | cuda-nvcc-12-9 | cuda-nvcc-12-8 | cuda-nvcc-12-7 | cuda-nvcc-12-5 | cuda-nvcc-12-4 | cuda-nvcc-12-3 | cuda-nvcc-12-2 |cuda-nvcc-12-1 | cuda-nvcc-12-0, \
+    cuda-cudart-dev-12-6 | libcudart.so.12-dev, \
+    cuda-nvrtc-dev-12-6 | cuda-nvrtc-dev-12-9 | cuda-nvrtc-dev-12-8 | cuda-nvrtc-dev-12-7 | cuda-nvrtc-dev-12-5 | cuda-nvrtc-dev-12-4 | cuda-nvrtc-dev-12-3 | cuda-nvrtc-dev-12-2 | cuda-nvrtc-dev-12-1 | cuda-nvrtc-dev-12-0, \
+    cuda-cccl-12-6"
+  )
+endif()
 
 # Recommended packages for core runtime functionality:
 # - libnvinfer-bin: meta package including required nvinfer libs.
@@ -98,22 +110,44 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS
 # - libvulkan1: needed for holoviz operator
 # - libegl1: needed for holoviz operator in headless mode
 # - libv4l-0: needed for v4l2 operator
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
-libnvinfer-bin (>=10.3), \
-libcublas-12-6 | libcublas.so.12, \
-cudnn9-cuda-12-6 | libcudnn.so.9, \
-libcufft-12-6 | libcufft.so.11, \
-libcurand-12-6 | libcurand.so.10, \
-libcusolver-12-6 | libcusolver.so.11, \
-libcusparse-12-6 | libcusparse.so.12, \
-libnpp-dev-12-6 | libnpp.so.12-dev, \
-libnvjitlink-12-6 | libnvjitlink.so.12, \
-libnccl2 | libnccl.so.2, \
-libgomp1, \
-libvulkan1, \
-libegl1, \
-libv4l-0"
-)
+
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
+    libnvinfer-bin (>=10.13), \
+    libcublas-13-0 | libcublas.so.13, \
+    libcufft-13-0 | libcufft.so.12, \
+    libcurand-13-0 | libcurand.so.10, \
+    libcusolver-13-0 | libcusolver.so.12, \
+    libcusparse-13-0 | libcusparse.so.12, \
+    libnpp-dev-13-0 | libnpp.so.13-dev, \
+    libnvjitlink-13-0 | libnvJitLink.so.13, \
+    libnccl2 | libnccl.so.2, \
+    libgomp1, \
+    libvulkan1, \
+    libegl1, \
+    libv4l-0"
+  )
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+    set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "${CPACK_DEBIAN_PACKAGE_RECOMMENDS}, \
+  libnuma1")
+  endif()
+elseif(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12")
+  set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
+    libnvinfer-bin (>=10.3), \
+    libcublas-12-6 | libcublas.so.12, \
+    libcufft-12-6 | libcufft.so.11, \
+    libcurand-12-6 | libcurand.so.10, \
+    libcusolver-12-6 | libcusolver.so.11, \
+    libcusparse-12-6 | libcusparse.so.12, \
+    libnpp-dev-12-6 | libnpp.so.12-dev, \
+    libnvjitlink-12-6 | libnvjitlink.so.12, \
+    libnccl2 | libnccl.so.2, \
+    libgomp1, \
+    libvulkan1, \
+    libegl1, \
+    libv4l-0"
+  )
+endif()
 
 # Packages for optional features:
 # - libcupti: needed for Torch inference backend
@@ -122,14 +156,36 @@ libv4l-0"
 # - libcusparselt: needed for Torch inference backend
 # - libopenblas: needed for Torch inference backend.
 # - libjpeg needed by v4l2 for mjpeg support
-set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
-cuda-cupti-12-6 | libcupti.so.12, \
-cuda-nvtx-12-6 | libnvToolsExt.so.1, \
-libcudnn9-cuda-12 | libcudnn.so.9, \
-libcusparselt0 | libcusparselt.so.0, \
-libjpeg-turbo8, \
-libopenblas0"
-)
+# - libcu*-dev-<cuda-version>: needed for MatX
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
+  set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
+    cuda-cupti-13-0 | libcupti.so.13, \
+    cuda-nvtx-13-0, \
+    libcublas-dev-13-0 | libcublas.so.13-dev, \
+    libcufft-dev-13-0 | libcufft.so.12-dev, \
+    libcurand-dev-13-0 | libcurand.so.10-dev, \
+    libcusolver-dev-13-0 | libcusolver.so.12-dev, \
+    libcusparse-dev-13-0 | libcusparse.so.12-dev, \
+    libcudnn9-cuda-13-0 | libcudnn9-cuda-13, \
+    libcusparselt0-cuda-13, \
+    libjpeg-turbo8, \
+    libopenblas0"
+  )
+elseif(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12")
+  set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
+    cuda-cupti-12-6 | libcupti.so.12, \
+    cuda-nvtx-12-6 | libnvToolsExt.so.1, \
+    libcublas-dev-12-6 | libcublas.so.12-dev, \
+    libcufft-dev-12-6 | libcufft.so.11-dev, \
+    libcurand-dev-12-6 | libcurand.so.10-dev, \
+    libcusolver-dev-12-6 | libcusolver.so.11-dev, \
+    libcusparse-dev-12-6 | libcusparse.so.12-dev, \
+    libcudnn9-cuda-12, \
+    libcusparselt0-cuda-12, \
+    libjpeg-turbo8, \
+    libopenblas0"
+  )
+endif()
 
 include(CPack)
 

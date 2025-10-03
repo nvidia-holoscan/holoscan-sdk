@@ -385,11 +385,144 @@ void HoloInferTests::inference_tests() {
   holoinfer_assert(
       status, test_module, 33, test_identifier_infer.at(33), HoloInfer::holoinfer_code::H_ERROR);
 
+  // setup for dynamic output
+  // use model with dynamic batch, but do not update trt_opt_profile, so this will give an error
   model_path_map["model_1"] = original_path;
   model_path_map["model_2"] = original_path;
 
   in_tensor_dimensions["m1_pre_proc"] = original_dim;
   in_tensor_dimensions["m2_pre_proc"] = original_dim;
+
+  auto original_infer_input_dims_m1 = inference_specs_->dims_per_tensor_["m1_pre_proc"];
+  auto original_infer_input_dims_m2 = inference_specs_->dims_per_tensor_["m2_pre_proc"];
+
+  model_path_map["model_1"] = model_folder + "identity_model_dynamic.onnx";
+  model_path_map["model_2"] = model_folder + "identity_model_dynamic.onnx";
+
+  in_tensor_dimensions["m1_pre_proc"] = {2, 256, 256};
+  in_tensor_dimensions["m2_pre_proc"] = {8, 256, 256};
+
+  cleanup_engines();
+  dynamic_inputs = true;
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 46, test_identifier_infer.at(46), HoloInfer::holoinfer_code::H_ERROR);
+
+  // same setup as above but now wrong batch size
+  batch_sizes[0] = {1, 2};
+  cleanup_engines();
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 47, test_identifier_infer.at(47), HoloInfer::holoinfer_code::H_ERROR);
+
+  // same setup as above but now with correct batch size
+  batch_sizes[0] = {1, 2, 8};
+  cleanup_engines();
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 48, test_identifier_infer.at(48), HoloInfer::holoinfer_code::H_SUCCESS);
+
+  // test multi input dynamism
+  model_path_map["model_1"] = model_folder + "identity_dynamic_multi.onnx";
+  model_path_map["model_2"] = model_folder + "identity_dynamic_multi.onnx";
+
+  in_tensor_dimensions["m1_pre_proc"] = {2, 256, 256};
+  in_tensor_dimensions["m2_pre_proc"] = {8, 32, 256};
+  batch_sizes[0] = {1, 2, 8};
+  cleanup_engines();
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 49, test_identifier_infer.at(49), HoloInfer::holoinfer_code::H_ERROR);
+
+  // same setup as above with correct trt profile
+  batch_sizes[0] = {1, 2, 8, 32, 128, 256};
+  cleanup_engines();
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 50, test_identifier_infer.at(50), HoloInfer::holoinfer_code::H_SUCCESS);
+
+#if defined(HOLOINFER_ORT_ENABLED)
+  // Test onnx with dynamic model but without dynamic flag.
+  model_path_map["model_1"] = model_folder + "identity_model_dynamic.onnx";
+  model_path_map["model_2"] = model_folder + "identity_model_dynamic.onnx";
+
+  in_tensor_dimensions["m1_pre_proc"] = {2, 256, 256};
+  in_tensor_dimensions["m2_pre_proc"] = {8, 256, 256};
+  dynamic_inputs = false;
+  backend = "onnxrt";
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 51, test_identifier_infer.at(51), HoloInfer::holoinfer_code::H_ERROR);
+
+  dynamic_inputs = true;
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 52, test_identifier_infer.at(52), HoloInfer::holoinfer_code::H_SUCCESS);
+#endif
+
+#if defined(HOLOINFER_TORCH_ENABLED)
+  // Test torch with dynamic model but without dynamic flag.
+  model_path_map["model_1"] = model_folder + "torch_dynamic_test.pt";
+  model_path_map["model_2"] = model_folder + "torch_dynamic_test.pt";
+
+  in_tensor_dimensions["m1_pre_proc"] = {2, 256, 256};
+  in_tensor_dimensions["m2_pre_proc"] = {256, 256};
+  dynamic_inputs = false;
+  backend = "torch";
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 53, test_identifier_infer.at(53), HoloInfer::holoinfer_code::H_ERROR);
+
+  dynamic_inputs = true;
+  status = prepare_for_inference();
+  for (const auto& td : in_tensor_dimensions) {
+    inference_specs_->dims_per_tensor_.at(td.first) = td.second;
+  }
+  status = do_inference();
+  holoinfer_assert(
+      status, test_module, 54, test_identifier_infer.at(54), HoloInfer::holoinfer_code::H_SUCCESS);
+#endif
+
+  model_path_map["model_1"] = original_path;
+  model_path_map["model_2"] = original_path;
+
+  in_tensor_dimensions["m1_pre_proc"] = original_dim;
+  in_tensor_dimensions["m2_pre_proc"] = original_dim;
+
+  inference_specs_->dims_per_tensor_["m1_pre_proc"] = original_infer_input_dims_m1;
+  inference_specs_->dims_per_tensor_["m2_pre_proc"] = original_infer_input_dims_m2;
 
 #if defined(HOLOINFER_TORCH_ENABLED)
   auto backup_path_map = std::move(model_path_map);

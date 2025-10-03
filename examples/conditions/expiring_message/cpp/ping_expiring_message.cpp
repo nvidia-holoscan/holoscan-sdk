@@ -24,11 +24,11 @@
 
 namespace holoscan::ops {
 
-class PingTxOp : public Operator {
+class TimestampPingTxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingTxOp)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(TimestampPingTxOp)
 
-  PingTxOp() = default;
+  TimestampPingTxOp() = default;
 
   void setup(OperatorSpec& spec) override { spec.output<std::shared_ptr<std::string>>("out"); }
 
@@ -52,11 +52,11 @@ class PingTxOp : public Operator {
   int index_ = 1;
 };
 
-class PingRxOp : public Operator {
+class TimestampPingRxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(PingRxOp)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(TimestampPingRxOp)
 
-  PingRxOp() = default;
+  TimestampPingRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
     ArgList expiring_message_arglist{Arg("max_batch_size", static_cast<int64_t>(5)),
@@ -70,10 +70,21 @@ class PingRxOp : public Operator {
 
   void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
-    HOLOSCAN_LOG_INFO("PingRxOp::compute() called");
+    HOLOSCAN_LOG_INFO("TimestampPingRxOp::compute() called");
 
     while (true) {
       auto in_value = op_input.receive<std::shared_ptr<std::string>>("in");
+
+      // receive timestamp (must be called after receive is called for this port)
+      auto in_timestamp = op_input.get_acquisition_timestamp("in");
+      if (!in_timestamp.has_value()) {
+        std::string error_msg = fmt::format(
+            "Operator '{}' failed to find timestamp in message received from port 'in': {}",
+            name());
+        HOLOSCAN_LOG_ERROR(error_msg);
+        throw std::runtime_error(error_msg);
+      }
+      HOLOSCAN_LOG_INFO("Rx message acquisition timestamp: {}", in_timestamp.value());
 
       if (!in_value) {
         break;
@@ -100,12 +111,12 @@ class App : public holoscan::Application {
     // execution after a specific number of messages have been sent.
     // PeriodicCondition is used so that each subsequent message is
     // sent only after a period of 10 milliseconds has elapsed.
-    auto tx = make_operator<ops::PingTxOp>(
+    auto tx = make_operator<ops::TimestampPingTxOp>(
         "tx",
         make_condition<CountCondition>("count-condition", 8),
         make_condition<PeriodicCondition>("periodic-condition", 0.01s));
 
-    auto rx = make_operator<ops::PingRxOp>("rx");
+    auto rx = make_operator<ops::TimestampPingRxOp>("rx");
 
     add_flow(tx, rx);
   }

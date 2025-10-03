@@ -100,7 +100,6 @@ target_link_libraries(${PROJECT_NAME}
     PRIVATE
         Vulkan::Vulkan
         glfw
-        X11::X11
         nvpro_core
         holoscan::viz::imgui
         holoscan::logger

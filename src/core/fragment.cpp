@@ -1036,4 +1036,39 @@ void Fragment::setup_component_internals(ComponentBase* component) {
   }
 }
 
+std::shared_ptr<CudaGreenContextPool> Fragment::add_default_green_context_pool(
+    int32_t dev_id, std::vector<uint32_t> sms_per_partition, int32_t default_context_index,
+    uint32_t min_sm_size) {
+  if (green_context_pools_.size() > 0) {
+    HOLOSCAN_LOG_WARN("Fragment '{}': a CudaGreenContextPool already exists. Skipping...");
+    return green_context_pools_.back();
+  }
+
+  // Create the CudaGreenContextPool resource
+  auto green_context_pool =
+      make_resource<CudaGreenContextPool>("fragment_default_green_context_pool",
+                                          dev_id,
+                                          0,
+                                          sms_per_partition.size(),
+                                          sms_per_partition,
+                                          default_context_index,
+                                          min_sm_size);
+  if (!green_context_pool) {
+    HOLOSCAN_LOG_ERROR("Failed to create fragment default green context pool");
+    return nullptr;
+  }
+
+  HOLOSCAN_LOG_DEBUG("green_context_pool: {}", static_cast<void*>(green_context_pool.get()));
+  green_context_pools_.push_back(green_context_pool);
+  return green_context_pool;
+}
+
+std::shared_ptr<CudaGreenContextPool> Fragment::get_default_green_context_pool() {
+  if (green_context_pools_.empty()) {
+    HOLOSCAN_LOG_DEBUG("No default green context pool found for fragment '{}'", name());
+    return nullptr;
+  }
+  return green_context_pools_.back();
+}
+
 }  // namespace holoscan

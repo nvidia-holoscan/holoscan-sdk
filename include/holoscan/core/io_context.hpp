@@ -31,16 +31,20 @@
 #include <vector>
 
 #include <common/type_name.hpp>
-#include "./common.hpp"
+#include "./arg.hpp"
 #include "./cuda_object_handler.hpp"
 #include "./data_logger.hpp"
+#include "./domain/tensor.hpp"
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
+#include "./execution_context.hpp"
 #include "./fragment.hpp"
 #include "./gxf/entity.hpp"
+#include "./io_spec.hpp"
 #include "./message.hpp"
 #include "./operator.hpp"
+#include "./parameter.hpp"
 #include "./type_traits.hpp"
 #include "holoscan/profiler/profiler.hpp"
 
@@ -63,6 +67,11 @@ PROF_DEFINE_EVENT(event_emit_streams, "emit_streams", 0x99, 0xFF, 0x00);
 PROF_DEFINE_EVENT(event_receive_cuda_stream, "receive_cuda_stream", 0x99, 0xFF, 0x00);
 PROF_DEFINE_EVENT(event_receive_cuda_streams, "receive_cuda_streams", 0x99, 0xFF, 0x00);
 PROF_DEFINE_EVENT(event_set_cuda_stream, "set_cuda_stream", 0x99, 0xFF, 0x00);
+// Acquisition timestamp profiling events (same green color as receive_cuda_stream)
+PROF_DEFINE_EVENT(event_receive_acquisition_timestamps, "receive_acquisition_timestamps", 0x99,
+                  0xFF, 0x00);
+PROF_DEFINE_EVENT(event_get_acquisition_timestamp, "get_acquisition_timestamp", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_get_acquisition_timestamps, "get_acquisition_timestamps", 0x99, 0xFF, 0x00);
 
 namespace holoscan {
 
@@ -120,9 +129,7 @@ class InputContext {
    * @param inputs The references to the map of the input specs.
    */
   InputContext(ExecutionContext* execution_context, Operator* op,
-               std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs)
-      : execution_context_(execution_context), op_(op), inputs_(inputs) {}
-
+               std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs);
   /**
    * @brief Construct a new InputContext object.
    *
@@ -131,8 +138,7 @@ class InputContext {
    * @param execution_context The pointer to GXF execution runtime
    * @param op The pointer to the operator that this context is associated with.
    */
-  InputContext(ExecutionContext* execution_context, Operator* op)
-      : execution_context_(execution_context), op_(op), inputs_(op->spec()->inputs()) {}
+  InputContext(ExecutionContext* execution_context, Operator* op);
 
   virtual ~InputContext() = default;
 
@@ -164,42 +170,39 @@ class InputContext {
    * @param name The name of the input port to check.
    * @return True, if it has no data, otherwise false.
    */
-  bool empty(const char* name = nullptr) {
-    // First see if the name could be found in the inputs
-    auto& inputs = op_->spec()->inputs();
-    auto it = inputs.find(std::string(name));
-    if (it != inputs.end()) {
-      return empty_impl(name);
-    }
+  bool empty(const char* name = nullptr);
 
-    // Then see if it is in the parameters
-    auto& params = op_->spec()->params();
-    auto it2 = params.find(std::string(name));
-    if (it2 != params.end()) {
-      auto& param_wrapper = it2->second;
-      auto& arg_type = param_wrapper.arg_type();
-      if ((arg_type.element_type() != ArgElementType::kIOSpec) ||
-          (arg_type.container_type() != ArgContainerType::kVector)) {
-        HOLOSCAN_LOG_ERROR("Input parameter with name '{}' is not of type 'std::vector<IOSpec*>'",
-                           name);
-        return true;
-      }
-      std::any& any_param = param_wrapper.value();
-      // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
-      auto& param = *std::any_cast<Parameter<std::vector<IOSpec*>>*>(any_param);
-      int num_inputs = param.get().size();
-      for (int i = 0; i < num_inputs; ++i) {
-        // if any of them is not empty return false
-        if (!empty_impl(fmt::format("{}:{}", name, i).c_str())) {
-          return false;
-        }
-      }
-      return true;  // all of them are empty, so return true.
-    }
+  /**
+   * @brief Reset acquisition timestamp map values to std::nullopt for all input ports.
+   *
+   * This method should be called before each compute call to reset the timestamp values
+   * while preserving the pre-initialized map structure for performance.
+   */
+  void reset_acquisition_timestamps();
 
-    HOLOSCAN_LOG_ERROR("Input port '{}' not found", name);
-    return true;
-  }
+  /**
+   * @brief Get the acquisition timestamp for a given input port.
+   *
+   * @param input_port_name The name of the input port.
+   * @return The acquisition timestamp. If no timestamp was published by the upstream operator,
+   * std::nullopt is returned.
+   */
+  std::optional<int64_t> get_acquisition_timestamp(const char* input_port_name = nullptr);
+
+  /**
+   * @brief Get all acquisition timestamp for a given input port.
+   *
+   * For a port with queue size not equal to one (e.g. an `IOSpec::kAnySize` connection) there may
+   * be multiple messages in a queue, each with its own acquisition timestamp. This method returns
+   * a vector of std::optional<int64_t> where the length of the vector is the same as the number
+   * of messages received on that port.
+   *
+   * @param input_port_name The name of the input port.
+   * @return The acquisition timestamps. Values of std::nullopt in the vector indicate that the
+   * corresponding message did not contain a timestamp.
+   */
+  std::vector<std::optional<int64_t>> get_acquisition_timestamps(
+      const char* input_port_name = nullptr);
 
  protected:
   /**
@@ -285,7 +288,7 @@ class InputContext {
           auto tensor_ptr = tensor_map.begin()->second;
           if (!data_loggers.empty()) {
             HOLOSCAN_LOG_TRACE("[receive] logging single Tensor from TensorMap");
-            log_tensor(tensor_ptr, input_name.c_str(), IOSpec::IOType::kInput);
+            log_tensor(tensor_ptr, input_name.c_str());
           }
           return tensor_ptr;
         }
@@ -300,7 +303,7 @@ class InputContext {
             input_name.c_str(), InputType::kAny);
         if (maybe_tensor.has_value() && !data_loggers.empty()) {
           HOLOSCAN_LOG_TRACE("[receive] logging single Tensor");
-          log_tensor(maybe_tensor.value(), input_name.c_str(), IOSpec::IOType::kInput);
+          log_tensor(maybe_tensor.value(), input_name.c_str());
         }
         return maybe_tensor;
       }
@@ -497,45 +500,31 @@ class InputContext {
     return true;
   }
 
-  // Get unique_id for an input or output port
-  std::string get_unique_id(Operator* op, const std::string& port_name, IOSpec::IOType io_type) {
-    if (!op->spec()) {
-      throw std::runtime_error("Operator spec is not available");
-    }
+  // Get unique_id for an input port
+  std::string get_unique_id(Operator* op, const std::string& port_name);
 
-    auto& ports = io_type == IOSpec::IOType::kInput ? op->spec()->inputs() : op->spec()->outputs();
-    auto it = ports.find(port_name);
-    if (it != ports.end()) {
-      return it->second->unique_id();
-    }
-
-    HOLOSCAN_LOG_WARN("Input port '{}' not found", port_name);
-    return fmt::format("{}.{}", op->qualified_name(), port_name);
-  }
-
-  inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const char* port_name,
-                         IOSpec::IOType io_type) {
+  inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const char* port_name) {
     PROF_SCOPED_EVENT(op_->id(), event_data_logging);
-    const std::string unique_id{get_unique_id(op_, port_name, io_type)};
+    const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
         PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
-        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, io_type);
+        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
       }
     }
     return true;
   }
 
-  inline bool log_tensormap(const holoscan::TensorMap& tensor_map, const char* port_name,
-                            IOSpec::IOType io_type) {
+  inline bool log_tensormap(const holoscan::TensorMap& tensor_map, const char* port_name) {
     PROF_SCOPED_EVENT(op_->id(), event_data_logging);
-    const std::string unique_id{get_unique_id(op_, port_name, io_type)};
+    const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
         PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
-        data_logger->log_tensormap_data(tensor_map, unique_id, -1, metadata_ptr, io_type);
+        data_logger->log_tensormap_data(
+            tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
       }
     }
     return true;
@@ -636,7 +625,7 @@ class InputContext {
         HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
         auto& data_loggers = op_->fragment()->data_loggers();
         if (tensor_map.size() > 0 && !data_loggers.empty()) {
-          log_tensormap(tensor_map, port_name, IOSpec::IOType::kInput);
+          log_tensormap(tensor_map, port_name);
         }
       } catch (const std::bad_any_cast& e) {
         error_message = fmt::format(
@@ -706,7 +695,7 @@ class InputContext {
           HOLOSCAN_LOG_TRACE("[receive] logging tensor map");
           auto& data_loggers = op_->fragment()->data_loggers();
           if (tensor_map.size() > 0 && !data_loggers.empty()) {
-            log_tensormap(tensor_map, name, IOSpec::IOType::kInput);
+            log_tensormap(tensor_map, name);
           }
         }
         return tensor_map;
@@ -744,13 +733,20 @@ class InputContext {
 
   // --------------- End of helper functions for the receive method ---------------
 
+  void prepopulate_acquisition_timestamp_map();
+
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.
   Operator* op_ = nullptr;  ///< The operator that this context is associated with.
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs_;  ///< The inputs.
 
- protected:
   std::shared_ptr<CudaObjectHandler> cuda_object_handler_{};
+
+  // store any Timestamp component found in a received message entity
+  // Keys are the input port names. This mapping is pre-initialized with all input port names
+  // and reset to std::nullopt before each compute call. Values are populated for a given port
+  // during the InputContext::receive call for that port.
+  std::map<std::string, std::vector<std::optional<int64_t>>> acquisition_timestamp_map_;
 };
 
 /**
@@ -970,26 +966,7 @@ class OutputContext {
    *                      be the timestamp of the camera when it captures an image.
    */
   void emit(holoscan::TensorMap& data, const char* name = nullptr,
-            const int64_t acq_timestamp = -1) {
-    HOLOSCAN_LOG_TRACE("OutputContext::emit (TensorMap) for op: {}, name: {}",
-                       op_->name(),
-                       name == nullptr ? "nullptr" : name);
-    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
-    auto output_it = outputs_.find(output_name);
-    std::string unique_id;
-    if (output_it != outputs_.end()) {
-      unique_id = output_it->second->unique_id();
-    } else {
-      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
-    }
-    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
-
-    auto out_message = holoscan::gxf::Entity::New(execution_context_);
-    for (auto& [key, tensor] : data) {
-      out_message.add(tensor, key.c_str());
-    }
-    emit(out_message, name, acq_timestamp);
-  }
+            const int64_t acq_timestamp = -1);
 
   /**
    * @brief Send the message data (std::shared_ptr<holoscan::Tensor>) to the output port with the
@@ -1007,24 +984,7 @@ class OutputContext {
    *                      be the timestamp of the camera when it captures an image.
    */
   void emit(std::shared_ptr<holoscan::Tensor> data, const char* name = nullptr,
-            const int64_t acq_timestamp = -1) {
-    HOLOSCAN_LOG_TRACE(
-        "OutputContext::emit (std::shared_ptr<holoscan::Tensor>) for op: {}, name: {}",
-        op_->name(),
-        name == nullptr ? "nullptr" : name);
-    std::string output_name = holoscan::get_well_formed_name(name, outputs_);
-    auto output_it = outputs_.find(output_name);
-    std::string unique_id;
-    if (output_it != outputs_.end()) {
-      unique_id = output_it->second->unique_id();
-    } else {
-      unique_id = fmt::format("{}.{}", op_->name(), name == nullptr ? "<unknown>" : name);
-    }
-    PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
-    auto out_message = holoscan::gxf::Entity::New(execution_context_);
-    out_message.add(data, "");
-    emit(out_message, name, acq_timestamp);
-  }
+            const int64_t acq_timestamp = -1);
 
   /**
    * @brief Set a stream to be emitted on a given output port.
@@ -1063,12 +1023,39 @@ class OutputContext {
    * @param name The name of the output port.
    * @param out_type The type of the message data.
    * @param acq_timestamp The timestamp to publish in the output message. The default value of -1
+   * @param omit_data_logging If true, data will not be logged via the DataLogger interface.
    * does not publish a timestamp.
    */
   virtual void emit_impl([[maybe_unused]] std::any data,
                          [[maybe_unused]] const char* name = nullptr,
                          [[maybe_unused]] OutputType out_type = OutputType::kAny,
-                         [[maybe_unused]] const int64_t acq_timestamp = -1) {}
+                         [[maybe_unused]] const int64_t acq_timestamp = -1,
+                         [[maybe_unused]] bool omit_data_logging = false) {}
+
+  inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id) {
+    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
+    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+    for (auto& data_logger : op_->fragment()->data_loggers()) {
+      if (data_logger->should_log_output()) {
+        PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
+        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput);
+      }
+    }
+    return true;
+  }
+
+  inline bool log_tensormap(const holoscan::TensorMap& tensor_map, const std::string& unique_id) {
+    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
+    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+    for (auto& data_logger : op_->fragment()->data_loggers()) {
+      if (data_logger->should_log_output()) {
+        PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
+        data_logger->log_tensormap_data(
+            tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput);
+      }
+    }
+    return true;
+  }
 
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.

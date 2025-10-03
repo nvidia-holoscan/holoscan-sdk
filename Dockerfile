@@ -20,13 +20,15 @@
 ############################################################
 ARG ONNX_RUNTIME_VERSION=1.22.1
 ARG ONNX_RUNTIME_STRATEGY=downloader # or builder
-ARG LIBTORCH_VERSION=2.8.0
+ARG LIBTORCH_CU12_VERSION=2.8.0
+ARG LIBTORCH_CU13_VERSION=2.9.0.dev20250828
 ARG GRPC_VERSION=1.54.2
 ARG GXF_CU12_VERSION=5.1.0_20250820_2ac8c610f_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.1.0_20250820_2ac8c610f_holoscan-sdk-cu13
+ARG GXF_CU13_VERSION=5.1.0_20250909_2ac8c610f_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.0.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.13
+ARG UCX_VERSION=1.19.0
 
 ############################################################
 # Base image
@@ -78,7 +80,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         unzip \
         patch
 
-# Install L4T APT repo on iGPU base
+# Install L4T APT repo on iGPU base, or set up CUDA APT repo on dGPU base if missing
 RUN if [ "${GPU_TYPE}" = "igpu" ]; then \
         L4T_APT_REPO_URL="https://repo.download.nvidia.com/jetson"; \
         L4T_APT_REPO_KEY="$L4T_APT_REPO_URL/jetson-ota-public.asc"; \
@@ -87,6 +89,17 @@ RUN if [ "${GPU_TYPE}" = "igpu" ]; then \
         L4T_APT_BRANCH="r36.4"; \
         curl -sSL "$L4T_APT_REPO_KEY" | gpg --dearmor -o "$L4T_APT_REPO_FILE"; \
         echo "deb [signed-by=$L4T_APT_REPO_FILE] $L4T_APT_REPO_URL/common/ $L4T_APT_BRANCH main" > "$L4T_APT_SOURCE_FILE"; \
+    elif ! grep -q "developer.download.nvidia.com/compute/cuda/repos" /etc/apt/sources.list /etc/apt/sources.list.d/* 2>/dev/null; then \
+        OS_CODENAME=$(source /etc/os-release && echo "ubuntu${VERSION_ID//./}"); \
+        if [ $(uname -m) = "aarch64" ] && [ "${GPU_TYPE}" = "dgpu" ]; then \
+            CUDA_PLATFORM="sbsa"; \
+        else \
+            CUDA_PLATFORM=$(uname -m); \
+        fi; \
+        CUDA_REPO_URL="https://developer.download.nvidia.com/compute/cuda/repos/${OS_CODENAME}/${CUDA_PLATFORM}"; \
+        CUDA_KEYRING="/usr/share/keyrings/cuda-archive-keyring.gpg"; \
+        curl -fsSL "${CUDA_REPO_URL}/cuda-archive-keyring.gpg" -o "${CUDA_KEYRING}"; \
+        echo "deb [signed-by=${CUDA_KEYRING}] ${CUDA_REPO_URL} /" > /etc/apt/sources.list.d/cuda.list; \
     fi
 
 ############################################################
@@ -412,35 +425,40 @@ FROM onnxruntime-${ONNX_RUNTIME_STRATEGY} AS onnxruntime
 # Libtorch
 ############################################################
 FROM python-base AS libtorch-downloader
-ARG LIBTORCH_VERSION
+ARG LIBTORCH_CU12_VERSION
+ARG LIBTORCH_CU13_VERSION
+ARG GPU_TYPE
 
 # Install torch wheel
 ARG TORCH_WHL_DIR=/tmp/torch-whl
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
     if [ "$GPU_TYPE" = "dgpu" ]; then \
-        INDEX_URL="https://download.pytorch.org/whl/test"; \
-        TORCH_VERSION_ESCAPED=$(echo ${LIBTORCH_VERSION} | sed 's|\.|\\.|g'); \
-        TORCH_WHL_VERSION=$(python3 -m pip index versions --index-url ${INDEX_URL} torch | \
-            grep -oE "${TORCH_VERSION_ESCAPED}\+cu${CUDA_MAJOR}[0-9]" | \
-            head -n 1); \
-        if [ -z "${TORCH_WHL_VERSION}" ]; then \
-            echo "Error: Could not find a matching torch version for torch ${LIBTORCH_VERSION} and CUDA ${CUDA_VERSION}." >&2; \
-            exit 1; \
+        if [ "${CUDA_MAJOR}" = "12" ]; then \
+            LIBTORCH_VERSION="${LIBTORCH_CU12_VERSION}+cu129"; \
+        else \
+            LIBTORCH_VERSION="${LIBTORCH_CU13_VERSION}+cu130"; \
         fi; \
-        echo "Found torch version: ${TORCH_WHL_VERSION}, installing..."; \
+        INDEX_URL="https://download.pytorch.org/whl"; \
         python3 -m pip install \
+            --pre \
             --no-deps \
             --target ${TORCH_WHL_DIR} \
             --index-url ${INDEX_URL} \
-            torch==${TORCH_WHL_VERSION}; \
+            --extra-index-url "${INDEX_URL}/test" \
+            --extra-index-url "${INDEX_URL}/nightly" \
+            torch==${LIBTORCH_VERSION}; \
     else \
         python3 -m pip install \
             --no-deps \
             --python-version 3.10 \
             --target ${TORCH_WHL_DIR} \
             --index-url "https://pypi.jetson-ai-lab.io/jp6/cu126" \
-            torch=="${LIBTORCH_VERSION}"; \
-    fi
+            torch=="${LIBTORCH_CU12_VERSION}"; \
+    fi; \
+    if ! find ${TORCH_WHL_DIR} -name "libtorch_cuda.so" > /dev/null; then \
+        echo "ERROR: Could not find libtorch_cuda.so in ${TORCH_WHL_DIR}, please check the download"; \
+        exit 1; \
+    fi;
 
 # Copy libtorch C++
 WORKDIR /opt/libtorch/${LIBTORCH_VERSION}
@@ -453,9 +471,9 @@ RUN TORCH_INSTALL="${TORCH_WHL_DIR}/torch" \
         "${TORCH_INSTALL}/lib/libshm.so" \
         "${TORCH_INSTALL}/lib/libtorch"* \
         lib/ \
-    && if [ "$GPU_TYPE" = "dgpu" ]; then \
+    && if [ "$GPU_TYPE" = "dgpu" ] && compgen -G "${TORCH_INSTALL}/lib/libgomp"* > /dev/null; then \
         cp -v "${TORCH_INSTALL}/lib/libgomp"* lib/ \
-        && if [ $(uname -m) = "aarch64" ]; then \
+        && if [ $(uname -m) = "aarch64" ] && compgen -G "${TORCH_INSTALL}/lib/libarm_"* > /dev/null; then \
             cp -v "${TORCH_INSTALL}/lib/libarm_"* lib/; \
         fi; \
     fi \
@@ -519,7 +537,7 @@ RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
         GXF_VERSION="${GXF_CU12_VERSION}"; \
     fi; \
     curl -S -# -L -o gxf.tgz \
-        "https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
+        "https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
     if [ $(stat -c %s gxf.tgz) -lt 1000 ]; then \
         echo "ERROR: Downloaded gxf.tgz is too small. Download may have failed."; \
         exit 1; \
@@ -549,6 +567,66 @@ RUN DOCA_ARCH=$(uname -m); \
     && DOCA_HOSTNAME=$(echo "${DOCA_REPO_ROOT}" | sed 's|https://\([^/]*\).*|\1|') \
     && echo "Package: *\nPin: origin \"${DOCA_HOSTNAME}\"\nPin-Priority: 800" \
         > /etc/apt/preferences.d/doca-pin
+
+############################################################
+# UCX
+############################################################
+FROM cuda-dev as ucx-builder
+
+WORKDIR /opt/ucx
+ARG UCX_VERSION
+ARG MAX_PROC
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 | tr . -) \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        autoconf \
+        automake \
+        libtool \
+        cuda-nvml-dev-${CUDA_MAJOR_MINOR}
+
+RUN git clone --depth 1 --recurse-submodules --shallow-submodules \
+        --branch v${UCX_VERSION} \
+        https://github.com/openucx/ucx.git src
+# Build with observed DLFW HPCX 24.08 build options from ./ucx_info -v
+WORKDIR /opt/ucx/src
+RUN ./autogen.sh && \
+    ./contrib/configure-release --prefix=/opt/hpcx/ucx/ \
+    --disable-logging --disable-debug --disable-assertions \
+    --disable-params-check --enable-mt \
+    --with-rdmacm --with-verbs --with-mlx5 \
+    --enable-cma \
+    --without-java --without-go \
+    --with-cuda=/usr/local/cuda --without-xpmem
+RUN make -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN make install
+
+# configure: =========================================================
+# configure: UCX build configuration:
+# configure:         Build prefix:   /usr
+# configure:    Configuration dir:   ${prefix}/etc/ucx
+# configure:                   CC:   gcc
+# configure:                  CXX:   g++
+# configure:             CPPFLAGS:   -DCPU_FLAGS="" -I${abs_top_srcdir}/src -I${abs_top_builddir} -I${abs_top_builddir}/src 
+# configure:               CFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch -Wno-pointer-sign -Werror-implicit-function-declaration -Wno-format-zero-length -Wnested-externs -Wshadow -Werror=declaration-after-statement 
+# configure:             CXXFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch 
+# configure:           ASAN check:   no
+# configure:         Multi-thread:   enabled
+# configure:            MPI tests:   disabled
+# configure:          VFS support:   no
+# configure:        Devel headers:   no
+# configure: io_demo CUDA support:   no
+# configure:             Bindings:   < >
+# configure:          UCS modules:   < >
+# configure:          UCT modules:   < cuda cma >
+# configure:         CUDA modules:   < >
+# configure:         ROCM modules:   < >
+# configure:           IB modules:   < >
+# configure:          UCM modules:   < cuda >
+# configure:         Perf modules:   < cuda >
+# configure: =========================================================
 
 ############################################################
 # Build image
@@ -600,13 +678,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         libv4l-dev \
         v4l-utils \
         libjpeg-turbo8-dev \
-        ucx ucx-cuda \
-        ibverbs-providers libibverbs1 librdmacm1 \
-    && DRIVER_PACKAGES=$(apt list --installed 2>/dev/null | grep libnvidia- | cut -d/ -f1) \
-    && echo "-- Removing files from driver packages brought by ucx-cuda which should not be in the container:" ${DRIVER_PACKAGES} \
-    && for pkg in ${DRIVER_PACKAGES}; do \
-        dpkg -L ${pkg} | xargs -I {} sh -c 'if [ ! -d "{}" ]; then rm -v "{}"; fi'; \
-    done
+        ibverbs-providers libibverbs1 librdmacm1
 
 # libvulkan-dev depends on python3 package which pulls python3.10. re-override with python3.12
 RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
@@ -621,13 +693,14 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
 #    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
 COPY python/requirements.dev.txt /tmp/requirements.dev.txt
-COPY python/requirements.txt /tmp/requirements.txt
+COPY python/requirements.cu${CUDA_MAJOR}.txt /tmp/requirements.cu${CUDA_MAJOR}.txt
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
-    python3 -m pip install -r /tmp/requirements.dev.txt -r /tmp/requirements.txt
+    python3 -m pip install -r /tmp/requirements.dev.txt -r /tmp/requirements.cu${CUDA_MAJOR}.txt
 
-# A pre-existing NumPy 1.x may have been kept by the above requirements.txt. Explicitly install 2.x
+# A pre-existing NumPy 1.x may have been kept by the above requirements.txt. Explicitly install 2.x.
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
-    python3 -m pip install "numpy>2.0"
+    python3 -m pip install \
+        "numpy>2.0"
 
 # Disable the keep-archives setting at the end of the build stage
 # so it doesn't persist for users interacting directly with this image.
@@ -655,10 +728,20 @@ COPY --from=onnxruntime ${ONNX_RUNTIME} ${ONNX_RUNTIME}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${ONNX_RUNTIME}"
 
 # Copy Libtorch
-ARG LIBTORCH_VERSION
-ENV LIBTORCH=/opt/libtorch/${LIBTORCH_VERSION}
+ENV LIBTORCH=/opt/libtorch
 COPY --from=libtorch-downloader ${LIBTORCH} ${LIBTORCH}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${LIBTORCH}"
+
+# Install runtime requirements if needed by libtorch:
+# - nvshmem (libtorch_cuda.so)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    if find ${LIBTORCH} -name libtorch.so | xargs -I {} ldd {} | grep -q "libnvshmem_host.so"; then \
+        apt-get update \
+        && apt-get install --no-install-recommends -y libnvshmem3-cuda-${CUDA_MAJOR} \
+        && dpkg -L libnvshmem3-cuda-${CUDA_MAJOR} | grep libnvshmem_host.so.3$ | xargs dirname > /etc/ld.so.conf.d/nvshmem.conf \
+        && rm -rf /var/lib/apt/lists/*; \
+    fi;
 
 # Copy gRPC
 ARG GRPC_VERSION
@@ -671,6 +754,14 @@ ENV GXF=/opt/nvidia/gxf/gxf-install
 COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
 ENV PYTHONPATH="${PYTHONPATH}:/opt/nvidia/gxf/${GXF_VERSION}/python"
+
+# Copy UCX
+ENV UCX=/opt/hpcx/ucx
+COPY --from=ucx-builder ${UCX} ${UCX}
+ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${UCX}"
+RUN echo "/opt/hpcx/ucx/lib" >> /etc/ld.so.conf.d/ucx.conf \
+    && echo "/opt/hpcx/ucx/lib/ucx" >> /etc/ld.so.conf.d/ucx.conf \
+    && ldconfig
 
 ############################################################################################
 # dGPU specific build stage
@@ -696,6 +787,29 @@ RUN --mount=type=bind,from=dla-downloader,source=/opt/nvidia/dla,target=/dla \
         dpkg -x /dla/l4t_core.deb / \
         && dpkg -x /dla/l4t_cuda.deb / \
         && dpkg -x /dla/l4t_dla.deb /; \
+    fi
+
+# iGPU libtorch build distributions have been observed to depend on libnuma.so and libcudss.so
+ARG LIBTORCH
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    if find ${LIBTORCH} -name libtorch.so | xargs -I {} ldd {} | grep -q "libcudss.so"; then \
+        apt-get update \
+        && apt-get install --no-install-recommends -y \
+            libnuma1; \
+    fi
+
+ARG CUDSS_VERSION=0.6.0.5
+ARG CUDA_MAJOR
+WORKDIR /opt/nvidia/cudss
+RUN if find ${LIBTORCH} -name libtorch.so | xargs -I {} ldd {} | grep -q "libcudss.so"; then \
+      curl -S -# -o cudss.tar.xz \
+        "https://developer.download.nvidia.com/compute/cudss/redist/libcudss/linux-$(uname -m)/libcudss-linux-$(uname -m)-${CUDSS_VERSION}_cuda${CUDA_MAJOR}-archive.tar.xz" \
+        && tar xJf cudss.tar.xz --strip-components 1 --no-same-owner --no-same-permissions \
+        && rm -f cudss.tar.xz \
+        && echo "/opt/nvidia/cudss/lib" >> /etc/ld.so.conf.d/cudss.conf \
+        && ldconfig \
+        && ldconfig -p | grep -q cudss; \
     fi
 
 ############################################################################################

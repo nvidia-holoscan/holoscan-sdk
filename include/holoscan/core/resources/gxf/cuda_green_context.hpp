@@ -42,14 +42,18 @@ namespace holoscan {
  * - **green_context_pool** (CudaGreenContextPool): The CUDA green context pool to use.
  * - **index** (uint32_t, optional): The index of the green context to use, When not specified,
  *       the default green context will be used.
+ * - **nvtx_identifier** (std::string, optional): The NVTX identifier of the green context. This
+ *      will be used in NSight captures to identify the green context.
  */
 class CudaGreenContext : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaGreenContext, gxf::GXFResource)
   CudaGreenContext() = default;
   CudaGreenContext(std::shared_ptr<CudaGreenContextPool> green_context_pool = nullptr,
-                   int32_t index = -1)
-      : cuda_green_context_pool_(green_context_pool), index_(index) {}
+                   int32_t index = -1, const std::string& nvtx_identifier = "defaultGreenContext")
+      : cuda_green_context_pool_(green_context_pool),
+        index_(index),
+        nvtx_identifier_(nvtx_identifier) {}
   CudaGreenContext(const std::string& name, nvidia::gxf::CudaGreenContext* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::CudaGreenContext"; }
@@ -63,6 +67,7 @@ class CudaGreenContext : public gxf::GXFResource {
  private:
   Parameter<std::shared_ptr<CudaGreenContextPool>> cuda_green_context_pool_;
   Parameter<int32_t> index_;
+  Parameter<std::string> nvtx_identifier_;
 };
 
 }  // namespace holoscan

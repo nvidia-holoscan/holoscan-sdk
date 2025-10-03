@@ -98,6 +98,7 @@ void PingTensorTxOp::setup(OperatorSpec& spec) {
              "If True, enables asynchronous device memory allocation. For async allocation to be, "
              "used, cuda_stream_pool must also be set.",
              false);
+  spec.param(data_, "data", "data", "Data to be transmitted.", std::vector<uint8_t>{});
 }
 
 nvidia::gxf::PrimitiveType PingTensorTxOp::primitive_type(const std::string& data_type) {
@@ -230,6 +231,19 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
                              orig_pointer.reset();  // decrement ref count
                              return nvidia::gxf::Success;
                            });
+  }
+
+  if (data_.get().size() > 0) {
+    // copy the data into the tensor
+    if (storage_type == nvidia::gxf::MemoryStorageType::kDevice) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(gxf_tensor->pointer(),
+                                                data_.get().data(),
+                                                data_.get().size(),
+                                                cudaMemcpyHostToDevice),
+                                     "Failed to copy to tensor data");
+    } else {
+      std::memcpy(gxf_tensor->pointer(), data_.get().data(), data_.get().size());
+    }
   }
 
   // Create Holoscan tensor

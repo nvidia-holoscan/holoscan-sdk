@@ -19,6 +19,8 @@
 
 #include <NvInferPlugin.h>
 
+#include <functional>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -30,8 +32,8 @@ namespace holoscan {
 namespace inference {
 
 TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
-                   const std::vector<int32_t>& trt_opt_profile, int device_id, int device_id_dt,
-                   bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
+                   const std::vector<std::vector<int32_t>>& trt_opt_profile, int device_id,
+                   int device_id_dt, bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
                    bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
                    std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : model_path_(model_path),
@@ -45,18 +47,30 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out),
-      allocate_cuda_stream_(std::move(allocate_cuda_stream)) {
-  if (trt_opt_profile.size() != 3) {
-    HOLOSCAN_LOG_WARN(
-        "TRT Inference: Optimization profile must of of size 3. Size from inference parameters: "
-        "{}",
-        trt_opt_profile.size());
-    HOLOSCAN_LOG_INFO("Input optimization profile ignored. Using default optimization profile");
+      allocate_cuda_stream_(allocate_cuda_stream) {
+  auto num_of_opt_profiles = trt_opt_profile.size();
+
+  if (num_of_opt_profiles > 0) {
+    network_options_.batch_sizes.clear();
+    for (auto opt_profile : trt_opt_profile) {
+      if (opt_profile.size() % 3 != 0) {
+        HOLOSCAN_LOG_WARN(
+            "TRT Inference: Optimization profile must be a multiple of 3. Size of one of the "
+            "optimization profiles from inference parameters: {}",
+            opt_profile.size());
+        HOLOSCAN_LOG_INFO("Invalid optimization profile ignored.");
+        HOLOSCAN_LOG_INFO("TRT Engine will use the default optimization profile of {1,1,1}");
+        HOLOSCAN_LOG_WARN(
+            "Default optimization profile only supports dynamic batches. If this input requires "
+            "dynamism in multiple dimensions, ingest the correct optimization profile.");
+        network_options_.batch_sizes.push_back({1, 1, 1});
+      } else {
+        std::vector<int32_t> current_opt_profile(opt_profile);
+        network_options_.batch_sizes.push_back(current_opt_profile);
+      }
+    }
   } else {
-    // set the network optimization profile for dynamic inputs
-    network_options_.batch_sizes[0] = trt_opt_profile_[0];
-    network_options_.batch_sizes[1] = trt_opt_profile_[1];
-    network_options_.batch_sizes[2] = trt_opt_profile_[2];
+    HOLOSCAN_LOG_INFO("TRT Inference: Using the default optimization profile");
   }
 
   // Set the device index
@@ -188,6 +202,7 @@ bool TrtInfer::load_engine() {
   }
 
   HOLOSCAN_LOG_INFO("Engine loaded: {}", engine_path_);
+
   return true;
 }
 
@@ -304,6 +319,58 @@ bool TrtInfer::initialize_parameters() {
   return true;
 }
 
+bool TrtInfer::set_dynamic_input_dimension(
+    const std::vector<std::string>& input_holoscan_tensors,
+    const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  if (!engine_) {
+    HOLOSCAN_LOG_ERROR("Engine is Null.");
+    return false;
+  }
+  const int num_bindings = engine_->getNbIOTensors();
+
+  input_dims_.clear();
+  int input_index = 0;
+
+  for (int i = 0; i < num_bindings; i++) {
+    auto tensor_name = engine_->getIOTensorName(i);
+
+    if (engine_->getTensorIOMode(tensor_name) == nvinfer1::TensorIOMode::kINPUT) {
+      auto holoscan_tensor_name = input_holoscan_tensors[input_index++];
+      auto dims = dims_per_tensor.at(holoscan_tensor_name);
+
+      if (dims.size() > 8) {
+        HOLOSCAN_LOG_INFO("All tensors must have dimension size less than or equal to 8.");
+        return false;
+      }
+      nvinfer1::Dims in_dimensions;
+      in_dimensions.nbDims = dims.size();
+
+      for (size_t in = 0; in < dims.size(); in++) {
+        in_dimensions.d[in] = dims[in];
+      }
+
+      auto set_status = context_->setInputShape(tensor_name, in_dimensions);
+      if (!set_status) {
+        HOLOSCAN_LOG_ERROR("Dimension setup for input tensor {} failed.", tensor_name);
+        return false;
+      }
+
+      std::vector<int64_t> indim;
+      for (size_t in = 0; in < dims.size(); in++) {
+        indim.push_back(dims[in]);
+      }
+      input_dims_.push_back(std::move(indim));
+    }
+  }
+
+  if (!context_->allInputDimensionsSpecified()) {
+    HOLOSCAN_LOG_ERROR("Error, not all input dimensions specified.");
+    return false;
+  }
+
+  return true;
+}
+
 InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_buffers,
                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffers,
                                    cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference) {
@@ -362,6 +429,8 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
     }
   }
 
+  size_t out_tensors_index = 0;
+
   for (auto& output_buffer : output_buffers) {
     if (output_buffer->device_buffer_ == nullptr) {
       status.set_message(" TRT inference core: Output Device buffer is null.");
@@ -383,6 +452,21 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       return status;
     }
 
+    nvinfer1::Dims outputDims = context_->getTensorShape(tensor_name);
+    for (int ai = 0; ai < outputDims.nbDims; ai++) {
+      output_dims_[out_tensors_index][ai] = outputDims.d[ai];
+    }
+
+    size_t dynamic_buffer_size = accumulate(output_dims_[out_tensors_index].begin(),
+                                            output_dims_[out_tensors_index].end(),
+                                            1,
+                                            std::multiplies<size_t>());
+
+    if (dynamic_buffer_size != output_buffer->device_buffer_->size()) {
+      output_buffer->device_buffer_->resize(dynamic_buffer_size);
+      output_buffer->host_buffer_->resize(dynamic_buffer_size);
+    }
+
     auto set_flag = context_->setTensorAddress(tensor_name, output_buffer->device_buffer_->data());
 
     if (!set_flag) {
@@ -390,6 +474,7 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       status.set_message(" TRT inference core: Error binding output buffer.");
       return status;
     }
+    ++out_tensors_index;
   }
 
   bool capturing_graph = false;
@@ -486,7 +571,6 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
   // record a CUDA event and pass it back to the caller
   check_cuda(cudaEventRecord(cuda_event_, cuda_stream_));
   *cuda_event_inference = cuda_event_;
-
   return InferStatus();
 }
 

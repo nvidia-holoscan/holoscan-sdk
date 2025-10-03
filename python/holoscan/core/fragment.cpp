@@ -193,6 +193,16 @@ void init_fragment(py::module_& m) {
            "name"_a,
            "initialize_size"_a = 1,
            doc::Fragment::doc_make_thread_pool)
+      .def("add_default_green_context_pool",
+           &Fragment::add_default_green_context_pool,
+           "dev_id"_a,
+           "sms_per_partition"_a = py::cast(std::vector<uint32_t>{}),
+           "default_context_index"_a = -1,
+           "min_sm_size"_a = 2,
+           doc::Fragment::doc_add_default_green_context_pool)
+      .def("get_default_green_context_pool",
+           &Fragment::get_default_green_context_pool,
+           doc::Fragment::doc_get_default_green_context_pool)
       .def("run",
            &Fragment::run,
            doc::Fragment::doc_run,

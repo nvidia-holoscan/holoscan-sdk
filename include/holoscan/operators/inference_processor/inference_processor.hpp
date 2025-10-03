@@ -31,7 +31,6 @@
 
 #include "holoinfer.hpp"
 #include "holoinfer_buffer.hpp"
-#include "holoinfer_utils.hpp"
 
 namespace HoloInfer = holoscan::inference;
 

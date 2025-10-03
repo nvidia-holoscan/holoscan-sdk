@@ -51,6 +51,7 @@ class HoloInferTests {
   void inference_tests();
   void print_summary();
   int get_status();
+  void cleanup_engines();
 
  private:
   /// Default parameters for inference
@@ -62,7 +63,8 @@ class HoloInferTests {
   std::vector<std::string> out_tensor_names = {"m1_infer", "m2_infer"};
 
   std::string model_folder = "../tests/holoinfer/test_models/";
-  std::vector<int32_t> batch_sizes = {1, 1, 1};
+  std::vector<std::vector<int32_t>> batch_sizes = {{1, 1, 1}};
+  bool dynamic_inputs = false;
 
   std::map<std::string, std::string> model_path_map = {
       {"model_1", model_folder + "identity_model.onnx"},
@@ -193,7 +195,18 @@ class HoloInferTests {
       {42, "Torch backend, policy with nested list input"},
       {43, "Torch backend, policy with nested dict input"},
       {44, "Torch backend, policy with nested list and dict input"},
-      {45, "Torch backend, policy with heterogeneous input output"}};
+      {45, "Torch backend, policy with heterogeneous input output"},
+      {46, "TRT backend, dynamic input, batch dynamism, empty trt_opt_profile"},
+      {47, "TRT backend, dynamic input, batch dynamism, with wrong trt_opt_profile"},
+      {48, "TRT backend, dynamic input, batch dynamism, with correct trt_opt_profile"},
+      {49, "TRT backend, multi dynamic input, batch dynamism, with incorrect trt_opt_profile"},
+      {50, "TRT backend, multi dynamic input, batch dynamism, with correct trt_opt_profile"},
+      {51, "ONNX backend, dynamic input, with incorrect flag"},
+      {52, "ONNX backend, dynamic input, with correct flag"},
+      {53, "Torch backend, dynamic input, with incorrect flag"},
+      {54, "Torch backend, dynamic input, with correct flag"}};
+
+  std::vector<std::string> failed_tests;
 };
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

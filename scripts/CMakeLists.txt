@@ -27,6 +27,7 @@ install(
     gxf_entity_codec.py
     video_validation.py
     ctest_time_comparison.py
+    test_pattern_validation.py
   DESTINATION "bin"
   PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ
   COMPONENT "holoscan-core"

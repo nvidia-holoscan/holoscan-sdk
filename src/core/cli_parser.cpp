@@ -47,7 +47,8 @@ void CLIParser::initialize(std::string app_description, std::string app_version)
         options_.driver_address,
         "Address ('[<IP or hostname>][:<port>]') of the App Driver. If not specified, "
         "the App Driver uses the default host address ('0.0.0.0') with the default port "
-        "number ('8765').");
+        "number ('57777'). The default port can be overridden by setting the "
+        "'HOLOSCAN_APP_DRIVER_PORT' environment variable.");
     app_.add_option(
         "--worker-address",
         options_.worker_address,

@@ -31,6 +31,8 @@
 #include "holoscan/operators/inference/codecs.hpp"
 #include "holoscan/utils/holoinfer_utils.hpp"
 
+#include <holoinfer_utils.hpp>
+
 /**
  * Custom YAML parser for DataMap class
  */
@@ -176,7 +178,7 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "trt_opt_profile",
              "TensorRT Opt Profile",
              "Optimization profile for input tensors",
-             {1, 1, 1});
+             {});
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
   spec.param(infer_on_cpu_, "infer_on_cpu", "Inference on CPU", "Use CPU.", false);
   spec.param(is_engine_path_, "is_engine_path", "Input path is engine file", "", false);
@@ -206,6 +208,7 @@ void InferenceOp::setup(OperatorSpec& spec) {
   spec.param(input_on_cuda_, "input_on_cuda", "Input buffer on CUDA", "", true);
   spec.param(output_on_cuda_, "output_on_cuda", "Output buffer on CUDA", "", true);
   spec.param(transmit_on_cuda_, "transmit_on_cuda", "Transmit message on CUDA", "", true);
+  spec.param(dynamic_input_dims_, "dynamic_input_dims", "Dynamic Input dimensions", "", false);
 
   spec.param(parallel_inference_, "parallel_inference", "Parallel inference", "", true);
   spec.param(cuda_stream_pool_,
@@ -263,6 +266,7 @@ void InferenceOp::start() {
                                                     temporal_map_.get().get_map(),
                                                     activation_map_.get().get_map(),
                                                     trt_opt_profile_.get(),
+                                                    dynamic_input_dims_.get(),
                                                     is_engine_path_.get(),
                                                     infer_on_cpu_.get(),
                                                     parallel_inference_.get(),
@@ -323,7 +327,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     gxf_result_t stat = holoscan::utils::get_data_per_model(op_input,
                                                             in_tensor_names_.get(),
                                                             inference_specs_->data_per_tensor_,
-                                                            dims_per_tensor_,
+                                                            inference_specs_->dims_per_tensor_,
                                                             input_on_cuda_.get(),
                                                             module_,
                                                             cuda_stream);
@@ -339,12 +343,13 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     }
 
     // check for tensor validity the first time
-    if (validate_tensor_dimensions_) {
+    if (validate_tensor_dimensions_ && !dynamic_input_dims_) {
       validate_tensor_dimensions_ = false;
       auto model_in_dims_map = holoscan_infer_context_->get_input_dimensions();
 
-      auto dim_status = HoloInfer::tensor_dimension_check(
-          pre_processor_map_.get().get_map(), model_in_dims_map, dims_per_tensor_);
+      auto dim_status = HoloInfer::tensor_dimension_check(pre_processor_map_.get().get_map(),
+                                                          model_in_dims_map,
+                                                          inference_specs_->dims_per_tensor_);
       if (dim_status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
         HoloInfer::raise_error(module_,
                                "Compute, Inference execution, " + dim_status.get_message());

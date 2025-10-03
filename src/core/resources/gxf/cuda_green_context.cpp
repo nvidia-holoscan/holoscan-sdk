@@ -43,6 +43,14 @@ CudaGreenContext::CudaGreenContext(const std::string& name,
     throw std::runtime_error("Failed to get index");
   }
   index_ = maybe_index.value();
+
+  auto maybe_nvtx_identifier = component->getParameter<std::string>("nvtx_identifier");
+  if (!maybe_nvtx_identifier) {
+    // Use the name of this CudaGreenContext as the NVTX identifier
+    nvtx_identifier_ = name;
+  } else {
+    nvtx_identifier_ = maybe_nvtx_identifier.value();
+  }
 }
 
 nvidia::gxf::CudaGreenContext* CudaGreenContext::get() const {
@@ -60,6 +68,11 @@ void CudaGreenContext::setup(ComponentSpec& spec) {
              "The green context pool to use. If not provided, an error will be returned",
              static_cast<std::shared_ptr<CudaGreenContextPool>>(nullptr));
   spec.param(index_, "index", "Index", "The index of the green context to use.", -1);
+  spec.param(nvtx_identifier_,
+             "nvtx_identifier",
+             "NVTX Identifier",
+             "The NVTX identifier of the green context.",
+             std::string("defaultGreenContext"));
 }
 
 void CudaGreenContext::initialize() {

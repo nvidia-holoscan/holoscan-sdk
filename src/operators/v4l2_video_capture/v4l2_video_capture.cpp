@@ -70,6 +70,32 @@
 namespace holoscan::ops {
 
 /**
+ * Check if the given CUDA device is an NVIDIA Orin GPU
+ * @param device CUDA device ID to check
+ * @return true if the device is an Orin GPU, false otherwise
+ */
+bool isOrinGPU(int device) {
+  cudaDeviceProp deviceProp;
+  cudaError_t err = cudaGetDeviceProperties(&deviceProp, device);
+  if (err != cudaSuccess) {
+    return false;
+  }
+
+  // Check if the device name contains "Orin"
+  std::string deviceName(deviceProp.name);
+  if (deviceName.find("Orin") != std::string::npos) {
+    return true;
+  }
+
+  // Alternatively, check compute capability (Orin GPUs have compute capability 8.7)
+  if (deviceProp.major == 8 && deviceProp.minor == 7) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Holds a nvidia::gxf::VideoFormat and the corresponding function to create the default color plane
  * description
  **/
@@ -567,8 +593,8 @@ void V4L2VideoCaptureOp::v4l2_request_buffers() {
 
     // when running on L4T and managed memory is supported, then output is managed memory
     // which has the best combination of CPU and GPU access performance
-    if (std::filesystem::exists("/etc/nv_tegra_release")) {
-      const int device = 0;
+    const int device = 0;
+    if (isOrinGPU(device)) {
       int managed_memory = 0;
       HOLOSCAN_CUDA_CALL(cudaDeviceGetAttribute(&managed_memory, cudaDevAttrManagedMemory, device));
       // Workaround: frames are not updated when running bare metal on IGX with dGPU so enabled

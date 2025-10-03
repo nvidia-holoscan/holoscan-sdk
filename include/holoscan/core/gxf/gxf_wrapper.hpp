@@ -45,6 +45,8 @@ PROF_DEFINE_EVENT(event_stop, "stop", 0xFE, 0x27, 0x12);
 PROF_DEFINE_EVENT(event_tick, "tick", 0x00, 0xCC, 0xFF);
 PROF_DEFINE_EVENT(event_metadata_clear, "metadata_clear", 0xFF, 0x99, 0x00);
 PROF_DEFINE_EVENT(event_clear_streams, "clear_streams", 0x99, 0xFF, 0x00);
+PROF_DEFINE_EVENT(event_clear_acquisition_timestamps, "clear_acquisition_timestamps", 0x99, 0xFF,
+                  0x00);
 PROF_DEFINE_EVENT(event_compute, "compute", 0x66, 0xA1, 0xFE);
 
 /**

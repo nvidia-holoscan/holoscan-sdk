@@ -124,3 +124,14 @@ ffmpeg -stream_loop -1 -re -i /path/to/video.mp4 -pix_fmt rgba -f v4l2 /dev/vide
 ```
 
 Next, run the `v4l2_camera` application having specified the correct device node in the yaml-configuration file (set the `device` parameter of the V4L2 operator to `/dev/video3`). The mp4 video should be showing in the Holoviz window.
+
+## Known Issues
+
+### YUYV 4:2:2 frame format is not supported on >=R550 display driver
+
+The >=R550 GPU display driver removed support for the YUYV 4:2:2 frame format,
+which is the default output format for some webcams. In this case the webcam
+will initialize but Holoviz visualization may fail.
+
+As a workaround, developers can add FormatConverterOp to their application pipeline
+to convert from YUYV to a supported Holoviz format such as RGB888.

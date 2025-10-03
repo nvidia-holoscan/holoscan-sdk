@@ -108,9 +108,9 @@ class PingMetadataRxOp(Operator):
 
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
-        print(f"rx: {len(values)=}")
+        print(f"rx: {len(values)=}", flush=True)
         assert values is not None
-        print(f"received message {self.count}")
+        print(f"received message {self.count}", flush=True)
         self.count += 1
         if self.is_metadata_enabled:
             print("metadata is enabled", flush=True)
@@ -238,6 +238,7 @@ def test_metadata_duplicate_keys_app(capfd, scheduler_class, is_metadata_enabled
     app.is_metadata_enabled = is_metadata_enabled
 
     scheduler_kwargs = {"worker_thread_number": 8} if scheduler_class != GreedyScheduler else {}
+    scheduler_kwargs["stop_on_deadlock_timeout"] = logging_timeout
     app.scheduler(scheduler_class(app, **scheduler_kwargs))
 
     if is_metadata_enabled and (update_policy is None or update_policy == MetadataPolicy.RAISE):

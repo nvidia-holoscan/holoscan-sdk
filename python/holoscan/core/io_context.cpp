@@ -35,13 +35,13 @@
 #include "emitter_receiver_registry.hpp"
 #include "emitter_receivers.hpp"
 #include "gxf/std/tensor.hpp"
+#include "holoinfer_activation_spec.hpp"
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/expected.hpp"
 #include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
-#include "holoscan/operators/inference/inference.hpp"
 #include "holoscan/profiler/profiler.hpp"
 #include "io_context_pydoc.hpp"
 #include "operator.hpp"  // for PyOperator
@@ -275,11 +275,11 @@ bool PyOutputContext::handle_inference_op(py::object& data, const std::string& n
   // emitter_name="std::vector<holoscan::ops::InferenceOp::ActivationSpec>" when calling emit.
   if ((py::isinstance<py::list>(data) || py::isinstance<py::tuple>(data)) && py::len(data) > 0) {
     auto seq = data.cast<py::sequence>();
-    if (py::isinstance<holoscan::ops::InferenceOp::ActivationSpec>(seq[0])) {
+    if (py::isinstance<holoscan::inference::ActivationSpec>(seq[0])) {
       HOLOSCAN_LOG_DEBUG(
           "py_emit: emitting a std::vector<holoscan::ops::InferenceOp::ActivationSpec> object");
       const auto& emit_func =
-          registry.get_emitter(typeid(std::vector<holoscan::ops::InferenceOp::ActivationSpec>));
+          registry.get_emitter(typeid(std::vector<holoscan::inference::ActivationSpec>));
       emit_func(data, name, *this, acq_timestamp);
       return true;
     }
@@ -436,6 +436,14 @@ void init_io_context(py::module_& m) {
            py::kw_only(),
            "kind"_a = "",
            doc::InputContext::doc_receive)
+      .def("get_acquisition_timestamp",
+           &InputContext::get_acquisition_timestamp,
+           "input_port_name"_a = nullptr,
+           doc::InputContext::doc_get_acquisition_timestamp)
+      .def("get_acquisition_timestamps",
+           &InputContext::get_acquisition_timestamps,
+           "input_port_name"_a = nullptr,
+           doc::InputContext::doc_get_acquisition_timestamps)
       .def(
           "receive_cuda_stream",
           [](PyInputContext& op_input, const char* input_port_name, bool allocate) -> intptr_t {

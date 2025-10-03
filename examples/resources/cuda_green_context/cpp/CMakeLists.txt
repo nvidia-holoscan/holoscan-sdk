@@ -66,7 +66,7 @@ if(HOLOSCAN_BUILD_TESTS)
           )
   set_tests_properties(EXAMPLE_CPP_CUDA_GREEN_CONTEXT_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "Rx message value: 20"
+    PASS_REGULAR_EXPRESSION "Rx message value: 25"
   )
 endif()
 

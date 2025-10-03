@@ -25,9 +25,12 @@ limitations under the License.
     holoscan.data_loggers.SimpleTextSerializer
 """
 
+# Eager import of SimpleTextSerializer symbol required by console logger constructors
+from holoscan.data_loggers.basic_console_logger import SimpleTextSerializer
+
 # Define data logger modules and classes for lazy loading
 _DATA_LOGGER_MODULES = {
-    "basic_console_logger": ["BasicConsoleLogger", "GXFConsoleLogger", "SimpleTextSerializer"],
+    "basic_console_logger": ["BasicConsoleLogger", "GXFConsoleLogger"],
     "async_console_logger": ["AsyncConsoleLogger"],
 }
 _DATA_LOGGERS = [item for sublist in _DATA_LOGGER_MODULES.values() for item in sublist]

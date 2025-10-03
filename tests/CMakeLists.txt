@@ -119,6 +119,7 @@ ConfigureTest(CODECS_TEST
 # * operator classes tests ----------------------------------------------------------------------------------
 ConfigureTest(OPERATORS_CLASSES_TEST
   operators/operator_classes.cpp
+  operators/inference/test_inference_operator.cpp
 )
 target_link_libraries(OPERATORS_CLASSES_TEST
   PRIVATE
@@ -185,6 +186,7 @@ ConfigureTest(
   system/realtime_ping_app.cpp
   system/receive_as_entity_test.cpp
   system/tensor_compare_op.cpp
+  system/timestamp_emit_receive.cpp
   system/video_stream_replayer_op.cpp
 )
 target_link_libraries(SYSTEM_TEST
@@ -339,6 +341,7 @@ target_include_directories(HOLOINFER_TEST
 target_link_libraries(HOLOINFER_TEST
   PRIVATE
     holoinfer
+    holoscan::holoinfer_utils
 )
 
 # ##################################################################################################

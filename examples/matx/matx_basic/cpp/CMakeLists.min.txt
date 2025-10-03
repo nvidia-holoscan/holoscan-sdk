@@ -26,25 +26,36 @@ elseif(CMAKE_CUDA_ARCHITECTURES LESS 70)
   set(CMAKE_CUDA_ARCHITECTURES "70")
 endif()
 
+find_package(CUDAToolkit QUIET)
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0)
+  set(MATX_CCCL_MIN_VERSION 3.0)
+else()
+  set(MATX_CCCL_MIN_VERSION 2.8)
+endif()
+
+# Holoscan SDK core features depend on CCCL >= 2.5 while the optional holoscan::matx feature
+# depends on CCCL >= 2.8. Skip this example if no compatible CCCL is found.
+if(MATX_CCCL_MIN_VERSION VERSION_GREATER_EQUAL 3.0)
+  find_package(CCCL ${MATX_CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
+else()
+  # Allow compatibility across CCCL major versions
+  find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
+  if(NOT CCCL_FOUND)
+    find_package(CCCL ${MATX_CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
+  endif()
+endif()
+
+if(NOT CCCL_FOUND)
+  message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${MATX_CCCL_MIN_VERSION} for MatX.
+Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
+and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.
+Skipping the matx_basic example...")
+  return()
+endif()
+
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
-
-# Fetch CCCL if not already found (for standalone builds)
-find_package(CCCL 2.8 QUIET)
-if(NOT CCCL_FOUND)
-  message(STATUS "MatX requires CCCL > 2.8.0. Fetching version 2.8.0 since no suitable version found.")
-  include(FetchContent)
-  FetchContent_Declare(
-    CCCL
-    GIT_REPOSITORY https://github.com/NVIDIA/cccl.git
-    GIT_TAG 6d02e11  # corresponds to version 2.8.0, matching MatX requirement
-    GIT_SHALLOW ON
-  )
-  set(CCCL_TOPLEVEL_PROJECT OFF)
-  set(CCCL_ENABLE_INSTALL_RULES ON)
-  FetchContent_MakeAvailable(CCCL)
-endif()
 
 add_executable(matx_basic
   matx_basic.cu

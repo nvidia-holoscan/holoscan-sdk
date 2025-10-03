@@ -24,6 +24,7 @@
 #include <yaml-cpp/yaml.h>
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <queue>
 #include <sstream>
@@ -48,12 +49,17 @@ static const std::unordered_map<std::string, torch::ScalarType> kTorchTypeMap = 
 // Pimpl
 class TorchInferImpl {
  public:
-  TorchInferImpl(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
-                 bool cuda_buf_out);
+  explicit TorchInferImpl(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
+                          bool cuda_buf_out, int device_id,
+                          std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
   ~TorchInferImpl();
 
   std::string model_path_{""};
   size_t input_nodes_{0}, output_nodes_{0};
+
+  // Max dynamic input size depends on several factors such as hardware, number of inputs and model
+  // type. Each input is limited to a 2GB buffer. This must be updated depending on the use case.
+  size_t max_dynamic_input_size = 2000000000;
 
   std::vector<std::vector<int64_t>> input_dims_{};
   std::vector<std::vector<int64_t>> output_dims_{};
@@ -79,6 +85,12 @@ class TorchInferImpl {
   std::unique_ptr<c10::cuda::CUDAStreamGuard> stream_guard_;
   cudaEvent_t cuda_event_ = nullptr;
 
+  int device_id_;
+  cudaStream_t cuda_stream_ = nullptr;
+
+  /// @brief Function to allocate a CUDA stream (optional)
+  std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
+
   void print_model_details();
 
   InferStatus parse_node_details(const YAML::Node& config,
@@ -97,6 +109,9 @@ class TorchInferImpl {
   InferStatus torch_struct_to_map(const YAML::Node& node, const torch::IValue& torch_struct,
                                   std::unordered_map<std::string, torch::Tensor>& data_map);
   InferStatus get_io_schema(const YAML::Node& yaml_node, std::string& type_stream);
+
+  bool set_dynamic_input_dimension(const std::vector<std::string>& input_holoscan_tensors,
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
 
   struct InputProcessor {
     std::function<torch::IValue(const std::unordered_map<std::string, torch::Tensor>&)> processor;
@@ -256,7 +271,6 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
   }
 
   auto data_type = input_buffer->get_datatype();
-  auto cstream = infer_stream_.stream();
   if (data_type != kHoloInferDataTypeMap.at(data_type_str)) {
     HOLOSCAN_LOG_ERROR("Torch core: Failed to create tensor. Data type mismatch, expected: {}",
                        data_type_str);
@@ -264,8 +278,12 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
     return torch::empty({0});
   }
   try {
-    return create_tensor_core(
-        input_buffer, dims, kTorchTypeMap.at(data_type_str), infer_device_, input_device_, cstream);
+    return create_tensor_core(input_buffer,
+                              dims,
+                              kTorchTypeMap.at(data_type_str),
+                              infer_device_,
+                              input_device_,
+                              cuda_stream_);
   } catch (const std::out_of_range& e) {
     std::vector<std::string> supported_types;
     for (const auto& [key, value] : kTorchTypeMap) {
@@ -366,7 +384,6 @@ InferStatus TorchInferImpl::transfer_to_output(std::shared_ptr<DataBuffer>& outp
                                                const std::string& data_type_str) {
   auto data_type = output_buffer->get_datatype();
   out_torch_tensor = out_torch_tensor.contiguous();
-  auto cstream = infer_stream_.stream();
 
   if (data_type != kHoloInferDataTypeMap.at(data_type_str)) {
     HOLOSCAN_LOG_ERROR("Torch core: Failed to transfer to output. Data type mismatch, expected: {}",
@@ -380,7 +397,7 @@ InferStatus TorchInferImpl::transfer_to_output(std::shared_ptr<DataBuffer>& outp
                                    infer_device_,
                                    output_device_,
                                    kTorchTypeMap.at(data_type_str),
-                                   cstream);
+                                   cuda_stream_);
   } catch (const std::out_of_range& e) {
     std::vector<std::string> supported_types;
     for (const auto& [key, value] : kTorchTypeMap) {
@@ -429,6 +446,45 @@ void TorchInferImpl::print_model_details() {
     HOLOSCAN_LOG_INFO(
         "Output Dimension for {}: [{}]", output_names_[a], fmt::join(output_dims_[a], ", "));
   }
+}
+
+bool TorchInfer::set_dynamic_input_dimension(
+    const std::vector<std::string>& input_holoscan_tensors,
+    const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  return impl_->set_dynamic_input_dimension(input_holoscan_tensors, dims_per_tensor);
+}
+
+bool TorchInferImpl::set_dynamic_input_dimension(
+    const std::vector<std::string>& input_holoscan_tensors,
+    const std::map<std::string, std::vector<int>>& dims_per_tensor) {
+  input_dims_.clear();
+
+  for (int i = 0; i < input_nodes_; i++) {
+    auto holoscan_tensor_name = input_holoscan_tensors[i];
+    auto dims = dims_per_tensor.at(holoscan_tensor_name);
+
+    const size_t tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
+
+    auto input_node_type = kHoloInferDataTypeMap.at(input_type_[i]);
+    auto input_node_type_size = get_element_size(input_node_type);
+    size_t buffer_size = tensor_size * input_node_type_size;
+
+    if (buffer_size > max_dynamic_input_size) {
+      HOLOSCAN_LOG_INFO("Allowed buffer size in bytes: {}", max_dynamic_input_size);
+      HOLOSCAN_LOG_INFO("Input buffer size in bytes: {}", buffer_size);
+      HOLOSCAN_LOG_ERROR(
+          "Input buffer size exceeded the total buffer size supported by the Inference module.");
+      return false;
+    }
+
+    std::vector<int64_t> indim;
+    for (size_t in = 0; in < dims.size(); in++) {
+      indim.push_back(dims[in]);
+    }
+    input_dims_.push_back(std::move(indim));
+  }
+
+  return true;
 }
 
 InferStatus TorchInferImpl::parse_node_details(const YAML::Node& config,
@@ -735,14 +791,18 @@ InferStatus TorchInferImpl::populate_model_details() {
   return InferStatus();
 }
 
-extern "C" TorchInfer* NewTorchInfer(const std::string& model_file_path, bool cuda_flag,
-                                     bool cuda_buf_in, bool cuda_buf_out) {
-  return new TorchInfer(model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out);
+extern "C" TorchInfer* NewTorchInfer(
+    const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
+    int device_id, std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream) {
+  return new TorchInfer(
+      model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out, device_id, allocate_cuda_stream);
 }
 
 TorchInfer::TorchInfer(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
-                       bool cuda_buf_out)
-    : impl_(new TorchInferImpl(model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out)) {}
+                       bool cuda_buf_out, int device_id,
+                       std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
+    : impl_(new TorchInferImpl(model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out, device_id,
+                               allocate_cuda_stream)) {}
 
 TorchInfer::~TorchInfer() {
   if (impl_) {
@@ -752,10 +812,26 @@ TorchInfer::~TorchInfer() {
 }
 
 TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
-                               bool cuda_buf_out)
-    : model_path_(model_file_path) {
+                               bool cuda_buf_out, int device_id,
+                               std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
+    : model_path_(model_file_path),
+      device_id_(device_id),
+      allocate_cuda_stream_(allocate_cuda_stream) {
   try {
-    infer_stream_ = c10::cuda::getStreamFromPool(true);
+    if (allocate_cuda_stream_) {
+      cuda_stream_ = allocate_cuda_stream(device_id_);
+      if (cuda_stream_ == nullptr) {
+        throw std::runtime_error("Torch core: Failed to allocate CUDA stream");
+      }
+      infer_stream_ = c10::cuda::getStreamFromExternal(cuda_stream_, device_id_);
+    } else {
+      infer_stream_ = c10::cuda::getStreamFromPool(true);
+      cuda_stream_ = infer_stream_.stream();
+    }
+    if (cuda_stream_ == nullptr || infer_stream_ == nullptr) {
+      HOLOSCAN_LOG_ERROR("Torch core: Failed to allocate CUDA stream");
+      throw std::runtime_error("Torch core: Failed to allocate CUDA stream");
+    }
     stream_guard_ = std::make_unique<c10::cuda::CUDAStreamGuard>(infer_stream_);
     check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
 

@@ -45,7 +45,9 @@ void UcxContext::setup(ComponentSpec& spec) {
   spec.param(enable_async_,
              "enable_async",
              "enable async mode",
-             "Enable asynchronous transmit/receive.",
+             "Enable asynchronous transmit/receive. This parameter is deprecated in Holoscan "
+             "v3.7 and will be removed in v4.0. The new behavior will be equivalent to a "
+             "value of `false` here.",
              false);
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }

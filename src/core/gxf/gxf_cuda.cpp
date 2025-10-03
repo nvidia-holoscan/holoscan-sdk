@@ -88,9 +88,7 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
       HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaStreamPool in resources", op->name());
       cuda_stream_pool_ = cuda_stream_pool_ptr;
 
-      // Note: Do not return early here, still need to initialize CudaGreenContextPool before
-      // CudaGreenContext below if either of these was provided.
-      break;
+      return;
     }
   }
 
@@ -100,26 +98,18 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
   std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool_ptr = nullptr;
   for (auto& resource : op->resources()) {
     auto pool_resource = std::dynamic_pointer_cast<CudaGreenContextPool>(resource.second);
-    if (pool_resource) {
+    if (pool_resource &&
+        std::string(pool_resource->name()) != "fragment_default_green_context_pool") {
       HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContextPool in resources", op->name());
       cuda_green_context_pool_ptr = pool_resource;
       break;
     }
   }
 
-  // if not found in resources, check if it is added in spec parameters
+  // Try to use the default green context pool from the fragment
   if (!cuda_green_context_pool_ptr) {
-    auto param_iter = params.find("cuda_green_context_pool");
-    if (param_iter != params.end()) {
-      auto param_wrapper = param_iter->second;
-      auto pool_param =
-          std::any_cast<holoscan::MetaParameter<std::shared_ptr<holoscan::CudaGreenContextPool>>*>(
-              param_wrapper.value());
-      if (pool_param->has_value()) {
-        HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContextPool in parameters", op->name());
-        cuda_green_context_pool_ptr = pool_param->get();
-      }
-    }
+    HOLOSCAN_LOG_DEBUG("Operator '{}': using the default CudaGreenContextPool", op->name());
+    cuda_green_context_pool_ptr = op->fragment()->get_default_green_context_pool();
   }
 
   if (cuda_green_context_pool_ptr) {
@@ -138,18 +128,6 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
       HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContext in resources", op->name());
       cuda_green_context_ptr = context_resource;
       break;
-    }
-  }
-
-  // if not in resources, check if a CudaGreenContext is added in spec parameters
-  if (!cuda_green_context_ptr) {
-    auto params = op->spec()->params();
-    for (auto& param : params) {
-      if (param.second.type() == typeid(CudaGreenContext)) {
-        HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContext in parameters", op->name());
-        cuda_green_context_ptr = std::any_cast<std::shared_ptr<CudaGreenContext>>(param.second);
-        break;
-      }
     }
   }
 

@@ -43,7 +43,10 @@ enum class FormatDType {
   kNV12BT709HDTV,
   kNV12BT709CSC,
   kNV12BT601Full,
-  kYUYV
+  kYUYV,
+  kRGB161616,
+  kRGBA16161616,
+  kUnsigned16
 };
 
 enum class FormatConversionType {
@@ -60,7 +63,9 @@ enum class FormatConversionType {
   kNV12BT709HDTVToRGB888,
   kNV12BT709CSCToRGB888,
   kNV12BT601FullToRGB888,
-  kYUYVToRGB888
+  kYUYVToRGB888,
+  kRGB161616ToRGB888,
+  kRGBA16161616ToRGB888,
 };
 
 /**
@@ -106,6 +111,8 @@ enum class FormatConversionType {
  *   - `"nv12_bt709_hdtv"` (BT.709 recommendation for high-definition TV (HDTV))
  *   - `"nv12_bt709_csc"`  (BT.709 recommendation for computer systems consideration (CSC))
  *   - `"yuyv"`
+ *   - `"rgb161616"`
+ *   - `"rgba16161616"`
  *   Optional (default: `"rgb888"`).
  * - **in_tensor_name**: The name of the input tensor. Optional (default: `""`).
  * - **out_tensor_name**: The name of the output tensor. Optional (default: `""`).
@@ -134,7 +141,7 @@ enum class FormatConversionType {
  *
  *   Optional (default: `0`). The default value `0` (NPPI_INTER_UNDEFINED) which would be
  *   equivalent to `4` (NPPI_INTER_CUBIC).
- * - **channel_order**: Sequence of integers describing how channel values are permuted.
+ * - **out_channel_order**: Sequence of integers describing how channel values are permuted.
  *   Optional (default: `[0, 1, 2]` for 3-channel images and `[0, 1, 2, 3]` for 4-channel images).
  * - **cuda_stream_pool**: `holoscan::CudaStreamPool` instance to allocate CUDA streams.
  *   Optional (default: `nullptr`).

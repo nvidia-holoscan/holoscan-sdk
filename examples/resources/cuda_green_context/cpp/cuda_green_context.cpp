@@ -86,8 +86,8 @@ class PingTxOp : public Operator {
  private:
   int index_ = 1;
   int tensor_size_ = 256;
-  cudaEvent_t start_event_;
-  cudaEvent_t stop_event_;
+  cudaEvent_t start_event_ = nullptr;
+  cudaEvent_t stop_event_ = nullptr;
   cudaStream_t stream_ = nullptr;
   float* input1_ = nullptr;
   float* input2_ = nullptr;
@@ -133,7 +133,7 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     std::vector<uint32_t> partitions;
     struct utsname osInfo{};
     uname(&osInfo);
-    std::string arch(osInfo.machine);
+    std::string arch(static_cast<const char*>(osInfo.machine));
     if (arch == "x86_64" || arch == "amd64") {
       partitions = std::vector<uint32_t>{8, 8};
     } else if (arch == "aarch64" || arch == "arm64") {
@@ -142,24 +142,22 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
       //                Jetson Thor has 22 SMs
       partitions = std::vector<uint32_t>{4, 4};
     } else {
-      throw std::runtime_error(
-          fmt::format("Unsupported platform architecture: {}", arch));
+      throw std::runtime_error(fmt::format("Unsupported platform architecture: {}", arch));
     }
-    const auto cuda_green_context_pool =
-        make_resource<CudaGreenContextPool>("cuda_green_context_pool",
-                                            Arg("dev_id", 0),
-                                            Arg("num_partitions", (uint32_t)partitions.size()),
-                                            Arg("sms_per_partition", partitions));
 
-    const auto cuda_green_context1 = make_resource<CudaGreenContext>(
-        "cuda_green_context", cuda_green_context_pool);
-    // Create a stream pool with a 5 streams capacity (5 operators could share the same pool)
-    const auto cuda_stream_pool1 =
-        make_resource<CudaStreamPool>("cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context1);
+    // Create a green context pool which will be used as the default green context pool for the
+    // current fragment
+    const auto cuda_green_context_pool = add_default_green_context_pool(0, partitions);
+
+    // Use green context 0 from the provided green context pool
+    const auto cuda_green_context1 =
+        make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 0, "tx1");
+
+    const auto cuda_stream_pool1 = make_resource<CudaStreamPool>(
+        "cuda_stream_pool", 0, 0, 0, 1, 5, cuda_green_context1, "tx1");
     // Define the tx and rx operators, allowing the tx operator to execute 10 times
-    auto tx1 = make_operator<ops::PingTxOp>("tx1",
-                                            make_condition<CountCondition>(10),
-                                            cuda_stream_pool1);
+    auto tx1 =
+        make_operator<ops::PingTxOp>("tx1", make_condition<CountCondition>(10), cuda_stream_pool1);
 
     auto rx1 = make_operator<ops::PingRxOp>("rx1");
 
@@ -170,14 +168,13 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     pool1->add(rx1, true);
     add_flow(tx1, rx1);
 
-    // Add another flow to use a different green context and stream pool
+    // Use a specific green context identified by "index"
     auto cuda_green_context2 =
-        make_resource<CudaGreenContext>("cuda_green_context",
-                                        cuda_green_context_pool, 1);
-    auto cuda_stream_pool2 = make_resource<CudaStreamPool>(0, 0, 0, 1, 5, cuda_green_context2);
-    auto tx2 = make_operator<ops::PingTxOp>("tx2",
-                                            make_condition<CountCondition>(15),
-                                            cuda_stream_pool2);
+        make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 1, "tx2");
+    auto cuda_stream_pool2 = make_resource<CudaStreamPool>(
+        "cuda_stream_pool2", 0, 0, 0, 1, 5, cuda_green_context2, "tx2");
+    auto tx2 =
+        make_operator<ops::PingTxOp>("tx2", make_condition<CountCondition>(15), cuda_stream_pool2);
     auto rx2 = make_operator<ops::PingRxOp>("rx2");
 
     // Create a thread pool with two threads
@@ -186,12 +183,9 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     pool2->add(rx2, true);
     add_flow(tx2, rx2);
 
-    // Create a flow to use default green context and default stream pool
-    // cuda_green_context_pool is mondatory to use green context with the default green context pool
-    auto tx3 =
-        make_operator<ops::PingTxOp>("tx3",
-                                     make_condition<CountCondition>(20),
-                                     cuda_green_context_pool);
+    // Use the default green context from the provided green context pool
+    auto tx3 = make_operator<ops::PingTxOp>(
+        "tx3", make_condition<CountCondition>(20), cuda_green_context_pool);
     auto rx3 = make_operator<ops::PingRxOp>("rx3");
 
     // Create a thread pool with two threads
@@ -199,6 +193,16 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     pool3->add(tx3, true);
     pool3->add(rx3, true);
     add_flow(tx3, rx3);
+
+    // Use the fragment default green context pool without providing a green context pool
+    auto tx4 = make_operator<ops::PingTxOp>("tx4", make_condition<CountCondition>(25));
+    auto rx4 = make_operator<ops::PingRxOp>("rx4");
+
+    // Create a thread pool with two threads
+    auto pool4 = make_thread_pool("pool4", 2);
+    pool4->add(tx4, true);
+    pool4->add(rx4, true);
+    add_flow(tx4, rx4);
   }
 };
 
@@ -207,6 +211,7 @@ int main() {
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
       "event-based", holoscan::Arg("worker_thread_number", static_cast<int64_t>(4))));
+
   app->run();
 
   return 0;

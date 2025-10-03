@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,7 +94,7 @@ class CuPyProcessOp(Operator):
             # sum along the last axis
             partial_sum = prod1.sum(axis=-1)
         else:
-            # stream1 and stream2 will both be using the operator's internal stream
+            # stream and stream2 will both be using the operator's internal stream
             # Any stream on in1 or in2 will have been synchronized to the same internal stream.
             stream = op_input.receive_cuda_stream("in1")
             stream2 = op_input.receive_cuda_stream("in2")
@@ -125,19 +125,21 @@ class CuPyProcessOp(Operator):
 
 class CuPyExampleApp(Application):
     def __init__(
-        self, *args, count=10, use_default_stream=False, use_green_context=False, **kwargs
+        self,
+        *args,
+        count=10,
+        use_default_stream=False,
+        use_green_context=False,
+        **kwargs,
     ):
         self.count = count
         self.use_default_stream = use_default_stream
         self.use_green_context = use_green_context
-        if self.use_green_context and self.use_default_stream:
-            raise ValueError("Green context is not supported with default stream")
 
         super().__init__(*args, **kwargs)
 
     def compose(self):
-        # Default stream is not supported with green context
-        if self.use_green_context and not self.use_default_stream:
+        if self.use_green_context:
             arch = platform.machine().lower()
             if arch in ["x86_64", "amd64"]:
                 partitions = [8, 8]
@@ -257,8 +259,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.count < 1:
         raise ValueError("count must be a positive integer")
-    if args.default_stream and args.green_context:
-        parser.error("--default_stream and --green_context cannot be used together")
 
     app = CuPyExampleApp(
         count=args.count,

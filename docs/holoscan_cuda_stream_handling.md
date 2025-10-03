@@ -187,8 +187,16 @@ The following code demonstrates operators that need to use the default green con
 
 ```cpp
 auto operator_tx =
-    make_operator<ops::PingTxOp>("tx",
-                                 Arg("cuda_green_context_pool", cuda_green_context_pool));
+    make_operator<ops::PingTxOp>("tx", cuda_green_context_pool);
+```
+
+A default `CudaGreenContextPool` can also be added to a fragment or an application. In this case, operators that do not need a dedicated CUDA context partition can use the following method to
+use the default fragment level default `CudaGreenContextPool`.
+
+```cpp
+// Create a green context pool which will be used as the default green context pool for the current fragment
+const auto cuda_green_context_pool = add_default_green_context_pool(0, partitions);
+auto operator_tx = make_operator<ops::PingTxOp>("tx", cuda_green_context_pool);
 ```
 
 ## Sending stream information between operators

@@ -56,6 +56,10 @@ namespace holoscan {
  * pool. A value of 0 indicates that the size is unlimited (Default: 0). Note that in practice the
  * device hardware will limit the number of possible concurrent kernels and/or memory copy
  * operations to a value defined by `CUDA_DEVICE_MAX_CONNECTIONS`.
+ * - **cuda_green_context** (std::shared_ptr, optional): The CUDA green context to create the CUDA
+ * stream pool.
+ * - **nvtx_identifier** (std::string, optional): The NVTX identifier of the stream pool. This
+ * identifier will be used in NSight captures to identify the stream pool.
  */
 class CudaStreamPool : public Allocator {
  public:
@@ -63,13 +67,15 @@ class CudaStreamPool : public Allocator {
   CudaStreamPool() = default;
   CudaStreamPool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
                  uint32_t reserved_size, uint32_t max_size,
-                 std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr)
+                 std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr,
+                 const std::string& nvtx_identifier = "defaultStreamPool")
       : dev_id_(dev_id),
         stream_flags_(stream_flags),
         stream_priority_(stream_priority),
         reserved_size_(reserved_size),
         max_size_(max_size),
-        cuda_green_context_(cuda_green_context) {}
+        cuda_green_context_(cuda_green_context),
+        nvtx_identifier_(nvtx_identifier) {}
   CudaStreamPool(const std::string& name, nvidia::gxf::CudaStreamPool* component);
 
   const char* gxf_typename() const override { return "nvidia::gxf::CudaStreamPool"; }
@@ -89,6 +95,7 @@ class CudaStreamPool : public Allocator {
   Parameter<uint32_t> reserved_size_;
   Parameter<uint32_t> max_size_;
   Parameter<std::shared_ptr<CudaGreenContext>> cuda_green_context_;
+  Parameter<std::string> nvtx_identifier_;
 };
 
 }  // namespace holoscan

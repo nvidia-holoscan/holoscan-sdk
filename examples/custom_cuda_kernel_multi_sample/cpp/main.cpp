@@ -157,7 +157,7 @@ int main(int argc, char** argv) {
   // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
   struct option long_options[] = {{"help", no_argument, nullptr, 'h'},
                                   {"config_path", optional_argument, nullptr, 'c'},
-                                  {"green_context", no_argument, 0, 'g'},
+                                  {"green_context", no_argument, nullptr, 'g'},
                                   {nullptr, 0, nullptr, 0}};
 
   // Parse command line options for config_path and green_context

@@ -47,7 +47,8 @@ namespace holoscan {
  * - **enable_async** (bool, optional): If false, synchronous operation of message transmission
  * will be used (Default: false). The `HOLOSCAN_UCX_ASYNCHRONOUS` environment variable can be used
  * to set the value that Holoscan will use for this parameter when creating its internal
- * `UcxNetworkContext`.
+ * `UcxNetworkContext`. This parameter is deprecated in Holoscan v3.7 and will be removed in v4.0.
+ * The new behavior will be equivalent to a value of `false` here.
  */
 class UcxContext : public gxf::GXFNetworkContext {
  public:
