@@ -537,7 +537,7 @@ RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
         GXF_VERSION="${GXF_CU12_VERSION}"; \
     fi; \
     curl -S -# -L -o gxf.tgz \
-        "https://urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
+        "https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/gxf/gxf_${GXF_VERSION}_$(uname -m).tar.gz"; \
     if [ $(stat -c %s gxf.tgz) -lt 1000 ]; then \
         echo "ERROR: Downloaded gxf.tgz is too small. Download may have failed."; \
         exit 1; \
