@@ -18,10 +18,14 @@
 #ifndef HOLOSCAN_CORE_CUDA_OBJECT_HANDLER_HPP
 #define HOLOSCAN_CORE_CUDA_OBJECT_HANDLER_HPP
 
-#include <cuda_runtime.h>
 #include <optional>
 #include <string>
 #include <vector>
+
+// Forward declaration to avoid including <cuda_runtime.h>
+extern "C" {
+typedef struct CUstream_st* cudaStream_t;
+}
 
 namespace holoscan {
 

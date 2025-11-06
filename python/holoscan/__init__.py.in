@@ -46,7 +46,10 @@ def as_tensor(obj):
 
         # nd-array, but with only 1 non-singleton dimension
         nd_singleton = (obj.ndim > 1) and (sum(tuple(s > 1 for s in obj.shape)) == 1)
-        if nd_singleton and obj.flags.forc:
+
+        # hasattr checks exclude PyTorch Tensors from this code path (they don't have a flags
+        # attribute)
+        if nd_singleton and hasattr(obj, "flags") and hasattr(obj.flags, "forc") and obj.flags.forc:
             # determine expected strides for a C-contiguous array
             expected_strides = [
                 1,

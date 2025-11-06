@@ -21,9 +21,15 @@
 #include <any>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 #include "./io_spec.hpp"
+
+// Forward declaration to avoid including <cuda_runtime.h>
+extern "C" {
+typedef struct CUstream_st* cudaStream_t;
+}
 
 namespace holoscan {
 
@@ -59,12 +65,14 @@ class DataLogger {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging (including serialization and sending) was successful, false otherwise.
    */
   virtual bool log_data(const std::any& data, const std::string& unique_id,
                         int64_t acquisition_timestamp = -1,
                         const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                        IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;
+                        IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                        std::optional<cudaStream_t> stream = std::nullopt) = 0;
 
   /**
    * @brief Logs a Tensor with optional data content logging.
@@ -85,12 +93,14 @@ class DataLogger {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false otherwise.
    */
   virtual bool log_tensor_data(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
                                int64_t acquisition_timestamp = -1,
                                const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                               IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;
+                               IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                               std::optional<cudaStream_t> stream = std::nullopt) = 0;
 
   /**
    * @brief Logs a TensorMap with optional data content logging.
@@ -111,12 +121,14 @@ class DataLogger {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false otherwise.
    */
   virtual bool log_tensormap_data(const TensorMap& tensor_map, const std::string& unique_id,
                                   int64_t acquisition_timestamp = -1,
                                   const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                                  IOSpec::IOType io_type = IOSpec::IOType::kOutput) = 0;
+                                  IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                                  std::optional<cudaStream_t> stream = std::nullopt) = 0;
 
   /**
    * @brief Logs backend-specific data types.
@@ -144,13 +156,15 @@ class DataLogger {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false if backend-specific logging is not supported.
    */
   virtual bool log_backend_specific(
       [[maybe_unused]] const std::any& data, [[maybe_unused]] const std::string& unique_id,
       [[maybe_unused]] int64_t acquisition_timestamp = -1,
       [[maybe_unused]] const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-      [[maybe_unused]] IOSpec::IOType io_type = IOSpec::IOType::kOutput) {
+      [[maybe_unused]] IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+      [[maybe_unused]] std::optional<cudaStream_t> stream = std::nullopt) {
     // Default implementation: backend-specific logging is not supported
     return false;
   }

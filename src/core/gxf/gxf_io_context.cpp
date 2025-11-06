@@ -169,6 +169,22 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
 
   auto& data_loggers = op_->fragment()->data_loggers();
 
+  // Lambda to extract the first received CUDA stream for logging
+  auto get_stream_for_logging = [this](const char* port_name) -> std::optional<cudaStream_t> {
+    auto received_streams = receive_cuda_streams(port_name);
+    if (!received_streams.empty() && received_streams[0].has_value()) {
+      if (received_streams.size() > 1) {
+        HOLOSCAN_LOG_DEBUG(
+            "Multiple CUDA streams ({}) received on input port '{}', using first stream for data "
+            "logging",
+            received_streams.size(),
+            port_name);
+      }
+      return received_streams[0];
+    }
+    return std::nullopt;
+  };
+
   auto it = inputs_.find(input_name);
   if (it == inputs_.end()) {
     if (no_error_message) {
@@ -290,6 +306,10 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       // Log the entity itself using log_backend_specific
       auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
       const std::string unique_id = io_spec->unique_id();
+
+      // Check if any CUDA streams were received
+      auto stream_for_logging = get_stream_for_logging(input_name.c_str());
+
       for (auto& data_logger : data_loggers) {
         HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
         if (data_logger->should_log_input()) {
@@ -302,7 +322,8 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
                                               unique_id,
                                               -1,
                                               metadata_ptr,
-                                              IOSpec::IOType::kInput);
+                                              IOSpec::IOType::kInput,
+                                              stream_for_logging);
           } else {
             HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
                                GxfResultStr(shared_entity_expected.error()));
@@ -324,6 +345,10 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       // Log the entity itself using log_backend_specific
       auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
       const std::string unique_id = io_spec->unique_id();
+
+      // Check if any CUDA streams were received
+      auto stream_for_logging = get_stream_for_logging(input_name.c_str());
+
       for (auto& data_logger : data_loggers) {
         if (data_logger->should_log_input()) {
           // Create a shared entity to ensure proper lifetime management for async logging
@@ -335,7 +360,8 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
                                               unique_id,
                                               -1,
                                               metadata_ptr,
-                                              IOSpec::IOType::kInput);
+                                              IOSpec::IOType::kInput,
+                                              stream_for_logging);
           } else {
             HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
                                GxfResultStr(shared_entity_expected.error()));
@@ -418,6 +444,29 @@ void GXFOutputContext::set_cuda_stream(const cudaStream_t stream, const char* ou
         "`ExecutionContext::allocate_cuda_stream*` can be added to an output port.",
         output_port_name);
   }
+}
+
+std::optional<cudaStream_t> GXFOutputContext::stream_to_emit(const char* output_port_name) {
+  std::string output_name = holoscan::get_well_formed_name(output_port_name, outputs_);
+
+  auto gxf_cuda_handler = gxf_cuda_object_handler();
+  if (!gxf_cuda_handler) {
+    return std::nullopt;
+  }
+
+  auto maybe_stream_cid = gxf_cuda_handler->get_output_stream_cid(output_name);
+  if (!maybe_stream_cid.has_value()) {
+    return std::nullopt;
+  }
+
+  auto gxf_ctx = gxf_context();
+  auto maybe_stream_handle = gxf::CudaStreamHandle::Create(gxf_ctx, maybe_stream_cid.value());
+  if (!maybe_stream_handle.has_value()) {
+    return std::nullopt;
+  }
+
+  cudaStream_t stream = gxf_cuda_handler->stream_from_stream_handle(maybe_stream_handle.value());
+  return stream;
 }
 
 namespace {
@@ -568,11 +617,18 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
           const std::string unique_id = output_spec->unique_id();
 
+          // Check if a CUDA stream is being emitted on this output port
+          auto stream_for_logging = stream_to_emit(output_name.c_str());
+
           for (auto& data_logger : data_loggers) {
             if (data_logger->should_log_output()) {
               PROF_SCOPED_EVENT(op_->id(), event_log_data);
-              data_logger->log_data(
-                  data, unique_id, acq_timestamp, metadata_ptr, IOSpec::IOType::kOutput);
+              data_logger->log_data(data,
+                                    unique_id,
+                                    acq_timestamp,
+                                    metadata_ptr,
+                                    IOSpec::IOType::kOutput,
+                                    stream_for_logging);
             }
           }
         }
@@ -630,6 +686,9 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
             auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
             const std::string unique_id = output_spec->unique_id();
 
+            // Check if a CUDA stream is being emitted on this output port
+            auto stream_for_logging = stream_to_emit(output_name.c_str());
+
             for (auto& data_logger : data_loggers) {
               if (data_logger->should_log_output()) {
                 // Create a shared entity to ensure proper lifetime management for async logging
@@ -641,7 +700,8 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
                                                     unique_id,
                                                     acq_timestamp,
                                                     metadata_ptr,
-                                                    IOSpec::IOType::kOutput);
+                                                    IOSpec::IOType::kOutput,
+                                                    stream_for_logging);
                 } else {
                   HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
                                      GxfResultStr(shared_entity_expected.error()));

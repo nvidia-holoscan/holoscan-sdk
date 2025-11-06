@@ -46,6 +46,7 @@ from holoscan.core import (
     OutputContext,
     Resource,
     Scheduler,
+    Subgraph,
     _Fragment,
     arglist_to_kwargs,
     io_type_registry,
@@ -1204,7 +1205,99 @@ class TestIOTypeRegistry:
         assert "PyObject" in registered_types
 
     def test_holoviz_registered_types(self):
+        # HolovizOp operator must be imported for these types to be registered
+        from holoscan.operators import HolovizOp  # noqa: F401, PLC0415
+
         registered_types = io_type_registry.registered_types()
         assert "std::shared_ptr<nvidia::gxf::Pose3D>" in registered_types
         assert "std::shared_ptr<std::array<float, 16>>" in registered_types
         assert "std::vector<HolovizOp::InputSpec>" in registered_types
+
+
+class TestSubgraph:
+    def test_init_without_fragment(self):
+        with pytest.raises(TypeError, match=r".*required positional argument.*fragment.*"):
+            Subgraph(instance_name="my_subgraph")
+
+    def test_init_without_instance_name(self):
+        with pytest.raises(TypeError, match=r".*required positional argument.*instance_name.*"):
+            Subgraph(Fragment())
+
+    def test_init_invalid_fragment(self):
+        with pytest.raises(
+            ValueError, match=r".*first argument to a Subgraph's constructor must be the Fragment.*"
+        ):
+            Subgraph(None, "camera1")
+
+    def test_init_positional(self):
+        instance_name = "camera1"
+        sg = Subgraph(Fragment(), instance_name)
+        assert isinstance(sg, Subgraph)
+        assert sg.instance_name == instance_name
+
+    def test_init_kwargs(self):
+        instance_name = "camera1"
+        sg = Subgraph(fragment=Fragment(), instance_name=instance_name)
+        assert isinstance(sg, Subgraph)
+        assert sg.instance_name == instance_name
+
+    def test_add_flow(self):
+        instance_name = "camera1"
+        frag = Fragment()
+        sg = Subgraph(frag, instance_name)
+
+        # can call add_flow to add operators
+        op_tx, op_rx = get_tx_and_rx_ops(frag)
+        original_tx_name = op_tx.name
+        original_rx_name = op_rx.name
+        sg.add_flow(op_tx, op_rx, {("tensor", "in1")})
+
+        # there are 2 nodes in the graph (op_tx and op_rx)
+        nodes = frag.graph.get_nodes()
+        assert len(nodes) == 2
+
+        # Check qualified names
+        node_names = [node.name for node in nodes]
+        assert f"{instance_name}_{original_tx_name}" in node_names
+        assert f"{instance_name}_{original_rx_name}" in node_names
+
+        # adding to the subgraph populates the operators in the underlying Fragment
+        port_map = frag.graph.port_map_description()
+        assert (
+            """input_to_output:
+  camera1_op_rx.in1:
+    - camera1_op_tx.tensor
+output_to_input:
+  camera1_op_tx.tensor:
+    - camera1_op_rx.in1"""
+            in port_map
+        )
+
+    def test_add_operator(self):
+        instance_name = "camera1"
+        frag = Fragment()
+        sg = Subgraph(frag, instance_name)
+
+        # can call add_flow to add operators
+        op_tx, op_rx = get_tx_and_rx_ops(frag)
+        original_tx_name = op_tx.name
+        original_rx_name = op_rx.name
+        sg.add_operator(op_tx)
+        sg.add_operator(op_rx)
+
+        # there are 2 nodes in the graph (op_tx and op_rx)
+        nodes = frag.graph.get_nodes()
+        assert len(nodes) == 2
+
+        # Check qualified names
+        node_names = [node.name for node in nodes]
+        assert f"{instance_name}_{original_tx_name}" in node_names
+        assert f"{instance_name}_{original_rx_name}" in node_names
+
+        # no connections when add_flow wasn't called
+        port_map = frag.graph.port_map_description()
+        assert (
+            """input_to_output: ~
+output_to_input: ~"""
+            in port_map
+        )

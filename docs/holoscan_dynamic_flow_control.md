@@ -247,6 +247,10 @@ During execution, after the source operator's `compute()` method is called, the 
 
 Starting with Holoscan SDK v3.0, operators can be connected via `add_flow()` without the need for explicit input and output execution ports, allowing for more flexible and dynamic operator connections.
 
+:::{note}
+These execution port concepts also apply to Subgraph interface ports. Subgraphs can expose execution interface ports using `add_input_exec_interface_port()` and `add_output_exec_interface_port()`, allowing Subgraphs to participate in dynamic flow control just like operators. See the [Subgraph with Dynamic Flow Control](#using-dynamic-flow-control-with-subgraphs) section below for details.
+:::
+
 ### Start Operator
 
 In Holoscan, when the workflow graph is executed, root operators who do not have any input ports are first executed, and unless any condition is specified to the root operator (such as `CountCondition` or `PeriodicCondition`), it will execute continuously.
@@ -557,6 +561,23 @@ The `find_flow_info()` ({cpp:func}`C++ <holoscan::Operator::find_flow_info>`/{py
 The `find_all_flow_info()` ({cpp:func}`C++ <holoscan::Operator::find_all_flow_info>`/{py:func}`Python <holoscan.core.Operator.find_all_flow_info>`) method takes a predicate as an argument and returns a vector (list) of `FlowInfo` objects that match the predicate.
 
 If you want to get a vector of all the next flows, you can use `op->next_flows()` in C++ or `op.next_flows` in Python.
+
+(using-dynamic-flow-control-with-subgraphs)=
+### Using Dynamic Flow Control with Subgraphs
+
+Subgraphs can expose execution interface ports that work seamlessly with dynamic flow control features. This allows you to encapsulate sequences of operators and treat them as single units in your control flow.
+
+Subgraphs support both data and execution interface ports:
+- **Data interface ports**: Expose operator data input/output ports using `add_input_interface_port()` and `add_output_interface_port()`
+- **Execution interface ports**: Expose operator execution ports using `add_input_exec_interface_port()` and `add_output_exec_interface_port()`
+
+When connecting Subgraphs in control flow:
+- If a Subgraph has only one execution interface port (input or output), `add_flow()` will automatically resolve to that port
+- Subgraphs can be used with `start_op()`, just like regular operators
+- Dynamic flow routing works with Subgraphs through their interface ports
+- Nested Subgraphs are supported, allowing hierarchical control flow composition
+
+For a complete example, see [sequential_with_subgraph](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/flow_control/sequential_with_subgraph), which demonstrates a workflow where `node2` and `node3` are encapsulated in a Subgraph with execution interface ports.
 
 ## Flow Control Pattern Selection Guide
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,11 +15,13 @@
 
 if(HOLOSCAN_CPP_EXAMPLES)
   add_subdirectory(cpp)
+
+  # Python example depends on C++ operator wrapped with pybind11
+  if(HOLOSCAN_PYTHON_EXAMPLES)
+    add_subdirectory(python)
+  endif()
 endif()
 
-if(HOLOSCAN_PYTHON_EXAMPLES)
-  add_subdirectory(python)
-endif()
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 

@@ -87,6 +87,10 @@
             "holoscan::viz::SetCamera(float, float, float, float, float, float, float, float, float, bool)";
             "holoscan::viz::GetCameraPose(unsigned long, float*)";
             "holoscan::viz::GetCameraPose(float (&) [9], float (&) [3])";
+
+            "holoscan::viz::WaitForPresent(unsigned long, unsigned long)";
+            "holoscan::viz::WaitForDisplayEvent(holoscan::viz::DisplayEventType, unsigned long)";
+            "holoscan::viz::GetVBlankCounter()";
         };
     local:
         *;

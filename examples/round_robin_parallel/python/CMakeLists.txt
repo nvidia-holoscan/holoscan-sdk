@@ -39,15 +39,16 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_ROUND_ROBIN_4_TEST
-           COMMAND python3 round_robin.py --threads 4
+           COMMAND ${Python3_EXECUTABLE} round_robin.py --threads 4
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_ROUND_ROBIN_4_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "delay03: sending new value \\(100\\)")
 
   add_test(NAME EXAMPLE_PYTHON_ROUND_ROBIN_0_TEST
-           COMMAND python3 round_robin.py --threads 0
+           COMMAND ${Python3_EXECUTABLE} round_robin.py --threads 0
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   set_tests_properties(EXAMPLE_PYTHON_ROUND_ROBIN_0_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "delay03: sending new value \\(100\\)")

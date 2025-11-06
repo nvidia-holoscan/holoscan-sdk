@@ -32,8 +32,8 @@ namespace holoscan {
 namespace inference {
 
 TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
-                   const std::vector<std::vector<int32_t>>& trt_opt_profile, int device_id,
-                   int device_id_dt, bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
+                   const std::vector<std::string>& trt_opt_profile, int device_id, int device_id_dt,
+                   bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
                    bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
                    std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : model_path_(model_path),
@@ -52,8 +52,19 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
 
   if (num_of_opt_profiles > 0) {
     network_options_.batch_sizes.clear();
-    for (auto opt_profile : trt_opt_profile) {
-      if (opt_profile.size() % 3 != 0) {
+    for (auto opt_profile_str : trt_opt_profile) {
+      // parse opt_profile here
+      std::vector<std::string> tokens;
+      std::vector<int32_t> opt_profile = {};
+      string_split(opt_profile_str, tokens, ',');
+
+      if (tokens.size() != 0) {
+        for (const auto& t : tokens) {
+          opt_profile.push_back(std::stoi(t));
+        }
+      }
+
+      if (opt_profile.size() == 0 || opt_profile.size() % 3 != 0) {
         HOLOSCAN_LOG_WARN(
             "TRT Inference: Optimization profile must be a multiple of 3. Size of one of the "
             "optimization profiles from inference parameters: {}",
@@ -70,7 +81,8 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
       }
     }
   } else {
-    HOLOSCAN_LOG_INFO("TRT Inference: Using the default optimization profile");
+    HOLOSCAN_LOG_INFO("TRT Inference: Using the default optimization profile for model {}",
+                      model_name_);
   }
 
   // Set the device index
@@ -260,9 +272,14 @@ bool TrtInfer::initialize_parameters() {
         holoinfer_type = holoinfer_datatype::h_Int64;
         break;
       }
+      case nvinfer1::DataType::kBOOL: {
+        holoinfer_type = holoinfer_datatype::h_Bool;
+        break;
+      }
       default: {
         HOLOSCAN_LOG_INFO(
-            "TensorRT backend supports float, float16, float64, int8, int32, uint8 data types.");
+            "TensorRT backend supports float, float16, int64, int8, int32, uint8, bool data "
+            "types.");
         HOLOSCAN_LOG_ERROR("Data type not supported.");
         return false;
       }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,8 +33,8 @@ regardless.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 max_batch_size : int
     The maximum number of messages to be batched together.
 max_delay_ns: int or datetime.timedelta

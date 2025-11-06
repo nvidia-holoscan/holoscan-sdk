@@ -63,7 +63,7 @@ void BasicConsoleLogger::initialize() {
 bool BasicConsoleLogger::log_data(const std::any& data, const std::string& unique_id,
                                   int64_t acquisition_timestamp,
                                   const std::shared_ptr<MetadataDictionary>& metadata,
-                                  IOSpec::IOType io_type) {
+                                  IOSpec::IOType io_type, std::optional<cudaStream_t> stream) {
   // Check if this message should be logged based on allowlist/denylist patterns
   if (!should_log_message(unique_id)) {
     HOLOSCAN_LOG_DEBUG(
@@ -102,13 +102,14 @@ bool BasicConsoleLogger::log_data(const std::any& data, const std::string& uniqu
     // Tensor serialization
     auto tensor = std::any_cast<std::shared_ptr<Tensor>>(data);
     bool log_data_content = should_log_tensor_data_content();
-    serialized_content = serializer_->serialize_tensor_to_string(tensor, log_data_content);
+    serialized_content = serializer_->serialize_tensor_to_string(tensor, log_data_content, stream);
     log_category = "Tensor";
   } else if (data.type() == typeid(TensorMap)) {
     // TensorMap serialization
     auto tensor_map = std::any_cast<TensorMap>(data);
     bool log_data_content = should_log_tensor_data_content();
-    serialized_content = serializer_->serialize_tensormap_to_string(tensor_map, log_data_content);
+    serialized_content =
+        serializer_->serialize_tensormap_to_string(tensor_map, log_data_content, stream);
     log_category = "TensorMap";
   } else {
     // General case
@@ -135,18 +136,35 @@ bool BasicConsoleLogger::log_data(const std::any& data, const std::string& uniqu
 
   // Format the log message similar to BasicConsoleLogger using HOLOSCAN_LOG_INFO
   {
+    std::string stream_info;
+    if (stream.has_value()) {
+      if (stream.value() == cudaStreamDefault) {
+        stream_info = "Stream: default";
+      } else if (stream.value() == cudaStreamLegacy) {
+        stream_info = "Stream: legacy";
+      } else if (stream.value() == cudaStreamPerThread) {
+        stream_info = "Stream: per-thread";
+      } else {
+        stream_info = fmt::format("Stream: 0x{:x}", reinterpret_cast<uintptr_t>(stream.value()));
+      }
+    } else {
+      stream_info = "Stream: none";
+    }
+
     // In general, should protect console output with mutex in case of concurrent access from
     // multiple threads to prevent interleaved output. Should not be necessary here since there is
     // only a single logging statement.
     // std::lock_guard<std::mutex> lock(console_output_mutex);
     HOLOSCAN_LOG_INFO(
-        "BasicConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: {}] {}",
+        "BasicConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: "
+        "{}][{}] {}",
         unique_id,
         acquisition_timestamp,
         io_type == IOSpec::IOType::kOutput ? "Emit Timestamp" : "Receive Timestamp",
         current_timestamp,
         log_category,
         type_name,
+        stream_info,
         serialized_content);
   }
 
@@ -157,33 +175,36 @@ bool BasicConsoleLogger::log_tensor_data(const std::shared_ptr<Tensor>& tensor,
                                          const std::string& unique_id,
                                          int64_t acquisition_timestamp,
                                          const std::shared_ptr<MetadataDictionary>& metadata,
-                                         IOSpec::IOType io_type) {
+                                         IOSpec::IOType io_type,
+                                         std::optional<cudaStream_t> stream) {
   // Convert to std::any and dispatch to unified log_data method
   std::any data = tensor;
-  return log_data(std::move(data), unique_id, acquisition_timestamp, metadata, io_type);
+  return log_data(std::move(data), unique_id, acquisition_timestamp, metadata, io_type, stream);
 }
 
 bool BasicConsoleLogger::log_tensormap_data(const TensorMap& tensor_map,
                                             const std::string& unique_id,
                                             int64_t acquisition_timestamp,
                                             const std::shared_ptr<MetadataDictionary>& metadata,
-                                            IOSpec::IOType io_type) {
+                                            IOSpec::IOType io_type,
+                                            std::optional<cudaStream_t> stream) {
   // Convert to std::any and dispatch to unified log_data method
   std::any data = tensor_map;
-  return log_data(std::move(data), unique_id, acquisition_timestamp, metadata, io_type);
+  return log_data(std::move(data), unique_id, acquisition_timestamp, metadata, io_type, stream);
 }
 
 bool BasicConsoleLogger::log_backend_specific(const std::any& data, const std::string& unique_id,
                                               int64_t acquisition_timestamp,
                                               const std::shared_ptr<MetadataDictionary>& metadata,
-                                              IOSpec::IOType io_type) {
+                                              IOSpec::IOType io_type,
+                                              std::optional<cudaStream_t> stream) {
   // Default implementation: backend-specific logging is not supported
   HOLOSCAN_LOG_DEBUG(
       "BasicConsoleLogger: Backend-specific logging not supported for type '{}'."
       "Please use GXFConsoleLogger instead to log this type.",
       data.type().name());
   // still log metadata and timestamp
-  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type);
+  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type, stream);
   if (!result) {
     HOLOSCAN_LOG_ERROR("BasicConsoleLogger: Failed to log metadata for port '{}'.", unique_id);
   }

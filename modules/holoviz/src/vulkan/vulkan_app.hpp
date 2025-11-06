@@ -23,11 +23,11 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
-#include <list>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include "../holoviz/display_event_type.hpp"
 #include "../holoviz/image_format.hpp"
 #include "../holoviz/present_mode.hpp"
 #include "../holoviz/surface_format.hpp"
@@ -334,6 +334,34 @@ class Vulkan {
    */
   void read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                         CUdeviceptr buffer, CUstream ext_stream, size_t row_pitch);
+
+  /**
+   * Block until either the present_id is greater than or equal to the current present id, or
+   * timeout_ns nanoseconds passes. The present ID is initially zero and increments after each
+   * present.
+   *
+   * @param present_id the presentation presentId to wait for
+   * @param timeout_ns timeout in nanoseconds
+   * @return true if the present_id is greater than or equal to the current present id, false if
+   * timeout_ns nanoseconds passes
+   */
+  bool wait_for_present(uint64_t present_id, uint64_t timeout_ns);
+
+  /**
+   * Block until either the display_event_type is signaled, or timeout_ns nanoseconds passes.
+   *
+   * @param display_event_type display event type
+   * @param timeout_ns timeout in nanoseconds
+   * @return true if the display_event_type is signaled, false if timeout_ns nanoseconds passes
+   */
+  bool wait_for_display_event(DisplayEventType display_event_type, uint64_t timeout_ns);
+
+  /**
+   * @returns the counter incrementing once every time a vertical blanking period occurs on the
+   * display associated window or the display selected in full screen mode or exclusive display
+   * mode.
+   */
+  uint64_t get_vblank_counter();
 
  private:
   struct Impl;

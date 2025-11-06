@@ -246,14 +246,15 @@ void DataLoggerResource::compile_patterns() {
 bool DataLoggerResource::log_backend_specific(const std::any& data, const std::string& unique_id,
                                               int64_t acquisition_timestamp,
                                               const std::shared_ptr<MetadataDictionary>& metadata,
-                                              IOSpec::IOType io_type) {
+                                              IOSpec::IOType io_type,
+                                              std::optional<cudaStream_t> stream) {
   // Default implementation: backend-specific logging is not supported
   HOLOSCAN_LOG_DEBUG(
       "Backend-specific logging not supported for type '{}'. Please use a logger "
       "implementing log_backend_specific instead to log this type.",
       data.type().name());
   // still log metadata and timestamp
-  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type);
+  auto result = log_data(data, unique_id, acquisition_timestamp, metadata, io_type, stream);
   if (!result) {
     HOLOSCAN_LOG_ERROR("DataLoggerResource: Failed to log metadata for port '{}'.", unique_id);
   }

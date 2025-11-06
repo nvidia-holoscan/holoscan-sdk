@@ -292,11 +292,11 @@ struct InferenceSpecs {
                  const Mappings& model_path_map, const MultiMappings& pre_processor_map,
                  const MultiMappings& inference_map, const Mappings& device_map,
                  const Mappings& dla_core_map, const Mappings& temporal_map,
-                 const Mappings& activation_map,
-                 const std::vector<std::vector<int32_t>>& trt_opt_profile, bool dynamic_input_dims,
-                 bool is_engine_path, bool oncpu, bool parallel_proc, bool use_fp16,
-                 bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs, int32_t dla_core,
-                 bool dla_gpu_fallback, std::function<cudaStream_t(int32_t)> allocate_cuda_stream)
+                 const Mappings& activation_map, const MultiMappings& trt_opt_profile,
+                 bool dynamic_input_dims, bool is_engine_path, bool oncpu, bool parallel_proc,
+                 bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs,
+                 int32_t dla_core, bool dla_gpu_fallback,
+                 std::function<cudaStream_t(int32_t)> allocate_cuda_stream)
       : backend_type_(backend),
         backend_map_(backend_map),
         model_path_map_(model_path_map),
@@ -398,7 +398,7 @@ struct InferenceSpecs {
   std::map<std::string, std::vector<int>> dims_per_tensor_;
 
   /// @brief TensorRT optimization profile during engine creation for dynamic inputs
-  std::vector<std::vector<int32_t>> trt_opt_profile_;
+  MultiMappings trt_opt_profile_;
 
   /// @brief Flag showing if the the inputs to the models are dynamic
   bool dynamic_input_dims_ = false;

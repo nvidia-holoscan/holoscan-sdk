@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +38,7 @@ Operator class to record a video stream to a file.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 directory : str
     Directory path for storing files.

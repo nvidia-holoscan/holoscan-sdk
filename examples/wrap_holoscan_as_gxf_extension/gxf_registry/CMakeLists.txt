@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
+if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
     configure_file(target.yaml.in target.yaml @ONLY)
     configure_file(ping_installable.yaml.in ping_installable.yaml @ONLY)
 
@@ -22,9 +22,9 @@ if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
         COMMAND registry extn info -n PingVarCustomNativeResExtension
     )
     set_tests_properties(gxf_native_res_registry_inspection_test PROPERTIES
-        PASS_REGULAR_EXPRESSION "name :        PingVarCustomNativeResExtension"
-        PASS_REGULAR_EXPRESSION "uuid :        2b8381ed-5c27-40a1-be58-6c019eaa87be"
-        PASS_REGULAR_EXPRESSION "version :     ${holoscan_VERSION}"
+        # PASS_REGULAR_EXPRESSION "name :        PingVarCustomNativeResExtension"
+        # PASS_REGULAR_EXPRESSION "uuid :        2b8381ed-5c27-40a1-be58-6c019eaa87be"
+        # PASS_REGULAR_EXPRESSION "version :     ${holoscan_VERSION}"
         PASS_REGULAR_EXPRESSION "myexts::PingVarRxNativeOpCodelet :"
     )
 

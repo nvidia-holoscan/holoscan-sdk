@@ -22,6 +22,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>  // For std::shared_ptr in parameters
+#include <optional>
 #include <sstream>
 #include <string>
 #include <typeindex>
@@ -29,6 +30,11 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+// Forward declaration to avoid including <cuda_runtime.h>
+extern "C" {
+typedef struct CUstream_st* cudaStream_t;
+}
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/resource.hpp"
@@ -71,13 +77,15 @@ class SimpleTextSerializer : public Resource {
    * @brief Serialize tensor data to a simple text string
    */
   std::string serialize_tensor_to_string(const std::shared_ptr<Tensor>& tensor,
-                                         bool log_data_content = false);
+                                         bool log_data_content = false,
+                                         std::optional<cudaStream_t> stream = std::nullopt);
 
   /**
    * @brief Serialize tensor map data to a simple text string
    */
   std::string serialize_tensormap_to_string(const TensorMap& tensor_map,
-                                            bool log_data_content = false);
+                                            bool log_data_content = false,
+                                            std::optional<cudaStream_t> stream = std::nullopt);
 
   /**
    * @brief Serialize metadata to a simple text string
@@ -88,7 +96,8 @@ class SimpleTextSerializer : public Resource {
    * @brief Serialize video buffer data to a simple text string
    */
   std::string serialize_video_buffer_to_string(
-      const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video_buffer);
+      const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video_buffer,
+      std::optional<cudaStream_t> stream = std::nullopt);
 
   /**
    * @brief Register a custom encoder for a specific type

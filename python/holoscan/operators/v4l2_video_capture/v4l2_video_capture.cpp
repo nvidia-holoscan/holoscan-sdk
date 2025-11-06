@@ -22,7 +22,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -30,6 +32,7 @@
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -55,8 +58,8 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
   using V4L2VideoCaptureOp::V4L2VideoCaptureOp;
 
   // Define a constructor that fully initializes the object.
-  PyV4L2VideoCaptureOp(Fragment* fragment, const py::args& args,
-                       std::shared_ptr<::holoscan::Allocator> allocator,
+  PyV4L2VideoCaptureOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                       const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, float frame_rate = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto", bool pass_through = false,
@@ -78,10 +81,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
       this->add_arg(Arg{"gain", gain.value()});
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -97,7 +97,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
              Operator,
              std::shared_ptr<V4L2VideoCaptureOp>>(
       m, "V4L2VideoCaptureOp", doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
                     std::shared_ptr<::holoscan::Allocator>,
                     const std::string&,

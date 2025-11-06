@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,12 +57,14 @@ install(TARGETS ping_clock
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_RESOURCES_CPP_PING_CLOCK_TEST
-           COMMAND ping_clock
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_RESOURCES_CPP_PING_CLOCK_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Rx message value: 3")
-  set_tests_properties(EXAMPLE_RESOURCES_CPP_PING_CLOCK_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "final timestamp")
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/ping_clock 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'Rx message value: 3' \
+        --pass-pattern 'final timestamp'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 endif()

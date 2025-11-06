@@ -39,8 +39,10 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_FOR_LOOP_EXECUTION_TEST
-    COMMAND python3 for_loop_execution.py
+    COMMAND ${Python3_EXECUTABLE} for_loop_execution.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_FOR_LOOP_EXECUTION_TEST PROPERTIES

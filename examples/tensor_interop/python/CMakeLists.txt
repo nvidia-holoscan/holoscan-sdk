@@ -48,7 +48,6 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_tensor_interop_output)
   set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/tensor_interop/)
@@ -71,26 +70,26 @@ if(HOLOSCAN_BUILD_TESTS)
     DEPENDS tensor_interop_test.py
   )
 
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  # in some environments may log an error about: "XDG_RUNTIME_DIR is invalid or not set in the env"
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_TEST
-    COMMAND python3 tensor_interop_test.py --config ${CONFIG_FILE}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} tensor_interop_test.py --config ${CONFIG_FILE} 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
+        --pass-pattern 'BasicConsoleLogger\\[ID:replayer.output\\]' \
+        --pass-pattern 'BasicConsoleLogger\\[ID:image_processing.input_tensor\\]' \
+        --pass-pattern 'BasicConsoleLogger\\[ID:image_processing.output_tensor\\]' \
+        --pass-pattern 'BasicConsoleLogger\\[ID:holoviz.receivers:0\\]' \
+        --pass-pattern 'Category:TensorMap' \
+        --pass-pattern '\\[Stream: none\\]' \
+        --pass-pattern 'TensorMap\\(size=1\\) \\{: Tensor\\(shape=\\[540, 960, 3\\], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=1555200, nbytes=1555200, C-contiguous=true\\)\\}'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_TENSOR_INTEROP_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    # All operator ports should appear in the log.
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:image_processing.input_tensor\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:image_processing.output_tensor\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
-    # Data logging tests (Tensors are sent via the C++ TensorMap type).
-    PASS_REGULAR_EXPRESSION "Category:TensorMap"
-    # Data logging tests (Various tensor attributes are logged)
-    PASS_REGULAR_EXPRESSION "TensorMap\\(size=1\\) \\{'': Tensor\\(shape=\\[540, 960, 3\\], dtype=kDLUInt:8:1, device=kDLCUDA:0, size=1555200, nbytes=1555200, C-contiguous=true\\)\\}"
   )
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_RENDER_TEST
-      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}

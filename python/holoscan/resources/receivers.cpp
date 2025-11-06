@@ -16,11 +16,14 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./receivers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -29,6 +32,7 @@
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
 #include "holoscan/core/resources/gxf/ucx_receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -43,14 +47,11 @@ class PyDoubleBufferReceiver : public DoubleBufferReceiver {
   using DoubleBufferReceiver::DoubleBufferReceiver;
 
   // Define a constructor that fully initializes the object.
-  explicit PyDoubleBufferReceiver(Fragment* fragment, uint64_t capacity = 1UL,
-                                  uint64_t policy = 2UL,
+  explicit PyDoubleBufferReceiver(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                                  uint64_t capacity = 1UL, uint64_t policy = 2UL,
                                   const std::string& name = "double_buffer_receiver")
       : DoubleBufferReceiver(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -60,7 +61,7 @@ class PyUcxReceiver : public UcxReceiver {
   using UcxReceiver::UcxReceiver;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxReceiver(Fragment* fragment,
+  explicit PyUcxReceiver(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                          std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
                          uint64_t capacity = 1UL, uint64_t policy = 2UL,
                          const std::string& address = std::string("0.0.0.0"),
@@ -72,10 +73,7 @@ class PyUcxReceiver : public UcxReceiver {
     if (buffer) {
       this->add_arg(Arg{"buffer", buffer});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -85,13 +83,10 @@ class PyAsyncBufferReceiver : public AsyncBufferReceiver {
   using AsyncBufferReceiver::AsyncBufferReceiver;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsyncBufferReceiver(Fragment* fragment,
+  explicit PyAsyncBufferReceiver(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                  const std::string& name = "async_buffer_receiver")
       : AsyncBufferReceiver() {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -108,7 +103,7 @@ void init_receivers(py::module_& m) {
              Receiver,
              std::shared_ptr<DoubleBufferReceiver>>(
       m, "DoubleBufferReceiver", doc::DoubleBufferReceiver::doc_DoubleBufferReceiver)
-      .def(py::init<Fragment*, uint64_t, uint64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, uint64_t, uint64_t, const std::string&>(),
            "fragment"_a,
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
@@ -120,14 +115,14 @@ void init_receivers(py::module_& m) {
              Receiver,
              std::shared_ptr<AsyncBufferReceiver>>(
       m, "AsyncBufferReceiver", doc::AsyncBufferReceiver::doc_AsyncBufferReceiver)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
            "name"_a = "async_buffer_receiver"s,
            doc::AsyncBufferReceiver::doc_AsyncBufferReceiver);
 
   py::class_<UcxReceiver, PyUcxReceiver, Receiver, std::shared_ptr<UcxReceiver>>(
       m, "UcxReceiver", doc::UcxReceiver::doc_UcxReceiver)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::shared_ptr<UcxSerializationBuffer>,
                     uint64_t,
                     uint64_t,

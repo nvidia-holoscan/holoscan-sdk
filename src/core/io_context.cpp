@@ -26,9 +26,11 @@
 
 #include "gxf/core/entity.hpp"
 #include "holoscan/core/arg.hpp"
+#include "holoscan/core/data_logger.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/domain/tensor_map.hpp"
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/fragment.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/parameter.hpp"
@@ -213,7 +215,7 @@ void OutputContext::emit(holoscan::TensorMap& data, const char* name, const int6
   PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
 
   if (!op_->fragment()->data_loggers().empty()) {
-    log_tensormap(data, unique_id);
+    log_tensormap(data, unique_id, output_name.c_str());
   }
 
   auto out_message = holoscan::gxf::Entity::New(execution_context_);
@@ -239,12 +241,48 @@ void OutputContext::emit(std::shared_ptr<holoscan::Tensor> data, const char* nam
   PROF_SCOPED_PORT_EVENT(op_->id(), unique_id, event_emit::color);
 
   if (!op_->fragment()->data_loggers().empty()) {
-    log_tensor(data, unique_id);
+    log_tensor(data, unique_id, output_name.c_str());
   }
 
   auto out_message = holoscan::gxf::Entity::New(execution_context_);
   out_message.add(data, "");
   emit_impl(nvidia::gxf::Entity(out_message), name, OutputType::kGXFEntity, acq_timestamp, true);
+}
+
+bool OutputContext::log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
+                               const char* port_name) {
+  PROF_SCOPED_EVENT(op_->id(), event_data_logging);
+  auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+
+  // Check if a CUDA stream is being emitted on this output port
+  auto stream_for_logging = stream_to_emit(port_name);
+
+  for (auto& data_logger : op_->fragment()->data_loggers()) {
+    if (data_logger->should_log_output()) {
+      PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
+      data_logger->log_tensor_data(
+          tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput, stream_for_logging);
+    }
+  }
+  return true;
+}
+
+bool OutputContext::log_tensormap(const holoscan::TensorMap& tensor_map,
+                                  const std::string& unique_id, const char* port_name) {
+  PROF_SCOPED_EVENT(op_->id(), event_data_logging);
+  auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+
+  // Check if a CUDA stream is being emitted on this output port
+  auto stream_for_logging = stream_to_emit(port_name);
+
+  for (auto& data_logger : op_->fragment()->data_loggers()) {
+    if (data_logger->should_log_output()) {
+      PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
+      data_logger->log_tensormap_data(
+          tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput, stream_for_logging);
+    }
+  }
+  return true;
 }
 
 }  // namespace holoscan

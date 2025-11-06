@@ -22,13 +22,16 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./cuda_stream_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/cuda_stream.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -53,16 +56,13 @@ class PyCudaStreamCondition : public CudaStreamCondition {
   using CudaStreamCondition::CudaStreamCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCudaStreamCondition(Fragment* fragment,
+  explicit PyCudaStreamCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                  std::optional<const std::string> receiver = std::nullopt,
                                  const std::string& name = "noname_cuda_stream_condition") {
-    name_ = name;
-    fragment_ = fragment;
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -72,7 +72,9 @@ void init_cuda_stream(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<CudaStreamCondition>>(
       m, "CudaStreamCondition", doc::CudaStreamCondition::doc_CudaStreamCondition)
-      .def(py::init<Fragment*, std::optional<const std::string>, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    std::optional<const std::string>,
+                    const std::string&>(),
            "fragment"_a,
            "receiver"_a = py::none(),
            "name"_a = "noname_cuda_stream_condition"s,

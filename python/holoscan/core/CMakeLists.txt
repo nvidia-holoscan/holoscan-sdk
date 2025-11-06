@@ -38,6 +38,7 @@ holoscan_pybind11_module(
     operator.cpp
     resource.cpp
     scheduler.cpp
+    subgraph.cpp
     tensor.cpp
     ../gxf/entity.cpp
 )

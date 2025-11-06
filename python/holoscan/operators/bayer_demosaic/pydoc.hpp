@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -58,8 +58,8 @@ Bayer Demosaic operator.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
-    The fragment that the operator belongs to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
+    The fragment or subgraph that the operator belongs to.
 pool : holoscan.resources.Allocator
     Memory pool allocator used by the operator.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

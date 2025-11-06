@@ -97,6 +97,13 @@ nsight_profiling
 
 ```{toctree}
 :maxdepth: 1
+:caption: Testing Operators
+
+testing
+```
+
+```{toctree}
+:maxdepth: 1
 :caption: FAQ
 
 hsdk_faq

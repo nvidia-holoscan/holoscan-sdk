@@ -16,11 +16,14 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./component_serializers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -28,6 +31,7 @@
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
 #include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -42,12 +46,9 @@ class PyStdComponentSerializer : public StdComponentSerializer {
   using StdComponentSerializer::StdComponentSerializer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyStdComponentSerializer(Fragment* fragment,
+  explicit PyStdComponentSerializer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                     const std::string& name = "std_component_serializer") {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -57,16 +58,13 @@ class PyUcxComponentSerializer : public UcxComponentSerializer {
   using UcxComponentSerializer::UcxComponentSerializer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxComponentSerializer(Fragment* fragment,
+  explicit PyUcxComponentSerializer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                     std::shared_ptr<holoscan::Allocator> allocator = nullptr,
                                     const std::string& name = "ucx_component_serializer") {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -77,15 +75,13 @@ class PyUcxHoloscanComponentSerializer : public UcxHoloscanComponentSerializer {
 
   // Define a constructor that fully initializes the object.
   explicit PyUcxHoloscanComponentSerializer(
-      Fragment* fragment, std::shared_ptr<holoscan::Allocator> allocator = nullptr,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<holoscan::Allocator> allocator = nullptr,
       const std::string& name = "ucx_holoscan_component_serializer") {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -95,7 +91,7 @@ void init_component_serializers(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<StdComponentSerializer>>(
       m, "StdComponentSerializer", doc::StdComponentSerializer::doc_StdComponentSerializer)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
            "name"_a = "standard_component_serializer"s,
            doc::StdComponentSerializer::doc_StdComponentSerializer)
@@ -108,7 +104,9 @@ void init_component_serializers(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<UcxComponentSerializer>>(
       m, "UcxComponentSerializer", doc::UcxComponentSerializer::doc_UcxComponentSerializer)
-      .def(py::init<Fragment*, std::shared_ptr<holoscan::Allocator>, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    std::shared_ptr<holoscan::Allocator>,
+                    const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
            "name"_a = "ucx_component_serializer"s,
@@ -121,7 +119,9 @@ void init_component_serializers(py::module_& m) {
       m,
       "UcxHoloscanComponentSerializer",
       doc::UcxHoloscanComponentSerializer::doc_UcxHoloscanComponentSerializer)
-      .def(py::init<Fragment*, std::shared_ptr<holoscan::Allocator>, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    std::shared_ptr<holoscan::Allocator>,
+                    const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
            "name"_a = "ucx_component_serializer"s,

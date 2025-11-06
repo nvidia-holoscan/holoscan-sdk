@@ -322,8 +322,10 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
   bool is_video_buffer;
   nvidia::gxf::Handle<nvidia::gxf::VideoBuffer> video_buffer;
   try {
-    video_buffer = holoscan::gxf::get_videobuffer(in_message);
-    is_video_buffer = true;
+    const char* video_buffer_name =
+        in_tensor_name_.get() == "" ? nullptr : in_tensor_name_.get().c_str();
+    video_buffer = holoscan::gxf::get_videobuffer(in_message, video_buffer_name);
+    is_video_buffer = video_buffer ? true : false;
   } catch (const std::runtime_error& r_) {
     HOLOSCAN_LOG_TRACE("Failed to read VideoBuffer with error: {}", std::string(r_.what()));
     is_video_buffer = false;

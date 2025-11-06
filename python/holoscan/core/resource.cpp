@@ -30,8 +30,11 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "kwarg_handling.hpp"
 #include "resource_pydoc.hpp"
+
+using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 
 namespace py = pybind11;
 
@@ -113,6 +116,26 @@ void init_resource(py::module_& m) {
   resource_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),
            doc::Resource::doc_Resource_args_kwargs)
+      .def(py::init([](py::object resource,
+                       std::shared_ptr<Subgraph>
+                           subgraph,
+                       const py::args& args,
+                       const py::kwargs& kwargs) {
+             // Extract the fragment from the subgraph
+             Fragment* fragment = subgraph->fragment();
+
+             // Create the PyResource in the Subgraph's fragment
+             auto py_resource = std::make_shared<PyResource>(resource, fragment, args, kwargs);
+
+             // Apply qualified naming using the subgraph's instance name
+             std::string qualified_name =
+                 subgraph->get_qualified_name(py_resource->name(), "resource");
+             py_resource->name(qualified_name);
+
+             return py_resource;
+           }),
+           "resource"_a,
+           "subgraph"_a)
       .def_property(
           "name",
           py::overload_cast<>(&Resource::name, py::const_),

@@ -36,3 +36,5 @@ source:  # V4L2VideoCaptureOp
   # gain: 100
 
 visualizer:  # Holoviz
+
+rmm_allocator:  # RMMAllocator

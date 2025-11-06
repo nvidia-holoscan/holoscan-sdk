@@ -38,6 +38,7 @@
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/logger/logger.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan {
 
@@ -84,6 +85,12 @@ bool Operator::is_metadata_enabled() const {
 
 void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
                                     uint32_t reserved_size, uint32_t max_size) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error(
+        fmt::format("Operator '{}' is not a native, GXF, or virtual operator. Cannot add CUDA "
+                    "stream pool.",
+                    name_));
+  }
   // If a "cuda_stream_pool" parameter exists, do nothing
   if (!spec_) {
     throw std::runtime_error(
@@ -142,20 +149,24 @@ void Operator::add_cuda_stream_pool(int32_t dev_id, uint32_t stream_flags, int32
 }
 
 bool Operator::is_root() {
-  std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
-  return fragment()->graph().is_root(op_shared_ptr);
+  if (!fragment()) {
+    throw std::runtime_error("Operator::is_root(): Fragment is not set");
+  }
+  return fragment()->graph().is_root(self_shared());
 }
 
 bool Operator::is_user_defined_root() {
-  std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
-
-  return fragment()->graph().is_user_defined_root(op_shared_ptr);
+  if (!fragment()) {
+    throw std::runtime_error("Operator::is_user_defined_root(): Fragment is not set");
+  }
+  return fragment()->graph().is_user_defined_root(self_shared());
 }
 
 bool Operator::is_leaf() {
-  std::shared_ptr<holoscan::Operator> op_shared_ptr(this, [](Operator*) {});
-
-  return fragment()->graph().is_leaf(op_shared_ptr);
+  if (!fragment()) {
+    throw std::runtime_error("Operator::is_leaf(): Fragment is not set");
+  }
+  return fragment()->graph().is_leaf(self_shared());
 }
 
 bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph) {
@@ -178,8 +189,8 @@ bool Operator::is_all_operator_predecessor_virtual(OperatorNodeType op, Operator
   return true;
 }
 
-std::string Operator::qualified_name() {
-  if (!this->fragment()->name().empty()) {
+std::string Operator::qualified_name() const {
+  if (fragment() && !this->fragment()->name().empty()) {
     return fmt::format("{}.{}", this->fragment()->name(), name());
   } else {
     return name();
@@ -198,6 +209,19 @@ std::pair<std::string, std::string> Operator::parse_port_name(const std::string&
   return std::make_pair(op_name, port_name);
 }
 
+std::pair<std::string, std::string> Operator::parse_operator_port_key(
+    const std::string& operator_port_key) {
+  auto dash_pos = operator_port_key.rfind('-');
+  if (dash_pos == std::string::npos) {
+    return std::make_pair(operator_port_key, "");
+  }
+
+  auto operator_name = operator_port_key.substr(0, dash_pos);
+  auto port_name = operator_port_key.substr(dash_pos + 1);
+
+  return std::make_pair(operator_name, port_name);
+}
+
 void Operator::update_published_messages(std::string output_name) {
   if (num_published_messages_map_.find(output_name) == num_published_messages_map_.end()) {
     num_published_messages_map_[output_name] = 0;
@@ -206,12 +230,29 @@ void Operator::update_published_messages(std::string output_name) {
 }
 
 holoscan::MessageLabel Operator::get_consolidated_input_label() {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot get consolidated input label.");
+  }
   MessageLabel m;
 
   if (this->input_message_labels.size()) {
     // Flatten the message_paths in input_message_labels into a single MessageLabel
     for (auto& it : this->input_message_labels) {
       MessageLabel everyinput = it.second;
+
+      // Preserve frame numbers from each input message (only when profiling is enabled)
+      // Frame numbers are now keyed by "operatorname-portname" so can be directly copied
+      if (holoscan::profiler::trace_enabled()) {
+        const auto& frame_numbers = everyinput.get_frame_numbers();
+        for (const auto& [operator_port_key, frame_number] : frame_numbers) {
+          // Extract operator name and port name from the key using helper function
+          auto [operator_name, port_name] = parse_operator_port_key(operator_port_key);
+          if (!operator_name.empty() && !port_name.empty()) {
+            m.set_frame_number(operator_name, port_name, frame_number);
+          }
+        }
+      }
+
       for (auto& p : everyinput.paths()) {
         m.add_new_path(p);
       }
@@ -232,9 +273,8 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
       // Calculate the current execution according to the scheduler clock and
       // convert nanoseconds to microseconds as GXF scheduler uses nanoseconds
       // and DFFT uses microseconds
-      if (!op_backend_ptr) {
-        throw std::runtime_error("op_backend_ptr is null. Cannot calculate root execution time.");
-      } else if (!scheduler_clock) {
+      // op_backend_ptr should be non-null
+      if (!scheduler_clock) {
         throw std::runtime_error("scheduler_clock is null. Cannot calculate root execution time.");
       }
       int64_t cur_exec_time = (scheduler_clock->timestamp() -
@@ -258,9 +298,13 @@ void Operator::set_op_backend() {
     const char* codelet_typename = nullptr;
     if (operator_type_ == Operator::OperatorType::kNative) {
       codelet_typename = "holoscan::gxf::GXFWrapper";
-    } else {
+    } else if (operator_type_ == Operator::OperatorType::kGXF ||
+               operator_type_ == Operator::OperatorType::kVirtual) {
       ops::GXFOperator* gxf_op = static_cast<ops::GXFOperator*>(this);
       codelet_typename = gxf_op->gxf_typename();
+    } else {
+      HOLOSCAN_LOG_WARN("Unrecognized operator type: {}", static_cast<int>(operator_type_));
+      return;
     }
 
     gxf_tid_t codelet_tid;
@@ -346,6 +390,9 @@ YAML::Node Operator::to_yaml_node() const {
 }
 
 void Operator::initialize_conditions() {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot initialize conditions.");
+  }
   // Inspect resources for any ConditionCombiner and automatically add any conditions
   // associated with those so they don't also have to also be passed individually to
   // Fragment::make_operator when creating the operator.
@@ -429,6 +476,9 @@ void Operator::initialize_conditions() {
 }
 
 void Operator::initialize_resources() {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot initialize resources.");
+  }
   for (const auto& [name, resource] : resources_) {
     HOLOSCAN_LOG_TRACE("\top '{}': initializing resource: {}", name_, resource->name());
     auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
@@ -447,7 +497,11 @@ void Operator::find_ports_used_by_condition_args() {
     auto& cond_args = condition.second->args();
 
     // replace any string "receiver" with Receiver or "transmitter" with Transmitter object.
-    const std::vector<std::string> connector_arg_names = {"receiver", "transmitter"};
+    // GXF Condition type wrappers use names "receiver" and "transmitter", but for native
+    // Python operators we use "receiver_name" and "transmitter_name" instead to avoid
+    // conflict with Python `Operator.receiver` and `Operator.transmitter` method names.
+    const std::vector<std::string> connector_arg_names = {
+        "receiver", "receiver_name", "transmitter", "transmitter_name"};
     for (const auto& arg_name : connector_arg_names) {
       auto connector_arg_iter =
           std::find_if(cond_args.begin(), cond_args.end(), [arg_name](const auto& arg) {
@@ -471,7 +525,7 @@ void Operator::find_ports_used_by_condition_args() {
         } else {
           connector_name = std::any_cast<std::string>(connector_arg_iter->value());
         }
-        if (arg_name == "receiver") {
+        if (arg_name == "receiver" || arg_name == "receiver_name") {
           non_default_input_ports_.emplace_back(std::move(connector_name));
         } else {
           non_default_output_ports_.emplace_back(std::move(connector_name));
@@ -613,9 +667,11 @@ void Operator::reset_backend_objects() {
       [reset_resource,
        reset_condition](const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& io_specs) {
         for (auto& [_, io_spec] : io_specs) {
-          reset_resource(io_spec->connector());
-          for (auto& [_, condition] : io_spec->conditions()) {
-            reset_condition(condition);
+          if (io_spec) {
+            reset_resource(io_spec->connector());
+            for (auto& [_, condition] : io_spec->conditions()) {
+              reset_condition(condition);
+            }
           }
         }
       };
@@ -634,6 +690,9 @@ void Operator::reset_backend_objects() {
 }
 
 std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& port_name) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot get Receiver.");
+  }
   if (!spec_) {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
@@ -669,6 +728,9 @@ void Operator::queue_policy(const std::string& port_name, IOSpec::IOType port_ty
 }
 
 std::optional<std::shared_ptr<Transmitter>> Operator::transmitter(const std::string& port_name) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot get Transmitter.");
+  }
   if (!spec_) {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
@@ -698,6 +760,9 @@ const std::function<void(const std::shared_ptr<Operator>&)>& Operator::dynamic_f
 }
 
 std::shared_ptr<Operator> Operator::self_shared() {
+  if (self_shared_.expired()) {
+    throw std::runtime_error(fmt::format("shared_ptr of operator ({}) is not available", name_));
+  }
   return self_shared_.lock();
 }
 
@@ -751,6 +816,9 @@ const std::vector<std::shared_ptr<Operator::FlowInfo>>& Operator::next_flows() {
 }
 
 void Operator::add_dynamic_flow(const std::shared_ptr<FlowInfo>& flow) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot add dynamic flow.");
+  }
   if (!dynamic_flows_) {
     dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
     dynamic_flows_->reserve(next_flows().size());
@@ -759,6 +827,9 @@ void Operator::add_dynamic_flow(const std::shared_ptr<FlowInfo>& flow) {
 }
 
 void Operator::add_dynamic_flow(const std::vector<std::shared_ptr<FlowInfo>>& flows) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot add dynamic flow.");
+  }
   if (!dynamic_flows_) {
     dynamic_flows_ = std::make_shared<std::vector<std::shared_ptr<FlowInfo>>>();
     dynamic_flows_->reserve(next_flows().size());
@@ -769,6 +840,9 @@ void Operator::add_dynamic_flow(const std::vector<std::shared_ptr<FlowInfo>>& fl
 void Operator::add_dynamic_flow(const std::string& curr_output_port_name,
                                 const std::shared_ptr<Operator>& next_op,
                                 const std::string& next_input_port_name) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot add dynamic flow.");
+  }
   if (!spec_) {
     throw std::runtime_error(
         fmt::format("OperatorSpec has not been set for Operator '{}'.", name_));
@@ -838,7 +912,11 @@ std::vector<std::shared_ptr<Operator::FlowInfo>> Operator::find_all_flow_info(
 
 void Operator::set_dynamic_flows(
     const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
-  dynamic_flow_func_ = dynamic_flow_func;
+  if (is_gxf_compatible_operator_type()) {
+    dynamic_flow_func_ = dynamic_flow_func;
+  } else {
+    throw std::runtime_error("Operator backend is not GXF. Cannot set dynamic flows.");
+  }
 }
 
 std::shared_ptr<holoscan::AsynchronousCondition> Operator::async_condition() {
@@ -864,22 +942,40 @@ void Operator::ensure_contexts() {
   }
 
   if (!execution_context_) {
-    auto gxf_context = fragment()->executor().context();
-    // Initialize the execution context
-    execution_context_ = std::make_shared<gxf::GXFExecutionContext>(gxf_context, this);
-    auto gxf_exec_context = static_cast<gxf::GXFExecutionContext*>(execution_context_.get());
-    auto input_context = static_cast<gxf::GXFInputContext*>(gxf_exec_context->input().get());
-    auto output_context = static_cast<gxf::GXFOutputContext*>(gxf_exec_context->output().get());
-
-    gxf_exec_context->init_cuda_object_handler(this);
-    HOLOSCAN_LOG_TRACE(
-        "Operator::ensure_contexts(): gxf_exec_context->cuda_object_handler() for op '{}' is "
-        "{}null",
-        name(),
-        gxf_exec_context->cuda_object_handler() == nullptr ? "" : "not ");
-    input_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
-    output_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
+    execution_context_ = initialize_execution_context();
   }
+}
+
+std::shared_ptr<ExecutionContext> Operator::initialize_execution_context() {
+  // Initialize a GXF execution context by default
+  auto gxf_context =
+      std::make_shared<gxf::GXFExecutionContext>(fragment()->executor().context(), this);
+  auto gxf_exec_context = static_cast<gxf::GXFExecutionContext*>(gxf_context.get());
+  auto input_context = static_cast<gxf::GXFInputContext*>(gxf_exec_context->input().get());
+  auto output_context = static_cast<gxf::GXFOutputContext*>(gxf_exec_context->output().get());
+
+  gxf_exec_context->init_cuda_object_handler(this);
+  HOLOSCAN_LOG_TRACE(
+      "Operator::ensure_contexts(): gxf_exec_context->cuda_object_handler() for op '{}' is "
+      "{}null",
+      name(),
+      gxf_exec_context->cuda_object_handler() == nullptr ? "" : "not ");
+  input_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
+  output_context->cuda_object_handler(gxf_exec_context->cuda_object_handler());
+  return gxf_context;
+}
+
+bool Operator::is_gxf_compatible_operator_type() const {
+  return operator_type_ == Operator::OperatorType::kNative ||
+         operator_type_ == Operator::OperatorType::kGXF ||
+         operator_type_ == Operator::OperatorType::kVirtual;
+}
+
+std::shared_ptr<Executor> Operator::executor() {
+  if (!fragment()) {
+    throw std::runtime_error("Operator::executor(): Fragment is not set");
+  }
+  return fragment()->executor_shared();
 }
 
 void Operator::release_internal_resources() {

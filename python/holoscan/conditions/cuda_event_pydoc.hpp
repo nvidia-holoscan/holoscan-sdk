@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,8 +35,8 @@ event provided to check for data availability for consumption.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 event_name : event, optional
     The event name on which the cudaEventQuery API is called to get the status.
 receiver : str, optional

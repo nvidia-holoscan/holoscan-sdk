@@ -69,7 +69,7 @@ Format conversion operator.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 pool : holoscan.resources.Allocator
     Memory pool allocator used by the operator.

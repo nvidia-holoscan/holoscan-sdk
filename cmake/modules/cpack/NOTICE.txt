@@ -139,7 +139,7 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.2/LICENSE)
+Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.3/LICENSE)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.

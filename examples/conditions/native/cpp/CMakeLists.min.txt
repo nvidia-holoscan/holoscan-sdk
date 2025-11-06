@@ -43,6 +43,7 @@ target_link_libraries(message_available_native
 )
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_CPP_PING_PERIODIC_NATIVE_TEST
            COMMAND ping_periodic_native
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
@@ -51,12 +52,17 @@ if(BUILD_TESTING)
                        PASS_REGULAR_EXPRESSION "Rx message value: 5")
 
   add_test(NAME EXAMPLE_CPP_MESSAGE_AVAILABLE_NATIVE_TEST
-           COMMAND message_available_native
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/message_available_native 2>&1 | \
+      ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../bin/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Not adding default condition to port in of operator rx' \
+        --pass-pattern 'Rx message value: 10' \
+        --fail-pattern 'Rx message value: 11' \
+        --fail-pattern 'Operator rx failed to receive message' \
+        --fail-pattern 'error'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
   set_tests_properties(EXAMPLE_CPP_MESSAGE_AVAILABLE_NATIVE_TEST PROPERTIES
-                       ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-                       PASS_REGULAR_EXPRESSION "Not adding default condition to port 'in' of operator 'rx'"
-                       PASS_REGULAR_EXPRESSION "Rx message value: 10"
-                       FAIL_REGULAR_EXPRESSION "Operator 'rx' failed to receive message")
+    ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
+  )
 endif()

@@ -183,6 +183,7 @@ add_holoscan_library(core
     core/argument_setter.cpp
     core/cli_options.cpp
     core/cli_parser.cpp
+    core/codec_registry.cpp
     core/component.cpp
     core/component_spec.cpp
     core/condition.cpp
@@ -215,12 +216,14 @@ add_holoscan_library(core
     core/executors/gxf/gxf_executor.cpp
     core/executors/gxf/gxf_logger.cpp
     core/executors/gxf/gxf_parameter_adaptor.cpp
+    core/executors/gpu_resident/gpu_resident_executor.cpp
+    core/executors/gpu_resident/gpu_resident_deck.cpp
     core/flow_tracking_annotation.cpp
     core/fragment.cpp
     core/fragment_scheduler.cpp
     core/fragment_service.cpp
+    core/gpu_resident_operator.cpp
     core/graphs/flow_graph.cpp
-    core/gxf/codec_registry.cpp
     core/gxf/endpoint.cpp
     core/gxf/entity.cpp
     core/gxf/entity_group.cpp
@@ -295,6 +298,7 @@ add_holoscan_library(core
     core/schedulers/gxf/greedy_scheduler.cpp
     core/schedulers/gxf/multithread_scheduler.cpp
     core/signal_handler.cpp
+    core/subgraph.cpp
     core/system/cpu_resource_monitor.cpp
     core/system/gpu_resource_monitor.cpp
     core/system/network_utils.cpp
@@ -302,6 +306,7 @@ add_holoscan_library(core
     core/system/topology.cpp
     utils/cuda_stream_handler.cpp  # keep here instead of separate lib for backwards compatibility with 1.0
     utils/operator_runner.cpp
+    utils/cuda/buffer.cpp
     ${CORE_GRPC_SRCS}
 )
 
@@ -310,6 +315,7 @@ target_link_libraries(core
         ${CMAKE_DL_LIBS}  # for dlopen
         holoscan::logger
         holoscan::profiler
+        holoscan::gpu_resident_cuda
         CUDA::cuda_driver
         CUDA::cudart
         fmt::fmt-header-only
@@ -341,6 +347,54 @@ target_include_directories(core
       $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/single_include>
       $<BUILD_INTERFACE:${concurrent_queue_SOURCE_DIR}>
       $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
+)
+
+# ##############################################################################
+# # Add library: holoscan::gpu_resident_cuda
+# ##############################################################################
+
+# Create a CUDA library for GPU resident CUDA kernels
+add_library(gpu_resident_cuda STATIC
+    core/executors/gpu_resident/gr_cuda_controller.cu
+)
+
+# Set target properties for the CUDA library
+set_target_properties(gpu_resident_cuda PROPERTIES
+    CUDA_SEPARABLE_COMPILATION ON
+    CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    POSITION_INDEPENDENT_CODE ON
+    OUTPUT_NAME ${HOLOSCAN_PACKAGE_NAME}_gpu_resident_cuda
+    SOVERSION ${PROJECT_VERSION_MAJOR}
+    VERSION ${PROJECT_VERSION}
+)
+
+# Add alias for the library
+add_library(${HOLOSCAN_PACKAGE_NAME}::gpu_resident_cuda ALIAS gpu_resident_cuda)
+
+# Set include directories
+target_include_directories(gpu_resident_cuda
+    PUBLIC
+        $<BUILD_INTERFACE:${HOLOSCAN_TOP}/include>
+        $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+    PRIVATE
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+)
+
+# Link CUDA libraries
+target_link_libraries(gpu_resident_cuda
+    PUBLIC
+        CUDA::cudart
+)
+
+# Set compile features
+target_compile_features(gpu_resident_cuda
+    PUBLIC cxx_std_17
+)
+
+# Add compile definitions if needed
+target_compile_definitions(gpu_resident_cuda
+    PRIVATE
+        $<$<CONFIG:Release>:NDEBUG>
 )
 
 # ##############################################################################

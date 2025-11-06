@@ -1720,17 +1720,69 @@ void HolovizOp::start() {
   if (window_size_callback_.has_value()) {
     viz::SetWindowSizeCallback(this, window_size_callback_handler);
   }
+
+  {
+    std::unique_lock<std::shared_mutex> lock(running_state_mutex_);
+    running_state_ = RunningState::STARTED;
+  }
 }
 
 void HolovizOp::stop() {
+  {
+    std::unique_lock<std::shared_mutex> lock(running_state_mutex_);
+    running_state_ = RunningState::STOPPED;
+  }
   if (instance_) {
     viz::Shutdown(instance_);
+    instance_ = nullptr;
   }
   if (is_holoviz_multiprocess_mutex_enabled_ && multiprocess_framedrop_waittime_ms_) {
     HOLOSCAN_LOG_INFO("Dropped {} frames due to unavailable mutex in multiprocess scenario.",
                       dropped_frame_count_);
   }
   holoviz_multiprocess_mutex_.reset();  // early cleanup
+}
+
+bool HolovizOp::wait_for_first_pixel_out(uint64_t timeout_ns) {
+  {
+    std::shared_lock<std::shared_mutex> lock(running_state_mutex_);
+    if (running_state_ == RunningState::STARTED) {
+      ScopedPushInstance scoped_instance(instance_);
+      return viz::WaitForDisplayEvent(viz::DisplayEventType::FIRST_PIXEL_OUT, timeout_ns);
+    }
+  }
+
+  if (running_state_ == RunningState::NOT_STARTED) {
+    // the operator is not yet started, just wait for the timeout and return false
+    std::this_thread::sleep_for(std::chrono::nanoseconds(timeout_ns));
+    return false;
+  }
+
+  // the operator is stopped, we need to return true to trigger the condition which called this wait
+  // so that the scheduler is able to stop the operator using the condition.
+  assert(running_state_ == RunningState::STOPPED);
+  return true;
+}
+
+bool HolovizOp::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
+  {
+    std::shared_lock<std::shared_mutex> lock(running_state_mutex_);
+    if (running_state_ == RunningState::STARTED) {
+      ScopedPushInstance scoped_instance(instance_);
+      return viz::WaitForPresent(present_id, timeout_ns);
+    }
+  }
+
+  if (running_state_ == RunningState::NOT_STARTED) {
+    // the operator is not yet started, just wait for the timeout and return false
+    std::this_thread::sleep_for(std::chrono::nanoseconds(timeout_ns));
+    return false;
+  }
+
+  // the operator is stopped, we need to return true to trigger the condition which called this wait
+  // so that the scheduler is able to stop the operator using the condition.
+  assert(running_state_ == RunningState::STOPPED);
+  return true;
 }
 
 void HolovizOp::disable_via_window_close() {
@@ -1744,7 +1796,6 @@ void HolovizOp::disable_via_window_close() {
     app->initiate_distributed_app_shutdown(fragment()->name());
   }
   window_close_condition_->disable_tick();
-  return;
 }
 
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,

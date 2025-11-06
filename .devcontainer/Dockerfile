@@ -34,8 +34,9 @@ ARG USER_GID=$USER_UID
 RUN if id "ubuntu" >/dev/null 2>&1; then touch /var/mail/ubuntu && chown ubuntu /var/mail/ubuntu && userdel -r ubuntu; fi
 # Install needed packages and setup non-root user. Use a separate RUN statement to add your own dependencies.
 COPY library-scripts/common-debian.sh /tmp/library-scripts/
-RUN yes | unminimize 2>&1 \
-    && bash /tmp/library-scripts/common-debian.sh "${INSTALL_ZSH}" "${USERNAME}" "${USER_UID}" "${USER_GID}" "${UPGRADE_PACKAGES}" "true" "true" \
+# Skip running 'yes | unminimize 2>&1' here to avoid upgrading/reinstalling packages,
+# which can result in version conflicts (e.g., cmake/cmake-data being updated from 3.x to 4.x).
+RUN bash /tmp/library-scripts/common-debian.sh "${INSTALL_ZSH}" "${USERNAME}" "${USER_UID}" "${USER_GID}" "${UPGRADE_PACKAGES}" "true" "true" \
     && apt-get clean -y && rm -rf /var/lib/apt/lists/* /tmp/library-scripts
 
 # Additional tooling

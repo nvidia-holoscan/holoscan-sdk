@@ -33,19 +33,23 @@ target_link_libraries(ping_distributed
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   # For iGPU, a call to `ucp_init_version` with CUDA_VISIBLE_DEVICES="" seems to cause a segfault.
   # Limit the following test case to x86_64 systems to avoid this.
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
     # emulate a x86_64 system without any GPUs by setting CUDA_VISIBLE_DEVICES=""
     add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_CPU_ONLY_TEST
-      COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed
-      WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+      COMMAND bash -c
+        "${CMAKE_CURRENT_BINARY_DIR}/ping_distributed 2>&1 | \
+        ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../bin/test_pattern_validation.py --strip-quotes \
+          --pass-pattern 'no CUDA-capable device is detected' \
+          --pass-pattern 'rx received message 10: Tensor key: tensor' \
+          --fail-pattern 'initialized independent of a parent entity'"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_CPU_ONLY_TEST PROPERTIES
       ENVIRONMENT "CUDA_VISIBLE_DEVICES="
-      PASS_REGULAR_EXPRESSION "no CUDA-capable device is detected"
-      PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
-      FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
     )
   endif()
 
@@ -69,13 +73,13 @@ if(BUILD_TESTING)
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_FLOW_TRACKING_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed --track
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_FLOW_TRACKING_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
-    PASS_REGULAR_EXPRESSION "Fragment: fragment2"
-    PASS_REGULAR_EXPRESSION "Fragment: fragment1"
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/ping_distributed --track 2>&1 | \
+      ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../bin/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Data Flow Tracking Results' \
+        --pass-pattern 'Fragment: fragment1' \
+        --pass-pattern 'Fragment: fragment2'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST

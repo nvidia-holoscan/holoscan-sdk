@@ -22,8 +22,14 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <sstream>
 #include <string>
+
+// Forward declaration to avoid including <cuda_runtime.h>
+extern "C" {
+typedef struct CUstream_st* cudaStream_t;
+}
 
 #include "holoscan/core/resources/async_data_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
@@ -89,12 +95,14 @@ class AsyncConsoleBackend : public AsyncDataLoggerBackend {
   /**
    * @brief Serialize data entry content
    */
-  std::string serialize_data_content(const DataEntry& entry) const;
+  std::string serialize_data_content(const DataEntry& entry,
+                                     std::optional<cudaStream_t> stream = std::nullopt) const;
 
   /**
    * @brief Serialize large data entry content
    */
-  std::string serialize_large_data_content(const DataEntry& entry) const;
+  std::string serialize_large_data_content(const DataEntry& entry,
+                                           std::optional<cudaStream_t> stream = std::nullopt) const;
 };
 
 }  // namespace data_loggers

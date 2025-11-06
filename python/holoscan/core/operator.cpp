@@ -38,6 +38,7 @@
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "kwarg_handling.hpp"
 #include "operator_pydoc.hpp"
 
@@ -231,6 +232,30 @@ void init_operator(py::module_& m) {
   operator_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),
            doc::Operator::doc_Operator_args_kwargs)
+      .def(py::init([](py::object op,
+                       std::shared_ptr<Subgraph>
+                           subgraph,
+                       const py::args& args,
+                       const py::kwargs& kwargs) {
+             // Check if subgraph is nullptr (None from Python)
+             if (!subgraph) {
+               throw py::type_error("subgraph parameter cannot be None");
+             }
+
+             // Extract the fragment from the subgraph
+             Fragment* fragment = subgraph->fragment();
+
+             // Create the PyOperator in the Subgraph's fragment
+             auto py_op = std::make_shared<PyOperator>(op, fragment, args, kwargs);
+
+             // Apply qualified naming using the subgraph's instance name
+             std::string qualified_name = subgraph->get_qualified_name(py_op->name(), "operator");
+             py_op->name(qualified_name);
+
+             return py_op;
+           }),
+           "op"_a,
+           "subgraph"_a)
       .def_property(
           "name",
           py::overload_cast<>(&Operator::name, py::const_),

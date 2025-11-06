@@ -245,18 +245,20 @@ class HolovizCameraApp : public holoscan::Application {
    * @param count Limits the number of frames to show before the application ends.
    *   Set to -1 by default. Any positive integer will limit on the number of frames displayed.
    */
-  explicit HolovizCameraApp(uint64_t count) : count_(count) {}
+  explicit HolovizCameraApp(int64_t count) : count_(count) {}
 
   void compose() override {
     using namespace holoscan;
 
     auto source = make_operator<ops::GeometrySourceOp>(
         "source",
-        // limit frame count
-        make_condition<CountCondition>("frame_limit", count_),
         // run at 60 Hz
         make_condition<PeriodicCondition>("frame_limiter",
                                           Arg("recess_period", std::string("60Hz"))));
+    // Limit the total number of frames (if count_ is positive)
+    if (count_ >= 0) {
+      source->add_arg(make_condition<CountCondition>("frame_limit", count_));
+    }
 
     // build the input spec list
     std::vector<ops::HolovizOp::InputSpec> input_spec;
@@ -297,7 +299,7 @@ class HolovizCameraApp : public holoscan::Application {
   }
 
  private:
-  uint64_t count_ = -1;
+  int64_t count_ = -1;
 };
 
 int main(int argc, char** argv) {
@@ -307,7 +309,7 @@ int main(int argc, char** argv) {
                                   {"count", required_argument, nullptr, 'c'},
                                   {nullptr, 0, nullptr, 0}};
   // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
-  uint64_t count = -1;
+  int64_t count = -1;
   while (true) {
     int option_index = 0;
     // NOLINTBEGIN(concurrency-mt-unsafe)
@@ -334,7 +336,7 @@ int main(int argc, char** argv) {
         return EXIT_SUCCESS;
 
       case 'c':
-        count = std::stoull(argument);
+        count = std::stoll(argument);
         break;
       default:
         throw std::runtime_error(fmt::format("Unhandled option `{}`", static_cast<char>(c)));

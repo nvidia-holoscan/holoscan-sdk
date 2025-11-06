@@ -97,19 +97,23 @@ class BasicConsoleLogger : public DataLoggerResource {
   bool log_data(const std::any& data, const std::string& unique_id,
                 int64_t acquisition_timestamp = -1,
                 const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                std::optional<cudaStream_t> stream = std::nullopt) override;
   bool log_tensor_data(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
                        int64_t acquisition_timestamp = -1,
                        const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                       IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                       IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                       std::optional<cudaStream_t> stream = std::nullopt) override;
   bool log_tensormap_data(const TensorMap& tensor_map, const std::string& unique_id,
                           int64_t acquisition_timestamp = -1,
                           const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                          IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                          IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                          std::optional<cudaStream_t> stream = std::nullopt) override;
   bool log_backend_specific(const std::any& data, const std::string& unique_id,
                             int64_t acquisition_timestamp = -1,
                             const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                            IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                            IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                            std::optional<cudaStream_t> stream = std::nullopt) override;
 
  private:
   Parameter<std::shared_ptr<SimpleTextSerializer>> serializer_;

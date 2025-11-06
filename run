@@ -948,6 +948,10 @@ test() {
             shift
             shift
         ;;
+        --no-xvfb)
+            local no_xvfb="true"
+            shift
+        ;;
         *)
             extra_args+=("$1")
             shift
@@ -982,7 +986,11 @@ test() {
 	#   Additionally, `xvfb-run -a docker run ...` is not used, as no solution was found
 	#   that could reliably set the `-e DISPLAY` parameter using this approach.
 	#
-    local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
+    if [ -z ${no_xvfb-} ]; then
+        local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
+    else
+        local run_headless=""
+    fi
 
     # Run ctest and capture output while also displaying it in real-time
     local ctest_output
@@ -997,17 +1005,17 @@ test() {
         --cap-drop=NET_BIND_SERVICE \
         ${extra_args[@]} \
         --run-cmd "$preload $run_headless ctest . $test_regex_flag --timeout $timeout --output-on-failure $verbose $options" 2>&1 | tee "$temp_output"
-    
+
     ctest_exit_code=${PIPESTATUS[0]}
     ctest_output=$(cat "$temp_output")
     rm -f "$temp_output"
-    
+
     # Check if ctest output contains "No tests were found"
     if echo "$ctest_output" | grep -q "No tests were found"; then
         c_echo_err R "Error: No tests were found!"
         return 1
     fi
-    
+
     # Return the original ctest exit code
     return $ctest_exit_code
 }
@@ -1274,18 +1282,79 @@ launch() {
 vscode_desc() { c_echo 'Launch VSCode in DevContainer
 
 Launch a VSCode instance in a Docker container with the development environment.
+If `cursor` command is available, Cursor will be launched instead.
 
 Arguments:
   --parallel, -j <njobs> : Specify the maximum number of concurrent processes to be used when building
         Default: maximum (number of CPUs, using 'nproc')
         Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
+  --ide <ide_name> : Specify the IDE to use
+        Default: vscode
+        Supported IDEs: vscode, vscode-insiders, cursor
+  --cmd <path> : Specify the command or path to the IDE binary (such as 'code')
+  --code: Launch VSCode for DevContainer. (using `code` command)
+  --cursor: Launch Cursor for DevContainer. (using `cursor` command)
 '
 }
 vscode() {
     local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
+    local ide_name="vscode"
+    local ide_bin="code"
 
-    if ! command -v code > /dev/null; then
-        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
+    # Check if cursor command is available
+    if command -v cursor &> /dev/null; then
+        ide_name="cursor"
+        ide_bin="cursor"
+    fi
+
+    # Parse CLI arguments next
+    local args=("$@")
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --parallel|-j)
+                build_njobs="$2"
+                shift 2
+                ;;
+            --ide)
+                ide_name="$2"
+                shift 2
+                if [ "$ide_name" == "vscode" ]; then
+                    ide_bin="code"
+                elif [ "$ide_name" == "vscode-insiders" ]; then
+                    ide_bin="code-insiders"
+                elif [ "$ide_name" == "cursor" ]; then
+                    ide_bin="cursor"
+                else
+                    ide_bin="$ide_name"
+                    echo_c W "Using binary '${ide_bin}' for VSCode-based IDE"
+                fi
+                ;;
+            --cmd)
+                ide_bin="$2"
+                shift 2
+                ;;
+            --code)
+                ide_name="vscode"
+                ide_bin="code"
+                shift
+                ;;
+            --cursor)
+                ide_name="cursor"
+                ide_bin="cursor"
+                shift
+                ;;
+            *)
+                # If $1 starts with a dash, it's an unknown option
+                if [[ $1 == -* ]]; then
+                    c_echo_err R "Unknown option: $1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if ! command -v "${ide_bin}" > /dev/null; then
+        fatal R "No '${ide_bin}' available. Please install " W "VSCode or Cursor" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
     fi
 
     local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
@@ -1298,24 +1367,6 @@ vscode() {
         # workspace folder.
         run_command export HOLOSCAN_PUBLIC_FOLDER=$(realpath --relative-to=${workspace_path} ${TOP})
     fi
-
-    # Parse CLI arguments next
-    local args=("$@")
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --parallel|-j)
-                build_njobs="$2"
-                shift 2
-                ;;
-            *)
-                # If $1 starts with a dash, it's an unknown option
-                if [[ $1 == -* ]]; then
-                    c_echo_err R "Unknown option: $1"
-                fi
-                shift
-                ;;
-        esac
-    done
 
     # These environment variables will be passed to the container via `devcontainer.json`
     # during the creation of the VSCode Docker dev container.
@@ -1331,7 +1382,13 @@ vscode() {
     # Install the VSCode Remote Development extension.
     # Checking if the extension is already installed is slow, so we always install it so that
     # the installation can be skipped if the extension is already installed.
-    run_command code --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
+    if [ "${ide_name}" == "vscode" ] || [ "${ide_name}" == "vscode-insiders" ]; then
+        run_command "${ide_bin}" --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
+    elif [ "${ide_name}" == "cursor" ]; then
+        run_command "${ide_bin}" --force --install-extension anysphere.remote-containers
+        # Install C/C++ themes as a host extension
+        run_command "${ide_bin}" --force --install-extension ms-vscode.cpptools-themes
+    fi
 
     # For now, there is no easy way to launch DevContainer directly from the command line.
     # ('devcontainer' CLI is only available after manually executing 'Remote-Containers: Install devcontainer CLI' command)
@@ -1340,7 +1397,7 @@ vscode() {
     workspace_path_hex=$(echo -n ${workspace_path} | xxd -p)
     workspace_path_hex="${workspace_path_hex//[[:space:]]/}"
     c_echo B "Local workspace path: " W "${workspace_path} (${workspace_path_hex})"
-    run_command code --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
+    run_command "${ide_bin}" --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
 }
 
 vscode_remote_desc() { c_echo 'Attach to the existing VSCode DevContainer

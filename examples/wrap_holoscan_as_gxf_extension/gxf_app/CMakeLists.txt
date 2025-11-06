@@ -41,16 +41,17 @@ endif()
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST
-           COMMAND ${CMAKE_CURRENT_BINARY_DIR}/test_holoscan_as_gxf_ext
-           WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Number of pings received: 10")
-  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "PingVarCustomNativeRes: custom_int_type=4, float_type=3.5, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null")
-  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "PingVarTxNativeOp: custom_resource=non-null, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null")
-  set_tests_properties(EXAMPLE_HOLOSCAN_AS_GXF_EXT_TEST PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "ERROR;Error;error")
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/test_holoscan_as_gxf_ext 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Number of pings received: 10' \
+        --pass-pattern 'PingVarCustomNativeRes: custom_int_type=4, float_type=3.5, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null' \
+        --pass-pattern 'PingVarTxNativeOp: custom_resource=non-null, numeric=1, numeric_array=\\[10, 20, 30\\], optional_numeric=-1, optional_numeric_array=\\[\\], boolean=true, optional_void_ptr=null, string=string text, optional_resource=null' \
+        --fail-pattern 'ERROR' \
+        --fail-pattern 'Error' \
+        --fail-pattern 'error'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
 endif()

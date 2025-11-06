@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -165,6 +165,25 @@ class FramebufferSequence {
    * @param cmd command buffer to use
    */
   void cmd_update_barriers(vk::CommandBuffer cmd) const;
+
+  /**
+   * Block until either the present_id is greater than or equal to the current present id, or
+   * timeout_ns nanoseconds passes. The present ID is initially zero and increments after each
+   * present.
+   *
+   * @param present_id the presentation presentId to wait for
+   * @param timeout_ns timeout in nanoseconds
+   * @return true if the present_id is greater than or equal to the current present id, false if
+   * timeout_ns nanoseconds passes
+   */
+  vk::Result wait_for_present(uint64_t present_id, uint64_t timeout_ns);
+
+  /**
+   * Get the swapchain vblank counter.
+   *
+   * @return swapchain vblank counter
+   */
+  uint64_t get_swapchain_vblank_counter() const;
 
  private:
   vk::Device device_;

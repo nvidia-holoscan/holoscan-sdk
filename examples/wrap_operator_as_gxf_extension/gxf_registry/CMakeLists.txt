@@ -22,9 +22,9 @@ if(BUILD_TESTING AND HOLOSCAN_REGISTER_GXF_EXTENSIONS)
         COMMAND registry extn info -n PingRxNativeOpExtension
     )
     set_tests_properties(gxf_registry_inspection_test PROPERTIES
-        PASS_REGULAR_EXPRESSION "name :        PingRxNativeOpExtension"
-        PASS_REGULAR_EXPRESSION "uuid :        2e62c3ee-c4f0-4784-aed1-83505e49dc73"
-        PASS_REGULAR_EXPRESSION "version :     ${holoscan_VERSION}"
+        # PASS_REGULAR_EXPRESSION "name :        PingRxNativeOpExtension"
+        # PASS_REGULAR_EXPRESSION "uuid :        2e62c3ee-c4f0-4784-aed1-83505e49dc73"
+        # PASS_REGULAR_EXPRESSION "version :     ${holoscan_VERSION}"
         PASS_REGULAR_EXPRESSION "myexts::PingRxNativeOpCodelet :"
     )
 

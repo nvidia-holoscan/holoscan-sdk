@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,19 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./entity_serializers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -41,18 +45,13 @@ class PyUcxEntitySerializer : public UcxEntitySerializer {
 
   // Define a constructor that fully initializes the object.
   explicit PyUcxEntitySerializer(
-      Fragment* fragment,
+      std::variant<Fragment*, Subgraph*> fragment_or_subgraph,
       // std::vector<std::shared_ptr<holoscan::Resource>> component_serializers = {},
       bool verbose_warning = false, const std::string& name = "ucx_entity_buffer")
       : UcxEntitySerializer(ArgList{
             Arg{"verbose_warning", verbose_warning},
         }) {
-    // if (component_serializers.size() == 0) { this->add_arg(Arg{"component_serializers",
-    // component_serializers}); }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -62,7 +61,7 @@ void init_entity_serializers(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<UcxEntitySerializer>>(
       m, "UcxEntitySerializer", doc::UcxEntitySerializer::doc_UcxEntitySerializer)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     // std::vector<std::shared_ptr<holoscan::Resource>>,
                     bool,
                     const std::string&>(),

@@ -69,10 +69,12 @@ endif()
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_CPP_ACTIVATION_MAP_TEST
     COMMAND bash -c
       "${CMAKE_CURRENT_BINARY_DIR}/activation_map --config ${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml 2>&1 | \
-       python3 ${Holoscan-examples_SOURCE_DIR}/../scripts//test_pattern_validation.py \
+       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
          --pass-pattern 'Model first, second, third was selected to infer' \
          --pass-pattern '7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7' \
          --pass-pattern '8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8' \

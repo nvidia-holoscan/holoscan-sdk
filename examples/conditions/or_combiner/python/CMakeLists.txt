@@ -30,10 +30,18 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_MULTI_PORT_OR_COMBINER_TEST
-    COMMAND python3 multi_port_or_combiner.py
+    COMMAND ${Python3_EXECUTABLE} multi_port_or_combiner.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTI_PORT_OR_COMBINER_TEST PROPERTIES

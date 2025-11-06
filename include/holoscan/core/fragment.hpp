@@ -18,6 +18,8 @@
 #ifndef HOLOSCAN_CORE_FRAGMENT_HPP
 #define HOLOSCAN_CORE_FRAGMENT_HPP
 
+#include <fmt/format.h>
+
 #include <future>        // for std::future
 #include <iostream>      // for std::cout
 #include <memory>        // for std::shared_ptr
@@ -40,9 +42,11 @@
 #include "executor.hpp"
 #include "fragment_service_provider.hpp"
 #include "graph.hpp"
+#include "io_spec.hpp"
 #include "network_context.hpp"
 #include "resources/data_logger.hpp"
 #include "scheduler.hpp"
+#include "subgraph.hpp"
 
 namespace holoscan {
 
@@ -59,11 +63,14 @@ class ComponentBase;
 /// The name of the start operator. Used to identify the start operator in the graph.
 constexpr static const char* kStartOperatorName = "<|start|>";
 
+// NOLINTBEGIN(whitespace/indent_namespace)
+
 // key = operator name,  value = (input port names, output port names, multi-receiver names)
 using FragmentPortMap =
     std::unordered_map<std::string,
                        std::tuple<std::unordered_set<std::string>, std::unordered_set<std::string>,
                                   std::unordered_set<std::string>>>;
+// NOLINTEND(whitespace/indent_namespace)
 
 // Data structure containing port information for multiple fragments. Fragments are composed by
 // the workers and port information is sent back to the driver for addition to this map.
@@ -83,6 +90,64 @@ constexpr bool kDefaultMetadataEnabled = true;
  */
 class Fragment : public FragmentServiceProvider {
  public:
+  /**
+   * @brief Accessor class for GPU-resident specific functions of a Fragment.
+   *
+   * This class provides a convenient interface for accessing GPU-resident specific
+   * functionality of a Fragment. It acts as a mediator to expose GPU-resident operations
+   * through a cleaner API pattern: `fragment->gpu_resident().function()`.
+   *
+   * This is a lightweight accessor class that maintains a reference to the parent Fragment.
+   */
+  class GPUResidentAccessor {
+   public:
+    /**
+     * @brief Construct a new GPUResidentAccessor object
+     *
+     * @param fragment Pointer to the parent Fragment
+     */
+    explicit GPUResidentAccessor(Fragment* fragment) : fragment_(fragment) {}
+
+    /**
+     * @brief Set the timeout for GPU-resident execution.
+     *
+     * GPU-resident execution occurs asynchronously. This sets the timeout so that
+     * execution is stopped after it exceeds the specified duration.
+     *
+     * @param timeout_ms The timeout in milliseconds.
+     */
+    void timeout_ms(unsigned long long timeout_ms);
+
+    /**
+     * @brief Send a tear down signal to the GPU-resident CUDA graph.
+     *
+     * The timeout has to be set to zero for this to work for now.
+     */
+    void tear_down();
+
+    /**
+     * @brief Check if the result of a single iteration of the GPU-resident CUDA graph is ready.
+     *
+     * @return true if the result is ready, false otherwise.
+     */
+    bool result_ready();
+
+    /**
+     * @brief Inform the GPU-resident CUDA graph that the data is ready for the main workload.
+     */
+    void data_ready();
+
+    /**
+     * @brief Check if the GPU-resident CUDA graph has been launched.
+     *
+     * @return true if the CUDA graph has been launched, false otherwise.
+     */
+    bool is_launched();
+
+   private:
+    Fragment* fragment_;  ///< Pointer to the parent Fragment
+  };
+
   Fragment() = default;
   ~Fragment() override;
 
@@ -228,6 +293,13 @@ class Fragment : public FragmentServiceProvider {
    * @return The shared pointer to the graph of the fragment.
    */
   std::shared_ptr<OperatorGraph> graph_shared();
+
+  /**
+   * @brief Set the executor of the fragment.
+   *
+   * @param executor The executor to be added.
+   */
+  void executor(const std::shared_ptr<Executor>& executor);
 
   /**
    * @brief Get the executor of the fragment.
@@ -926,6 +998,148 @@ class Fragment : public FragmentServiceProvider {
       const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
 
   /**
+   * @brief Create and compose a Subgraph
+   *
+   * Creates a Subgraph that directly populates this Fragment's operator graph.
+   * The Subgraph is composed immediately and its operators are added with
+   * qualified names to the Fragment's main graph.
+   *
+   * @tparam SubgraphT The subgraph class type (must inherit from Subgraph)
+   * @param instance_name Unique name for this instance (used for operator qualification)
+   * @param args Additional arguments to pass to the subgraph constructor
+   * @return Shared pointer to the composed Subgraph
+   */
+  template <typename SubgraphT, typename... ArgsT>
+  std::shared_ptr<SubgraphT> make_subgraph(const std::string& instance_name, ArgsT&&... args) {
+    // Check for duplicate subgraph instance names
+    if (subgraph_instance_names_.find(instance_name) != subgraph_instance_names_.end()) {
+      throw std::runtime_error(
+          fmt::format("Fragment::make_subgraph: Duplicate subgraph instance name '{}'. "
+                      "Each subgraph instance must have a unique name within the same fragment.",
+                      instance_name));
+    }
+
+    // Register the instance name
+    subgraph_instance_names_.insert(instance_name);
+
+    // Create Subgraph with Fragment* and instance_name, plus any additional args
+    auto subgraph = std::make_shared<SubgraphT>(this, instance_name, std::forward<ArgsT>(args)...);
+
+    // Compose immediately - operators added directly to Fragment's main graph
+    if (!subgraph->is_composed()) {
+      subgraph->compose();
+      subgraph->set_composed(true);
+    }
+
+    return subgraph;
+  }
+
+  /**
+   * @brief Connect Operator to Subgraph
+   *
+   * @param upstream_op The upstream operator
+   * @param downstream_subgraph The downstream subgraph
+   * @param port_pairs Port connections: {upstream_port, subgraph_interface_port}
+   */
+  virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        std::set<std::pair<std::string, std::string>> port_pairs = {});
+
+  /**
+   * @brief Connect Subgraph to Operator
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_op The downstream operator
+   * @param port_pairs Port connections: {subgraph_interface_port, downstream_port}
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        std::set<std::pair<std::string, std::string>> port_pairs = {});
+
+  /**
+   * @brief Connect Subgraph to Subgraph
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_subgraph The downstream subgraph
+   * @param port_pairs Port connections: {upstream_interface_port, downstream_interface_port}
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        std::set<std::pair<std::string, std::string>> port_pairs = {});
+
+  /**
+   * @brief Connect Operator to Subgraph with connector type
+   *
+   * @param upstream_op The upstream operator
+   * @param downstream_subgraph The downstream subgraph
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Connect Operator to Subgraph with port pairs and connector type
+   *
+   * @param upstream_op The upstream operator
+   * @param downstream_subgraph The downstream subgraph
+   * @param port_pairs Port connections: {upstream_port, subgraph_interface_port}
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        std::set<std::pair<std::string, std::string>> port_pairs,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Connect Subgraph to Operator with connector type
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_op The downstream operator
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Connect Subgraph to Operator with port pairs and connector type
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_op The downstream operator
+   * @param port_pairs Port connections: {subgraph_interface_port, downstream_port}
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Operator>& downstream_op,
+                        std::set<std::pair<std::string, std::string>> port_pairs,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Connect Subgraph to Subgraph with connector type
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_subgraph The downstream subgraph
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Connect Subgraph to Subgraph with port pairs and connector type
+   *
+   * @param upstream_subgraph The upstream subgraph
+   * @param downstream_subgraph The downstream subgraph
+   * @param port_pairs Port connections: {upstream_interface_port, downstream_interface_port}
+   * @param connector_type The connector type
+   */
+  virtual void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                        const std::shared_ptr<Subgraph>& downstream_subgraph,
+                        std::set<std::pair<std::string, std::string>> port_pairs,
+                        const IOSpec::ConnectorType connector_type);
+
+  /**
    * @brief Compose a graph.
    *
    * The graph is composed by adding operators and flows in this method.
@@ -1082,11 +1296,39 @@ class Fragment : public FragmentServiceProvider {
    */
   const std::vector<std::shared_ptr<DataLogger>>& data_loggers() const { return data_loggers_; }
 
+  /**
+   * @brief Check if the fragment has GPU-resident operators.
+   *
+   * @return True if the fragment has GPU-resident operators, false otherwise.
+   */
+  bool is_gpu_resident() const { return is_gpu_resident_; }
+
+  /**
+   * @brief Get an accessor for GPU-resident specific functions.
+   *
+   * This method returns a GPUResidentAccessor object that provides convenient access to
+   * GPU-resident specific functionality. It allows for a cleaner API pattern:
+   *
+   * ```cpp
+   * fragment->gpu_resident().timeout_ms(1000);
+   * fragment->gpu_resident().data_ready();
+   * fragment->gpu_resident().result_ready();
+   * fragment->gpu_resident().is_launched();
+   * fragment->gpu_resident().tear_down();
+   * ```
+   *
+   * @return A GPUResidentAccessor object for accessing GPU-resident functions.
+   * @throws RuntimeError if the fragment does not have GPU-resident operators.
+   */
+  GPUResidentAccessor gpu_resident();
+
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
   friend class gxf::GXFExecutor;
   friend class holoscan::ComponentBase;  // Allow ComponentBase to access internal setup
+  friend class GPUResidentAccessor;      // Allow GPUResidentAccessor to access
+                                         // get_gpu_resident_executor
 
   template <typename ConfigT, typename... ArgsT>
   std::shared_ptr<Config> make_config(ArgsT&&... args) {
@@ -1098,14 +1340,13 @@ class Fragment : public FragmentServiceProvider {
     return std::make_shared<GraphT>();
   }
 
-  template <typename ExecutorT>
-  std::shared_ptr<Executor> make_executor() {
-    return std::make_shared<ExecutorT>(this);
-  }
-
+  /**
+   * @brief Create and assign an Executor to the fragment
+   */
   template <typename ExecutorT, typename... ArgsT>
   std::shared_ptr<Executor> make_executor(ArgsT&&... args) {
-    return std::make_shared<ExecutorT>(std::forward<ArgsT>(args)...);
+    executor_ = std::make_shared<ExecutorT>(this, std::forward<ArgsT>(args)...);
+    return executor_;
   }
 
   /// Cleanup helper that will be called by the executor prior to destroying any backend context
@@ -1137,6 +1378,106 @@ class Fragment : public FragmentServiceProvider {
    * @param component Pointer to the ComponentBase instance to configure. Must not be nullptr.
    */
   void setup_component_internals(ComponentBase* component);
+
+  /**
+   * @brief Resolve Subgraph interface port to actual operator and port
+   *
+   * @param subgraph The Subgraph to resolve the port in
+   * @param interface_port The interface port name
+   * @return Pair of (operator, actual_port_name) or (nullptr, "") if not found
+   */
+  std::pair<std::shared_ptr<Operator>, std::string> resolve_subgraph_port(
+      const std::shared_ptr<Subgraph>& subgraph, const std::string& interface_port);
+
+  // ========== Helper functions for port auto-resolution ==========
+
+  /**
+   * @brief Get output port names from an operator
+   */
+  std::vector<std::string> get_operator_output_ports(const std::shared_ptr<Operator>& op);
+
+  /**
+   * @brief Get input port names from an operator
+   */
+  std::vector<std::string> get_operator_input_ports(const std::shared_ptr<Operator>& op);
+
+  /**
+   * @brief Get output interface port names from a subgraph
+   */
+  std::vector<std::string> get_subgraph_output_ports(const std::shared_ptr<Subgraph>& subgraph);
+
+  /**
+   * @brief Get input interface port names from a subgraph
+   */
+  std::vector<std::string> get_subgraph_input_ports(const std::shared_ptr<Subgraph>& subgraph);
+
+  /**
+   * @brief Attempt auto-resolution of port pairs between two entities
+   *
+   * @param upstream_ports Output ports from upstream entity
+   * @param downstream_ports Input ports from downstream entity
+   * @param upstream_name Name of upstream entity (for error messages)
+   * @param downstream_name Name of downstream entity (for error messages)
+   * @param port_pairs Output parameter: will contain the resolved port pair if successful
+   * @throws std::runtime_error if auto-resolution fails
+   */
+  void try_auto_resolve_ports(const std::vector<std::string>& upstream_ports,
+                              const std::vector<std::string>& downstream_ports,
+                              const std::string& upstream_name, const std::string& downstream_name,
+                              std::set<std::pair<std::string, std::string>>& port_pairs);
+
+  /**
+   * @brief Resolve and create flows for operator-to-subgraph connections
+   */
+  void resolve_and_create_op_to_subgraph_flows(
+      const std::shared_ptr<Operator>& upstream_op,
+      const std::shared_ptr<Subgraph>& downstream_subgraph,
+      const std::set<std::pair<std::string, std::string>>& port_pairs,
+      const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Resolve and create flows for subgraph-to-operator connections
+   */
+  void resolve_and_create_subgraph_to_op_flows(
+      const std::shared_ptr<Subgraph>& upstream_subgraph,
+      const std::shared_ptr<Operator>& downstream_op,
+      const std::set<std::pair<std::string, std::string>>& port_pairs,
+      const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Resolve and create flows for subgraph-to-subgraph connections
+   */
+  void resolve_and_create_subgraph_to_subgraph_flows(
+      const std::shared_ptr<Subgraph>& upstream_subgraph,
+      const std::shared_ptr<Subgraph>& downstream_subgraph,
+      const std::set<std::pair<std::string, std::string>>& port_pairs,
+      const IOSpec::ConnectorType connector_type);
+
+  // ========== Helper functions for control flow connections ==========
+
+  /**
+   * @brief Validate prerequisites for establishing a control flow connection
+   *
+   * @param upstream_op The upstream operator
+   * @param downstream_op The downstream operator
+   * @param connector_type The connector type (cannot be kAsyncBuffer for control flow)
+   * @return true if validation passes, false otherwise (error message will be logged)
+   */
+  bool validate_control_flow_prerequisites(const std::shared_ptr<Operator>& upstream_op,
+                                           const std::shared_ptr<Operator>& downstream_op,
+                                           const IOSpec::ConnectorType connector_type);
+
+  /**
+   * @brief Create and register a control flow connection between two operators
+   *
+   * This helper creates the port map, sets self_shared on both operators,
+   * adds the flow to the graph, and registers it with the executor.
+   *
+   * @param upstream_op The upstream operator
+   * @param downstream_op The downstream operator
+   */
+  void create_control_flow_connection(const std::shared_ptr<Operator>& upstream_op,
+                                      const std::shared_ptr<Operator>& downstream_op);
 
   // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
   //       of the executor's context.
@@ -1172,7 +1513,82 @@ class Fragment : public FragmentServiceProvider {
 
   // The default green context pool in the fragment.
   std::vector<std::shared_ptr<CudaGreenContextPool>> green_context_pools_;
+
+  // Track subgraph instance names to detect duplicates
+  std::unordered_set<std::string> subgraph_instance_names_;
+
+ private:
+  bool verify_gpu_resident_connections(const std::shared_ptr<Operator>& upstream_op,
+                                       const std::shared_ptr<Operator>& downstream_op,
+                                       const std::shared_ptr<OperatorEdgeDataElementType> port_map);
+
+  /**
+   * @brief Helper function to get GPU resident executor with error handling
+   *
+   * @param func_name The name of the calling function (typically __func__)
+   * @return std::shared_ptr<GPUResidentExecutor> The GPU resident executor
+   * @throws RuntimeError if casting fails
+   */
+  std::shared_ptr<GPUResidentExecutor> get_gpu_resident_executor(const char* func_name);
+
+  bool is_gpu_resident_ = false;  ///< Whether the fragment is a GPU resident fragment.
 };
+
+// Subgraph template method implementations - placed here to resolve circular dependency
+// These methods depend on the full Fragment definition being available
+
+template <typename OperatorT, typename StringT, typename... ArgsT, typename>
+std::shared_ptr<OperatorT> Subgraph::make_operator(StringT name, ArgsT&&... args) {
+  if (!fragment_) {
+    throw std::runtime_error(
+        "Subgraph::make_operator called but fragment_ is nullptr. "
+        "Subgraph must be created via Fragment::make_subgraph to set the target fragment.");
+  }
+  auto qualified_name = get_qualified_name(std::string(name), "operator");
+  return fragment_->make_operator<OperatorT>(qualified_name, std::forward<ArgsT>(args)...);
+}
+
+template <typename OperatorT, typename... ArgsT>
+std::shared_ptr<OperatorT> Subgraph::make_operator(ArgsT&&... args) {
+  auto qualified_name = get_qualified_name("noname_operator", "operator");
+  return make_operator<OperatorT>("noname_operator", std::forward<ArgsT>(args)...);
+}
+
+template <typename ConditionT, typename StringT, typename... ArgsT, typename>
+std::shared_ptr<ConditionT> Subgraph::make_condition(StringT name, ArgsT&&... args) {
+  if (!fragment_) {
+    throw std::runtime_error(
+        "Subgraph::make_condition called but fragment_ is nullptr. "
+        "Subgraph must be created via Fragment::make_subgraph to set the target fragment.");
+  }
+
+  // Use qualified name to avoid conflicts between Subgraph instances
+  auto qualified_name = get_qualified_name(std::string(name), "condition");
+  return fragment_->make_condition<ConditionT>(qualified_name, std::forward<ArgsT>(args)...);
+}
+
+template <typename ConditionT, typename... ArgsT>
+std::shared_ptr<ConditionT> Subgraph::make_condition(ArgsT&&... args) {
+  return make_condition<ConditionT>("noname_condition", std::forward<ArgsT>(args)...);
+}
+
+template <typename ResourceT, typename StringT, typename... ArgsT, typename>
+std::shared_ptr<ResourceT> Subgraph::make_resource(StringT name, ArgsT&&... args) {
+  if (!fragment_) {
+    throw std::runtime_error(
+        "Subgraph::make_resource called but fragment_ is nullptr. "
+        "Subgraph must be created via Fragment::make_subgraph to set the target fragment.");
+  }
+
+  // Use qualified name to avoid conflicts between Subgraph instances
+  auto qualified_name = get_qualified_name(std::string(name), "resource");
+  return fragment_->make_resource<ResourceT>(qualified_name, std::forward<ArgsT>(args)...);
+}
+
+template <typename ResourceT, typename... ArgsT>
+std::shared_ptr<ResourceT> Subgraph::make_resource(ArgsT&&... args) {
+  return make_resource<ResourceT>("noname_resource", std::forward<ArgsT>(args)...);
+}
 
 }  // namespace holoscan
 

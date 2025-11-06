@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,16 +16,20 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./gxf_component_resource_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/gxf_component_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 #include "../operators/operator_util.hpp"
 
@@ -44,7 +48,8 @@ class PyGXFComponentResource : public GXFComponentResource {
   using GXFComponentResource::GXFComponentResource;
 
   // Define a constructor that fully initializes the object.
-  PyGXFComponentResource(const py::object& component, Fragment* fragment,
+  PyGXFComponentResource(const py::object& component,
+                         const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                          const std::string& gxf_typename, const std::string& name,
                          const py::kwargs& kwargs)
       : GXFComponentResource(gxf_typename.c_str()),
@@ -54,8 +59,10 @@ class PyGXFComponentResource : public GXFComponentResource {
     // Holoscan resources don't accept the positional arguments for Condition and Resource.
     add_kwargs(this, kwargs);
 
-    name_ = name;
-    fragment_ = fragment;
+    auto [frag_ptr, qualified_name] =
+        get_fragment_ptr_name_pair(fragment_or_subgraph, name, "resource");
+    fragment_ = frag_ptr;
+    name_ = qualified_name;
   }
 
   void initialize() override {
@@ -95,7 +102,7 @@ void init_gxf_component_resource(py::module_& m) {
       m, "GXFComponentResource", doc::GXFComponentResource::doc_GXFComponentResource)
       .def(py::init<>())
       .def(py::init<py::object,
-                    Fragment*,
+                    std::variant<Fragment*, Subgraph*>,
                     const std::string&,
                     const std::string&,
                     const py::kwargs&>(),

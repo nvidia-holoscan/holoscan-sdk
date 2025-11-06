@@ -49,8 +49,9 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_DISTRIBUTED_POSE_TREE_TEST
-    COMMAND python3 distributed_pose_tree.py
+    COMMAND ${Python3_EXECUTABLE} distributed_pose_tree.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_DISTRIBUTED_POSE_TREE_TEST PROPERTIES

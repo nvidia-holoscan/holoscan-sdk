@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,8 +40,8 @@ used for operators which do not consume all messages from the queue.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 min_size : int
     The total number of messages over a set of input channels needed
     to permit execution.

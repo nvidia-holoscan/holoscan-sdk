@@ -178,7 +178,7 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "trt_opt_profile",
              "TensorRT Opt Profile",
              "Optimization profile for input tensors",
-             {});
+             DataVecMap());
   spec.param(allocator_, "allocator", "Allocator", "Output Allocator");
   spec.param(infer_on_cpu_, "infer_on_cpu", "Inference on CPU", "Use CPU.", false);
   spec.param(is_engine_path_, "is_engine_path", "Input path is engine file", "", false);
@@ -265,7 +265,7 @@ void InferenceOp::start() {
                                                     dla_core_map_.get().get_map(),
                                                     temporal_map_.get().get_map(),
                                                     activation_map_.get().get_map(),
-                                                    trt_opt_profile_.get(),
+                                                    trt_opt_profile_.get().get_map(),
                                                     dynamic_input_dims_.get(),
                                                     is_engine_path_.get(),
                                                     infer_on_cpu_.get(),

@@ -34,7 +34,7 @@
 #include <vector>
 
 #include "./arg.hpp"
-#include "./gxf/codec_registry.hpp"
+#include "./codec_registry.hpp"
 #include "./common.hpp"
 #include "./component.hpp"
 #include "./condition.hpp"
@@ -136,6 +136,7 @@ class OutputContext;
 
 namespace gxf {
 class GXFExecutor;
+class GXFWrapper;
 }  // namespace gxf
 
 /**
@@ -160,6 +161,7 @@ class Operator : public ComponentBase {
     kGXF,      ///< GXF operator.
     kVirtual,  ///< Virtual operator.
                ///< (for internal use, not intended for use by application authors)
+    kUnknown,  ///< Placeholder for unknown operator type.
   };
 
   /// Default input execution port name.
@@ -426,7 +428,7 @@ class Operator : public ComponentBase {
    * @return std::string fully qualified name of the operator in the format:
    * "<fragment_name>.<operator_name>"
    */
-  std::string qualified_name();
+  std::string qualified_name() const;
 
   /**
    * @brief Initialize the operator.
@@ -475,6 +477,10 @@ class Operator : public ComponentBase {
   /// Return operator name and port name from a string in the format of "<op_name>[.<port_name>]".
   static std::pair<std::string, std::string> parse_port_name(const std::string& op_port_name);
 
+  /// Return operator name and port name from a string in the format of "<op_name>-<port_name>".
+  static std::pair<std::string, std::string> parse_operator_port_key(
+      const std::string& operator_port_key);
+
   /**
    * @brief Register the codec for serialization/deserialization of a custom type.
    * @deprecated Use holoscan::gxf::GXFExecutor::register_codec instead.
@@ -487,7 +493,7 @@ class Operator : public ComponentBase {
     HOLOSCAN_LOG_WARN(
         "Operator::register_codec is deprecated. Please use the static method "
         "holoscan::gxf::GXFExecutor::register_codec instead.");
-    gxf::CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
+    CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
   }
 
   /**
@@ -735,6 +741,10 @@ class Operator : public ComponentBase {
   /**
    * @brief Get the internal asynchronous condition for the operator.
    *
+   * Note: This object is only accessible after the executor has called `Operator::initialize()`
+   *       via `run()` or `run_async()`.
+   *       If accessed during `Application::compose()`, it will return nullptr.
+   *
    * @return A shared pointer to the internal asynchronous condition.
    */
   std::shared_ptr<holoscan::AsynchronousCondition> async_condition();
@@ -786,6 +796,17 @@ class Operator : public ComponentBase {
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   virtual void set_parameters();
 
+  /**
+   * @brief Check if the operator is a GXF compatible operator type. This checks the OperatorType
+   * and returns true if it is one of {kNative, kGXF, kVirtual}.
+   *
+   * @return True if the operator is a GXF compatible operator type, false otherwise.
+   */
+  bool is_gxf_compatible_operator_type() const;
+
+  /// Get the executor of the operator
+  std::shared_ptr<Executor> executor();
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -801,6 +822,9 @@ class Operator : public ComponentBase {
 
   // Make GXFExecutor a friend class so it can call protected initialization methods
   friend class holoscan::gxf::GXFExecutor;
+  // Allow GXFWrapper to access protected helpers for profiling (e.g., consolidated input label)
+  friend class holoscan::gxf::GXFWrapper;
+  friend class holoscan::GPUResidentExecutor;
   // Fragment must be able to call set_self_shared
   friend class Fragment;
 
@@ -922,6 +946,8 @@ class Operator : public ComponentBase {
   void set_dynamic_flows(
       const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
   void set_self_shared(const std::shared_ptr<Operator>& this_op);
+
+  virtual std::shared_ptr<ExecutionContext> initialize_execution_context();
 
   bool is_initialized_ = false;                         ///< Whether the operator is initialized.
   OperatorType operator_type_ = OperatorType::kNative;  ///< The type of the operator.

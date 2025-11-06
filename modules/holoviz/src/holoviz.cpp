@@ -20,7 +20,6 @@
 #include <imgui.h>
 
 #include <algorithm>
-#include <iostream>
 #include <vector>
 
 #include "context.hpp"
@@ -380,6 +379,18 @@ void GetCameraPose(float (&rotation)[9], float (&translation)[3]) {
   translation[0] = camera_matrix(0, 3);
   translation[1] = camera_matrix(1, 3);
   translation[2] = camera_matrix(2, 3);
+}
+
+bool WaitForPresent(uint64_t present_id, uint64_t timeout_ns) {
+  return Context::get().wait_for_present(present_id, timeout_ns);
+}
+
+bool WaitForDisplayEvent(DisplayEventType display_event_type, uint64_t timeout_ns) {
+  return Context::get().wait_for_display_event(display_event_type, timeout_ns);
+}
+
+uint64_t GetVBlankCounter() {
+  return Context::get().get_vblank_counter();
 }
 
 }  // namespace holoscan::viz

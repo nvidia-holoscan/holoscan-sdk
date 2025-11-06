@@ -34,9 +34,9 @@
 #include <atomic>
 
 #include "../../app_driver.hpp"
+#include "../../codec_registry.hpp"
 #include "../../executor.hpp"
 #include "../../graph.hpp"
-#include "../../gxf/codec_registry.hpp"
 #include "../../gxf/gxf_extension_manager.hpp"
 #include "gxf/app/graph_entity.hpp"
 
@@ -47,6 +47,10 @@ class Arg;
 class Condition;
 class GPUDevice;
 class Resource;
+
+namespace ops {
+class VirtualOperator;
+}
 
 }  // namespace holoscan
 
@@ -281,7 +285,7 @@ class GXFExecutor : public holoscan::Executor {
    */
   template <typename typeT>
   static void register_codec(const std::string& codec_name, bool overwrite = true) {
-    gxf::CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
+    CodecRegistry::get_instance().add_codec<typeT>(codec_name, overwrite);
   }
 
  protected:
@@ -447,6 +451,41 @@ class GXFExecutor : public holoscan::Executor {
    */
   void add_component_args_to_graph_entity(std::vector<Arg>& args,
                                           std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+
+  /* @brief Connect UCX transmitters to virtual operators.
+   *
+   * @param fragment The fragment containing the virtual operators.
+   * @param virtual_ops The vector of virtual operators to connect.
+   */
+  void connect_ucx_transmitters_to_virtual_ops(
+      Fragment* fragment, std::vector<std::shared_ptr<ops::VirtualOperator>>& virtual_ops);
+
+  /* @brief Get the IOSpec for an operator's input or output port.
+   *
+   * This helper is robust to nullptr operator, spec, invalid port name, etc.
+   * A std::runtime_error is thrown if the IOSpec is not found.
+   *
+   * @param op The operator to get the IOSpec for.
+   * @param port_name The name of the port to get the IOSpec for.
+   * @param io_type The type of the port to get the IOSpec for.
+   * @return The IOSpec for the operator's input or output port.
+   */
+  static std::shared_ptr<IOSpec> get_operator_port_iospec(const std::shared_ptr<Operator>& op,
+                                                          const std::string& port_name,
+                                                          IOSpec::IOType io_type);
+
+  /* @brief Get the IOSpec for an operator's input or output port.
+   *
+   * This helper is robust to nullptr operator, spec, invalid port name, etc.
+   * A std::runtime_error is thrown if the GXF compoenent ID can't be found.
+   *
+   * @param op The operator to get the IOSpec for.
+   * @param port_name The name of the port to get the IOSpec for.
+   * @param io_type The type of the port to get the IOSpec for.
+   * @return The GXF component ID for the operator's input or output port.
+   */
+  static gxf_uid_t get_operator_port_cid(const std::shared_ptr<Operator>& op,
+                                         const std::string& port_name, IOSpec::IOType io_type);
 
   std::shared_ptr<GPUDevice> add_gpu_device_to_graph_entity(
       const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,

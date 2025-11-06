@@ -95,7 +95,7 @@ This is a Vulkan-based visualizer.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 allocator : holoscan.core.Allocator, optional
     Allocator used to allocate render buffer output. If ``None``, will default to

@@ -27,22 +27,7 @@ This is a workaround for the CTest limitation that any PASS_REGULAR_EXPRESSION
 match will mark the entire test as passed, while we typically want to require
 all expressions are matched.
 
-Usage Examples:
-    # Basic usage with log file
-    python3 test_pattern_validation.py --log-file app.log --pass-pattern "Success" --fail-pattern "Error"
-
-    # Using stdin (pipe output directly) - default behavior
-    python3 my_app.py | python3 test_pattern_validation.py --pass-pattern "Success"
-
-    # Multiple patterns with log file
-    python3 test_pattern_validation.py --log-file app.log \
-        --pass-pattern "Connection established" \
-        --pass-pattern "Data processed" \
-        --fail-pattern "FATAL:" \
-        --fail-pattern "initialized independent of a parent entity"
-
-    # Only check for failure patterns from stdin
-    some_command | python3 test_pattern_validation.py --fail-pattern "ERROR:"
+See ArgumentParser epilog in main for usage examples.
 """  # noqa: E501
 
 import argparse
@@ -52,7 +37,7 @@ from pathlib import Path
 
 
 def validate_log_patterns(
-    log_file_path=None, pass_patterns=None, fail_patterns=None, verbose=False
+    log_file_path=None, pass_patterns=None, fail_patterns=None, verbose=False, strip_quotes=False
 ):
     """
     Validate log file or stdin against multiple pass and fail patterns.
@@ -62,6 +47,7 @@ def validate_log_patterns(
         pass_patterns: List of regex patterns that should be found (all must match)
         fail_patterns: List of regex patterns that should NOT be found (none should match)
         verbose: Print additional debug information
+        strip_quotes: Remove all single and double quotes from log content before pattern matching
 
     Returns:
         bool: True if validation passes, False otherwise
@@ -91,19 +77,25 @@ def validate_log_patterns(
         if verbose:
             print(f"Read log file: {log_file_path} ({len(log_content)} characters)")
 
+    # Strip quotes if requested
+    if strip_quotes:
+        original_length = len(log_content)
+        log_content = log_content.replace('"', "").replace("'", "")
+        if verbose:
+            print(f"Stripped quotes: {original_length} -> {len(log_content)} characters")
+
     # Check fail patterns first - any match means failure
     if fail_patterns:
         for pattern in fail_patterns:
             match = re.search(pattern, log_content, re.MULTILINE)
             if match:
                 print(f"FAIL: Found prohibited pattern: '{pattern}'")
-                if verbose:
-                    print(f"  Match: {match.group()}")
-                    # Show context around the match
-                    start = max(0, match.start() - 50)
-                    end = min(len(log_content), match.end() + 50)
-                    context = log_content[start:end].replace("\n", "\\n")
-                    print(f"  Context: ...{context}...")
+                print(f"  Match: {match.group()}")
+                # Show context around the match
+                start = max(0, match.start() - 50)
+                end = min(len(log_content), match.end() + 50)
+                context = log_content[start:end].replace("\n", "\\n")
+                print(f"  Context: ...{context}...")
                 return False
 
         print(f"PASS: No prohibited patterns found ({len(fail_patterns)} patterns checked)")
@@ -144,6 +136,10 @@ Examples:
     --fail-pattern "FATAL:" \\
     --fail-pattern "ERROR:"
 
+  # Strip quotes from log content before pattern matching
+  python3 my_app.py | %(prog)s --strip-quotes \\
+    --pass-pattern 'messages received on in1: [tx1, tx1, tx1, tx1]'
+
   # Only check for failure patterns from stdin
   some_command | %(prog)s --fail-pattern "initialized independent of a parent entity"
         """,
@@ -172,6 +168,11 @@ Examples:
         action="store_true",
         help="Print detailed information about pattern matching",
     )
+    parser.add_argument(
+        "--strip-quotes",
+        action="store_true",
+        help="Remove all single and double quotes from log content before pattern matching",
+    )
 
     args = parser.parse_args()
 
@@ -180,7 +181,7 @@ Examples:
         return 1
 
     success = validate_log_patterns(
-        args.log_file, args.pass_patterns, args.fail_patterns, args.verbose
+        args.log_file, args.pass_patterns, args.fail_patterns, args.verbose, args.strip_quotes
     )
 
     if success:

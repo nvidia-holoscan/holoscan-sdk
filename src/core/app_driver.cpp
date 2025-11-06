@@ -199,6 +199,16 @@ void AppDriver::run() {
     return;
   }
 
+  // Check no fragments are GPU-resident
+  for (auto& fragment : fragment_graph.get_nodes()) {
+    if (fragment->is_gpu_resident()) {
+      throw std::runtime_error(
+          fmt::format("Fragment ({}) has a GPU-resident operator."
+                      "GPU-resident execution is only supported in local mode.",
+                      fragment->name()));
+    }
+  }
+
   if (need_driver_) {
     launch_app_driver();
   }
@@ -1441,6 +1451,9 @@ std::future<void> AppDriver::launch_fragments_async(
         "v4.0");
   }
   for (auto& fragment : target_fragments) {
+    if (fragment->is_gpu_resident()) {
+      continue;
+    }
     auto network_context = fragment->make_network_context<holoscan::UcxContext>(
         "ucx_context", Arg("cpu_data_only", gpu_count == 0), Arg("enable_async", enable_async));
     fragment->network_context(network_context);
@@ -1457,8 +1470,8 @@ std::future<void> AppDriver::launch_fragments_async(
   for (auto& fragment : target_fragments) {
     auto gxf_executor = dynamic_cast<gxf::GXFExecutor*>(&fragment->executor());
     if (gxf_executor == nullptr) {
-      HOLOSCAN_LOG_ERROR("Cannot cast executor to GXFExecutor");
-      return std::async(std::launch::async, []() {});
+      HOLOSCAN_LOG_DEBUG("Cannot cast executor to GXFExecutor");
+      continue;
     }
     // Set the connection items
     if (connection_map_.find(fragment) != connection_map_.end()) {

@@ -26,6 +26,7 @@
 #include <list>
 #include <mutex>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -67,6 +68,9 @@ struct GLFWWindow::Impl {
     if (!glfwVulkanSupported()) {
       throw std::runtime_error("Vulkan is not supported");
     }
+
+    present_id_feature_.presentId = true;
+    present_wait_feature_.presentWait = true;
   }
   Impl() = delete;
 
@@ -119,8 +123,13 @@ struct GLFWWindow::Impl {
   static std::mutex mutex_;          ///< mutex to protect glfw init counter
   static uint32_t glfw_init_count_;  ///< glfw init counter
 
+  vk::PhysicalDevicePresentIdFeaturesKHR present_id_feature_;
+  vk::PhysicalDevicePresentWaitFeaturesKHR present_wait_feature_;
+
   GLFWwindow* window_ = nullptr;
   bool intern_window_ = false;
+  std::string display_name_;
+  vk::DisplayKHR display_ = nullptr;
 
   std::list<KeyCallbackFunction> key_callbacks_;
   GLFWkeyfun prev_key_cb_ = nullptr;
@@ -201,8 +210,14 @@ GLFWWindow::GLFWWindow(uint32_t width, uint32_t height, const char* title, InitF
         }
       }
     }
-    if (!monitor) {
+
+    if (monitor) {
+      impl_->display_name_ = display_name;
+    } else {
       monitor = glfwGetPrimaryMonitor();
+      if (monitor) {
+        impl_->display_name_ = glfwGetMonitorName(monitor);
+      }
     }
     // although the GLFW documentation says that fullscreen windows ignore this hint it is needed
     // for fullscreen windows to switch to flip mode and enable GSync
@@ -554,27 +569,97 @@ Window::CallbackHandle GLFWWindow::add_window_size_callback(WindowSizeCallbackFu
       });
 }
 
-const char** GLFWWindow::get_required_instance_extensions(uint32_t* count) {
-  return glfwGetRequiredInstanceExtensions(count);
+std::vector<Window::InstanceExtensionInfo> GLFWWindow::get_required_instance_extensions() {
+  uint32_t count;
+  const char** extensions = glfwGetRequiredInstanceExtensions(&count);
+  std::vector<Window::InstanceExtensionInfo> instance_extensions;
+  for (uint32_t i = 0; i < count; ++i) {
+    instance_extensions.push_back(Window::InstanceExtensionInfo{extensions[i]});
+  }
+  instance_extensions.push_back(Window::InstanceExtensionInfo{VK_KHR_DISPLAY_EXTENSION_NAME});
+  instance_extensions.push_back(
+      Window::InstanceExtensionInfo{VK_EXT_DISPLAY_SURFACE_COUNTER_EXTENSION_NAME});
+  return instance_extensions;
 }
 
-const char** GLFWWindow::get_required_device_extensions(uint32_t* count) {
-  static char const* extensions[]{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-
-  *count = sizeof(extensions) / sizeof(extensions[0]);
-  return extensions;
+std::vector<Window::DeviceExtensionInfo> GLFWWindow::get_required_device_extensions() {
+  std::vector<Window::DeviceExtensionInfo> device_extensions = {
+      {VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+      {VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME},
+      {VK_KHR_PRESENT_ID_EXTENSION_NAME, true /*optional*/, &impl_->present_id_feature_},
+      {VK_KHR_PRESENT_WAIT_EXTENSION_NAME, true /*optional*/, &impl_->present_wait_feature_},
+  };
+  return device_extensions;
 }
 
 uint32_t GLFWWindow::select_device(vk::Instance instance,
                                    const std::vector<vk::PhysicalDevice>& physical_devices) {
-  // select the first device which has presentation support
-  for (uint32_t index = 0; index < physical_devices.size(); ++index) {
+  bool found_display = false;
+  uint32_t display_device_index;
+  bool found_device = false;
+  uint32_t first_device_index = 0;
+
+  std::string first_display;
+  uint32_t first_display_device_index = 0;
+
+  for (uint32_t index = 0; (index < physical_devices.size()) && (!found_display); ++index) {
+    // select devices which have display support
     if (glfwGetPhysicalDevicePresentationSupport(instance, physical_devices[index], 0) ==
-        GLFW_TRUE) {
-      return index;
+        GLFW_FALSE) {
+      continue;
+    }
+
+    if (!found_device) {
+      first_device_index = index;
+      found_device = true;
+    }
+
+    // now check for the display name, if display_name_ is empty this will use the first display
+    const std::vector<vk::DisplayPropertiesKHR> display_properties =
+        physical_devices[index].getDisplayPropertiesKHR();
+    for (auto&& displayProperty : display_properties) {
+      if (std::string(displayProperty.displayName).find(impl_->display_name_) !=
+          std::string::npos) {
+        impl_->display_ = displayProperty.display;
+        display_device_index = index;
+        found_display = true;
+        break;
+      }
+      if (first_display.empty()) {
+        first_display = displayProperty.displayName;
+        impl_->display_ = displayProperty.display;
+        first_display_device_index = index;
+      }
     }
   }
-  throw std::runtime_error("No device with presentation support found");
+
+  uint32_t device_index = 0;
+
+  if (impl_->display_name_.empty()) {
+    // no display name, return the first device index
+    device_index = first_device_index;
+  } else {
+    // found the display, return the device index
+    if (found_display) {
+      device_index = display_device_index;
+      found_device = true;
+    } else {
+      if (!first_display.empty()) {
+        HOLOSCAN_LOG_WARN(
+            "Display \"{}\" not found, using the first available display \"{}\" instead",
+            impl_->display_name_.c_str(),
+            first_display.c_str());
+        device_index = first_display_device_index;
+        found_device = true;
+      }
+    }
+  }
+
+  if (!found_device) {
+    throw std::runtime_error("No device with presentation support found");
+  }
+
+  return device_index;
 }
 
 void GLFWWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
@@ -629,6 +714,10 @@ float GLFWWindow::get_aspect_ratio() {
   } else {
     return 1.F;
   }
+}
+
+vk::DisplayKHR GLFWWindow::get_display() {
+  return impl_->display_;
 }
 
 }  // namespace holoscan::viz

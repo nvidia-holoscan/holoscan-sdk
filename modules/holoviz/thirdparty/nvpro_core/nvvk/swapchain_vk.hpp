@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -205,7 +205,8 @@ class SwapChain {
   VkSurfaceKHR m_surface{};
   VkFormat m_surfaceFormat{};
   VkColorSpaceKHR m_surfaceColor{};
-
+  bool m_has_present_id_extension{false};
+  uint64_t m_current_present_id{0};
   uint32_t m_imageCount{0};
   VkSwapchainKHR m_swapchain{};
 
@@ -230,7 +231,8 @@ class SwapChain {
   VkImageUsageFlags m_imageUsage{};
 
   VkResult waitIdle() {
-    if (m_waitQueue) return vkQueueWaitIdle(m_waitQueue);
+    if (m_waitQueue)
+      return vkQueueWaitIdle(m_waitQueue);
     else
       return vkDeviceWaitIdle(m_device);
   }

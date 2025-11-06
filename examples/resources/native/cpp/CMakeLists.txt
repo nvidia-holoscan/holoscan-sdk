@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,16 +55,16 @@ install(TARGETS native_resource
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_RESOURCES_CPP_NATIVE_RESOURCE_TEST
-           COMMAND native_resource
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(
-      EXAMPLE_RESOURCES_CPP_NATIVE_RESOURCE_TEST PROPERTIES
-      PASS_REGULAR_EXPRESSION "string_native_resource.string_param: test_string"
-      PASS_REGULAR_EXPRESSION "hardcoded_native_resource.string_param: hardcoded_string"
-      PASS_REGULAR_EXPRESSION "empty_native_resource.string_param: ''"
-      FAIL_REGULAR_EXPRESSION "error"
-      FAIL_REGULAR_EXPRESSION "Exception occurred"
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/native_resource 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'string_native_resource.string_param: test_string' \
+        --pass-pattern 'hardcoded_native_resource.string_param: hardcoded_string' \
+        --pass-pattern 'empty_native_resource.string_param: ' \
+        --fail-pattern 'error' \
+        --fail-pattern 'Exception occurred'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 endif()

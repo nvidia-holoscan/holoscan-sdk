@@ -39,25 +39,26 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_PYTHON_MULTI_BRANCH_TEST
-    COMMAND python3 multi_branch_pipeline.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   # rx2 should receive close to 100 message (values 0 - 99)
   # rx1 will receive only some of these, but it is hard to know exactly which ones so just verify the first
-  set_tests_properties(EXAMPLE_PYTHON_MULTI_BRANCH_TEST PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Push failed on 'in'"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx2' received value: 90"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx1' received value: 0")
+  add_test(NAME EXAMPLE_PYTHON_MULTI_BRANCH_PIPELINE_TEST
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/multi_branch_pipeline.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'receiver rx2 received value: 90' \
+        --pass-pattern 'receiver rx1 received value: 0' \
+        --fail-pattern 'Push failed on in'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 
-  add_test(NAME EXAMPLE_PYTHON_MULTI_BRANCH_EVENT_BASED_TEST
-    COMMAND python3 multi_branch_pipeline.py --event_based
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  add_test(NAME EXAMPLE_PYTHON_MULTI_BRANCH_PIPELINE_EVENT_BASED_TEST
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/multi_branch_pipeline.py --event_based 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'receiver rx2 received value: 90' \
+        --pass-pattern 'receiver rx1 received value: 0' \
+        --fail-pattern 'Push failed on in'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
-  # rx2 should receive close to 100 message (values 0 - 99)
-  # rx1 will receive only some of these, but it is hard to know exactly which ones so just verify the first
-  set_tests_properties(EXAMPLE_PYTHON_MULTI_BRANCH_TEST PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Push failed on 'in'"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx2' received value: 90"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx1' received value: 0")
 endif()

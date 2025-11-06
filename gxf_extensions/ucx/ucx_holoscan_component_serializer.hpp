@@ -24,7 +24,6 @@
 #include "gxf/serialization/component_serializer.hpp"
 #include "gxf/std/allocator.hpp"
 #include "gxf/std/tensor.hpp"
-#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/metadata.hpp"

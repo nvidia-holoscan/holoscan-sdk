@@ -766,6 +766,9 @@ def test_tensor_content_logging(
     # metadata value added by 'mx' operator was logged
     assert f"MetadataDictionary(size=1) {{'value': Python(int): {value}}}" in captured.err
 
+    # stream information is logged
+    assert "Stream: none" in captured.err
+
 
 @pytest.mark.parametrize("large_data_max_queue_size", [1, 1000])
 @pytest.mark.parametrize(
@@ -849,6 +852,9 @@ def test_async_logger_small_entry_fallback(
     elif large_data_max_queue_size >= num_large_entries:
         assert f"Large entries: {num_large_entries}" in captured.err
         assert "Exception during large data enqueueing" not in captured.err
+
+    # stream information is logged
+    assert "Stream: none" in captured.err
 
 
 @pytest.mark.parametrize(

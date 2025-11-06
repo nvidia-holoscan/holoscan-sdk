@@ -16,16 +16,20 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./asynchronous_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/count.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -50,12 +54,9 @@ class PyAsynchronousCondition : public AsynchronousCondition {
   using AsynchronousCondition::AsynchronousCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsynchronousCondition(Fragment* fragment,
+  explicit PyAsynchronousCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                    const std::string& name = "noname_async_condition") {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -72,7 +73,7 @@ void init_asynchronous(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<AsynchronousCondition>>(
       m, "AsynchronousCondition", doc::AsynchronousCondition::doc_AsynchronousCondition)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
            "name"_a = "noname_async_condition"s,
            doc::AsynchronousCondition::doc_AsynchronousCondition_python)

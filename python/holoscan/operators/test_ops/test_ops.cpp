@@ -20,13 +20,16 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/test_ops/rx_dtype_test.hpp"
 #include "holoscan/operators/test_ops/tx_dtype_test.hpp"
 
@@ -52,15 +55,12 @@ class PyDataTypeTxTestOp : public holoscan::ops::DataTypeTxTestOp {
   using DataTypeTxTestOp::DataTypeTxTestOp;
 
   // Define a constructor that fully initializes the object.
-  PyDataTypeTxTestOp(Fragment* fragment, const py::args& args,
-                     const std::string& data_type = "double"s,
+  PyDataTypeTxTestOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                     const py::args& args, const std::string& data_type = "double"s,
                      const std::string& name = "data_type_tx_test_op"s)
       : DataTypeTxTestOp(ArgList{Arg{"data_type", data_type}}) {
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -70,14 +70,11 @@ class PyDataTypeRxTestOp : public holoscan::ops::DataTypeRxTestOp {
   using DataTypeRxTestOp::DataTypeRxTestOp;
 
   // Define a constructor that fully initializes the object.
-  PyDataTypeRxTestOp(Fragment* fragment, const py::args& args,
-                     const std::string& name = "data_type_rx_test_op"s)
+  PyDataTypeRxTestOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                     const py::args& args, const std::string& name = "data_type_rx_test_op"s)
       : DataTypeRxTestOp() {
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -92,7 +89,10 @@ PYBIND11_MODULE(_test_ops, m) {
 
   py::class_<DataTypeTxTestOp, PyDataTypeTxTestOp, Operator, std::shared_ptr<DataTypeTxTestOp>>(
       m, "DataTypeTxTestOp", doc::DataTypeTxTestOp::doc_DataTypeTxTestOp)
-      .def(py::init<Fragment*, const py::args&, const std::string&, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    const py::args&,
+                    const std::string&,
+                    const std::string&>(),
            "fragment"_a,
            "data_type"_a = "double"s,
            "name"_a = "data_type_tx_test_op"s,
@@ -100,7 +100,7 @@ PYBIND11_MODULE(_test_ops, m) {
 
   py::class_<DataTypeRxTestOp, PyDataTypeRxTestOp, Operator, std::shared_ptr<DataTypeRxTestOp>>(
       m, "DataTypeRxTestOp", doc::DataTypeRxTestOp::doc_DataTypeRxTestOp)
-      .def(py::init<Fragment*, const py::args&, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const py::args&, const std::string&>(),
            "fragment"_a,
            "name"_a = "data_type_rx_test_op"s,
            doc::DataTypeRxTestOp::doc_DataTypeRxTestOp);

@@ -210,6 +210,37 @@ class DataFlowTracker {
    */
   void end_logging();
 
+  /**
+   * @brief Generate a new frame number for a root operator.
+   *
+   * @param operator_name The name of the root operator
+   * @return The new frame number for the operator
+   */
+  uint64_t generate_frame_number(const std::string& operator_name);
+
+  /**
+   * @brief Reset frame numbers for all operators.
+   */
+  void reset_frame_numbers();
+
+  /**
+   * @brief Set frame number for a specific operator port (for NVTX display).
+   *
+   * @param operator_name The name of the root operator
+   * @param port_name The name of the output port
+   * @param frame_number The frame number to set
+   */
+  void set_port_frame_number(const std::string& operator_name, const std::string& port_name,
+                             uint64_t frame_number);
+
+  /**
+   * @brief Get port-specific frame numbers for an operator (for NVTX display).
+   *
+   * @param operator_name The name of the operator
+   * @return Map of operator-port keys to their frame numbers (e.g., "tx-out1" -> 1)
+   */
+  std::map<std::string, uint64_t> get_port_frame_numbers(const std::string& operator_name) const;
+
  protected:
   // Making DFFTCollector friend class to access update_latency,
   // update_source_messages_number, and write_to_logfile.
@@ -270,6 +301,12 @@ class DataFlowTracker {
   std::map<std::string, std::shared_ptr<holoscan::PathMetrics>>
       all_path_metrics_;               ///< The map of path names to the path metrics.
   std::mutex all_path_metrics_mutex_;  ///< The mutex for the all_path_metrics_.
+
+  /// Simple per-operator frame counters for generation
+  std::map<std::string, uint64_t> operator_counters_;
+  /// Map of operator-port combinations to their frame numbers (for NVTX display)
+  std::map<std::string, uint64_t> port_frame_numbers_;
+  mutable std::mutex port_frame_numbers_mutex_;  ///< The mutex for both maps above.
 
   /// The number of messages to skip at the beginning of the execution of an application graph.
   /// This is also known as the warm-up period.

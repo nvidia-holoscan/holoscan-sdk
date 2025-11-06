@@ -38,35 +38,41 @@ namespace holoscan {
 
 // DataEntry constructors
 DataEntry::DataEntry(std::any data_arg, const std::string& id, int64_t acq_time, int64_t emit_time,
-                     IOSpec::IOType io_type_arg, std::shared_ptr<MetadataDictionary> meta)
+                     IOSpec::IOType io_type_arg, std::shared_ptr<MetadataDictionary> meta,
+                     std::optional<cudaStream_t> stream_arg)
     : type(Generic),
       unique_id(id),
       acquisition_timestamp(acq_time),
       emit_timestamp(emit_time),
       io_type(io_type_arg),
       metadata(std::move(meta)),
+      stream(stream_arg),
       data(std::move(data_arg)) {}
 
 DataEntry::DataEntry(std::shared_ptr<holoscan::Tensor> tensor, const std::string& id,
                      int64_t acq_time, int64_t emit_time, IOSpec::IOType io_type_arg,
-                     std::shared_ptr<MetadataDictionary> meta)
+                     std::shared_ptr<MetadataDictionary> meta,
+                     std::optional<cudaStream_t> stream_arg)
     : type(TensorData),
       unique_id(id),
       acquisition_timestamp(acq_time),
       emit_timestamp(emit_time),
       io_type(io_type_arg),
       metadata(std::move(meta)),
+      stream(stream_arg),
       data(std::move(tensor)) {}
 
 DataEntry::DataEntry(holoscan::TensorMap tensor_map, const std::string& id, int64_t acq_time,
                      int64_t emit_time, IOSpec::IOType io_type_arg,
-                     std::shared_ptr<MetadataDictionary> meta)
+                     std::shared_ptr<MetadataDictionary> meta,
+                     std::optional<cudaStream_t> stream_arg)
     : type(TensorMapData),
       unique_id(id),
       acquisition_timestamp(acq_time),
       emit_timestamp(emit_time),
       io_type(io_type_arg),
       metadata(std::move(meta)),
+      stream(stream_arg),
       data(std::move(tensor_map)) {}
 
 // AsyncDataLoggerResource implementation
@@ -171,7 +177,8 @@ bool AsyncDataLoggerResource::log_tensor_data(const std::shared_ptr<Tensor>& ten
                                               const std::string& unique_id,
                                               int64_t acquisition_timestamp,
                                               const std::shared_ptr<MetadataDictionary>& metadata,
-                                              IOSpec::IOType io_type) {
+                                              IOSpec::IOType io_type,
+                                              std::optional<cudaStream_t> stream) {
   HOLOSCAN_LOG_TRACE("AsyncDataLoggerResource: log_tensor_data called for unique_id: {}",
                      unique_id);
 
@@ -205,7 +212,7 @@ bool AsyncDataLoggerResource::log_tensor_data(const std::shared_ptr<Tensor>& ten
   if (should_log_content && large_data_enabled) {
     try {
       DataEntry large_entry(
-          tensor, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy);
+          tensor, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy, stream);
       success = enqueue_large_data_entry(std::move(large_entry));
     } catch (const std::exception& e) {
       // Log the exception instead of crashing the application
@@ -224,7 +231,7 @@ bool AsyncDataLoggerResource::log_tensor_data(const std::shared_ptr<Tensor>& ten
   if (!large_data_enabled || !should_log_content || !success) {
     try {
       DataEntry data_entry(
-          tensor, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy);
+          tensor, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy, stream);
 
       success = enqueue_data_entry(std::move(data_entry));
     } catch (const std::exception& e) {
@@ -241,7 +248,7 @@ bool AsyncDataLoggerResource::log_tensor_data(const std::shared_ptr<Tensor>& ten
 bool AsyncDataLoggerResource::log_data(const std::any& data, const std::string& unique_id,
                                        int64_t acquisition_timestamp,
                                        const std::shared_ptr<MetadataDictionary>& metadata,
-                                       IOSpec::IOType io_type) {
+                                       IOSpec::IOType io_type, std::optional<cudaStream_t> stream) {
   // Check filtering conditions
   if (io_type == IOSpec::IOType::kOutput && !should_log_output()) {
     return true;
@@ -266,7 +273,7 @@ bool AsyncDataLoggerResource::log_data(const std::any& data, const std::string& 
   // Log generic data (always goes to data queue)
   try {
     DataEntry data_entry(
-        data, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy);
+        data, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy, stream);
 
     return enqueue_data_entry(std::move(data_entry));
   } catch (const std::exception& e) {
@@ -281,7 +288,7 @@ bool AsyncDataLoggerResource::log_data(const std::any& data, const std::string& 
 bool AsyncDataLoggerResource::log_tensormap_data(
     const holoscan::TensorMap& tensor_map, const std::string& unique_id,
     int64_t acquisition_timestamp, const std::shared_ptr<MetadataDictionary>& metadata,
-    IOSpec::IOType io_type) {
+    IOSpec::IOType io_type, std::optional<cudaStream_t> stream) {
   HOLOSCAN_LOG_TRACE("AsyncDataLoggerResource: log_tensormap_data called for unique_id: {}",
                      unique_id);
 
@@ -314,8 +321,13 @@ bool AsyncDataLoggerResource::log_tensormap_data(
   bool success = true;
   if (should_log_content && large_data_enabled) {
     try {
-      DataEntry large_entry(
-          tensor_map, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy);
+      DataEntry large_entry(tensor_map,
+                            unique_id,
+                            acquisition_timestamp,
+                            emit_timestamp,
+                            io_type,
+                            metadata_copy,
+                            stream);
       success = enqueue_large_data_entry(std::move(large_entry));
     } catch (const std::exception& e) {
       // Log the exception instead of crashing the application
@@ -333,8 +345,13 @@ bool AsyncDataLoggerResource::log_tensormap_data(
   // 3. Large data enqueue failed
   if (!large_data_enabled || !should_log_content || !success) {
     try {
-      DataEntry data_entry(
-          tensor_map, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy);
+      DataEntry data_entry(tensor_map,
+                           unique_id,
+                           acquisition_timestamp,
+                           emit_timestamp,
+                           io_type,
+                           metadata_copy,
+                           stream);
 
       success = enqueue_data_entry(std::move(data_entry));
     } catch (const std::exception& e) {

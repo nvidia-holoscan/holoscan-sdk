@@ -119,12 +119,14 @@ class DataLoggerResource : public DataLogger, public Resource {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging (including serialization and sending) was successful, false otherwise.
    */
   bool log_data(const std::any& data, const std::string& unique_id,
                 int64_t acquisition_timestamp = -1,
                 const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                IOSpec::IOType io_type = IOSpec::IOType::kOutput) override = 0;
+                IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                std::optional<cudaStream_t> stream = std::nullopt) override = 0;
 
   /**
    * @brief Logs a Tensor with optional data content logging.
@@ -145,12 +147,14 @@ class DataLoggerResource : public DataLogger, public Resource {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false otherwise.
    */
   bool log_tensor_data(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
                        int64_t acquisition_timestamp = -1,
                        const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                       IOSpec::IOType io_type = IOSpec::IOType::kOutput) override = 0;
+                       IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                       std::optional<cudaStream_t> stream = std::nullopt) override = 0;
 
   /**
    * @brief Logs a TensorMap with optional data content logging.
@@ -171,12 +175,14 @@ class DataLoggerResource : public DataLogger, public Resource {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false otherwise.
    */
   bool log_tensormap_data(const TensorMap& tensor_map, const std::string& unique_id,
                           int64_t acquisition_timestamp = -1,
                           const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                          IOSpec::IOType io_type = IOSpec::IOType::kOutput) override = 0;
+                          IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                          std::optional<cudaStream_t> stream = std::nullopt) override = 0;
 
   /**
    * @brief Logs backend-specific data types.
@@ -204,12 +210,14 @@ class DataLoggerResource : public DataLogger, public Resource {
    * @param acquisition_timestamp Timestamp when the data was acquired (-1 if unknown).
    * @param metadata Associated metadata dictionary for the message.
    * @param io_type The type of I/O port (kInput or kOutput).
+   * @param stream Optional CUDA stream for GPU operations.
    * @return true if logging was successful, false if backend-specific logging is not supported.
    */
   bool log_backend_specific(const std::any& data, [[maybe_unused]] const std::string& unique_id,
                             int64_t acquisition_timestamp = -1,
                             const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                            IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                            IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                            std::optional<cudaStream_t> stream = std::nullopt) override;
 
   /**
    * @brief Checks if a message with the given unique_id should be logged based on

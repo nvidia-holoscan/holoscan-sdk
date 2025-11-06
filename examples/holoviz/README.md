@@ -4,7 +4,8 @@ Includes multiple examples showing how to use various features of the Holoviz op
 - use the [camera with 3d primitives](#holovizop-camera-usage)
 - use the [geometry layer and the image layer](#holovizop-geometry-layer-usage)
 - use the [geometry layer with 3d primitives](#holovizop-3d-geometry-layer-usage)
-- use [layer views][#holovizop-views-usage]
+- use the [first pixel out and presentation done conditions](#holovizop-conditions-usage)
+- use [layer views](#holovizop-views-usage)
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/visualization.html) to learn more about Visualization in Holoscan.*
 
@@ -157,4 +158,35 @@ The following dataset is used by this example:
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   python3 ${BUILD_OR_INSTALL_DIR}/examples/holoviz/python/holoviz_views.py
+  ```
+
+## HolovizOp conditions usage
+
+This example demonstrates the use of Holoviz's synchronization conditions, including the FirstPixelOut and PresentDone conditions. These conditions allow you to control the execution flow of the operator, synchronizing data presentation and frame rendering with the graphics subsystem (first pixel out and present events). It shows how to wire up HolovizOp with these custom conditions and track readiness for presenting new frames.
+
+### Command Line Options
+
+The example supports the following command line options:
+
+* `-h, --help` - Display help information
+* `-c, --count <N>` - Limit the number of frames to display before the application exits. Default is -1 (unlimited). Any positive integer will limit the number of frames displayed.
+* `-t, --type <TYPE>` - Select the condition type to use for synchronization. Default is `present_done`.
+  * `first_pixel_out` - Use FirstPixelOutCondition to wait for the first pixel out signal from the display
+  * `present_done` - Use PresentDoneCondition to wait for presentation completion
+* `-v, --vsync` - Enable vsync for the visualizer. Default is disabled.
+
+### C++ Run instructions
+
+* **using deb package install or NGC container**:
+  ```bash
+  /opt/nvidia/holoscan/examples/holoviz/cpp/holoviz_conditions
+  ```
+* **source (dev container)**:
+  ```bash
+  ./run launch # optional: append `install` for install tree
+  ./examples/holoviz/cpp/holoviz_conditions
+  ```
+* **source (local env)**:
+  ```bash
+  ${BUILD_OR_INSTALL_DIR}/examples/holoviz/cpp/holoviz_conditions
   ```

@@ -22,13 +22,16 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./memory_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/memory_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -52,13 +55,12 @@ class PyMemoryAvailableCondition : public MemoryAvailableCondition {
   using MemoryAvailableCondition::MemoryAvailableCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyMemoryAvailableCondition(Fragment* fragment, std::shared_ptr<Allocator> allocator,
-                                      std::optional<uint64_t> min_bytes = std::nullopt,
-                                      std::optional<uint64_t> min_blocks = std::nullopt,
-                                      const std::string& name = "noname_memory_available_condition")
+  explicit PyMemoryAvailableCondition(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<Allocator> allocator, std::optional<uint64_t> min_bytes = std::nullopt,
+      std::optional<uint64_t> min_blocks = std::nullopt,
+      const std::string& name = "noname_memory_available_condition")
       : MemoryAvailableCondition(Arg{"allocator", allocator}) {
-    name_ = name;
-    fragment_ = fragment;
     if (!min_bytes.has_value() && !min_blocks.has_value()) {
       throw pybind11::value_error("Either `min_bytes` or `min_blocks` must be provided.");
     }
@@ -70,8 +72,7 @@ class PyMemoryAvailableCondition : public MemoryAvailableCondition {
     } else if (min_blocks.has_value()) {
       this->add_arg(Arg("min_blocks", min_blocks.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -81,7 +82,7 @@ void init_memory_available(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<MemoryAvailableCondition>>(
       m, "MemoryAvailableCondition", doc::MemoryAvailableCondition::doc_MemoryAvailableCondition)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::shared_ptr<Allocator>,
                     std::optional<uint64_t>,
                     std::optional<uint64_t>,

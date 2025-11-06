@@ -32,10 +32,8 @@
 
 #include <algorithm>
 #include <filesystem>
-#include <iostream>
 #include <list>
 #include <memory>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -158,6 +156,10 @@ class Vulkan::Impl {
                         size_t buffer_size, CUdeviceptr device_ptr, CUstream stream,
                         size_t row_pitch);
 
+  bool wait_for_present(uint64_t present_id, uint64_t timeout_ns);
+  bool wait_for_display_event(DisplayEventType display_event_type, uint64_t timeout_ns);
+  uint64_t get_vblank_counter();
+
  private:
   void init_im_gui(const std::string& font_path, float font_size_in_pixels);
   void create_framebuffer_sequence();
@@ -271,11 +273,16 @@ class Vulkan::Impl {
   vk::PhysicalDeviceLineRasterizationFeaturesEXT line_rasterization_feature_;
   vk::Device device_;
   vk::UniqueSurfaceKHR surface_;
+  vk::DisplayKHR display_;
   vk::PhysicalDevice physical_device_;
   vk::Queue queue_gct_;
   vk::Queue queue_t_;
   vk::UniqueCommandPool cmd_pool_;
   vk::UniqueDescriptorPool im_gui_desc_pool_;
+
+  bool has_present_wait_extension_ = false;
+  bool has_line_rasterization_extension_ = false;
+  bool has_present_id_extension_ = false;
 
   /// Drawing/Surface
   std::unique_ptr<FramebufferSequence> fb_sequence_;
@@ -356,7 +363,9 @@ Vulkan::Impl::~Impl() {
 
       cleanup_transfer_jobs();
 
-      nvvk_.alloc_.releaseSampler(sampler_imgui_);
+      if (sampler_imgui_) {
+        nvvk_.alloc_.releaseSampler(sampler_imgui_);
+      }
 
       ImGui_ImplVulkan_Shutdown();
     }
@@ -374,27 +383,40 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   // Initialize instance independent function pointers
   VULKAN_HPP_DEFAULT_DISPATCHER.init(vkGetInstanceProcAddr);
 
-#ifdef NDEBUG
-  nvvk::ContextCreateInfo context_info;
-#else
+  // Enable validation in debug builds, but disable as a workaround for bug in validation layer with
+  // VK_KHR_present_id fixed with
+  // https://github.com/KhronosGroup/Vulkan-ValidationLayers/commit/312cc2942b4c66cf3d65bfc3d4fb3ac5f17d8b84
+  // Fixed in version 1.3.275 (Feb 6 2024)
+#if !defined(NDEBUG) &&                                                           \
+    ((VK_VERSION_MAJOR > 1) || (VK_VERSION_MAJOR == 1 && VK_VERSION_MINOR > 3) || \
+     (VK_VERSION_MAJOR == 1 && VK_VERSION_MINOR == 3 && VK_HEADER_VERSION >= 275))
   nvvk::ContextCreateInfo context_info(true /*bUseValidation*/);
+#else
+  nvvk::ContextCreateInfo context_info;
 #endif
 
   context_info.setVersion(1, 2);  // Using Vulkan 1.2
 
   // Requesting Vulkan extensions and layers
   uint32_t count{0};
-  const char** req_extensions = window_->get_required_instance_extensions(&count);
-  for (uint32_t ext_id = 0; ext_id < count; ext_id++)
-    context_info.addInstanceExtension(req_extensions[ext_id]);
+  const std::vector<Window::InstanceExtensionInfo> instance_extensions =
+      window_->get_required_instance_extensions();
+  for (const auto& extension : instance_extensions) {
+    context_info.addInstanceExtension(extension.name_.c_str(), extension.optional_);
+  }
 
   // Allow debug names
   context_info.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);
   context_info.addInstanceExtension(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
 
-  req_extensions = window_->get_required_device_extensions(&count);
-  for (uint32_t ext_id = 0; ext_id < count; ext_id++)
-    context_info.addDeviceExtension(req_extensions[ext_id]);
+  const std::vector<Window::DeviceExtensionInfo> device_extensions =
+      window_->get_required_device_extensions();
+  for (const auto& extension : device_extensions) {
+    context_info.addDeviceExtension(extension.name_.c_str(),
+                                    extension.optional_,
+                                    extension.feature_struct_,
+                                    extension.version_);
+  }
 
   context_info.addDeviceExtension(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
   context_info.addDeviceExtension(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
@@ -431,11 +453,16 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   // Let the window select the device to use (e.g. the one connected to the display if we opened
   // a visible windows)
   const uint32_t device_index = window_->select_device(instance_, compatible_physical_devices);
-
   // Finally initialize the device
   nvvk_.vk_ctx_.initDevice(compatible_physical_devices[device_index], context_info);
   device_ = nvvk_.vk_ctx_.m_device;
   physical_device_ = nvvk_.vk_ctx_.m_physicalDevice;
+
+  has_present_wait_extension_ =
+      nvvk_.vk_ctx_.hasDeviceExtension(VK_KHR_PRESENT_WAIT_EXTENSION_NAME);
+  has_line_rasterization_extension_ =
+      nvvk_.vk_ctx_.hasDeviceExtension(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME);
+  has_present_id_extension_ = nvvk_.vk_ctx_.hasDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME);
 
   // Get the list of supported formats for this physical device
   image_formats_ = get_supported_formats(physical_device_);
@@ -459,7 +486,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     cuda_service_ = std::make_unique<CudaService>(cuda_uuid);
   }
 
-  // Initialize device-specific function pointers function pointers
+  // Initialize device-specific function pointers
   VULKAN_HPP_DEFAULT_DISPATCHER.init(device_);
 
   // create a surface, headless windows don't have a surface
@@ -468,6 +495,8 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     if (!nvvk_.vk_ctx_.setGCTQueueWithPresent(surface_.get())) {
       throw std::runtime_error("Surface not supported by queue");
     }
+
+    display_ = window_->get_display();
   }
 
   queue_gct_ = device_.getQueue(nvvk_.vk_ctx_.m_queueGCT.familyIndex, 0);
@@ -1319,7 +1348,7 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
 
   // enable smooth line rasterization if available
   vk::PipelineRasterizationLineStateCreateInfoEXT line_state;
-  if (nvvk_.vk_ctx_.hasDeviceExtension(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME)) {
+  if (has_line_rasterization_extension_) {
     line_state.lineRasterizationMode = vk::LineRasterizationModeEXT::eRectangularSmooth;
     state.rasterizationState.pNext = &line_state;
   }
@@ -2356,6 +2385,49 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
   }
 }
 
+bool Vulkan::Impl::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
+  if (!has_present_wait_extension_) {
+    HOLOSCAN_LOG_ERROR(
+        "Waiting for presents is not supported since the required Vulkan device extension "
+        "`VK_KHR_present_wait` is not available.");
+    return false;
+  }
+  vk::Result result = fb_sequence_->wait_for_present(present_id, timeout_ns);
+  if (result == vk::Result::eTimeout) {
+    return false;
+  }
+  vk::resultCheck(result, "Failed to wait for present");
+  return true;
+}
+
+bool Vulkan::Impl::wait_for_display_event(DisplayEventType display_event_type,
+                                          uint64_t timeout_ns) {
+  vk::DisplayEventInfoEXT display_event_info;
+  switch (display_event_type) {
+    case DisplayEventType::FIRST_PIXEL_OUT:
+      display_event_info.displayEvent = vk::DisplayEventTypeEXT::eFirstPixelOut;
+      break;
+    default:
+      throw std::runtime_error(
+          fmt::format("Unsupported display event type: {}", int(display_event_type)));
+  }
+  if (!display_) {
+    throw std::runtime_error("There is no display (using a headless window?)");
+  }
+  auto display_event_fence = device_.registerDisplayEventEXTUnique(display_, display_event_info);
+
+  vk::Result result = device_.waitForFences(display_event_fence.get(), true, timeout_ns);
+  if (result == vk::Result::eTimeout) {
+    return false;
+  }
+  vk::resultCheck(result, "Failed to wait for display event");
+  return true;
+}
+
+uint64_t Vulkan::Impl::get_vblank_counter() {
+  return this->fb_sequence_->get_swapchain_vblank_counter();
+}
+
 Vulkan::Vulkan() : impl_(new Vulkan::Impl) {}
 
 Vulkan::~Vulkan() {}
@@ -2501,6 +2573,18 @@ void Vulkan::draw_indexed(vk::PrimitiveTopology topology,
 void Vulkan::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height, size_t buffer_size,
                               CUdeviceptr buffer, CUstream stream, size_t row_pitch) {
   impl_->read_framebuffer(this, fmt, width, height, buffer_size, buffer, stream, row_pitch);
+}
+
+bool Vulkan::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
+  return impl_->wait_for_present(present_id, timeout_ns);
+}
+
+bool Vulkan::wait_for_display_event(DisplayEventType display_event_type, uint64_t timeout_ns) {
+  return impl_->wait_for_display_event(display_event_type, timeout_ns);
+}
+
+uint64_t Vulkan::get_vblank_counter() {
+  return impl_->get_vblank_counter();
 }
 
 }  // namespace holoscan::viz

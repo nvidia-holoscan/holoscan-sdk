@@ -40,6 +40,7 @@
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/scheduler.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/logger/logger.hpp"
 #include "kwarg_handling.hpp"
 #include "operator.hpp"
@@ -114,13 +115,13 @@ void init_fragment(py::module_& m) {
       // TODO(unknown): sphinx API doc build complains if more than one overloaded add_flow method
       // has a docstring specified. For now using the docstring defined for 3-argument
       // Operator-based version and describing the other variants in the Notes section.
-      .def(  // note: virtual function
+      .def(
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&, const std::shared_ptr<Operator>&>(
               &Fragment::add_flow),
           "upstream_op"_a,
           "downstream_op"_a)
-      .def(  // note: virtual function
+      .def(
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&,
                             const std::shared_ptr<Operator>&,
@@ -128,7 +129,7 @@ void init_fragment(py::module_& m) {
           "upstream_op"_a,
           "downstream_op"_a,
           "port_pairs"_a)
-      .def(  // note: virtual function
+      .def(
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&,
                             const std::shared_ptr<Operator>&,
@@ -136,7 +137,7 @@ void init_fragment(py::module_& m) {
           "upstream_op"_a,
           "downstream_op"_a,
           "connector_type"_a)
-      .def(  // note: virtual function
+      .def(
           "add_flow",
           py::overload_cast<const std::shared_ptr<Operator>&,
                             const std::shared_ptr<Operator>&,
@@ -147,6 +148,86 @@ void init_fragment(py::module_& m) {
           "port_pairs"_a,
           "connector_type"_a,
           doc::Fragment::doc_add_flow_pair)
+      // Subgraph add_flow overloads
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Operator>&,
+                            const std::shared_ptr<Subgraph>&,
+                            std::set<std::pair<std::string, std::string>>>(&Fragment::add_flow),
+          "upstream_op"_a,
+          "downstream_subgraph"_a,
+          "port_pairs"_a = std::set<std::pair<std::string, std::string>>{})
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Operator>&,
+                            std::set<std::pair<std::string, std::string>>>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_op"_a,
+          "port_pairs"_a = std::set<std::pair<std::string, std::string>>{})
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Subgraph>&,
+                            std::set<std::pair<std::string, std::string>>>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_subgraph"_a,
+          "port_pairs"_a = std::set<std::pair<std::string, std::string>>{})
+      // Subgraph add_flow connector type overloads
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Operator>&,
+                            const std::shared_ptr<Subgraph>&,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_op"_a,
+          "downstream_subgraph"_a,
+          "connector_type"_a)
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Operator>&,
+                            const std::shared_ptr<Subgraph>&,
+                            std::set<std::pair<std::string, std::string>>,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_op"_a,
+          "downstream_subgraph"_a,
+          "port_pairs"_a,
+          "connector_type"_a)
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Operator>&,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_op"_a,
+          "connector_type"_a)
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Operator>&,
+                            std::set<std::pair<std::string, std::string>>,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_op"_a,
+          "port_pairs"_a,
+          "connector_type"_a)
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Subgraph>&,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_subgraph"_a,
+          "connector_type"_a)
+      .def(
+          "add_flow",
+          py::overload_cast<const std::shared_ptr<Subgraph>&,
+                            const std::shared_ptr<Subgraph>&,
+                            std::set<std::pair<std::string, std::string>>,
+                            const IOSpec::ConnectorType>(&Fragment::add_flow),
+          "upstream_subgraph"_a,
+          "downstream_subgraph"_a,
+          "port_pairs"_a,
+          "connector_type"_a)
       .def("compose", &Fragment::compose, doc::Fragment::doc_compose)  // note: virtual function
       .def("scheduler",
            py::overload_cast<const std::shared_ptr<Scheduler>&>(&Fragment::scheduler),
@@ -211,10 +292,11 @@ void init_fragment(py::module_& m) {
           "set_dynamic_flows",
           [](Fragment& fragment, const std::shared_ptr<Operator>& op, py::function func) {
             fragment.set_dynamic_flows(
-                op, [func = std::move(func)](const std::shared_ptr<Operator>& op_) {
+                op, [func_wrapper = std::make_shared<GILGuardedPyObject>(func)](
+                  const std::shared_ptr<Operator>& op_) {
                   // Acquire GIL before calling into Python code
                   py::gil_scoped_acquire gil;
-                  func(op_);
+                  func_wrapper->obj()(op_);
                 });
           },
           "op"_a,
@@ -686,6 +768,125 @@ void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_op, io_map, connector_type);
+}
+
+// Subgraph add_flow trampoline implementations
+void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          std::set<std::pair<std::string, std::string>> port_pairs) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_subgraph, port_pairs);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Operator>& downstream_op,
+                          std::set<std::pair<std::string, std::string>> port_pairs) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_subgraph, downstream_op, port_pairs);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          std::set<std::pair<std::string, std::string>> port_pairs) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_subgraph, downstream_subgraph, port_pairs);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          const IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_op, downstream_subgraph, connector_type);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          std::set<std::pair<std::string, std::string>> port_pairs,
+                          const IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[upstream_op.get()] = py::cast(upstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(
+      void, Fragment, add_flow, upstream_op, downstream_subgraph, port_pairs, connector_type);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Operator>& downstream_op,
+                          const IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_flow, upstream_subgraph, downstream_op, connector_type);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Operator>& downstream_op,
+                          std::set<std::pair<std::string, std::string>> port_pairs,
+                          const IOSpec::ConnectorType connector_type) {
+  {
+    pybind11::gil_scoped_acquire gil;
+    // Store a reference to the Python operator in PyFragment's internal registry
+    // to maintain the reference to the Python operator in case it's used by the
+    // data flow tracker after `run()` or `run_async()` is called.
+    // See the explanation in the `PyOperator::release_internal_resources()` method for details.
+    python_operator_registry_[downstream_op.get()] = py::cast(downstream_op);
+  }
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(
+      void, Fragment, add_flow, upstream_subgraph, downstream_op, port_pairs, connector_type);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          const IOSpec::ConnectorType connector_type) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(
+      void, Fragment, add_flow, upstream_subgraph, downstream_subgraph, connector_type);
+}
+
+void PyFragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                          const std::shared_ptr<Subgraph>& downstream_subgraph,
+                          std::set<std::pair<std::string, std::string>> port_pairs,
+                          const IOSpec::ConnectorType connector_type) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(
+      void, Fragment, add_flow, upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
 }
 
 void PyFragment::compose() {

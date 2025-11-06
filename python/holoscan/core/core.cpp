@@ -27,6 +27,7 @@
 #include "io_spec.hpp"
 #include "kwarg_handling.hpp"
 #include "operator.hpp"
+#include "subgraph.hpp"
 #include "tensor.hpp"
 
 namespace holoscan {
@@ -54,6 +55,7 @@ PYBIND11_MODULE(_core, m) {
   init_network_context(m);
   init_executor(m);
   init_fragment(m);
+  init_subgraph(m);
   init_application(m);
   init_data_flow_tracker(m);
   init_tensor(m);

@@ -25,14 +25,16 @@
 #include <string>
 #include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
+#include "holoscan/core/subgraph.hpp"
+#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -56,7 +58,8 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
   using PingTensorTxOp::PingTensorTxOp;
 
   // Define a constructor that fully initializes the object.
-  PyPingTensorTxOp(Fragment* fragment, const py::args& args,
+  PyPingTensorTxOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                   const py::args& args,
                    std::optional<std::shared_ptr<::holoscan::Allocator>> allocator = std::nullopt,
                    const std::string& storage_type = "system"s,
                    std::optional<int32_t> batch_size = std::nullopt, int32_t rows = 32,
@@ -122,10 +125,7 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
       }
       this->add_arg(Arg("data_type", data_type));
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -140,7 +140,7 @@ PYBIND11_MODULE(_ping_tensor_tx, m) {
 
   py::class_<PingTensorTxOp, PyPingTensorTxOp, Operator, std::shared_ptr<PingTensorTxOp>>(
       m, "PingTensorTxOp", doc::PingTensorTxOp::doc_PingTensorTxOp)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
                     std::optional<std::shared_ptr<::holoscan::Allocator>>,
                     const std::string&,
@@ -164,7 +164,7 @@ PYBIND11_MODULE(_ping_tensor_tx, m) {
            "tensor_name"_a = "tensor"s,
            "cuda_stream_pool"_a = py::none(),
            "async_device_allocation"_a = false,
-           "name"_a = "video_stream_replayer"s,
+           "name"_a = "ping_tensor_tx"s,
            doc::PingTensorTxOp::doc_PingTensorTxOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

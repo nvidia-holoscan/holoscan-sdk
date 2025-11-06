@@ -18,7 +18,7 @@
 #ifndef HOLOSCAN_CORE_IO_CONTEXT_HPP
 #define HOLOSCAN_CORE_IO_CONTEXT_HPP
 
-#include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 
 #include <any>
 #include <map>
@@ -383,8 +383,12 @@ class InputContext {
    * @returns The operator's internal CUDA stream, when possible. Returns `cudaStreamDefault`
    * instead if no CudaStreamPool resource was available and no stream was found on the input port.
    */
-  virtual cudaStream_t receive_cuda_stream(const char* input_port_name = nullptr,
-                                           bool allocate = true, bool sync_to_default = false) = 0;
+  virtual cudaStream_t receive_cuda_stream([[maybe_unused]] const char* input_port_name = nullptr,
+                                           [[maybe_unused]] bool allocate = true,
+                                           [[maybe_unused]] bool sync_to_default = false) {
+    HOLOSCAN_LOG_ERROR("receive_cuda_stream not implemented in base InputContext");
+    return cudaStreamDefault;
+  }
 
   /** @brief Retrieve the CUDA streams found an input port.
    *
@@ -399,7 +403,10 @@ class InputContext {
    * std::nullopt.
    */
   virtual std::vector<std::optional<cudaStream_t>> receive_cuda_streams(
-      const char* input_port_name = nullptr) = 0;
+      [[maybe_unused]] const char* input_port_name = nullptr) {
+    HOLOSCAN_LOG_ERROR("receive_cuda_streams not implemented in base InputContext");
+    return {};
+  }
 
  protected:
   /**
@@ -427,6 +434,7 @@ class InputContext {
                                 [[maybe_unused]] InputType in_type = InputType::kAny,
                                 [[maybe_unused]] bool no_error_message = false,
                                 [[maybe_unused]] bool omit_data_logging = false) {
+    HOLOSCAN_LOG_ERROR("receive_impl not implemented in base InputContext");
     return nullptr;
   }
 
@@ -507,10 +515,15 @@ class InputContext {
     PROF_SCOPED_EVENT(op_->id(), event_data_logging);
     const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+
+    // Check if any CUDA streams were received on this input port
+    auto stream_for_logging = get_first_stream_for_logging(port_name);
+
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
         PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
-        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
+        data_logger->log_tensor_data(
+            tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput, stream_for_logging);
       }
     }
     return true;
@@ -520,11 +533,15 @@ class InputContext {
     PROF_SCOPED_EVENT(op_->id(), event_data_logging);
     const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
+
+    // Check if any CUDA streams were received on this input port
+    auto stream_for_logging = get_first_stream_for_logging(port_name);
+
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
         PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
         data_logger->log_tensormap_data(
-            tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput);
+            tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput, stream_for_logging);
       }
     }
     return true;
@@ -734,6 +751,26 @@ class InputContext {
   // --------------- End of helper functions for the receive method ---------------
 
   void prepopulate_acquisition_timestamp_map();
+
+  /**
+   * @brief Helper to extract the first received CUDA stream for logging
+   * @param port_name The name of the input port
+   * @return The first CUDA stream if available, std::nullopt otherwise
+   */
+  inline std::optional<cudaStream_t> get_first_stream_for_logging(const char* port_name) {
+    auto received_streams = receive_cuda_streams(port_name);
+    if (!received_streams.empty() && received_streams[0].has_value()) {
+      if (received_streams.size() > 1) {
+        HOLOSCAN_LOG_DEBUG(
+            "Multiple CUDA streams ({}) received on input port '{}', using first stream for data "
+            "logging",
+            received_streams.size(),
+            port_name);
+      }
+      return received_streams[0];
+    }
+    return std::nullopt;
+  }
 
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.
@@ -996,8 +1033,10 @@ class OutputContext {
    * @param stream The CUDA stream
    * @param output_port_name The name of the output port.
    */
-  virtual void set_cuda_stream(const cudaStream_t stream,
-                               const char* output_port_name = nullptr) = 0;
+  virtual void set_cuda_stream([[maybe_unused]] const cudaStream_t stream,
+                               [[maybe_unused]] const char* output_port_name = nullptr) {
+    HOLOSCAN_LOG_ERROR("set_cuda_stream not implemented in base OutputContext");
+  }
 
   /** @brief Get the CUDA stream/event handler used by this input context
    *
@@ -1010,6 +1049,22 @@ class OutputContext {
   /// @brief Set the CUDA stream handler used by this output context
   void cuda_object_handler(std::shared_ptr<CudaObjectHandler> handler) {
     cuda_object_handler_ = std::move(handler);
+  }
+
+  /**
+   * @brief Get the CUDA stream to be emitted on the specified output port.
+   *
+   * This method retrieves the CUDA stream that has been configured for emission on the given
+   * output port via `set_cuda_stream`. The base implementation returns std::nullopt. Derived
+   * classes should override this method to provide actual stream information.
+   *
+   * @param output_port_name The name of the output port.
+   * @return Optional CUDA stream. std::nullopt if no stream is configured.
+   */
+  virtual std::optional<cudaStream_t> stream_to_emit(
+      [[maybe_unused]] const char* output_port_name = nullptr) {
+    HOLOSCAN_LOG_DEBUG("stream_to_emit not implemented in base OutputContext");
+    return std::nullopt;
   }
 
  protected:
@@ -1030,32 +1085,15 @@ class OutputContext {
                          [[maybe_unused]] const char* name = nullptr,
                          [[maybe_unused]] OutputType out_type = OutputType::kAny,
                          [[maybe_unused]] const int64_t acq_timestamp = -1,
-                         [[maybe_unused]] bool omit_data_logging = false) {}
-
-  inline bool log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id) {
-    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
-    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
-    for (auto& data_logger : op_->fragment()->data_loggers()) {
-      if (data_logger->should_log_output()) {
-        PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
-        data_logger->log_tensor_data(tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput);
-      }
-    }
-    return true;
+                         [[maybe_unused]] bool omit_data_logging = false) {
+    HOLOSCAN_LOG_ERROR("emit_impl not implemented in base OutputContext");
   }
 
-  inline bool log_tensormap(const holoscan::TensorMap& tensor_map, const std::string& unique_id) {
-    PROF_SCOPED_EVENT(op_->id(), event_data_logging);
-    auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
-    for (auto& data_logger : op_->fragment()->data_loggers()) {
-      if (data_logger->should_log_output()) {
-        PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
-        data_logger->log_tensormap_data(
-            tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kOutput);
-      }
-    }
-    return true;
-  }
+  bool log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
+                  const char* port_name);
+
+  bool log_tensormap(const holoscan::TensorMap& tensor_map, const std::string& unique_id,
+                     const char* port_name);
 
   ExecutionContext* execution_context_ =
       nullptr;              ///< The execution context that is associated with.

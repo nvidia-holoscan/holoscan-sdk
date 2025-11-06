@@ -250,6 +250,42 @@ RuntimeError
     If any other arguments cannot be converted to `Arg` type via `py_object_to_arg`.
 )doc")
 
+PYDOC(Operator_subgraph_args_kwargs, R"doc(
+Operator class with Subgraph constructor.
+
+This constructor allows creating an operator within a Subgraph context, which
+automatically handles qualified naming and fragment assignment.
+
+Parameters
+----------
+op : object
+    The Python operator object (self)
+subgraph : Subgraph
+    The Subgraph that this operator belongs to
+*args
+    Variable length argument list
+**kwargs
+    Arbitrary keyword arguments
+
+Notes
+-----
+When using this constructor, the operator's name will be automatically qualified
+with the Subgraph's instance name (e.g., "camera1_source" for a "source" operator
+in a Subgraph with instance name "camera1").
+
+Examples
+--------
+.. code-block:: python
+
+    class MySubgraph(Subgraph):
+        def compose(self):
+            # This operator will be named "camera1_source" if Subgraph instance is "camera1"
+            source = PingTxOp(self, name="source")
+            
+            # This operator will be named "camera1_converter"  
+            converter = FormatConverterOp(self, name="converter")
+)doc")
+
 PYDOC(name, R"doc(
 The name of the operator.
 )doc")
@@ -534,6 +570,13 @@ Returns
 condition : holoscan.conditions.AsynchronousCondition
     An instance of `holoscan.conditions.AsynchronousCondition` that is the internal
     asynchronous condition for the operator.
+
+Notes
+-----
+This object is only accessible after the executor has called ``Operator.initialize()`` via
+``run()`` or ``run_async()``. If accessed during ``Application.compose()``, it will return
+``None``.
+
 )doc")
 
 PYDOC(stop_execution, R"doc(

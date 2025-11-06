@@ -18,11 +18,14 @@
 #ifndef HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 #define HOLOSCAN_CORE_EXECUTION_CONTEXT_HPP
 
-#include <cuda_runtime.h>
-
 #include <memory>
 #include <string>
 #include <vector>
+
+// Forward declaration to avoid including <cuda_runtime.h>
+extern "C" {
+typedef struct CUstream_st* cudaStream_t;
+}
 
 #include "./common.hpp"
 #include "./errors.hpp"
@@ -75,14 +78,23 @@ class ExecutionContext {
 
   /// @brief allocate a new GXF CudaStream object and return the contained cudaStream_t
   virtual expected<cudaStream_t, RuntimeError> allocate_cuda_stream(
-      const std::string& stream_name = "") = 0;
+      [[maybe_unused]] const std::string& stream_name = "") {
+    return make_unexpected(RuntimeError(
+        ErrorCode::kFailure, "allocate_cuda_stream not implemented in base ExecutionContext"));
+  }
 
   /// @brief synchronize all of the streams in cuda_streams with target_cuda_stream
-  virtual void synchronize_streams(const std::vector<std::optional<cudaStream_t>>& cuda_streams,
-                                   cudaStream_t target_cuda_stream) = 0;
+  virtual void synchronize_streams(
+      [[maybe_unused]] const std::vector<std::optional<cudaStream_t>>& cuda_streams,
+      [[maybe_unused]] cudaStream_t target_cuda_stream) {
+    HOLOSCAN_LOG_ERROR("synchronize_streams not implemented in base ExecutionContext");
+  }
 
   /// @brief determine the CUDA device corresponding to the given stream
-  virtual expected<int, RuntimeError> device_from_stream(cudaStream_t stream) = 0;
+  virtual expected<int, RuntimeError> device_from_stream([[maybe_unused]] cudaStream_t stream) {
+    return make_unexpected(RuntimeError(
+        ErrorCode::kFailure, "device_from_stream not implemented in base ExecutionContext"));
+  }
 
   /**
    * @brief Find an operator by name.
@@ -92,7 +104,10 @@ class ExecutionContext {
    * @param op_name The name of the operator.
    * @return A shared pointer to the operator or nullptr if the operator is not found.
    */
-  virtual std::shared_ptr<Operator> find_operator(const std::string& op_name = "") = 0;
+  virtual std::shared_ptr<Operator> find_operator(
+      [[maybe_unused]] const std::string& op_name = "") {
+    return nullptr;
+  }
 
   /**
    * @brief Get the status of the operator.
@@ -103,7 +118,10 @@ class ExecutionContext {
    * @return The status of the operator or an error if the operator is not found.
    */
   virtual expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(
-      const std::string& op_name = "") = 0;
+      [[maybe_unused]] const std::string& op_name = "") {
+    return make_unexpected(RuntimeError(
+        ErrorCode::kFailure, "get_operator_status not implemented in base ExecutionContext"));
+  }
 
  protected:
   std::shared_ptr<InputContext> input_context_ = nullptr;    ///< The input context.

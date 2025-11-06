@@ -46,31 +46,34 @@ install(FILES
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_PING_PERIODIC_NATIVE_TEST
-    COMMAND python3 ping_periodic_native.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_PERIODIC_NATIVE_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "native condition setup method called"
-    PASS_REGULAR_EXPRESSION "native condition initialize method called"
-    PASS_REGULAR_EXPRESSION "native condition update_state method called"
-    PASS_REGULAR_EXPRESSION "native condition check method called"
-    PASS_REGULAR_EXPRESSION "native condition on_execute method called"
-    PASS_REGULAR_EXPRESSION "Rx message value: 10"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ping_periodic_native.py 2>&1 | \
+       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+         --pass-pattern 'native condition setup method called' \
+         --pass-pattern 'native condition initialize method called' \
+         --pass-pattern 'native condition update_state method called' \
+         --pass-pattern 'native condition check method called' \
+         --pass-pattern 'native condition on_execute method called' \
+         --pass-pattern 'Rx message value: 10'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_MESSAGE_AVAILABLE_NATIVE_TEST
-    COMMAND python3 message_available_native.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} message_available_native.py 2>&1 | \
+       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+         --pass-pattern 'Not adding default condition to port in of operator rx' \
+         --pass-pattern 'native condition setup method called' \
+         --pass-pattern 'native condition initialize method called' \
+         --pass-pattern 'native condition update_state method called' \
+         --pass-pattern 'native condition check method called' \
+         --pass-pattern 'native condition on_execute method called' \
+         --pass-pattern 'Rx message value: 10'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_MESSAGE_AVAILABLE_NATIVE_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "Not adding default condition to port 'in' of operator 'rx'"
-    PASS_REGULAR_EXPRESSION "native condition setup method called"
-    PASS_REGULAR_EXPRESSION "native condition initialize method called"
-    PASS_REGULAR_EXPRESSION "native condition update_state method called"
-    PASS_REGULAR_EXPRESSION "native condition check method called"
-    PASS_REGULAR_EXPRESSION "native condition on_execute method called"
-    PASS_REGULAR_EXPRESSION "Rx message value: 10"
   )
 endif()

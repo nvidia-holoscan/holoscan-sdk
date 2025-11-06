@@ -4,7 +4,7 @@ As described in the [Overview](./overview.md), the Holoscan SDK provides many co
 
 ## 1. Choose your platform
 
-The Holoscan SDK is optimized and compatible with multiple hardware platforms, including NVIDIA Developer Kits (aarch64) and x86_64 workstations. Learn more on the [developer page](https://developer.nvidia.com/holoscan-sdk) to help you decide what hardware you should target.
+The Holoscan SDK is optimized and compatible with multiple hardware platforms, including NVIDIA Developer Kits (aarch64), DGX Spark, and x86_64 workstations. Learn more on the [developer page](https://developer.nvidia.com/holoscan-sdk) to help you decide what hardware you should target.
 
 ## 2. Setup the SDK and your platform
 

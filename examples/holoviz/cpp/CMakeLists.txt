@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,16 @@ target_link_libraries(holoviz_camera
   holoscan::ops::holoviz
 )
 
+add_executable(holoviz_conditions
+  holoviz_conditions.cpp
+)
+
+target_link_libraries(holoviz_conditions
+  PRIVATE
+  holoscan::core
+  holoscan::ops::holoviz
+)
+
 add_executable(holoviz_geometry
   holoviz_geometry.cpp
 )
@@ -39,6 +49,7 @@ target_link_libraries(holoviz_geometry
 # The GXF extensions are loaded by the GXF libraries - no need to include here
 file(RELATIVE_PATH install_lib_relative_path ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR})
 set_target_properties(holoviz_camera PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
+set_target_properties(holoviz_conditions PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
 set_target_properties(holoviz_geometry PROPERTIES INSTALL_RPATH "\$ORIGIN/${install_lib_relative_path}")
 
 # Get relative folder path for the app
@@ -46,7 +57,7 @@ file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SO
 
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
   # Install the source
-  install(FILES holoviz_camera.cpp holoviz_geometry.cpp
+  install(FILES holoviz_camera.cpp holoviz_conditions.cpp holoviz_geometry.cpp
     DESTINATION "${app_relative_dest_path}"
     COMPONENT holoscan-examples
   )
@@ -60,13 +71,14 @@ if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 endif()
 
 # Install the app
-install(TARGETS holoviz_camera holoviz_geometry
+install(TARGETS holoviz_camera holoviz_conditions holoviz_geometry
   DESTINATION "${app_relative_dest_path}"
   COMPONENT holoscan-examples
 )
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME holoviz_geometry_output)
@@ -115,7 +127,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_RENDER_TEST
-      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}
@@ -134,9 +146,6 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Received camera pose:"
-    PASS_REGULAR_EXPRESSION "Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock."
+    PASS_REGULAR_EXPRESSION "Received camera pose:.*Scheduler stopped: Some entities are waiting for execution"
   )
-
-
 endif()

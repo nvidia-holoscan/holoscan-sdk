@@ -167,77 +167,144 @@ class ResultCheckerOp : public holoscan::Operator {
 // to verify the inference(identity model) result.
 // The identity model is a simple model that takes a tensor as input and returns the same tensor.
 // The test tensor has a dimension of BATCH_SIZE x TENSOR_SIZE x TENSOR_SIZE.
+// Supports testing both one and two inference ops through the test_two parameter.
+// Testing of two inference ops uses the EventBasedScheduler to verify running two pipelines
+// parallelly.
 class InferenceOpTestApp : public holoscan::Application {
  public:
   explicit InferenceOpTestApp(std::string backend, std::string model_path,
-                              bool enable_green_context)
-      : backend_(backend), model_path_(model_path), enable_green_context_(enable_green_context) {}
+                              bool enable_green_context, bool test_two = false)
+      : backend_(backend),
+        model_path_(model_path),
+        enable_green_context_(enable_green_context),
+        test_two_(test_two) {}
 
   void compose() override {
     using namespace holoscan;
     auto allocator = make_resource<UnboundedAllocator>("pool");
 
-    // Create a CUDA stream pool
+    // Create CUDA stream pools
     std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool = nullptr;
-    std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr;
+    std::shared_ptr<CudaGreenContext> cuda_green_context1 = nullptr;
+    std::shared_ptr<CudaGreenContext> cuda_green_context2 = nullptr;
 
     if (enable_green_context_) {
       std::vector<uint32_t> partitions = {4, 4};
       cuda_green_context_pool = make_resource<CudaGreenContextPool>(
-          "green_context_pool", 0, 0, partitions.size(), partitions);
-      cuda_green_context =
-          make_resource<CudaGreenContext>("green_context", cuda_green_context_pool);
+          "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
+      cuda_green_context1 = make_resource<CudaGreenContext>(
+          "cuda_green_context", cuda_green_context_pool, 0);
+      if (test_two_) {
+        cuda_green_context2 = make_resource<CudaGreenContext>(
+            "cuda_green_context", cuda_green_context_pool, 1);
+      }
     }
 
-    auto cuda_stream_pool =
-        make_resource<CudaStreamPool>("stream_pool", 0, 0, 0, 1, 5, cuda_green_context);
+    auto cuda_stream_pool1 = make_resource<CudaStreamPool>(
+            "cuda_stream_pool1", 0, 0, 0, 1, 5, cuda_green_context1);
+    auto cuda_stream_pool2 = test_two_ ? make_resource<CudaStreamPool>(
+            "cuda_stream_pool2", 0, 0, 0, 1, 5, cuda_green_context2) : nullptr;
 
     auto tensor_generator_op = make_operator<ops::TensorGeneratorOp>(
         "tensor_generator", Arg("allocator") = allocator, make_condition<CountCondition>(10));
 
-    ops::InferenceOp::DataMap model_path_map;
+    ops::InferenceOp::DataMap model_path_map1;
+    ops::InferenceOp::DataMap model_path_map2;
     std::string model_path = "../tests/operators/inference/models/" + model_path_;
-    model_path_map.insert("first", model_path);
-    HOLOSCAN_LOG_INFO("model_path = {}", model_path);
+    model_path_map1.insert("first", model_path);
+    if (test_two_) {
+      model_path_map2.insert("second", model_path);
+    }
     std::vector<int> in_tensor_dimensions = {BATCH_SIZE, TENSOR_SIZE, TENSOR_SIZE};
 
-    auto infer_op =
-        make_operator<ops::InferenceOp>("infer",
-                                        from_config("inference"),
-                                        Arg("backend") = backend_,
-                                        Arg("model_path_map") = model_path_map,
-                                        Arg("allocator") = allocator,
-                                        Arg("in_tensor_dimensions") = in_tensor_dimensions,
-                                        cuda_stream_pool);
-    auto result_checker_op = make_operator<ops::ResultCheckerOp>("checker", enable_green_context_);
+    // First inference operator
+    auto infer_op1 = make_operator<ops::InferenceOp>(
+        "infer1",
+        from_config("inference"),
+        Arg("backend") = backend_,
+        Arg("model_path_map") = model_path_map1,
+        Arg("allocator") = allocator,
+        Arg("in_tensor_dimensions") = in_tensor_dimensions,
+        cuda_stream_pool1);
 
-    // Add flow
-    add_flow(tensor_generator_op, infer_op, {{"output", "receivers"}});
-    add_flow(infer_op, result_checker_op, {{"transmitter", "input"}});
+    // Second inference operator (only if testing two inference ops in parallel)
+    std::shared_ptr<ops::InferenceOp> infer_op2 = nullptr;
+    if (test_two_) {
+      ops::InferenceOp::DataVecMap pre_processor_map2;
+      ops::InferenceOp::DataVecMap inference_map2;
+      pre_processor_map2.insert("second", {"tensor"});
+      inference_map2.insert("second", {"tensor"});
+
+      infer_op2 = make_operator<ops::InferenceOp>(
+          "infer2",
+          Arg("backend") = backend_,
+          Arg("model_path_map") = model_path_map2,
+          Arg("allocator") = allocator,
+          Arg("in_tensor_names") = std::vector<std::string>{"tensor"},
+          Arg("out_tensor_names") = std::vector<std::string>{"tensor"},
+          Arg("parallel_inference") = true,
+          Arg("infer_on_cpu") = false,
+          Arg("enable_fp16") = false,
+          Arg("enable_cuda_graphs") = true,
+          Arg("input_on_cuda") = true,
+          Arg("output_on_cuda") = true,
+          Arg("transmit_on_cuda") = true,
+          Arg("in_tensor_dimensions") = in_tensor_dimensions,
+          Arg("pre_processor_map") = pre_processor_map2,
+          Arg("inference_map") = inference_map2,
+          cuda_stream_pool2);
+    }
+
+    auto result_checker_op1 = make_operator<ops::ResultCheckerOp>(
+        "checker1", enable_green_context_);
+    auto result_checker_op2 = test_two_ ?
+        make_operator<ops::ResultCheckerOp>("checker2", enable_green_context_) : nullptr;
+
+    // Add flows
+    add_flow(tensor_generator_op, infer_op1, {{"output", "receivers"}});
+    add_flow(infer_op1, result_checker_op1, {{"transmitter", "input"}});
+
+    if (test_two_) {
+      add_flow(tensor_generator_op, infer_op2, {{"output", "receivers"}});
+      add_flow(infer_op2, result_checker_op2, {{"transmitter", "input"}});
+    }
   }
 
  private:
   std::string backend_;
   std::string model_path_;
   bool enable_green_context_;
+  bool test_two_;
 };
 
 class InferenceOpTestFixture
-    : public ::testing::TestWithParam<std::tuple<std::string, std::string, bool>> {};
+    : public ::testing::TestWithParam<std::tuple<std::string, std::string, bool, bool>> {};
 
 TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
   using namespace holoscan;
 
-  auto& [backend, model, enable_green_context] = GetParam();
+  auto& [backend, model, enable_green_context, test_two] = GetParam();
   HOLOSCAN_LOG_INFO("backend = {}", backend);
   HOLOSCAN_LOG_INFO("model = {}", model);
   HOLOSCAN_LOG_INFO("enable_green_context = {}", enable_green_context);
+  HOLOSCAN_LOG_INFO("test_two = {}", test_two);
 
   std::filesystem::path config_path;
   config_path = std::filesystem::path("../tests/operators/inference/inference.yaml");
 
-  auto app = make_application<InferenceOpTestApp>(backend, model, enable_green_context);
+  auto app = make_application<InferenceOpTestApp>(backend, model, enable_green_context, test_two);
   app->config(config_path);
+
+  // Use EventBasedScheduler if testing two inference ops
+  if (test_two) {
+    auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
+        "event_based_scheduler",
+        holoscan::Arg("worker_thread_number", static_cast<int64_t>(2)),
+        holoscan::Arg("stop_on_deadlock", true),
+        holoscan::Arg("stop_on_deadlock_timeout", static_cast<int64_t>(500)),
+        holoscan::Arg("max_duration_ms", static_cast<int64_t>(10000)));
+    app->scheduler(scheduler);
+  }
 
   // capture output to check that the expected messages were logged
   testing::internal::CaptureStderr();
@@ -250,9 +317,18 @@ TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
 }
 
 INSTANTIATE_TEST_CASE_P(InferenceOpTestApp, InferenceOpTestFixture,
-                        ::testing::Values(std::make_tuple("onnxrt", "identity_model.onnx", false),
-                                          std::make_tuple("onnxrt", "identity_model.onnx", true),
-                                          std::make_tuple("trt", "identity_model.onnx", false),
-                                          std::make_tuple("trt", "identity_model.onnx", true),
-                                          std::make_tuple("torch", "identity_model.pt", false),
-                                          std::make_tuple("torch", "identity_model.pt", true)));
+                        ::testing::Values(
+                          // Single inference op
+                          std::make_tuple("onnxrt", "identity_model.onnx", false, false),
+                          std::make_tuple("onnxrt", "identity_model.onnx", true, false),
+                          std::make_tuple("trt", "identity_model.onnx", false, false),
+                          std::make_tuple("trt", "identity_model.onnx", true, false),
+                          std::make_tuple("torch", "identity_model.pt", false, false),
+                          std::make_tuple("torch", "identity_model.pt", true, false),
+                          // Two inference ops
+                          std::make_tuple("onnxrt", "identity_model.onnx", false, true),
+                          std::make_tuple("onnxrt", "identity_model.onnx", true, true),
+                          std::make_tuple("trt", "identity_model.onnx", false, true),
+                          std::make_tuple("trt", "identity_model.onnx", true, true),
+                          std::make_tuple("torch", "identity_model.pt", false, true),
+                          std::make_tuple("torch", "identity_model.pt", true, true)));

@@ -29,6 +29,7 @@
 
 #include "./pydoc.hpp"
 
+#include "../../core/component_util.hpp"
 #include "../../core/gil_guarded_pyobject.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -101,10 +102,7 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
       this->add_arg(Arg("large_data_queue_policy",
                         std::get<holoscan::AsyncQueuePolicy>(large_data_queue_policy)));
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment, name);
   }
 };
 /* The python module */

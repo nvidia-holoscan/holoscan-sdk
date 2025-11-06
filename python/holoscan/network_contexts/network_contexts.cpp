@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 
+#include "../core/component_util.hpp"
 #include "./network_contexts_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -59,10 +60,7 @@ class PyUcxContext : public UcxContext {
     if (serializer) {
       this->add_arg(Arg{"serializer", serializer});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment, name);
   }
 };
 // End of trampoline classes for handling Python kwargs

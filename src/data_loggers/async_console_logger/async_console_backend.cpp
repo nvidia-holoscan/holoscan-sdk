@@ -39,6 +39,31 @@ namespace data_loggers {
 // (to be used as needed to prevent interleaved output from separate loggers)
 extern std::mutex console_output_mutex;
 
+namespace {
+
+/**
+ * @brief Format CUDA stream information for logging
+ * @param stream Optional CUDA stream
+ * @return Formatted string representation of the stream
+ */
+std::string format_stream_info(std::optional<cudaStream_t> stream) {
+  if (stream.has_value()) {
+    if (stream.value() == cudaStreamDefault) {
+      return "Stream: default";
+    } else if (stream.value() == cudaStreamLegacy) {
+      return "Stream: legacy";
+    } else if (stream.value() == cudaStreamPerThread) {
+      return "Stream: per-thread";
+    } else {
+      return fmt::format("Stream: 0x{:x}", reinterpret_cast<uintptr_t>(stream.value()));
+    }
+  } else {
+    return "Stream: none";
+  }
+}
+
+}  // namespace
+
 // AsyncConsoleBackend implementation
 AsyncConsoleBackend::AsyncConsoleBackend(std::shared_ptr<SimpleTextSerializer> serializer)
     : serializer_(std::move(serializer)) {}
@@ -108,8 +133,7 @@ bool AsyncConsoleBackend::log_entry(const DataEntry& entry) {
     HOLOSCAN_LOG_ERROR("AsyncConsoleLogger No serializer available for entry: {}", entry.unique_id);
     return false;
   }
-
-  std::string serialized_content = serialize_data_content(entry);
+  std::string serialized_content = serialize_data_content(entry, entry.stream);
   std::string type_name = get_data_type_name(entry);
 
   // Add metadata if available and enabled
@@ -148,18 +172,21 @@ bool AsyncConsoleBackend::log_entry(const DataEntry& entry) {
 
   // Format the log message similar to BasicConsoleLogger using HOLOSCAN_LOG_INFO
   {
+    std::string stream_info = format_stream_info(entry.stream);
     // In general, should protect console output with mutex in case of concurrent access from
     // multiple threads to prevent interleaved output. Should not be necessary here since there is
     // only a single logging statement.
     // std::lock_guard<std::mutex> lock(console_output_mutex);
     HOLOSCAN_LOG_INFO(
-        "AsyncConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: {}] {}",
+        "AsyncConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:{}][Type Name: {}]"
+        "[{}] {}",
         entry.unique_id,
         entry.acquisition_timestamp,
         entry.io_type == IOSpec::IOType::kOutput ? "Emit Timestamp" : "Receive Timestamp",
         entry.emit_timestamp,
         log_category,
         type_name,
+        stream_info,
         serialized_content);
   }
   return true;
@@ -172,7 +199,7 @@ bool AsyncConsoleBackend::log_large_entry(const DataEntry& entry) {
     return false;
   }
 
-  std::string serialized_content = serialize_large_data_content(entry);
+  std::string serialized_content = serialize_large_data_content(entry, entry.stream);
   std::string type_name = get_large_data_type_name(entry);
 
   // Add metadata if available and enabled
@@ -193,19 +220,20 @@ bool AsyncConsoleBackend::log_large_entry(const DataEntry& entry) {
   }
   // Format the log message similar to BasicConsoleLogger using HOLOSCAN_LOG_INFO
   {
+    std::string stream_info = format_stream_info(entry.stream);
     // In general, should protect console output with mutex in case of concurrent access from
     // multiple threads to prevent interleaved output. Should not be necessary here since there is
     // only a single logging statement.
     // std::lock_guard<std::mutex> lock(console_output_mutex);
     HOLOSCAN_LOG_INFO(
         "AsyncConsoleLogger[ID:{}][Acquisition Timestamp:{}][{}:{}][Category:Content][Type Name: "
-        "{}] "
-        "{}",
+        "{}][{}] {}",
         entry.unique_id,
         entry.acquisition_timestamp,
         entry.io_type == IOSpec::IOType::kOutput ? "Emit Timestamp" : "Receive Timestamp",
         entry.emit_timestamp,
         type_name,
+        stream_info,
         serialized_content);
     return true;
   }
@@ -235,7 +263,8 @@ std::string AsyncConsoleBackend::get_large_data_type_name(const DataEntry& entry
   }
 }
 
-std::string AsyncConsoleBackend::serialize_data_content(const DataEntry& entry) const {
+std::string AsyncConsoleBackend::serialize_data_content(const DataEntry& entry,
+                                                        std::optional<cudaStream_t> stream) const {
   try {
     switch (entry.type) {
       case DataEntry::Generic:
@@ -251,7 +280,7 @@ std::string AsyncConsoleBackend::serialize_data_content(const DataEntry& entry) 
         if (std::holds_alternative<std::shared_ptr<holoscan::Tensor>>(entry.data)) {
           auto tensor = std::get<std::shared_ptr<holoscan::Tensor>>(entry.data);
           // For data, we might serialize without tensor content (metadata only)
-          return serializer_->serialize_tensor_to_string(tensor, false);
+          return serializer_->serialize_tensor_to_string(tensor, false, stream);
         }
         return "Tensor (null)";
 
@@ -259,7 +288,7 @@ std::string AsyncConsoleBackend::serialize_data_content(const DataEntry& entry) 
         if (std::holds_alternative<holoscan::TensorMap>(entry.data)) {
           auto& tensor_map = std::get<holoscan::TensorMap>(entry.data);
           // For data, we might serialize without tensor content (metadata only)
-          return serializer_->serialize_tensormap_to_string(tensor_map, false);
+          return serializer_->serialize_tensormap_to_string(tensor_map, false, stream);
         }
         return "TensorMap (empty)";
 
@@ -271,21 +300,23 @@ std::string AsyncConsoleBackend::serialize_data_content(const DataEntry& entry) 
   }
 }
 
-std::string AsyncConsoleBackend::serialize_large_data_content(const DataEntry& entry) const {
+std::string AsyncConsoleBackend::serialize_large_data_content(
+    const DataEntry& entry, std::optional<cudaStream_t> stream) const {
   try {
     switch (entry.type) {
       case DataEntry::TensorData:
         if (std::holds_alternative<std::shared_ptr<holoscan::Tensor>>(entry.data)) {
           auto tensor = std::get<std::shared_ptr<holoscan::Tensor>>(entry.data);
-          return serializer_->serialize_tensor_to_string(tensor, log_tensor_data_content_.load());
+          return serializer_->serialize_tensor_to_string(
+              tensor, log_tensor_data_content_.load(), stream);
         }
         return "Tensor (null)";
 
       case DataEntry::TensorMapData:
         if (std::holds_alternative<holoscan::TensorMap>(entry.data)) {
           auto& tensor_map = std::get<holoscan::TensorMap>(entry.data);
-          return serializer_->serialize_tensormap_to_string(tensor_map,
-                                                            log_tensor_data_content_.load());
+          return serializer_->serialize_tensormap_to_string(
+              tensor_map, log_tensor_data_content_.load(), stream);
         }
         return "TensorMap (empty)";
 

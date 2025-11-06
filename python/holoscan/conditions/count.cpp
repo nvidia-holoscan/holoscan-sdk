@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,16 +16,20 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./count_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/count.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -50,20 +54,17 @@ class PyCountCondition : public CountCondition {
   using CountCondition::CountCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCountCondition(Fragment* fragment, int64_t count = 1L,
-                            const std::string& name = "noname_count_condition")
+  explicit PyCountCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                            int64_t count = 1L, const std::string& name = "noname_count_condition")
       : CountCondition(Arg{"count", count}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
 void init_count(py::module_& m) {
   py::class_<CountCondition, PyCountCondition, gxf::GXFCondition, std::shared_ptr<CountCondition>>(
       m, "CountCondition", doc::CountCondition::doc_CountCondition)
-      .def(py::init<Fragment*, int64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "count"_a = 1L,
            "name"_a = "noname_count_condition"s,

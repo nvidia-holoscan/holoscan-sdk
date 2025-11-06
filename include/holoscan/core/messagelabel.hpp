@@ -23,6 +23,8 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <map>
+#include <mutex>
 
 #include "./forward_def.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -107,12 +109,13 @@ struct OperatorTimestampLabel {
  * a message between Operators in Holoscan, for Data Frame Flow Tracking.
  *
  * A MessageLabel has a vector of paths, where each path is a vector of Operator references and
- * their publish and receive timestamps.
+ * their publish and receive timestamps. It also stores frame numbers for root operators.
  */
 class MessageLabel {
  public:
   using TimestampedPath = std::vector<OperatorTimestampLabel>;
   using PathOperators = std::unordered_set<std::string>;
+  using FrameNumberMap = std::map<std::string, uint64_t>;  // operatorname-portname -> frame_number
 
   MessageLabel() {
     // By default, allocate DEFAULT_NUM_PATHS paths in the message_paths
@@ -121,7 +124,9 @@ class MessageLabel {
   }
 
   MessageLabel(const MessageLabel& m)
-      : message_paths(m.message_paths), message_path_operators(m.message_path_operators) {}
+      : message_paths(m.message_paths),
+        message_path_operators(m.message_path_operators),
+        frame_numbers_(m.get_frame_numbers()) {}
 
   /**
    * @brief Construct a new Message Label object from a vector of TimestampedPaths. This constructor
@@ -143,6 +148,7 @@ class MessageLabel {
     if (this != &m) {
       this->message_paths = m.message_paths;
       this->message_path_operators = m.message_path_operators;
+      this->frame_numbers_ = m.get_frame_numbers();
     }
     return *this;
   }
@@ -249,6 +255,30 @@ class MessageLabel {
   std::vector<int> has_operator(const std::string& op_name) const;
 
   /**
+   * @brief Set frame number for a specific root operator and port
+   *
+   * @param operator_name The name of the root operator
+   * @param port_name The name of the output port
+   * @param frame_number The frame number to set
+   */
+  inline void set_frame_number(const std::string& operator_name, const std::string& port_name,
+                               uint64_t frame_number) {
+    std::scoped_lock lock(frame_numbers_mutex_);
+    std::string key = operator_name + "-" + port_name;
+    frame_numbers_[key] = frame_number;
+  }
+
+  /**
+   * @brief Get all frame numbers as a map
+   *
+   * @return Copy of the frame number map (thread-safe)
+   */
+  FrameNumberMap get_frame_numbers() const {
+    std::scoped_lock lock(frame_numbers_mutex_);
+    return frame_numbers_;
+  }
+
+  /**
    * @brief Add a new Operator timestamp to all the paths in a message label.
    *
    * @param o_timestamp The new operator timestamp to be added
@@ -290,6 +320,17 @@ class MessageLabel {
   /// List of paths where each path is a set of name of the operators
   /// This variable is used to quickly check whether an operator is in a path
   std::vector<PathOperators> message_path_operators;
+
+  /// Map of root operator-port combinations to their frame numbers
+  /// Keys are in format "operatorname-portname" to track frame numbers per output port.
+  /// Frame numbers are used to uniquely identify a frame in the dataflow pipeline.
+  /// Frame numbers are generated at root operators but carried through
+  /// the entire message pipeline, allowing any operator to access the
+  /// frame numbers from all contributing root operator ports.
+  FrameNumberMap frame_numbers_;
+
+  /// Mutex to protect concurrent access to frame_numbers_
+  mutable std::mutex frame_numbers_mutex_;
 };
 }  // namespace holoscan
 

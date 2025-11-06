@@ -43,7 +43,7 @@ If a pixel format is specified in the yaml file, then this format will be used.
 
 Parameters
 ----------
-fragment : Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 allocator : holoscan.resources.Allocator
     Deprecated, do not use.

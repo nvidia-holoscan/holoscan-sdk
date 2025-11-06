@@ -20,8 +20,10 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -30,6 +32,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/inference_processor/inference_processor.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -71,8 +74,8 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
   using InferenceProcessorOp::InferenceProcessorOp;
 
   // Define a constructor that fully initializes the object.
-  PyInferenceProcessorOp(Fragment* fragment, const py::args& args,
-                         std::shared_ptr<::holoscan::Allocator> allocator,
+  PyInferenceProcessorOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                         const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
                          const py::dict& process_operations,  // InferenceProcessorOp::DataVecMap
                          const py::dict& processed_map,       // InferenceProcessorOp::DataVecMap
                          const std::vector<std::string>& in_tensor_names,
@@ -95,8 +98,6 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
       this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
 
     // convert from Python dict to InferenceProcessorOp::DataVecMap
     auto process_operations_datavecmap =
@@ -141,9 +142,7 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
         _dict_to_processor_datamap(custom_kernels_process.cast<py::dict>());
     this->add_arg(Arg("custom_kernels", custom_kernels_datamap));
 
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -163,7 +162,7 @@ PYBIND11_MODULE(_inference_processor, m) {
       inference_processor_op(
           m, "InferenceProcessorOp", doc::InferenceProcessorOp::doc_InferenceProcessorOp);
 
-  inference_processor_op.def(py::init<Fragment*,
+  inference_processor_op.def(py::init<std::variant<Fragment*, Subgraph*>,
                                       const py::args&,
                                       std::shared_ptr<::holoscan::Allocator>,
                                       py::dict,

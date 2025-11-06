@@ -26,11 +26,13 @@
 #include <utility>
 #include <variant>
 
+#include "../core/component_util.hpp"
 #include "./periodic_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -77,7 +79,8 @@ class PyPeriodicCondition : public PeriodicCondition {
   using PeriodicCondition::PeriodicCondition;
 
   // Define constructors that fully initializes the object.
-  PyPeriodicCondition(Fragment* fragment, int64_t recess_period_ns,
+  PyPeriodicCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                      int64_t recess_period_ns,
                       const std::variant<std::string, PeriodicConditionPolicy>& policy =
                           PeriodicConditionPolicy::kCatchUpMissedTicks,
                       const std::string& name = "noname_periodic_condition")
@@ -89,13 +92,11 @@ class PyPeriodicCondition : public PeriodicCondition {
       this->add_arg(Arg("policy", std::get<PeriodicConditionPolicy>(policy)));
     }
 
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
   template <typename Rep, typename Period>
-  PyPeriodicCondition(Fragment* fragment, std::chrono::duration<Rep, Period> recess_period_duration,
+  PyPeriodicCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                      std::chrono::duration<Rep, Period> recess_period_duration,
                       const std::variant<std::string, PeriodicConditionPolicy>& policy =
                           PeriodicConditionPolicy::kCatchUpMissedTicks,
                       const std::string& name = "noname_periodic_condition")
@@ -107,10 +108,7 @@ class PyPeriodicCondition : public PeriodicCondition {
       this->add_arg(Arg("policy", std::get<PeriodicConditionPolicy>(policy)));
     }
 
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -128,7 +126,7 @@ void init_periodic(py::module_& m) {
       // TODO(unknown): sphinx API doc build complains if more than one PeriodicCondition init
       //       method has a docstring specified. For now just set the docstring for the
       //       overload using datetime.timedelta for the recess_period.
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int64_t,
                     const std::variant<std::string, PeriodicConditionPolicy>&,
                     const std::string&>(),
@@ -136,7 +134,7 @@ void init_periodic(py::module_& m) {
            "recess_period"_a,
            "policy"_a = PeriodicConditionPolicy::kCatchUpMissedTicks,
            "name"_a = "noname_periodic_condition"s)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::chrono::nanoseconds,
                     const std::variant<std::string, PeriodicConditionPolicy>&,
                     const std::string&>(),

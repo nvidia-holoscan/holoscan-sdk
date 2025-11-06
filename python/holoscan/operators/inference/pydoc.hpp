@@ -59,7 +59,7 @@ or refer to [Inference](https://docs.nvidia.com/holoscan/sdk-user-guide/inferenc
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 backend : {"trt", "onnxrt", "torch"}
     Backend to use for inference. Set ``"trt"`` for TensorRT, ``"torch"`` for LibTorch and
@@ -86,8 +86,10 @@ in_tensor_names : sequence of str, optional
     Input tensors.
 out_tensor_names : sequence of str, optional
     Output tensors.
-trt_opt_profile : sequence of int, optional
+trt_opt_profile : dict[str, list[str]], optional
     TensorRT optimization profile for models with dynamic inputs.
+dynamic_input_dims: bool, optional
+    Whether input dimensions to models are dynamic. Default value is ``False``.
 infer_on_cpu : bool, optional
     Whether to run the computation on the CPU instead of GPU. Default value is ``False``.
 parallel_inference : bool, optional

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,8 +36,8 @@ sending a message when the downstream operator is not ready to receive it.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 min_size : int
     The minimum number of free slots present in the back buffer.
 transmitter : str, optional
@@ -66,4 +66,4 @@ buffer.
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CONDITIONS_DOWNSTREAM_MESSAGE_AFFORDABLE_PYDOC_HPP
+#endif /* PYHOLOSCAN_CONDITIONS_DOWNSTREAM_MESSAGE_AFFORDABLE_PYDOC_HPP */

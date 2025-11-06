@@ -110,26 +110,32 @@ if(HOLOSCAN_BUILD_TESTS)
     holoscan::ops::format_converter
   )
 
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE} 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'APPLICATION PORT MAPPING' \
+        --pass-pattern 'fragment2.holoviz.receivers:0' \
+        --pass-pattern 'FRAGMENT fragment1 PORT MAPPING' \
+        --pass-pattern 'fragment1.replayer.output:' \
+        --pass-pattern 'FRAGMENT fragment2 PORT MAPPING' \
+        --fail-pattern 'initialized independent of a parent entity'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_DRIVER_AND_WORKER_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE} --driver --worker --fragments=all
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  )
-
-  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
-    # PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    # test for some expected strings in the distributed app port-mapping output
-    # PASS_REGULAR_EXPRESSION "APPLICATION_PORT_MAPPING"
-    # PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:"
-    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment1' PORT MAPPING"
-    # PASS_REGULAR_EXPRESSION "fragment1.replayer.output:"
-    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment2' PORT MAPPING"
-    PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:0"
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed_test --config ${CONFIG_FILE} --driver --worker --fragments=all 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'APPLICATION PORT MAPPING' \
+        --pass-pattern 'fragment2.holoviz.receivers:0' \
+        --pass-pattern 'FRAGMENT fragment1 PORT MAPPING' \
+        --pass-pattern 'fragment1.replayer.output:' \
+        --pass-pattern 'FRAGMENT fragment2 PORT MAPPING' \
+        --fail-pattern 'initialized independent of a parent entity'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   # repeat the default test, but with HOLOSCAN_UCX_ASYNCHRONOUS=TRUE to set
@@ -148,7 +154,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_RENDER_TEST
-      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}
@@ -172,16 +178,15 @@ if(HOLOSCAN_BUILD_TESTS)
   file(WRITE ${DUAL_WINDOW_CONFIG_FILE} ${CONFIG_STRING})
 
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_WINDOW_CLOSE_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed --config ${DUAL_WINDOW_CONFIG_FILE} --driver --worker --fragments=all
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/video_replayer_distributed --config ${DUAL_WINDOW_CONFIG_FILE} --driver --worker --fragments=all 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'HolovizOpAutoClose: compute called 30 times' \
+        --pass-pattern 'Terminating fragment fragment1 via stop_execution()' \
+        --fail-pattern 'HolovizOpAutoClose: compute called 31 times'"
+        # Cannot currently use the following fail pattern due to existing issue with non-clean
+        # window-close shutdown (there is no segfault, but some residual errors are logged)
+        # --fail-pattern '\\[error\\]'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
-
-  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_WINDOW_CLOSE_TEST PROPERTIES
-  DEPENDS EXAMPLE_CPP_VIDEO_REPLAYER_DISTRIBUTED_TEST
-  PASS_REGULAR_EXPRESSION "HolovizOpAutoClose: compute called 30 times"
-  PASS_REGULAR_EXPRESSION "Terminating fragment 'fragment1' via stop_execution()"
-  FAIL_REGULAR_EXPRESSION "HolovizOpAutoClose: compute called 31 times"
-  # FAIL_REGULAR_EXPRESSION "\\[error\\]"
-  )
-
 endif()

@@ -60,6 +60,7 @@ void MessageLabel::print_all() {
 
 std::string MessageLabel::to_string() const {
   auto msg_buf = fmt::memory_buffer();
+
   for (auto& it : message_paths) {
     fmt::format_to(std::back_inserter(msg_buf), "{}", to_string(it));
   }

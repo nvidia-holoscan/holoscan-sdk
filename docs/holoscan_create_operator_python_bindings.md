@@ -26,11 +26,12 @@ It is recommended to put any cleanup of resources allocated in the C++ operator'
 (pybind11-operator-trampoline)=
 ### Creating a PyToolTrackingPostprocessorOp trampoline class
 
-In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) in this case), create a subclass of the C++ Operator class to wrap. The general approach taken is to create a Python-specific class that provides a constructor that takes a `Fragment*`, an explicit list of the operators parameters with default values for any that are optional, and an operator name. This constructor needs to setup the operator as done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/include/holoscan/core/fragment.hpp#L284), so that it is ready for initialization by the GXF executor. We use the convention of prepending "Py" to the C++ class name for this (so, `PyToolTrackingPostprocessorOp` in this case). :
-
+In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) in this case), create a subclass of the C++ Operator class to wrap. The general approach taken is to create a Python-specific class that provides a constructor that takes a `std::variant<Fragment*, Subgraph*>`, an explicit list of the operators parameters with default values for any that are optional, and an operator name. This constructor needs to setup the operator as done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/include/holoscan/core/fragment.hpp#L284), so that it is ready for initialization by the GXF executor. We use the convention of prepending "Py" to the C++ class name for this (so, `PyToolTrackingPostprocessorOp` in this case).
 
 ```{code-block} cpp
 :caption: tool_tracking_post_processor/python/tool_tracking_post_processor.cpp
+
+#include "holoscan/python/core/component_util.hpp"
 
 class PyToolTrackingPostprocessorOp : public ToolTrackingPostprocessorOp {
  public:
@@ -39,7 +40,8 @@ class PyToolTrackingPostprocessorOp : public ToolTrackingPostprocessorOp {
 
   // Define a constructor that fully initializes the object.
   PyToolTrackingPostprocessorOp(
-      Fragment* fragment, const py::args& args, std::shared_ptr<Allocator> device_allocator,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      std::shared_ptr<Allocator> device_allocator,
       std::shared_ptr<Allocator> host_allocator, float min_prob = 0.5f,
       std::vector<std::vector<float>> overlay_img_colors = VIZ_TOOL_DEFAULT_COLORS,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -51,17 +53,16 @@ class PyToolTrackingPostprocessorOp : public ToolTrackingPostprocessorOp {
                                             }) {
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 ```
 
 This constructor will allow providing a Pythonic experience for creating the operator. Specifically, the user can pass Python objects for any of the parameters without having to explicitly create any {cpp:class}`holoscan::Arg` objects via {py:class}`holoscan.core.Arg`. For example, a standard Python float can be passed to `min_prob` and a Python `list[list[float]]` can be passed for `overlay_img_colors` (Pybind11 handles conversion between the C++ and Python types). Pybind11 will also take care of conversion of a Python allocator class like `holoscan.resources.UnboundedAllocator` or `holoscan.resources.BlockMemoryPool` to the underlying C++ `std::shared_ptr<holoscan::Allocator>` type. The arguments `device_allocator` and `host_allocator` correspond to required Parameters of the C++ class and can be provided from Python either positionally or via keyword while the Parameters `min_prob` and `overlay_img_colors` will be optional keyword arguments. `cuda_stream_pool` is also optional, but is only conditionally passed as an argument to the underlying `ToolTrackingPostprocessorOp` constructor when it is not a `nullptr`.
 
-- For all operators, the first argument should be `Fragment* fragment` and is the fragment the operator will be assigned to. In the case of a single fragment application (i.e. not a distributed application), the fragment is just the application itself.
+**Key constructor parameters:**
+
+- For all operators, the first argument should be `std::variant<Fragment*, Subgraph*> fragment_or_subgraph`. This allows the operator to be constructed from either a {cpp:class}`Fragment<holoscan::Fragment>` (or {cpp:class}`Application<holoscan::Application>`) or a {cpp:class}`Subgraph<holoscan::Subgraph>`. In the case of a single fragment application (i.e. not a distributed application), the fragment is just the application itself. When passed a Subgraph, the operator will be automatically added to the fragment with a qualified name.
 - An (optional) `const std::string& name` argument should be provided to enable the application author to set the operator's name.
 - The `const py::args& args` argument corresponds to the `*args` notation in Python. It is a set of 0 or more positional arguments. It is not required to provide this in the function signature, but is recommended in order to enable passing additional conditions such as a `CountCondition` or `PeriodicCondtion` as positional arguments to the operator. The call below to
 
@@ -78,14 +79,34 @@ This constructor will allow providing a Pythonic experience for creating the ope
     ```
     instead of passing it as part of the {cpp:class}`holoscan::ArgList` provided to the `ToolTrackingPostprocessorOp` constructor call above.
 
-The remaining lines of the constructor
+**Operator initialization:**
+
+The final line in the constructor uses the `init_operator_base` utility function to complete operator initialization:
+
 ```cpp
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    init_operator_base(this, fragment_or_subgraph, name);
 ```
-are required to properly initialize it and should be the same across all operators. These [correspond to equivalent code within the Fragment::make_operator method](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/include/holoscan/core/fragment.hpp#L287-L291).
+
+This utility function (defined in `holoscan/python/core/component_util.hpp`) encapsulates the common five-step initialization pattern:
+1. Extracts the fragment pointer and qualified name from the `fragment_or_subgraph` variant
+2. Sets the operator's fragment via the public setter
+3. Sets the operator's name (with automatic qualification for Subgraphs)
+4. Creates and sets the OperatorSpec
+5. Calls the operator's `setup()` method
+
+When a `Fragment*` (or `Application*`) is provided, the operator is initialized with that fragment and the name without modification. When a `Subgraph*` is provided, the fragment pointer is extracted from the Subgraph and a qualified name is created (subgraph instance name + "_" + operator name).
+
+This approach ensures operators work correctly whether instantiated directly in a Fragment/Application or within a Subgraph, with automatic name qualification to prevent conflicts when the same Subgraph class is instantiated multiple times.
+
+:::{note}
+The recommendation for using a `const std::variant<Fragment*, Subgraph*>&` as the first argument and using the `init_operator_base` utility also applies to pybind11 bindings for custom C++ `Condition` and `Resource` types. For several examples, see the [bindings for built-in conditions](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/python/holoscan/conditions) and [bindings for built-in resources](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/python/holoscan/resources).
+:::
+
+:::{warning}
+Holoscan versions prior to v3.8 did not support subgraphs, so it is likely existing bindings obtained from [Holohub](https://nvidia-holoscan.github.io/holohub/) or elsewhere may only support `Fragment*` as the first argument and will not use the `init_operator_base` utility. Such third-party bindings will need to be updated to use the variant pattern described here in order for them to be enabled for use from Holoscan's subgraphs.
+
+Although not recommended, it would be possible to pass `self.fragment` instead of `self` as the first argument within `Subgraph.compose` when creating such an operator without `Subgraph*` support in its constructor. In this case, the user would have to manually handle qualifying the operator name by prepending the subgraph instance name. This is likely to be error-prone, so updating the bindings is recommended to make sure the component is created appropriately for use from a subgraph.
+:::
 
 (pybind11-operator-module-definition)=
 ### Defining the Python module
@@ -119,8 +140,8 @@ PYBIND11_MODULE(_tool_tracking_postprocessor, m) {
       m,
       "ToolTrackingPostprocessorOp",
       doc::ToolTrackingPostprocessorOp::doc_ToolTrackingPostprocessorOp_python)
-      .def(py::init<Fragment*,
-                    const py::args& args,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    const py::args&,
                     std::shared_ptr<Allocator>,
                     std::shared_ptr<Allocator>,
                     float,
@@ -148,9 +169,13 @@ Using a mismatched name in `PYBIND_11_MODULE` will result in failure to import t
 
 The order in which the classes are specified in the `py::class_<>` template call is important and should follow the convention shown here. The first in the list is the C++ class name (`ToolTrackingPostprocessorOp`) and second is the `PyToolTrackingPostprocessorOp` class we defined above with the additional, explicit constructor. We also need to list the parent `Operator` class so that all of the methods such as `start`, `stop`, `compute`, `add_arg`, etc. that were already wrapped for the parent class don't need to be redefined here.
 
-The single `.def(py::init<...` call wraps the `PyToolTrackingPostprocessorOp` constructor we wrote above. As such, the argument types provided to `py::init<>` must exactly match the order and types of arguments in that constructor's function signature. The subsequent arguments to `def` are the names and default values (if any) for the named arguments in the same order as the function signature. Note that the `const py::args& args` (Python `*args`) argument is not listed as these are positional arguments that don't have a corresponding name. The use of `py::none()` (Python's `None`) as the default for `cuda_stream_pool` corresponds to the `nullptr` in the C++ function signature. The "_a" literal used in the definition is enabled by the following declaration earlier in the file.
+The single `.def(py::init<...` call wraps the `PyToolTrackingPostprocessorOp` constructor we wrote above. As such, the argument types provided to `py::init<>` must exactly match the order and types of arguments in that constructor's function signature, including the use of `std::variant<Fragment*, Subgraph*>` as the first argument type. The subsequent arguments to `def` are the names and default values (if any) for the named arguments in the same order as the function signature. Note that the `const py::args&` (Python `*args`) argument is not listed as these are positional arguments that don't have a corresponding name. The use of `py::none()` (Python's `None`) as the default for `cuda_stream_pool` corresponds to the `nullptr` in the C++ function signature. The "_a" literal used in the definition is enabled by the following declaration earlier in the file.
 
 The final argument to `.def` here is a documentation string that will serve as the Python docstring for the function. It is optional and we chose here to define it in a separate header as described in the next section.
+
+:::{note}
+The use of `std::variant<Fragment*, Subgraph*>` is handled transparently by Pybind11, allowing Python code to pass either a Fragment/Application or a Subgraph object as the first argument to the operator constructor.
+:::
 
 (pybind11-operator-docstrings)=
 ### Documentation strings
@@ -373,7 +398,8 @@ An alternative way to define the constructor would have been to use `std::option
 ```cpp
   // Define a constructor that fully initializes the object.
   PyToolTrackingPostprocessorOp(
-      Fragment* fragment, const py::args& args, std::shared_ptr<Allocator> device_allocator,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      std::shared_ptr<Allocator> device_allocator,
       std::shared_ptr<Allocator> host_allocator, std::optional<float> min_prob = 0.5f,
       std::optional<std::vector<std::vector<float>>> overlay_img_colors = VIZ_TOOL_DEFAULT_COLORS,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -387,17 +413,14 @@ An alternative way to define the constructor would have been to use `std::option
         this->add_arg(Arg{"overlay_img_colors", overlay_img_colors.value() });
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_.get());
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 ```
 where now that `min_prob` and `overlay_img_colors` are optional, they are only conditionally added as an argument to ToolTrackingPostprocessorOp when they have a value. If this approach is used, the Python bindings for the constructor should be updated to use `py::none()` as the default as follows:
 
 ```cpp
-      .def(py::init<Fragment*,
-                    const py::args& args,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    const py::args&,
                     std::shared_ptr<Allocator>,
                     std::shared_ptr<Allocator>,
                     float,

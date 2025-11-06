@@ -529,6 +529,27 @@ void Context::read_framebuffer(ImageFormat fmt, uint32_t width, uint32_t height,
       fmt, width, height, buffer_size, device_ptr, impl_->cuda_stream_, row_pitch);
 }
 
+bool Context::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->wait_for_present(present_id, timeout_ns);
+}
+
+bool Context::wait_for_display_event(DisplayEventType display_event_type, uint64_t timeout_ns) {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->wait_for_display_event(display_event_type, timeout_ns);
+}
+
+uint64_t Context::get_vblank_counter() {
+  if (!impl_->vulkan_) {
+    throw std::runtime_error("There is no window, please call viz::Init() first.");
+  }
+  return impl_->vulkan_->get_vblank_counter();
+}
+
 Layer* Context::get_active_layer() const {
   if (!impl_->active_layer_) {
     throw std::runtime_error("There is no active layer.");

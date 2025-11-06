@@ -15,8 +15,9 @@
  * limitations under the License.
  */
 
-#include <pybind11/pybind11.h>
 #include <pybind11/chrono.h>  // will include timedelta.h for us
+#include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <chrono>
 #include <cstdint>
@@ -24,7 +25,9 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./clocks_pydoc.hpp"
 #include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
@@ -34,6 +37,7 @@
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/resources/gxf/synthetic_clock.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -81,18 +85,16 @@ class PyRealtimeClock : public RealtimeClock {
   using RealtimeClock::RealtimeClock;
 
   // Define a constructor that fully initializes the object.
-  explicit PyRealtimeClock(Fragment* fragment, double initial_time_offset = 0.0,
-                           double initial_time_scale = 1.0, bool use_time_since_epoch = false,
+  explicit PyRealtimeClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                           double initial_time_offset = 0.0, double initial_time_scale = 1.0,
+                           bool use_time_since_epoch = false,
                            const std::string& name = "realtime_clock") {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_time_offset", initial_time_offset});
     add_arg(Arg{"initial_time_scale", initial_time_scale});
     add_arg(Arg{"use_time_since_epoch", use_time_since_epoch});
 
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 
   /* Trampolines (need one for each virtual function) */
@@ -120,15 +122,13 @@ class PyManualClock : public ManualClock {
   using ManualClock::ManualClock;
 
   // Define a constructor that fully initializes the object.
-  explicit PyManualClock(Fragment* fragment, int64_t initial_timestamp = 0LL,
+  explicit PyManualClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                         int64_t initial_timestamp = 0LL,
                          const std::string& name = "manual_clock") {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_timestamp", initial_timestamp});
 
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 
   /* Trampolines (need one for each virtual function) */
@@ -156,15 +156,13 @@ class PySyntheticClock : public SyntheticClock {
   using SyntheticClock::SyntheticClock;
 
   // Define a constructor that fully initializes the object.
-  explicit PySyntheticClock(Fragment* fragment, int64_t initial_timestamp = 0LL,
+  explicit PySyntheticClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                            int64_t initial_timestamp = 0LL,
                             const std::string& name = "synthetic_clock") {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_timestamp", initial_timestamp});
 
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 
   /* Trampolines (need one for each virtual function) */
@@ -194,7 +192,7 @@ void init_clocks(py::module_& m) {
 
   py::class_<RealtimeClock, PyRealtimeClock, gxf::Clock, std::shared_ptr<RealtimeClock>>(
       m, "RealtimeClock", doc::RealtimeClock::doc_RealtimeClock)
-      .def(py::init<Fragment*, double, double, bool, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, double, double, bool, const std::string&>(),
            "fragment"_a,
            "initial_time_offset"_a = 0.0,
            "initial_time_scale"_a = 1.0,
@@ -222,7 +220,7 @@ void init_clocks(py::module_& m) {
 
   py::class_<ManualClock, PyManualClock, gxf::Clock, std::shared_ptr<ManualClock>>(
       m, "ManualClock", doc::ManualClock::doc_ManualClock)
-      .def(py::init<Fragment*, int64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_timestamp"_a = 0LL,
            "name"_a = "manual_clock"s,
@@ -245,7 +243,7 @@ void init_clocks(py::module_& m) {
 
   py::class_<SyntheticClock, PySyntheticClock, gxf::Clock, std::shared_ptr<SyntheticClock>>(
       m, "SyntheticClock", doc::SyntheticClock::doc_SyntheticClock)
-      .def(py::init<Fragment*, int64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_timestamp"_a = 0LL,
            "name"_a = "synthetic_clock"s,

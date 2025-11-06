@@ -114,7 +114,7 @@ enum class FormatConversionType {
  *   - `"rgb161616"`
  *   - `"rgba16161616"`
  *   Optional (default: `"rgb888"`).
- * - **in_tensor_name**: The name of the input tensor. Optional (default: `""`).
+ * - **in_tensor_name**: The name of the input tensor (or VideoBuffer). Optional (default: `""`).
  * - **out_tensor_name**: The name of the output tensor. Optional (default: `""`).
  * - **scale_min**: Output will be clipped to this minimum value. Optional (default: `0.0`).
  * - **scale_max**: Output will be clipped to this maximum value. Optional (default: `1.0`).

@@ -159,7 +159,10 @@ TEST(Init, MultiThreaded) {
   // create multiple windows from threads
   std::vector<std::future<void>> futures;
   for (int i = 0; i < 8; ++i) {
-    futures.push_back(std::async(std::launch::async, [] { viz::Init(640, 480, "Holoviz test"); }));
+    futures.push_back(std::async(std::launch::async, [] {
+      viz::Init(640, 480, "Holoviz test");
+      viz::Shutdown();
+    }));
   }
   for (auto&& future : futures) {
     future.wait();

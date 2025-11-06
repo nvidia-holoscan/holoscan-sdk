@@ -39,8 +39,10 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_STATE_BASED_MONITORING_TEST
-    COMMAND python3 state_based_monitoring.py
+    COMMAND ${Python3_EXECUTABLE} state_based_monitoring.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_STATE_BASED_MONITORING_TEST PROPERTIES

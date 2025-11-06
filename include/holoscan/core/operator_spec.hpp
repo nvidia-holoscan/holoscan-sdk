@@ -173,11 +173,39 @@ class OperatorSpec : public ComponentSpec {
   }
 
   /**
+   * @brief Define an input specification for this operator. It is only applicable for GPU-resident
+   * operators.
+   *
+   * @param name The name of the input specification.
+   * @param memory_block_size The device memory block size of the input specification.
+   * @return The reference to the input specification.
+   */
+  IOSpec& device_input(std::string name, size_t memory_block_size) {
+    auto spec = std::make_shared<IOSpec>(this, name, memory_block_size, IOSpec::IOType::kInput);
+    auto [iter, inserted] = inputs_.insert_or_assign(name, std::move(spec));
+    if (!inserted) {
+      HOLOSCAN_LOG_ERROR("Input port '{}' already existed and was overwritten", name);
+    }
+    return *(iter->second.get());
+  }
+
+  /**
    * @brief Get output specifications of this operator.
    *
    * @return The reference to the output specifications of this operator.
    */
   std::unordered_map<std::string, std::shared_ptr<IOSpec>>& outputs() { return outputs_; }
+
+  /**
+   * @brief Return the unique_id for a port name by checking inputs first, then outputs.
+   *
+   * If a port with the same name exists in both inputs and outputs, an exception is thrown.
+   * If the port does not exist in either, an exception is thrown.
+   *
+   * @param name The port name to look up.
+   * @return const std::string& The unique_id corresponding to the found port.
+   */
+  const std::string& input_output_unique_id(const std::string& name) const;
 
   /**
    * @brief Define an output specification for this operator.
@@ -237,6 +265,23 @@ class OperatorSpec : public ComponentSpec {
   template <typename DataT>
   IOSpec& output(std::string name, std::optional<IOSpec::QueuePolicy> policy) {
     return output<DataT>(std::move(name), IOSpec::kSizeOne, policy);
+  }
+
+  /**
+   * @brief Define an output specification for this operator. It is only applicable for
+   * GPU-resident operators.
+   *
+   * @param name The name of the output specification.
+   * @param memory_block_size The device memory block size of the output specification.
+   * @return The reference to the output specification.
+   */
+  IOSpec& device_output(std::string name, size_t memory_block_size) {
+    auto spec = std::make_shared<IOSpec>(this, name, memory_block_size, IOSpec::IOType::kOutput);
+    auto [iter, inserted] = outputs_.insert_or_assign(name, std::move(spec));
+    if (!inserted) {
+      HOLOSCAN_LOG_ERROR("Output port '{}' already existed and was overwritten", name);
+    }
+    return *(iter->second.get());
   }
 
   using ComponentSpec::param;

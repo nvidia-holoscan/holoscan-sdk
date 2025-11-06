@@ -200,6 +200,18 @@ void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
     (*port_map)[key].insert(value);
   }
 
+  // Check if both the fragments have the same executor type
+  auto& upstream_executor = *upstream_frag->executor_shared();
+  auto& downstream_executor = *downstream_frag->executor_shared();
+  if (typeid(upstream_executor) != typeid(downstream_executor)) {
+    throw std::runtime_error(
+        fmt::format("Fragments have different executor types: upstream fragment "
+                    "executor type - {} "
+                    "vs downstream fragment executor type - {}.",
+                    std::string(typeid(upstream_executor).name()),
+                    std::string(typeid(downstream_executor).name())));
+  }
+
   // Add the flow to the fragment graph
   // Note that we don't check if the operator names are valid or not.
   // It will be checked when the graph is run.
@@ -543,6 +555,10 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
   }
 
   for (auto& fragment : target_fragments) {
+    if (fragment->is_gpu_resident()) {
+      HOLOSCAN_LOG_DEBUG("Scheduler is not set for GPU-resident fragment ({}).", fragment->name());
+      continue;
+    }
     std::shared_ptr<Scheduler>& scheduler = fragment->scheduler_;
     SchedulerType scheduler_setting = scheduler_type;
 

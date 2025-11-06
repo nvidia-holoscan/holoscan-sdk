@@ -21,14 +21,17 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "../core/component_util.hpp"
 #include "./system_resources_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -43,13 +46,10 @@ class PyThreadPool : public ThreadPool {
   using ThreadPool::ThreadPool;
 
   // Define a constructor that fully initializes the object.
-  explicit PyThreadPool(Fragment* fragment, int64_t initial_size = 1,
-                        const std::string& name = "thread_pool")
+  explicit PyThreadPool(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                        int64_t initial_size = 1, const std::string& name = "thread_pool")
       : ThreadPool(ArgList{Arg("initial_size", initial_size)}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -64,7 +64,7 @@ void init_system_resources(py::module_& m) {
              gxf::GXFSystemResourceBase,
              gxf::GXFResource,
              std::shared_ptr<ThreadPool>>(m, "ThreadPool", doc::ThreadPool::doc_ThreadPool_kwargs)
-      .def(py::init<Fragment*, int64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_size"_a = 1,
            "name"_a = "thread_pool"s,

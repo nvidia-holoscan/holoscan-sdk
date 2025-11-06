@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <vulkan/vulkan.hpp>
@@ -177,20 +178,40 @@ class Window {
   }
 
   /**
+   * Information about a Vulkan instance extension
+   */
+  struct InstanceExtensionInfo {
+    std::string name_;       ///< name of the extension
+    bool optional_ = false;  ///< whether the extension is optional
+  };
+
+  /**
    * Get the required instance extensions for vulkan.
    *
-   * @param [out] count   returns the extension count
-   * @return array with required extensions
+   * @return vector with required extensions
    */
-  virtual const char** get_required_instance_extensions(uint32_t* count) = 0;
+  virtual std::vector<InstanceExtensionInfo> get_required_instance_extensions() = 0;
+
+  /**
+   * Information about a Vulkan device extension
+   *
+   * @note The feature struct is a pointer to a struct that contains the features of the extension.
+   * Make sure the memory is persistent.
+   */
+  struct DeviceExtensionInfo {
+    std::string name_;       ///< name of the extension
+    bool optional_ = false;  ///< whether the extension is optional
+    void* feature_struct_ =
+        nullptr;            ///< feature struct for the extension (memory must be persistent)
+    uint32_t version_ = 0;  ///< version of the extension
+  };
 
   /**
    * Get the required device extensions for vulkan.
    *
-   * @param [out] count   returns the extension count
-   * @return array with required extensions
+   * @return vector with required extensions
    */
-  virtual const char** get_required_device_extensions(uint32_t* count) = 0;
+  virtual std::vector<DeviceExtensionInfo> get_required_device_extensions() = 0;
 
   /**
    * Select a device from the given list of supported physical devices.
@@ -280,6 +301,11 @@ class Window {
    * @return the horizontal aspect ratio
    */
   virtual float get_aspect_ratio() = 0;
+
+  /**
+   * @return the display
+   */
+  virtual vk::DisplayKHR get_display() { return nullptr; }
 };
 
 }  // namespace holoscan::viz

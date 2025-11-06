@@ -39,8 +39,9 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_PING_SIMPLE_ASYNC_BUFFER_TEST
-    COMMAND python3 ping_simple_async_buffer.py
+    COMMAND ${Python3_EXECUTABLE} ping_simple_async_buffer.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_SIMPLE_ASYNC_BUFFER_TEST PROPERTIES

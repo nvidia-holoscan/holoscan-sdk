@@ -16,13 +16,13 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(matx 0.9.2
+rapids_cpm_find(matx 0.9.3
     GLOBAL_TARGETS matx
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
 
     CPM_ARGS
     GITHUB_REPOSITORY NVIDIA/MatX
-    GIT_TAG v0.9.2
+    GIT_TAG v0.9.3
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )

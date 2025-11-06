@@ -106,4 +106,4 @@ the resource. The two types currently implemented are NATIVE and GXF.
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CORE_RESOURCE_PYDOC_HPP
+#endif /* PYHOLOSCAN_CORE_RESOURCE_PYDOC_HPP */

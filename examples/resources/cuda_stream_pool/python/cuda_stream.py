@@ -21,6 +21,7 @@ import cupy as cp
 
 from holoscan.conditions import CountCondition, CudaStreamCondition
 from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.data_loggers import BasicConsoleLogger
 from holoscan.operators import PingTensorRxOp
 from holoscan.resources import CudaStreamPool
 
@@ -217,4 +218,14 @@ if __name__ == "__main__":
         raise ValueError("count must be a positive integer")
 
     app = CuPyExampleApp(count=args.count, use_default_stream=args.default_stream)
+
+    # can see stream information in the logs if a console logger is added
+    app.add_data_logger(
+        BasicConsoleLogger(
+            app,
+            name="console_logger",
+            log_tensor_data_content=False,
+            log_metadata=False,
+        )
+    )
     app.run()

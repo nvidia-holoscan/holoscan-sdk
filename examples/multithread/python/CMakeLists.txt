@@ -37,54 +37,57 @@ install(FILES CMakeLists.min.txt
   COMPONENT holoscan-examples
 )
 
-# Install the test script
-install(FILES
-  "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py"
-  DESTINATION "${app_relative_dest_path}"
-  COMPONENT holoscan-examples
-)
-
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  # Copy the test script to the build directory (used by both tests)
-  add_custom_target(data_logging_test_script
-      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py" ${CMAKE_CURRENT_BINARY_DIR}
-      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/validate_data_logging_outputs.py"
-      BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/validate_data_logging_outputs.py"
-  )
-  set(DATA_LOGGING_TEST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/validate_data_logging_outputs.py)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   # Test flow tracking and data logging
-  # (see validate_data_logging_outputs.py for details of data logging regex tests)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  # (test_pattern_validation.py is used for regex-based checks for data logging output)
+  # (make sure --num_delay_ops, --delay and --delay_step remain identical across the following
+  #  cases involved in timing comparisons):
+  #    - EXAMPLE_PYTHON_MULTITHREAD_TEST  (runs with all available threads)
+  #    - EXAMPLE_PYTHON_MULTITHREAD_4_TEST (runs with 4 worker threads)
+  #    - EXAMPLE_PYTHON_MULTITHREAD_1_TEST (runs with 1 worker threads)
+  #    - EXAMPLE_PYTHON_MULTITHREAD_0_TEST (runs single-threaded GreedyScheduler)
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
-           COMMAND ${CMAKE_COMMAND} -E env
-           ${Python3_EXECUTABLE} ${DATA_LOGGING_TEST_SCRIPT}
-           multithread.py --name EXAMPLE_PYTHON_MULTITHREAD_TEST --mode logging --output_file multithread_times --data_log
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  add_dependencies(python_multithread data_logging_test_script)
-
-  add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_8_TEST
-           COMMAND python3 multithread.py --threads 8 --num_delay_ops 8 --delay 0.25 --delay_step 0.1
-                   --name EXAMPLE_PYTHON_MULTITHREAD_8_TEST --output_file multithread_times
+           COMMAND bash -c
+             "${Python3_EXECUTABLE} multithread.py --threads -1 --num_delay_ops 8 --delay 0.25 \
+               --delay_step 0.1 --data_log --name EXAMPLE_PYTHON_MULTITHREAD_TEST \
+               --output_file multithread_times 2>&1 | \
+             ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+               --pass-pattern 'sum of received values: 28' \
+               --pass-pattern 'BasicConsoleLogger\\[ID:tx\.out\\]' \
+               --pass-pattern 'BasicConsoleLogger\\[ID:delay07\.in\\]' \
+               --pass-pattern 'BasicConsoleLogger\\[ID:delay07\.out_name\\]' \
+               --pass-pattern 'BasicConsoleLogger\\[ID:rx\.values:7\\]' \
+               --pass-pattern 'Category:Message \\(std::any\\)' \
+               --pass-pattern 'Python\\(int\\): 7' \
+               --pass-pattern 'Python\\(str\\): delay07' \
+               --fail-pattern 'BasicConsoleLogger\\[ID:rx\\.names:7\\]' \
+               --fail-pattern 'BasicConsoleLogger\\[ID:delay07\.out_val\\]'"
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
-  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_8_TEST PROPERTIES
+
+  add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_4_TEST
+           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 4 --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
+                   --name EXAMPLE_PYTHON_MULTITHREAD_4_TEST --output_file multithread_times
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_4_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 28"
                        DEPENDS EXAMPLE_PYTHON_MULTITHREAD_TEST)
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_1_TEST
-           COMMAND python3 multithread.py --threads 1 --num_delay_ops 8 --delay 0.25 --delay_step 0.1
+           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 1 --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
            --name EXAMPLE_PYTHON_MULTITHREAD_1_TEST --output_file multithread_times
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_1_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 28"
-                       DEPENDS EXAMPLE_PYTHON_MULTITHREAD_8_TEST)
+                       DEPENDS EXAMPLE_PYTHON_MULTITHREAD_4_TEST)
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_0_TEST
-           COMMAND python3 multithread.py --threads 0 --num_delay_ops 8 --delay 0.25 --delay_step 0.1
+           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 0 --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
            --name EXAMPLE_PYTHON_MULTITHREAD_0_TEST --output_file multithread_times
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_0_TEST PROPERTIES
@@ -92,44 +95,43 @@ if(HOLOSCAN_BUILD_TESTS)
                        DEPENDS EXAMPLE_PYTHON_MULTITHREAD_1_TEST)
 
   # Add a test to check the validity of the timing
-  # This test is only valid for dgpu
+  # This test is only valid for dgpu and for systems with more than 4 CPU threads available
   execute_process(COMMAND nvidia-smi -L
                   OUTPUT_VARIABLE HOST_GPU)
   if(NOT HOST_GPU MATCHES "nvgpu")
     add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TIMES_VALIDATION_TEST
-            COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/ctest_time_comparison.py
+            COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/ctest_time_comparison.py
                   multithread_times
-                  EXAMPLE_PYTHON_MULTITHREAD_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_8_TEST
-                  EXAMPLE_PYTHON_MULTITHREAD_8_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_1_TEST
-                  EXAMPLE_PYTHON_MULTITHREAD_8_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_0_TEST
+                  EXAMPLE_PYTHON_MULTITHREAD_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_4_TEST
+                  EXAMPLE_PYTHON_MULTITHREAD_4_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_1_TEST
+                  EXAMPLE_PYTHON_MULTITHREAD_4_TEST LESS EXAMPLE_PYTHON_MULTITHREAD_0_TEST
             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
 
     set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TIMES_VALIDATION_TEST PROPERTIES
-      DEPENDS EXAMPLE_PYTHON_MULTITHREAD_TEST
-      DEPENDS EXAMPLE_PYTHON_MULTITHREAD_8_TEST
-      DEPENDS EXAMPLE_PYTHON_MULTITHREAD_1_TEST
-      DEPENDS EXAMPLE_PYTHON_MULTITHREAD_0_TEST
+      DEPENDS "EXAMPLE_PYTHON_MULTITHREAD_TEST;EXAMPLE_PYTHON_MULTITHREAD_4_TEST;EXAMPLE_PYTHON_MULTITHREAD_1_TEST;EXAMPLE_PYTHON_MULTITHREAD_0_TEST"
       PASS_REGULAR_EXPRESSION "Timing for tests matches expectations"
     )
   endif()
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_EVENT_BASED_TEST
-    COMMAND python3 multithread.py --event_based
+    COMMAND ${Python3_EXECUTABLE} multithread.py --event_based
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_EVENT_BASED_TEST PROPERTIES
                        PASS_REGULAR_EXPRESSION "sum of received values: 496")
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TRACK_TEST
-          COMMAND python3 multithread.py --track --count 5
-          WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_TRACK_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "tx->out: 5")
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} multithread.py --track --count 5 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'Number of messages: 6' \
+        --pass-pattern 'tx->out: 5'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_PRINT_PORT_MAP_TEST
-          COMMAND python3 multithread.py -n 4 --print_port_map
+          COMMAND ${Python3_EXECUTABLE} multithread.py -n 4 --print_port_map
           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   # test a string expected to be present in the port map

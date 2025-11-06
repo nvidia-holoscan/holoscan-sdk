@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,12 +18,12 @@
 # Workaround for issue where `FetchContent_Declare(GTest)` does not respect `SOURCE_DIR` for caching.
 # https://github.com/google/googletest/issues/4384
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25714
-set(version 1.12.1)
+set(version 1.17.0)
 rapids_cpm_find(googletest ${version}
     GLOBAL_TARGETS GTest::gtest GTest::gmock GTest::gtest_main GTest::gmock_main
     CPM_ARGS FIND_PACKAGE_ARGUMENTS "EXACT"
     GIT_REPOSITORY "https://github.com/google/googletest.git"
-    GIT_TAG release-${version}
+    GIT_TAG v${version}
     GIT_SHALLOW ON
     PATCH_COMMAND ""
     EXCLUDE_FROM_ALL OFF

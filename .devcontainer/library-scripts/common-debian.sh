@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The following script is from the following website:
-#   https://github.com/microsoft/vscode-dev-containers/blob/v0.241.1/containers/ubuntu/.devcontainer/library-scripts/common-debian.sh
+#   https://github.com/microsoft/vscode-dev-containers/blob/v0.245.2/containers/ubuntu/.devcontainer/library-scripts/common-debian.sh
 
 #-------------------------------------------------------------------------------------------------------------
 # Copyright (c) Microsoft Corporation. All rights reserved.
@@ -208,7 +208,7 @@ else
     fi
 fi
 
-# Add add sudo support for non-root user
+# Add sudo support for non-root user
 if [ "${USERNAME}" != "root" ] && [ "${EXISTING_NON_ROOT_USER}" != "${USERNAME}" ]; then
     echo $USERNAME ALL=\(root\) NOPASSWD:ALL > /etc/sudoers.d/$USERNAME
     chmod 0440 /etc/sudoers.d/$USERNAME
@@ -290,7 +290,7 @@ cat << 'EOF' > /usr/local/bin/systemctl
 #!/bin/sh
 set -e
 if [ -d "/run/systemd/system" ]; then
-    exec /bin/systemctl/systemctl "$@"
+    exec /bin/systemctl "$@"
 else
     echo '\n"systemd" is not running in this container due to its overhead.\nUse the "service" command to start services instead. e.g.: \n\nservice --status-all'
 fi

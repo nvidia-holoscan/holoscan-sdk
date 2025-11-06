@@ -15,8 +15,10 @@
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_HELLO_WORLD_TEST
-    COMMAND python3 hello_world.py
+    COMMAND ${Python3_EXECUTABLE} hello_world.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_HELLO_WORLD_TEST PROPERTIES

@@ -16,11 +16,14 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./transmitters_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -29,6 +32,7 @@
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/transmitter.hpp"
 #include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -43,14 +47,11 @@ class PyDoubleBufferTransmitter : public DoubleBufferTransmitter {
   using DoubleBufferTransmitter::DoubleBufferTransmitter;
 
   // Define a constructor that fully initializes the object.
-  explicit PyDoubleBufferTransmitter(Fragment* fragment, uint64_t capacity = 1UL,
-                                     uint64_t policy = 2UL,
+  explicit PyDoubleBufferTransmitter(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                                     uint64_t capacity = 1UL, uint64_t policy = 2UL,
                                      const std::string& name = "double_buffer_transmitter")
       : DoubleBufferTransmitter(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -60,7 +61,7 @@ class PyUcxTransmitter : public UcxTransmitter {
   using UcxTransmitter::UcxTransmitter;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxTransmitter(Fragment* fragment,
+  explicit PyUcxTransmitter(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                             std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
                             uint64_t capacity = 1UL, uint64_t policy = 2UL,
                             const std::string& receiver_address = std::string("0.0.0.0"),
@@ -78,10 +79,7 @@ class PyUcxTransmitter : public UcxTransmitter {
     if (buffer) {
       this->add_arg(Arg{"buffer", buffer});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -91,13 +89,10 @@ class PyAsyncBufferTransmitter : public AsyncBufferTransmitter {
   using AsyncBufferTransmitter::AsyncBufferTransmitter;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsyncBufferTransmitter(Fragment* fragment,
+  explicit PyAsyncBufferTransmitter(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                     const std::string& name = "async_buffer_transmitter")
       : AsyncBufferTransmitter() {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -114,7 +109,7 @@ void init_transmitters(py::module_& m) {
              Transmitter,
              std::shared_ptr<DoubleBufferTransmitter>>(
       m, "DoubleBufferTransmitter", doc::DoubleBufferTransmitter::doc_DoubleBufferTransmitter)
-      .def(py::init<Fragment*, uint64_t, uint64_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, uint64_t, uint64_t, const std::string&>(),
            "fragment"_a,
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
@@ -126,14 +121,14 @@ void init_transmitters(py::module_& m) {
              Transmitter,
              std::shared_ptr<AsyncBufferTransmitter>>(
       m, "AsyncBufferTransmitter", doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
            "name"_a = "async_buffer_transmitter"s,
            doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter);
 
   py::class_<UcxTransmitter, PyUcxTransmitter, Transmitter, std::shared_ptr<UcxTransmitter>>(
       m, "UcxTransmitter", doc::UcxTransmitter::doc_UcxTransmitter)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::shared_ptr<UcxSerializationBuffer>,
                     uint64_t,
                     uint64_t,

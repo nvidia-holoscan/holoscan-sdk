@@ -2023,7 +2023,7 @@ Holoscan's C++ API does not have any Python dependency and thus operators implem
 ```cpp
     auto maybe_tensormap = op_input.receive<TensorMap>(port_name);
 ```
-or (since Holoscan v3.1) directly as a `std::shared_ptr<holsocan::Tensor>`
+or (since Holoscan v3.1) directly as a `std::shared_ptr<holoscan::Tensor>`
 ```cpp
     auto maybe_tensor = op_input.receive<Tensor>(port_name);
 ```

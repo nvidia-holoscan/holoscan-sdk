@@ -20,13 +20,16 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "../core/component_util.hpp"
 #include "./condition_combiners_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -41,14 +44,11 @@ class PyOrConditionCombiner : public OrConditionCombiner {
   using OrConditionCombiner::OrConditionCombiner;
 
   // Define a constructor that fully initializes the object.
-  explicit PyOrConditionCombiner(Fragment* fragment,
+  explicit PyOrConditionCombiner(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                  std::vector<std::shared_ptr<holoscan::Condition>> terms = {},
                                  const std::string& name = "or_condition_combiner")
       : OrConditionCombiner(Arg{"terms", terms}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -58,7 +58,7 @@ void init_condition_combiners(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<OrConditionCombiner>>(
       m, "OrConditionCombiner", doc::ConditionCombiners::doc_OrConditionCombiner)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::vector<std::shared_ptr<holoscan::Condition>>,
                     const std::string&>(),
            "fragment"_a,

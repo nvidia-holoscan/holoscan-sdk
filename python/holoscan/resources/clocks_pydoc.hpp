@@ -98,8 +98,8 @@ Realtime clock.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) to assign the resource to.
 initial_timestamp : float, optional
     The initial time offset used until time scale is changed manually.
 initial_time_scale : float, optional
@@ -131,8 +131,8 @@ Manual clock.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) to assign the resource to.
 initial_timestamp : int, optional
     The initial timestamp on the clock (in nanoseconds).
 name : str, optional
@@ -148,8 +148,8 @@ A clock where time flow is synthesized, like from a recording or a simulation.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) to assign the resource to.
 initial_timestamp : int, optional
     The initial timestamp on the clock (in nanoseconds).
 name : str, optional

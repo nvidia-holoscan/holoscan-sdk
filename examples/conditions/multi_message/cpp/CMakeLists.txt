@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,31 +76,29 @@ install(TARGETS multi_message_per_receiver multi_message_sum_of_all single_messa
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_CPP_MULTI_MESSAGE_PER_RECEIVER_TEST
-           COMMAND multi_message_per_receiver
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(EXAMPLE_CPP_MULTI_MESSAGE_PER_RECEIVER_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "message received on in1: Hello from tx1"
-                       PASS_REGULAR_EXPRESSION "message received on in2: Hello from tx2"
-                       PASS_REGULAR_EXPRESSION "message received on in3: Hello from tx3"
-                       FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
-                      )
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/multi_message_per_receiver 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'message received on in1: Hello from tx1' \
+        --pass-pattern 'message received on in2: Hello from tx2' \
+        --pass-pattern 'message received on in3: Hello from tx3' \
+        --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 
   add_test(NAME EXAMPLE_CPP_MULTI_MESSAGE_SUM_OF_ALL_TEST
-           COMMAND multi_message_sum_of_all
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
-  set_tests_properties(
-    EXAMPLE_CPP_MULTI_MESSAGE_SUM_OF_ALL_TEST PROPERTIES
-    # check that multiple messages arrived on all ports
-    # (expect several message on in1, 4-5 on in2 and at least one on in3 with the timings specified)
-    PASS_REGULAR_EXPRESSION "messages received on in1: \\[\"tx1\", \"tx1\", \"tx1\", \"tx1\""
-    PASS_REGULAR_EXPRESSION "messages received on in2: \\[\"tx2\", \"tx2\", \"tx2\""
-    PASS_REGULAR_EXPRESSION "messages received on in3: \\[\"tx3\""
-    # with given periodic conditions should not be possible that tx3 arrived >3 this times
-    FAIL_REGULAR_EXPRESSION "messages received on in3: \\[\"tx3\", \"tx3\", \"tx3\", \"tx3\""
-    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/multi_message_sum_of_all 2>&1 | \
+       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+         --pass-pattern 'messages received on in1: \\[tx1, tx1, tx1, tx1' \
+         --pass-pattern 'messages received on in2: \\[tx2, tx2, tx2' \
+         --pass-pattern 'messages received on in3: \\[tx3' \
+         --fail-pattern 'messages received on in3: \\[tx3, tx3, tx3, tx3' \
+         --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_CPP_SINGLE_MESSAGE_TIMEOUT_TEST

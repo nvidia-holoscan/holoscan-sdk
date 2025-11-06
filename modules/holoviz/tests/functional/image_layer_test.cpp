@@ -887,7 +887,7 @@ INSTANTIATE_TEST_SUITE_P(ImageLayerDepth, ImageLayer,
 TEST_F(ImageLayer, ImageCudaArray) {
   constexpr viz::ImageFormat kFormat = viz::ImageFormat::R8G8B8A8_UNORM;
 
-  CUarray array;
+  CUarray array = nullptr;
 
   EXPECT_NO_THROW(viz::Begin());
 
@@ -964,7 +964,7 @@ TEST_F(ImageLayer, Errors) {
     return device_ptr;
   }());
 
-  CUarray array;
+  CUarray array = nullptr;
 
   EXPECT_NO_THROW(viz::Begin());
 

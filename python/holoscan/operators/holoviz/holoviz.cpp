@@ -26,12 +26,14 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
 // the default range for enums is 128 which is not enough for the Key enum, increase to 512
 #define MAGIC_ENUM_RANGE_MAX 512  // NOLINT(cppcoreguidelines-macro-usage)
 #include <magic_enum.hpp>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -40,13 +42,14 @@
 #include "../../core/io_context.hpp"                 // PyOutputContext
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
+#include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/holoviz/codecs.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 
@@ -93,7 +96,8 @@ class PyHolovizOp : public HolovizOp {
 
   // Define a constructor that fully initializes the object.
   PyHolovizOp(
-      Fragment* fragment, const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      std::shared_ptr<::holoscan::Allocator> allocator,
       std::vector<holoscan::IOSpec*> receivers = std::vector<holoscan::IOSpec*>(),
       const std::vector<HolovizOp::InputSpec>& tensors = std::vector<HolovizOp::InputSpec>(),
       const std::vector<std::vector<float>>& color_lut = std::vector<std::vector<float>>(),
@@ -215,10 +219,7 @@ class PyHolovizOp : public HolovizOp {
                         })});
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -235,7 +236,7 @@ PYBIND11_MODULE(_holoviz, m) {
 
   export_enum<HolovizOp::ColorSpace>(holoviz_op, "ColorSpace");
 
-  holoviz_op.def(py::init<Fragment*,
+  holoviz_op.def(py::init<std::variant<Fragment*, Subgraph*>,
                           const py::args&,
                           std::shared_ptr<::holoscan::Allocator>,
                           std::vector<holoscan::IOSpec*>,
@@ -387,7 +388,7 @@ PYBIND11_MODULE(_holoviz, m) {
   // Register the std::vector<InputSpec> codec when the Python module is imported.
   // This is useful for, e.g. testing serialization with pytest without having to first create a
   // HolovizOp operator (which registers the type in its initialize method).
-  gxf::CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
+  CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
       "std::vector<std::vector<holoscan::ops::HolovizOp::InputSpec>>", true);
 
   // Import the emitter/receiver registry from holoscan.core and pass it to this function to

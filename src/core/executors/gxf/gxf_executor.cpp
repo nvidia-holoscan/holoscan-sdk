@@ -127,6 +127,53 @@ bool has_ucx_connector(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
 
 }  // namespace
 
+std::shared_ptr<IOSpec> GXFExecutor::get_operator_port_iospec(const std::shared_ptr<Operator>& op,
+                                                              const std::string& port_name,
+                                                              IOSpec::IOType io_type) {
+  if (op == nullptr) {
+    throw std::runtime_error("Operator is nullptr");
+  }
+  if (!op->spec()) {
+    auto err_msg = fmt::format("Operator '{}' has no spec", op->name());
+    throw std::runtime_error(err_msg);
+  }
+  std::shared_ptr<IOSpec> target_port_iospec;
+  if (io_type == IOSpec::IOType::kInput) {
+    target_port_iospec = op->spec()->inputs()[port_name];
+  } else {
+    target_port_iospec = op->spec()->outputs()[port_name];
+  }
+  if (!target_port_iospec) {
+    auto err_msg = fmt::format("Could not find target {} port: {}",
+                               io_type == IOSpec::IOType::kInput ? "input" : "output",
+                               port_name);
+    throw std::runtime_error(err_msg);
+  }
+  return target_port_iospec;
+}
+
+gxf_uid_t GXFExecutor::get_operator_port_cid(const std::shared_ptr<Operator>& op,
+                                             const std::string& port_name, IOSpec::IOType io_type) {
+  auto target_port_iospec = get_operator_port_iospec(op, port_name, io_type);
+  auto target_connector = target_port_iospec->connector();
+  if (!target_connector) {
+    auto err_msg = fmt::format("Could not find connector for target port: {}", port_name);
+    throw std::runtime_error(err_msg);
+  }
+  auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(target_connector);
+  if (!target_gxf_resource) {
+    auto err_msg =
+        fmt::format("Could not cast connector to GXFResource for target port: {}", port_name);
+    throw std::runtime_error(err_msg);
+  }
+  auto cid = target_gxf_resource->gxf_cid();
+  if (cid == 0) {
+    auto err_msg = fmt::format("GXF component ID was 0 (unset) for target port: {}", port_name);
+    throw std::runtime_error(err_msg);
+  }
+  return cid;
+}
+
 static const std::vector<std::string> kDefaultGXFExtensions{
     "libgxf_std.so",
     "libgxf_cuda.so",
@@ -258,6 +305,10 @@ void GXFExecutor::initialize_gxf_resources(
 
 void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
                                                std::shared_ptr<Operator> op) {
+  if (op == nullptr) {
+    HOLOSCAN_LOG_ERROR("Operator is nullptr");
+    return;
+  }
   auto graph_entity = op->graph_entity();
   if (!graph_entity) {
     HOLOSCAN_LOG_ERROR("null GraphEntity found during add_operator_to_entity_group");
@@ -426,6 +477,12 @@ namespace {
  */
 void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid, IOSpec* io_spec,
                      const char* rx_name, IOSpec::ConnectorType rx_type, Operator* op) {
+  if (fragment == nullptr) {
+    throw std::runtime_error("fragment is nullptr");
+  }
+  if (op == nullptr) {
+    throw std::runtime_error("operator is nullptr");
+  }
   // Can't currently use GraphEntity API for this OperatorWrapper/bind_port code path
   if (rx_type != IOSpec::ConnectorType::kDefault) {
     // TODO(unknown): update bind_port code path for types other than ConnectorType::kDefault
@@ -521,6 +578,15 @@ void bind_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t ei
 
 void GXFExecutor::create_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
                                     IOSpec* io_spec, bool bind_port, Operator* op) {
+  if (op == nullptr) {
+    throw std::runtime_error("Operator is nullptr");
+  }
+  if (io_spec == nullptr) {
+    throw std::runtime_error("IOSpec is nullptr");
+  }
+  if (fragment == nullptr) {
+    throw std::runtime_error("fragment is nullptr");
+  }
   const char* rx_name = io_spec->name().c_str();  // input port name
   auto rx_type = io_spec->connector_type();
 
@@ -808,6 +874,12 @@ namespace {
  */
 void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid, IOSpec* io_spec,
                       const char* tx_name, IOSpec::ConnectorType tx_type, Operator* op) {
+  if (fragment == nullptr) {
+    throw std::runtime_error("fragment is nullptr");
+  }
+  if (op == nullptr) {
+    throw std::runtime_error("operator is nullptr");
+  }
   if (tx_type != IOSpec::ConnectorType::kDefault) {
     // TODO(unknown): update bind_port code path for types other than ConnectorType::kDefault
     throw std::runtime_error(fmt::format(
@@ -894,6 +966,15 @@ void bind_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t e
 
 void GXFExecutor::create_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
                                      IOSpec* io_spec, bool bind_port, Operator* op) {
+  if (op == nullptr) {
+    throw std::runtime_error("Operator is nullptr");
+  }
+  if (io_spec == nullptr) {
+    throw std::runtime_error("IOSpec is nullptr");
+  }
+  if (fragment == nullptr) {
+    throw std::runtime_error("fragment is nullptr");
+  }
   const char* tx_name = io_spec->name().c_str();
   auto tx_type = io_spec->connector_type();
 
@@ -1079,6 +1160,10 @@ ConnectionMapType generate_connection_map(
   // Construct name-to-operator map
   std::unordered_map<std::string, holoscan::OperatorGraph::NodeType> name_to_op;
   for (const auto& op : graph.get_nodes()) {
+    if (op == nullptr) {
+      auto err_msg = fmt::format("operator is nullptr");
+      throw std::runtime_error(err_msg);
+    }
     name_to_op[op->name()] = op;
   }
 
@@ -1133,6 +1218,10 @@ void create_virtual_operators_and_connections(
   }
 
   for (auto& [op, port_map] : connection_map) {
+    if (op == nullptr) {
+      auto err_msg = fmt::format("operator is nullptr");
+      throw std::runtime_error(err_msg);
+    }
     for (auto& [port_name, connections] : port_map) {
       int connection_index = 0;
       for (auto& connection : connections) {
@@ -1214,13 +1303,19 @@ void create_virtual_operators_and_connections(
   }
 }
 
-void connect_ucx_transmitters_to_virtual_ops(
+}  // unnamed namespace
+
+void GXFExecutor::connect_ucx_transmitters_to_virtual_ops(
     Fragment* fragment, std::vector<std::shared_ptr<ops::VirtualOperator>>& virtual_ops) {
   auto& graph = fragment->graph();
 
   // If a port corresponding to the VirtualTransmitterOp is not connected to multiple destination
   // ports, we can create UCX transmitter directly.
   for (auto& virtual_op : virtual_ops) {
+    if (virtual_op == nullptr) {
+      auto err_msg = fmt::format("virtual_op is nullptr");
+      throw std::runtime_error(err_msg);
+    }
     // If virtual_op is VirtualTransmitterOp
     switch (virtual_op->io_type()) {
       case IOSpec::IOType::kOutput: {
@@ -1242,7 +1337,9 @@ void connect_ucx_transmitters_to_virtual_ops(
         }
 
         if (connection_count == 1) {
-          auto& out_spec = last_transmitter_op->spec()->outputs()[port_name];
+          auto out_spec =
+              get_operator_port_iospec(last_transmitter_op, port_name, IOSpec::IOType::kOutput);
+
           // Create the connector for out_spec from the virtual_op
           out_spec->connector(virtual_op->connector_type(), virtual_op->arg_list());
         }
@@ -1253,8 +1350,6 @@ void connect_ucx_transmitters_to_virtual_ops(
     }
   }
 }
-
-}  // unnamed namespace
 
 gxf_result_t GXFExecutor::add_connection(gxf_uid_t source_cid, gxf_uid_t target_cid) {
   gxf_result_t code;
@@ -1298,7 +1393,8 @@ void GXFExecutor::connect_broadcast_to_previous_op(
       auto target_ports = port_map_val->at(port_name);
       for (const auto& target_port : target_ports) {
         // Create a Transmitter in the Broadcast entity.
-        auto& prev_op_io_spec = prev_op->spec()->outputs()[port_name];
+        auto prev_op_io_spec =
+            get_operator_port_iospec(prev_op, port_name, IOSpec::IOType::kOutput);
         auto prev_connector_type = prev_op_io_spec->connector_type();
         auto prev_connector = prev_op_io_spec->connector();
 
@@ -1379,11 +1475,7 @@ void GXFExecutor::connect_broadcast_to_previous_op(
               }
               btx_term_handle->setTransmitter(btx_handle);
             }
-
-            // Get the current Operator's input port
-            auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-                op->spec()->inputs()[target_port]->connector());
-            gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
+            gxf_uid_t target_cid = get_operator_port_cid(op, target_port, IOSpec::IOType::kInput);
 
             // Connect the newly created Transmitter with current operator's input port
             add_connection(btx_handle->cid(), target_cid);
@@ -1448,6 +1540,10 @@ void GXFExecutor::connect_broadcast_to_previous_op(
 void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType op,
                                               BroadcastEntityMapType& broadcast_entities,
                                               const TargetConnectionsMapType& connections) {
+  if (op == nullptr) {
+    auto err_msg = fmt::format("operator is nullptr");
+    throw std::runtime_error(err_msg);
+  }
   auto& op_name = op->name();
   auto context = context_;
   auto entity_prefix = entity_prefix_;
@@ -1470,7 +1566,7 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
 
     // Create a corresponding condition of the op's output port and set it as the
     // receiver's condition for the broadcast entity.
-    auto& op_io_spec = op->spec()->outputs()[source_cname];
+    auto op_io_spec = get_operator_port_iospec(op, source_cname, IOSpec::IOType::kOutput);
 
     // 1. Find the output port's condition.
     //    (ConditionType::kDownstreamMessageAffordable)
@@ -1634,9 +1730,12 @@ bool GXFExecutor::initialize_fragment() {
     }
     // Get (copy) shared pointer before popping it from the worklist.
     auto op = worklist.front();
+    if (op == nullptr) {
+      HOLOSCAN_LOG_ERROR("operator is nullptr");
+      throw std::runtime_error("operator is nullptr");
+    }
     worklist.pop_front();
 
-    auto op_spec = op->spec();
     auto& op_name = op->name();
 
     // Check if we have already visited this node
@@ -1714,6 +1813,7 @@ bool GXFExecutor::initialize_fragment() {
       if (prev_op == op) {
         continue;
       }
+      HOLOSCAN_LOG_DEBUG("Connecting previous operator: {}", prev_op->name());
 
       auto port_map = graph.get_port_map(prev_op, op);
       if (!port_map.has_value()) {
@@ -1722,6 +1822,7 @@ bool GXFExecutor::initialize_fragment() {
       }
 
       const auto& port_map_val = port_map.value();
+      HOLOSCAN_LOG_DEBUG("Got port map for previous operator: {}", prev_op->name());
 
       // If the previous operator is found to be one that is connected to the current operator via
       // a Broadcast component, then add the connection between the Broadcast component and the
@@ -1730,6 +1831,8 @@ bool GXFExecutor::initialize_fragment() {
         // Add transmitter to the prev_op's broadcast component and connect it to op's input port.
         // Any connected ports are removed from port_map_val.
         connect_broadcast_to_previous_op(broadcast_entities, op, prev_op, port_map_val);
+        HOLOSCAN_LOG_DEBUG("Finished broadcast connection for previous operator: {}",
+                           prev_op->name());
       }
 
       if (port_map_val->size()) {
@@ -1744,33 +1847,35 @@ bool GXFExecutor::initialize_fragment() {
           continue;
         }
 
+        HOLOSCAN_LOG_DEBUG("Looping through direct connections for previous operator: {}",
+                           prev_op->name());
         for (const auto& [source_port, target_ports] : *port_map_val) {
           gxf_uid_t source_cid = -1;
           // Only if previous operator is initialized, then source edge cid is valid
           // For cycles, a previous operator may not have been initialized yet
           if (prev_op->id() != -1) {  // id of an operator is -1 if it is not initialized
-            auto source_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-                prev_op->spec()->outputs()[source_port]->connector());
-            source_cid = source_gxf_resource->gxf_cid();
+            source_cid = get_operator_port_cid(prev_op, source_port, IOSpec::IOType::kOutput);
           }
 
+          HOLOSCAN_LOG_DEBUG(
+              "Processing source port: {} for previous operator: {}", source_port, prev_op->name());
           // GXF Connection component should not be added for types using a NetworkContext
-          auto connector_type = prev_op->spec()->outputs()[source_port]->connector_type();
+          auto out_iospec = get_operator_port_iospec(prev_op, source_port, IOSpec::IOType::kOutput);
+          auto connector_type = out_iospec->connector_type();
           if (connector_type != IOSpec::ConnectorType::kUCX) {
             // const auto& target_port = target_ports.begin();
             for (const auto& target_port : target_ports) {
-              auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-                  op->spec()->inputs()[target_port]->connector());
               // For cycles, a previous operator may not have been initialized yet, so we don't
               // connect them here. We connect them as a forward/downstream connection when we
               // visit the operator which is connected to the current operator.
               if (prev_op->id() != -1) {
-                gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
+                gxf_uid_t target_cid =
+                    get_operator_port_cid(op, target_port, IOSpec::IOType::kInput);
                 add_connection(source_cid, target_cid);
                 HOLOSCAN_LOG_DEBUG(
-                    "Connected directly source : {} -> target : {}", source_port, target_port);
+                    "\t\tConnected directly source : {} -> target : {}", source_port, target_port);
               } else {
-                HOLOSCAN_LOG_DEBUG("Connection source: {} -> target: {} will be added later",
+                HOLOSCAN_LOG_DEBUG("\t\tConnection source: {} -> target: {} will be added later",
                                    source_port,
                                    target_port);
               }
@@ -1811,12 +1916,19 @@ bool GXFExecutor::initialize_fragment() {
 
           // If current operator's type is virtual operator, we don't need to connect it.
           if (op_type != Operator::OperatorType::kVirtual) {
-            auto source_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-                op_spec->outputs()[source_port]->connector());
+            auto source_iospec = get_operator_port_iospec(op, source_port, IOSpec::IOType::kOutput);
+            auto source_gxf_resource =
+                std::dynamic_pointer_cast<GXFResource>(source_iospec->connector());
+            if (!source_gxf_resource) {
+              auto err_msg = fmt::format(
+                  "Could not cast connector to GXFResource for source port: {}", source_port);
+              HOLOSCAN_LOG_ERROR(err_msg);
+              throw std::runtime_error(err_msg);
+            }
             gxf_uid_t source_cid = source_gxf_resource->gxf_cid();
             std::string source_cname = source_gxf_resource->name();
 
-            auto connector_type = op_spec->outputs()[source_port]->connector_type();
+            auto connector_type = source_iospec->connector_type();
             if (connections.find(source_cid) == connections.end()) {
               connections[source_cid] =
                   TargetsInfo{source_cname, connector_type, std::set<TargetPort>{}};
@@ -1852,9 +1964,8 @@ bool GXFExecutor::initialize_fragment() {
           // Operator is already initialized
           HOLOSCAN_LOG_DEBUG("next op {} is already initialized, due to a cycle.",
                              tmp_next_op->name());
-          auto target_gxf_resource = std::dynamic_pointer_cast<GXFResource>(
-              tmp_next_op->spec()->inputs()[target_port_name]->connector());
-          gxf_uid_t target_cid = target_gxf_resource->gxf_cid();
+          gxf_uid_t target_cid =
+              get_operator_port_cid(tmp_next_op, target_port_name, IOSpec::IOType::kInput);
           add_connection(source_cid, target_cid);
           HOLOSCAN_LOG_TRACE(
               "Next Op {} is connected to the current Op {} as a downstream connection due to a "
@@ -1960,12 +2071,17 @@ bool GXFExecutor::initialize_fragment() {
 }
 
 bool GXFExecutor::initialize_operator(Operator* op) {
+  if (op == nullptr) {
+    HOLOSCAN_LOG_ERROR("operator is nullptr");
+    throw std::runtime_error("operator is nullptr");
+  }
   if (owns_context_ && !is_gxf_graph_initialized_) {
-    HOLOSCAN_LOG_ERROR(
+    auto err_msg = fmt::format(
         "Fragment graph is not composed yet. Operator should not be initialized in GXFExecutor. "
         "Op: {}.",
         op->name());
-    return false;
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   } else if (!owns_context_) {  // GXF context was created outside
     HOLOSCAN_LOG_DEBUG("Not an owned GXF context. Op: {}", op->name());
   }
@@ -2147,7 +2263,16 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
                                 const std::string& receivers_name,
                                 std::vector<std::string>& new_input_labels,
                                 std::vector<holoscan::IOSpec*>& iospec_vector) {
+  if (op == nullptr) {
+    HOLOSCAN_LOG_ERROR("Operator is nullptr");
+    throw std::runtime_error("Operator is nullptr");
+  }
   const auto downstream_op_spec = op->spec();
+  if (!downstream_op_spec) {
+    auto err_msg = fmt::format("Operator '{}' has no spec", op->name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
 
   // Create input port for the receivers parameter in the spec
 
@@ -2170,12 +2295,24 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
 
 bool GXFExecutor::add_control_flow(const std::shared_ptr<Operator>& upstream_op,
                                    const std::shared_ptr<Operator>& downstream_op) {
+  if (upstream_op == nullptr || downstream_op == nullptr) {
+    auto err_msg = fmt::format("upstream_op or downstream_op is nullptr");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   // Add control flow between the upstream and downstream operators
   HOLOSCAN_LOG_DEBUG("Adding control flow between operators: {} -> {}",
                      upstream_op->name(),
                      downstream_op->name());
-  auto& upstream_op_spec = *(upstream_op->spec());
-  auto& downstream_op_spec = *(downstream_op->spec());
+  auto upstream_op_spec_ptr = upstream_op->spec();
+  auto downstream_op_spec_ptr = downstream_op->spec();
+  if (!upstream_op_spec_ptr || !downstream_op_spec_ptr) {
+    const std::string err_msg{"upstream_op->spec() or downstream_op->spec() is nullptr"};
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
+  auto& upstream_op_spec = *upstream_op_spec_ptr;
+  auto& downstream_op_spec = *downstream_op_spec_ptr;
 
   if (!upstream_op->output_exec_spec()) {
     // Create a new output port for the control flow.
@@ -2214,6 +2351,10 @@ bool GXFExecutor::is_holoscan() const {
 std::shared_ptr<GPUDevice> GXFExecutor::add_gpu_device_to_graph_entity(
     const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
     std::optional<int32_t> device_id) {
+  if (graph_entity == nullptr) {
+    HOLOSCAN_LOG_ERROR("graph_entity is nullptr");
+    throw std::runtime_error("graph_entity is nullptr");
+  }
   int32_t gpu_id;
   if (device_id.has_value()) {
     gpu_id = device_id.value();
@@ -2331,6 +2472,9 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
 
       // Identify leaf and root operators and add to the DFFTCollector object
       for (auto& op : graph.get_nodes()) {
+        if (op == nullptr) {
+          throw std::runtime_error("Operator is nullptr");
+        }
         bool is_current_op_leaf =
             op->is_leaf() ||
             holoscan::Operator::is_all_operator_successor_virtual(op, fragment_->graph());

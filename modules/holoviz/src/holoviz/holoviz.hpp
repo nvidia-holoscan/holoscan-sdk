@@ -96,6 +96,7 @@ viz::Shutdown();
 
 #include "holoviz/callbacks.hpp"
 #include "holoviz/depth_map_render_mode.hpp"
+#include "holoviz/display_event_type.hpp"
 #include "holoviz/image_format.hpp"
 #include "holoviz/init_flags.hpp"
 #include "holoviz/present_mode.hpp"
@@ -745,6 +746,33 @@ void GetCameraPose(size_t size, float* matrix);
  * @param translation translation vector
  */
 void GetCameraPose(float (&rotation)[9], float (&translation)[3]);
+
+/**
+ * Block until either the present_id is greater than or equal to the current present id, or
+ * timeout_ns nanoseconds passes. The present ID is initially zero and increments after each
+ * present.
+ *
+ * @param present_id the presentation presentId to wait for
+ * @param timeout_ns timeout in nanoseconds
+ * @return true if the present_id is greater than or equal to the current present id, false if
+ * timeout_ns nanoseconds passes
+ */
+bool WaitForPresent(uint64_t present_id, uint64_t timeout_ns);
+
+/**
+ * Block until either the display_event_type is signaled, or timeout_ns nanoseconds passes.
+ *
+ * @param display_event_type display event type
+ * @param timeout_ns timeout in nanoseconds
+ * @return true if the display_event_type is signaled, false if timeout_ns nanoseconds passes
+ */
+bool WaitForDisplayEvent(DisplayEventType display_event_type, uint64_t timeout_ns);
+
+/**
+ * @returns the counter incrementing once every time a vertical blanking period occurs on the
+ * display associated window or the display selected in full screen mode or exclusive display mode.
+ */
+uint64_t GetVBlankCounter();
 
 }  // namespace holoscan::viz
 

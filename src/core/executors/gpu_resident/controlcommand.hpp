@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,16 +14,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-#include "holoscan/core/gxf/codec_registry.hpp"
+#ifndef HOLOSCAN_CORE_EXECUTORS_GPU_RESIDENT_CONTROLCOMMAND_HPP_
+#define HOLOSCAN_CORE_EXECUTORS_GPU_RESIDENT_CONTROLCOMMAND_HPP_
 
 namespace holoscan {
-namespace gxf {
 
-CodecRegistry& CodecRegistry::get_instance() {
-  static CodecRegistry instance;
-  return instance;
-}
+enum class ControlCommand : unsigned int {
+  INVALID = 0,
+  DATA_NOT_READY,
+  DATA_READY,
+  RESULT_READY,
+  RESULT_NOT_READY,
+  TEAR_DOWN,
+  MAX_COMMANDS
+};
 
-}  // namespace gxf
 }  // namespace holoscan
+
+#endif  // HOLOSCAN_CORE_EXECUTORS_GPU_RESIDENT_CONTROLCOMMAND_HPP_

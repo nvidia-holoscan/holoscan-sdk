@@ -16,17 +16,21 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./serialization_buffers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
 #include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -41,7 +45,7 @@ class PySerializationBuffer : public SerializationBuffer {
   using SerializationBuffer::SerializationBuffer;
 
   // Define a constructor that fully initializes the object.
-  explicit PySerializationBuffer(Fragment* fragment,
+  explicit PySerializationBuffer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                  std::shared_ptr<holoscan::Allocator> allocator = nullptr,
                                  size_t buffer_size = kDefaultSerializationBufferSize,
                                  const std::string& name = "serialization_buffer")
@@ -51,10 +55,7 @@ class PySerializationBuffer : public SerializationBuffer {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -64,7 +65,7 @@ class PyUcxSerializationBuffer : public UcxSerializationBuffer {
   using UcxSerializationBuffer::UcxSerializationBuffer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxSerializationBuffer(Fragment* fragment,
+  explicit PyUcxSerializationBuffer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                                     std::shared_ptr<holoscan::Allocator> allocator = nullptr,
                                     size_t buffer_size = kDefaultSerializationBufferSize,
                                     const std::string& name = "serialization_buffer")
@@ -74,10 +75,7 @@ class PyUcxSerializationBuffer : public UcxSerializationBuffer {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -87,7 +85,10 @@ void init_serialization_buffers(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<SerializationBuffer>>(
       m, "SerializationBuffer", doc::SerializationBuffer::doc_SerializationBuffer)
-      .def(py::init<Fragment*, std::shared_ptr<holoscan::Allocator>, size_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    std::shared_ptr<holoscan::Allocator>,
+                    size_t,
+                    const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
@@ -99,7 +100,10 @@ void init_serialization_buffers(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<UcxSerializationBuffer>>(
       m, "UcxSerializationBuffer", doc::UcxSerializationBuffer::doc_UcxSerializationBuffer)
-      .def(py::init<Fragment*, std::shared_ptr<holoscan::Allocator>, size_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    std::shared_ptr<holoscan::Allocator>,
+                    size_t,
+                    const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,

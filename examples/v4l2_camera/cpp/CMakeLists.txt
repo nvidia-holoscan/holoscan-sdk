@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+add_subdirectory(v4l2_camera_passthrough_op)
+
 # Create example
 add_executable(v4l2_camera
   v4l2_camera.cpp
@@ -23,6 +25,8 @@ target_link_libraries(v4l2_camera
   holoscan::core
   holoscan::ops::v4l2
   holoscan::ops::holoviz
+  holoscan::ops::format_converter
+  holoscan::ops::v4l2_camera_passthrough
 )
 
 # Copy config file
@@ -86,6 +90,8 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
     holoscan::core
     holoscan::ops::v4l2
     holoscan::ops::holoviz
+    holoscan::ops::format_converter
+    holoscan::ops::v4l2_camera_passthrough
   )
 
   add_dependencies(v4l2_camera_test racerx_data)

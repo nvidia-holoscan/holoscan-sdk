@@ -50,6 +50,7 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_video_replayer_distributed_output)
@@ -74,26 +75,21 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST
-    COMMAND python3 video_replayer_distributed_test.py --config python_video_replayer_distributed_config.yaml
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} video_replayer_distributed_test.py --config python_video_replayer_distributed_config.yaml 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'APPLICATION PORT MAPPING' \
+        --pass-pattern 'fragment2.holoviz.receivers:0' \
+        --pass-pattern 'FRAGMENT fragment1 PORT MAPPING' \
+        --pass-pattern 'fragment1.replayer.output:' \
+        --pass-pattern 'FRAGMENT fragment2 PORT MAPPING' \
+        --fail-pattern 'initialized independent of a parent entity'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-
-  set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_TEST PROPERTIES
-    DEPENDS "video_replayer_distributed_test.py"
-    # PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    # # test for some expected strings in the distributed app port-mapping output
-    # PASS_REGULAR_EXPRESSION "APPLICATION_PORT_MAPPING"
-    # PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:"
-    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment1' PORT MAPPING"
-    # PASS_REGULAR_EXPRESSION "fragment1.replayer.output:"
-    # PASS_REGULAR_EXPRESSION "FRAGMENT 'fragment2' PORT MAPPING"
-    PASS_REGULAR_EXPRESSION "fragment2.holoviz.receivers:0"
   )
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_DISTRIBUTED_RENDER_TEST
-    COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+    COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
     --source_video_dir ${RECORDING_DIR}
     --source_video_basename ${SOURCE_VIDEO_BASENAME}
     --output_dir ${RECORDING_DIR}

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,16 +16,20 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -51,17 +55,15 @@ class PyVideoStreamRecorderOp : public VideoStreamRecorderOp {
   using VideoStreamRecorderOp::VideoStreamRecorderOp;
 
   // Define a constructor that fully initializes the object.
-  PyVideoStreamRecorderOp(Fragment* fragment, const py::args& args, const std::string& directory,
+  PyVideoStreamRecorderOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                          const py::args& args, const std::string& directory,
                           const std::string& basename, bool flush_on_tick_ = false,
                           const std::string& name = "video_stream_recorder")
       : VideoStreamRecorderOp(ArgList{Arg{"directory", directory},
                                       Arg{"basename", basename},
                                       Arg{"flush_on_tick", flush_on_tick_}}) {
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -79,7 +81,7 @@ PYBIND11_MODULE(_video_stream_recorder, m) {
              Operator,
              std::shared_ptr<VideoStreamRecorderOp>>(
       m, "VideoStreamRecorderOp", doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
                     const std::string&,
                     const std::string&,

@@ -37,9 +37,9 @@
 #include "gxf/std/tensor.hpp"
 #include "holoinfer_activation_spec.hpp"
 #include "holoscan/core/application.hpp"
+#include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/expected.hpp"
-#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/operators/holoviz/holoviz.hpp"
 #include "holoscan/profiler/profiler.hpp"
@@ -105,7 +105,7 @@ struct codec<std::shared_ptr<GILGuardedPyObject>> {
 // NOLINTEND(altera-struct-pack-align)
 
 static void register_py_object_codec() {
-  auto& codec_registry = gxf::CodecRegistry::get_instance();
+  auto& codec_registry = CodecRegistry::get_instance();
   codec_registry.add_codec<std::shared_ptr<GILGuardedPyObject>>(
       "std::shared_ptr<GILGuardedPyObject>"s);
 }
@@ -529,7 +529,7 @@ void init_io_context(py::module_& m) {
     // Note: The types below are relevant to transmit between wrapped C++ operators and native
     // Python operators for both within fragment and inter-fragment communication. In the case of
     // inter-fragment communication (distributed apps), corresponding types must also be registered
-    // with the GXF UCX serialization components in `core/gxf/codec_registry.hpp`.
+    // with the GXF UCX serialization components in `core/codec_registry.hpp`.
 
     // Unordered map types
     registry.add_emitter_receiver<std::unordered_map<std::string, std::string>>(

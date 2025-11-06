@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,59 +39,62 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
-COMMAND python3 ping_distributed.py
-WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-)
-set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST PROPERTIES
-PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
-FAIL_REGULAR_EXPRESSION "AssertionError:"
-FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
-)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received message 10: Tensor key: out, shape:' \
+        --fail-pattern 'AssertionError:' \
+        --fail-pattern 'initialized independent of a parent entity' \
+        --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
-    COMMAND python3 ping_distributed.py --gpu
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
-    FAIL_REGULAR_EXPRESSION "AssertionError:"
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py --gpu 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received message 10: Tensor key: out, shape:' \
+        --fail-pattern 'AssertionError:' \
+        --fail-pattern 'initialized independent of a parent entity' \
+        --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_FLOW_TRACKING_TEST
-    COMMAND python3 ping_distributed.py --track
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_FLOW_TRACKING_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'out', shape: \\(32, 64\\)"
-    PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
-    PASS_REGULAR_EXPRESSION "Fragment: fragment2"
-    PASS_REGULAR_EXPRESSION "Fragment: fragment1"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py --track 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received message 10: Tensor key: out, shape:' \
+        --pass-pattern 'Data Flow Tracking Results' \
+        --pass-pattern 'Fragment: fragment1' \
+        --pass-pattern 'Fragment: fragment2'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST
-    COMMAND python3 ping_distributed.py --help
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Usage: ping_distributed.py \\[OPTIONS\\]"
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py --help 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Usage: ping_distributed.py' \
+        --fail-pattern 'initialized independent of a parent entity' \
+        --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
   add_test(NAME EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST
-    COMMAND python3 ping_distributed.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'GPUDevice value found and cached. dev_id: -5' \
+        --pass-pattern 'cudaSetDevice Failed' \
+        --fail-pattern 'initialized independent of a parent entity' \
+        --fail-pattern 'Unable to convert argument type'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   # Use a negative id to test with a non-existent device
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_UCX_DEVICE_ID=-5"
-    PASS_REGULAR_EXPRESSION "GPUDevice value found and cached. dev_id: -5"
-    PASS_REGULAR_EXPRESSION "cudaSetDevice Failed - 101, device id -5"
-    FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
-    FAIL_REGULAR_EXPRESSION "Unable to convert argument type"
   )
 endif()

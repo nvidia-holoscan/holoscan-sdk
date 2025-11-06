@@ -26,9 +26,19 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <mutex>
+
+#define STRINGIFY(x) #x
+#define TOSTRING(x) STRINGIFY(x)
 
 namespace holoscan {
 namespace inference {
+
+namespace {
+
+std::mutex g_managers_mutex;
+
+}  // namespace
 
 ManagerInfer::ManagerInfer() {}
 
@@ -253,11 +263,17 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 
+          // check here for valid entry
+          if (trt_opt_profile.find(model_name) == trt_opt_profile.end()) {
+            trt_opt_profile[model_name] = {};
+          }
+          auto current_trt_opt_profile = trt_opt_profile.at(model_name);
+
           holo_infer_context_.insert(
               {model_name,
                std::make_unique<TrtInfer>(model_path,
                                           model_name,
-                                          trt_opt_profile,
+                                          current_trt_opt_profile,
                                           device_id,
                                           device_gpu_dt_,
                                           inference_specs->use_fp16_,
@@ -286,7 +302,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
 #if defined(HOLOINFER_ORT_ENABLED)
           HOLOSCAN_LOG_INFO("Searching for ONNX Runtime libraries");
-          void* handle = dlopen("libholoscan_infer_onnx_runtime.so", RTLD_NOW);
+          void* handle = dlopen(
+              "libholoscan_infer_onnx_runtime.so." TOSTRING(PROJECT_VERSION_MAJOR), RTLD_NOW);
           if (handle == nullptr) {
             HOLOSCAN_LOG_ERROR(dlerror());
             status.set_message("ONNX Runtime context setup failure.");
@@ -341,7 +358,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           }
 #if defined(HOLOINFER_TORCH_ENABLED)
           HOLOSCAN_LOG_INFO("Searching for libtorch libraries");
-          void* handle = dlopen("libholoscan_infer_torch.so", RTLD_NOW);
+          void* handle =
+              dlopen("libholoscan_infer_torch.so." TOSTRING(PROJECT_VERSION_MAJOR), RTLD_NOW);
           if (handle == nullptr) {
             HOLOSCAN_LOG_ERROR(dlerror());
             status.set_message("Torch context setup failure.");
@@ -895,6 +913,7 @@ DimType ManagerInfer::get_output_dimensions() const {
 }
 
 InferContext::InferContext() {
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   try {
     if (g_managers.find("current_manager") != g_managers.end()) {
       HOLOSCAN_LOG_WARN("Inference context exists, cleaning up");
@@ -911,6 +930,7 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
                                             cudaStream_t cuda_stream) {
   InferStatus status = InferStatus();
 
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   if (g_managers.find(unique_id_) == g_managers.end()) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message("Inference manager, Error: Inference manager not created or is not set up.");
@@ -931,7 +951,9 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
 }
 
 InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& inference_specs) {
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   InferStatus status = InferStatus();
+
   if (g_managers.size() == 0) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message("Inference manager, Error: Inference Manager not initiated");
@@ -996,6 +1018,7 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 }
 
 InferContext::~InferContext() {
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   if (g_managers.find(unique_id_) != g_managers.end()) {
     g_manager = g_managers.at(unique_id_);
     g_manager.reset();
@@ -1004,11 +1027,13 @@ InferContext::~InferContext() {
 }
 
 DimType InferContext::get_output_dimensions() const {
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   g_manager = g_managers.at(unique_id_);
   return g_manager->get_output_dimensions();
 }
 
 DimType InferContext::get_input_dimensions() const {
+  std::lock_guard<std::mutex> lock(g_managers_mutex);
   g_manager = g_managers.at(unique_id_);
   return g_manager->get_input_dimensions();
 }

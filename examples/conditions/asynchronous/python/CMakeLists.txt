@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,13 +39,15 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_PING_ASYNC_TEST
-    COMMAND python3 ping_async.py --delay=100 --count=5
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_ASYNC_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Rx message value: 5"
-    PASS_REGULAR_EXPRESSION "waiting for 0.1 s in AsyncPingTxOp.async_send"
-    PASS_REGULAR_EXPRESSION "waiting for 0.1 s in AsyncPingRxOp.async_receive"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ping_async.py --delay=100 --count=5 2>&1 | \
+       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+         --pass-pattern 'Rx message value: 5' \
+         --pass-pattern 'waiting for 0.1 s in AsyncPingTxOp.async_send' \
+         --pass-pattern 'waiting for 0.1 s in AsyncPingRxOp.async_receive'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 endif()

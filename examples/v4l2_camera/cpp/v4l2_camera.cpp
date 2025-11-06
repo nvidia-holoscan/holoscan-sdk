@@ -22,85 +22,18 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
+#include <holoscan/operators/format_converter/format_converter.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
+#include <gxf/rmm/rmm_allocator.hpp>
+
+#include <v4l2_camera_passthrough_op.hpp>
 
 static bool key_exists(const holoscan::ArgList& config, const std::string& key) {
   return (std::find_if(config.begin(), config.end(), [&key](const holoscan::Arg& arg) {
             return arg.name() == key;
           }) != config.end());
 }
-
-namespace holoscan::ops {
-
-/**
- * The V4L2VideoCaptureOp outputs a VideoBuffer if the V4L2 pixel format has equivalent
- * nvidia::gxf::VideoFormat enum, see `v4l2_to_gxf_format`. If this is not the case then
- * V4L2VideoCaptureOp outputs a tensor. This operator checks for that tensor and uses the metadata
- * provided by the V4L2VideoCaptureOp and translates it to a HolovizOp::InputSpec so HolovizOp can
- * display the video data. It also sets the YCbCr encoding model and quantization range.
- */
-class V4L2FormatTranslateOp : public holoscan::Operator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(V4L2FormatTranslateOp)
-
-  V4L2FormatTranslateOp() = default;
-
-  void setup(OperatorSpec& spec) override {
-    spec.input<std::shared_ptr<holoscan::gxf::Entity>>("input");
-    spec.output<std::vector<HolovizOp::InputSpec>>("output_specs");
-  }
-
-  void compute(InputContext& op_input, OutputContext& op_output,
-               [[maybe_unused]] ExecutionContext& context) override {
-    if (!is_metadata_enabled()) {
-      throw std::runtime_error("Metadata needs to be enabled for this operator");
-    }
-    auto entity = op_input.receive<holoscan::gxf::Entity>("input");
-
-    auto maybe_tensor = entity->nvidia::gxf::Entity::get<nvidia::gxf::Tensor>();
-    if (maybe_tensor) {
-      // use the metadata provided by the V4L2VideoCaptureOp to build the input spec for the
-      // HolovizOp
-      auto meta = metadata();
-
-      std::vector<HolovizOp::InputSpec> spec;
-      auto& video_spec = spec.emplace_back(HolovizOp::InputSpec("", HolovizOp::InputType::COLOR));
-
-      const auto v4l2_pixel_format = meta->get<std::string>("V4L2_pixel_format");
-      if (v4l2_pixel_format == "YUYV") {
-        video_spec.image_format_ = HolovizOp::ImageFormat::Y8U8Y8V8_422_UNORM;
-
-        // also set the encoding and quantization
-        const auto v4l2_ycbcr_encoding = meta->get<std::string>("V4L2_ycbcr_encoding");
-        if (v4l2_ycbcr_encoding == "V4L2_YCBCR_ENC_601") {
-          video_spec.yuv_model_conversion_ = HolovizOp::YuvModelConversion::YUV_601;
-        } else if (v4l2_ycbcr_encoding == "V4L2_YCBCR_ENC_709") {
-          video_spec.yuv_model_conversion_ = HolovizOp::YuvModelConversion::YUV_709;
-        } else if (v4l2_ycbcr_encoding == "V4L2_YCBCR_ENC_2020") {
-          video_spec.yuv_model_conversion_ = HolovizOp::YuvModelConversion::YUV_2020;
-        }
-
-        const auto v4l2_quantization = meta->get<std::string>("V4L2_quantization");
-        if (v4l2_quantization == "V4L2_QUANTIZATION_FULL_RANGE") {
-          video_spec.yuv_range_ = HolovizOp::YuvRange::ITU_FULL;
-        } else if (v4l2_ycbcr_encoding == "V4L2_QUANTIZATION_LIM_RANGE") {
-          video_spec.yuv_range_ = HolovizOp::YuvRange::ITU_NARROW;
-        }
-      } else {
-        throw std::runtime_error(fmt::format("Unhandled V4L2 pixel format {}", v4l2_pixel_format));
-      }
-
-      // don't pass the meta data along to avoid errors when MetadataPolicy is `kRaise`
-      meta->clear();
-
-      // emit the output spec
-      op_output.emit(spec, "output_specs");
-    }
-  }
-};
-
-}  // namespace holoscan::ops
 
 class App : public holoscan::Application {
  public:
@@ -113,7 +46,18 @@ class App : public holoscan::Application {
     auto source =
         make_operator<ops::V4L2VideoCaptureOp>("source", Arg("pass_through", true), source_args);
 
-    auto format_translate = make_operator<ops::V4L2FormatTranslateOp>("format_translate");
+    // Create allocator for format converter
+    auto pool = make_resource<RMMAllocator>("rmm_allocator", from_config("rmm_allocator"));
+
+    // Create format converter for YUYV to RGB conversion
+    auto format_converter =
+        make_operator<ops::FormatConverterOp>("format_converter",
+                                              Arg("in_dtype") = std::string("yuyv"),
+                                              Arg("out_dtype") = std::string("rgb888"),
+                                              Arg("pool") = pool,
+                                              from_config("format_converter"));
+
+    auto passthrough = make_operator<ops::V4L2CameraPassthroughOp>("passthrough");
 
     auto viz_args = from_config("visualizer");
     if (key_exists(source_args, "width") && key_exists(source_args, "height")) {
@@ -128,15 +72,32 @@ class App : public holoscan::Application {
     auto visualizer = make_operator<ops::HolovizOp>(
         "visualizer", viz_args, Arg("cuda_stream_pool", cuda_stream_pool));
 
-    // Flow definition
-    add_flow(source, format_translate, {{"signal", "input"}});
-    add_flow(format_translate, visualizer, {{"output_specs", "input_specs"}});
-    add_flow(source, visualizer, {{"signal", "receivers"}});
+    // 1. Flow for YUYV format, not supported directly by Holoviz in display drivers >=R550
+    // source -> format_converter -> passthrough -> visualizer
+    add_flow(source, format_converter, {{"signal", "source_video"}});
+    add_flow(format_converter, passthrough, {{"tensor", "input"}});
 
-    // need metadata so V4L2FormatTranslateOp can translate the format
+    // 2. Flow for other VideoBuffer formats (NV12, RGB24, etc.) directly compatible with Holoviz
+    // source -> passthrough -> visualizer
+    add_flow(source, passthrough, {{"signal", "input"}});
 
-    // As of Holoscan 3.0, metadata is enabled by default, but if we wanted to explicitly
-    // disable it we could call `enable_metadata(false);` here
+    // Use a basic passthrough operator to circumvent the Holoviz "receivers" multi-port.
+    // Directly connecting multiple operators to the visualizer "receivers" multi-port
+    // creates multiple receiver ports and causes a deadlock.
+    add_flow(passthrough, visualizer, {{"output", "receivers"}});
+
+    // Define conditional routing based on pixel format metadata
+    set_dynamic_flows(source, [format_converter, passthrough](const std::shared_ptr<Operator>& op) {
+      std::string pixel_format = op->metadata()->get<std::string>("V4L2_pixel_format", "");
+
+      // Route based on pixel format
+      if (!pixel_format.empty() && (pixel_format.find("YUYV") != std::string::npos ||
+                                    pixel_format.find("yuyv") != std::string::npos)) {
+        op->add_dynamic_flow(format_converter);
+      } else {
+        op->add_dynamic_flow(passthrough);
+      }
+    });
   }
 };
 

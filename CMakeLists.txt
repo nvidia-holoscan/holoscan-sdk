@@ -34,6 +34,7 @@ option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
 option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_REGISTER_GXF_EXTENSIONS "Register extensions with the Graph Composer registry" OFF)
+option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" ON)
 
 # ##############################################################################
 # # Prerequisite statements
@@ -94,6 +95,24 @@ set(CMAKE_INSTALL_RPATH "\$ORIGIN:\$ORIGIN/gxf_extensions")
 # this generates a 'compile_commands.json' file which can be read by VSCode to
 # configure the include paths for IntelliSense
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Create a symbolic link for compile_commands.json in the source tree when building out of source
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR)
+    message(STATUS "Skipping compile_commands.json symlink because this is an in-source build.")
+else()
+    # Clangd searches parent directories and 'build/' folders for compile_commands.json.
+    # To ensure Clangd can find it, we create a symlink in the source directory.
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E create_symlink
+                ${CMAKE_BINARY_DIR}/compile_commands.json
+                ${CMAKE_SOURCE_DIR}/compile_commands.json
+        RESULT_VARIABLE result
+        ERROR_VARIABLE error
+    )
+    if(result)
+        message(FATAL_ERROR "Failed to create symbolic link for compile_commands.json: ${error}")
+    endif()
+endif()
 
 # Avoid 'Up-to-date' install messages
 set(CMAKE_INSTALL_MESSAGE LAZY)
@@ -270,6 +289,7 @@ endif()
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     core
     eigen3_interface
+    gpu_resident_cuda
     holoviz
     holoviz_imgui
     holoinfer
@@ -415,9 +435,6 @@ if(NOT TARGET GXF::common)
   set_target_properties(GXF::common PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/gxf")
 endif()
 
-if(TARGET GXF::std)
-  set_target_properties(GXF::std PROPERTIES INTERFACE_LINK_LIBRARIES "CCCL::libcudacxx")
-endif()
 ]=])
 foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
     string(TOUPPER "${CMAKE_BUILD_TYPE}" _build_type)
@@ -436,6 +453,23 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
             DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
             COMPONENT "holoscan-gxf_libs"
         )
+
+        get_target_property(interface_targets GXF::${_component} INTERFACE_LINK_LIBRARIES)
+        if(interface_targets)
+            # GXF "gems" are a subcomponent of the GXF::std extension and are not distributed individually
+            list(FILTER interface_targets EXCLUDE REGEX ".*gems.*")
+            # "internal" targets are a build detail and are no-ops for public interface
+            list(FILTER interface_targets EXCLUDE REGEX ".*_internal.*")
+            # RMM headers are embedded in the Holoscan SDK package
+            list(FILTER interface_targets EXCLUDE REGEX "^rmm::rmm$")
+            set(HOLOSCAN_GXF_INSTALL_HOOK "${HOLOSCAN_GXF_INSTALL_HOOK}
+if(TARGET GXF::${_component})
+set_target_properties(GXF::${_component} PROPERTIES \
+  INTERFACE_LINK_LIBRARIES \"${interface_targets}\"\
+)
+endif()"
+            )
+        endif()
     endif()
 endforeach()
 
@@ -489,6 +523,7 @@ libholoscan: Holoscan SDK C++ API
 set(holoscan_install_hook_code_string
 
 [=[
+find_dependency(ucx HINTS ${CMAKE_CURRENT_LIST_DIR}/../ucx)
 
 if(NOT TARGET fmt::fmt-header-only)
   add_library(fmt::fmt-header-only INTERFACE IMPORTED)

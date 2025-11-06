@@ -21,8 +21,10 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "../core/component_util.hpp"
 #include "./allocators_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -36,6 +38,7 @@
 #include "holoscan/core/resources/gxf/rmm_allocator.hpp"
 #include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -77,17 +80,14 @@ class PyBlockMemoryPool : public BlockMemoryPool {
   using BlockMemoryPool::BlockMemoryPool;
 
   // Define a constructor that fully initializes the object.
-  PyBlockMemoryPool(Fragment* fragment, int32_t storage_type, uint64_t block_size,
-                    uint64_t num_blocks, int32_t dev_id = 0,
-                    const std::string& name = "block_memory_pool")
+  PyBlockMemoryPool(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                    int32_t storage_type, uint64_t block_size, uint64_t num_blocks,
+                    int32_t dev_id = 0, const std::string& name = "block_memory_pool")
       : BlockMemoryPool(ArgList{Arg{"storage_type", storage_type},
                                 Arg{"block_size", block_size},
                                 Arg{"num_blocks", num_blocks},
                                 Arg{"dev_id", dev_id}}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -97,11 +97,9 @@ class PyUnboundedAllocator : public UnboundedAllocator {
   using UnboundedAllocator::UnboundedAllocator;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUnboundedAllocator(Fragment* fragment, const std::string& name = "cuda_stream_pool") {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+  explicit PyUnboundedAllocator(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                                const std::string& name = "unbounded_allocator") {
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -111,7 +109,8 @@ class PyCudaGreenContextPool : public CudaGreenContextPool {
   using CudaGreenContextPool::CudaGreenContextPool;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCudaGreenContextPool(Fragment* fragment, int32_t dev_id = 0, uint32_t flags = 0,
+  explicit PyCudaGreenContextPool(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                                  int32_t dev_id = 0, uint32_t flags = 0,
                                   uint32_t num_partitions = 0,
                                   const std::vector<uint32_t>& sms_per_partition = {},
                                   int32_t default_context_index = -1, uint32_t min_sm_size = 2,
@@ -124,10 +123,7 @@ class PyCudaGreenContextPool : public CudaGreenContextPool {
             Arg{"default_context_index", default_context_index},
             Arg{"min_sm_size", min_sm_size},
         }) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -138,14 +134,12 @@ class PyCudaGreenContext : public CudaGreenContext {
 
   // Define a constructor that fully initializes the object.
   explicit PyCudaGreenContext(
-      Fragment* fragment, std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool = nullptr,
-      int32_t index = -1, const std::string& nvtx_identifier = "defaultGreenContext",
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<CudaGreenContextPool> cuda_green_context_pool = nullptr, int32_t index = -1,
+      const std::string& nvtx_identifier = "defaultGreenContext",
       const std::string& name = "cuda_green_context")
       : CudaGreenContext(cuda_green_context_pool, index, nvtx_identifier) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -155,7 +149,8 @@ class PyCudaStreamPool : public CudaStreamPool {
   using CudaStreamPool::CudaStreamPool;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCudaStreamPool(Fragment* fragment, int32_t dev_id = 0, uint32_t stream_flags = 0,
+  explicit PyCudaStreamPool(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                            int32_t dev_id = 0, uint32_t stream_flags = 0,
                             int32_t stream_priority = 0, uint32_t reserved_size = 1,
                             uint32_t max_size = 0,
                             std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr,
@@ -163,10 +158,7 @@ class PyCudaStreamPool : public CudaStreamPool {
                             const std::string& name = "cuda_stream_pool")
       : CudaStreamPool(dev_id, stream_flags, stream_priority, reserved_size, max_size,
                        cuda_green_context, nvtx_identifier) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -177,7 +169,7 @@ class PyRMMAllocator : public RMMAllocator {
 
   // Define a constructor that fully initializes the object.
   explicit PyRMMAllocator(
-      Fragment* fragment,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       const std::string& device_memory_initial_size = std::string(kPoolInitialSize),
       const std::string& device_memory_max_size = std::string(kPoolMaxSize),
       const std::string& host_memory_initial_size = std::string(kPoolInitialSize),
@@ -188,10 +180,7 @@ class PyRMMAllocator : public RMMAllocator {
                              Arg{"host_memory_initial_size", host_memory_initial_size},
                              Arg{"host_memory_max_size", host_memory_max_size},
                              Arg{"dev_id", dev_id}}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -202,7 +191,7 @@ class PyStreamOrderedAllocator : public StreamOrderedAllocator {
 
   // Define a constructor that fully initializes the object.
   explicit PyStreamOrderedAllocator(
-      Fragment* fragment,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       const std::string& device_memory_initial_size = std::string(kPoolInitialSize),
       const std::string& device_memory_max_size = std::string(kPoolMaxSize),
       const std::string& release_threshold = std::string(kReleaseThreshold), int32_t dev_id = 0,
@@ -212,10 +201,7 @@ class PyStreamOrderedAllocator : public StreamOrderedAllocator {
                     Arg{"device_memory_max_size", device_memory_max_size},
                     Arg{"release_threshold", release_threshold},
                     Arg{"dev_id", dev_id}}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 
@@ -237,7 +223,12 @@ void init_allocators(py::module_& m) {
 
   py::class_<BlockMemoryPool, PyBlockMemoryPool, Allocator, std::shared_ptr<BlockMemoryPool>>(
       m, "BlockMemoryPool", doc::BlockMemoryPool::doc_BlockMemoryPool)
-      .def(py::init<Fragment*, int32_t, uint64_t, uint64_t, int32_t, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    int32_t,
+                    uint64_t,
+                    uint64_t,
+                    int32_t,
+                    const std::string&>(),
            "fragment"_a,
            "storage_type"_a,
            "block_size"_a,
@@ -251,7 +242,7 @@ void init_allocators(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<CudaGreenContextPool>>(
       m, "CudaGreenContextPool", doc::CudaGreenContextPool::doc_CudaGreenContextPool)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int32_t,
                     uint32_t,
                     uint32_t,
@@ -274,7 +265,7 @@ void init_allocators(py::module_& m) {
              gxf::GXFResource,
              std::shared_ptr<CudaGreenContext>>(
       m, "CudaGreenContext", doc::CudaGreenContext::doc_CudaGreenContext)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::shared_ptr<CudaGreenContextPool>,
                     int32_t,
                     const std::string&,
@@ -288,7 +279,7 @@ void init_allocators(py::module_& m) {
 
   py::class_<CudaStreamPool, PyCudaStreamPool, Allocator, std::shared_ptr<CudaStreamPool>>(
       m, "CudaStreamPool", doc::CudaStreamPool::doc_CudaStreamPool)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int32_t,
                     uint32_t,
                     int32_t,
@@ -313,7 +304,7 @@ void init_allocators(py::module_& m) {
              Allocator,
              std::shared_ptr<UnboundedAllocator>>(
       m, "UnboundedAllocator", doc::UnboundedAllocator::doc_UnboundedAllocator)
-      .def(py::init<Fragment*, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
            "name"_a = "unbounded_allocator"s,
            doc::UnboundedAllocator::doc_UnboundedAllocator);
@@ -337,7 +328,7 @@ void init_allocators(py::module_& m) {
 
   py::class_<RMMAllocator, PyRMMAllocator, CudaAllocator, std::shared_ptr<RMMAllocator>>(
       m, "RMMAllocator", doc::RMMAllocator::doc_RMMAllocator)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const std::string&,
                     const std::string&,
                     const std::string&,
@@ -358,7 +349,7 @@ void init_allocators(py::module_& m) {
              CudaAllocator,
              std::shared_ptr<StreamOrderedAllocator>>(
       m, "StreamOrderedAllocator", doc::StreamOrderedAllocator::doc_StreamOrderedAllocator)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const std::string&,
                     const std::string&,
                     const std::string&,

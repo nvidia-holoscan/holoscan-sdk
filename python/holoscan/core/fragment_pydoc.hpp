@@ -199,9 +199,19 @@ This is an overloaded function. Additional variants exist:
 1.) For the Application class there is a variant where the first two arguments are of type
 `holoscan.core.Fragment` instead of `holoscan.core.Operator`. This variant is used in building
 multi-fragment applications.
-2.) There are also variants that omit the `port_pairs` argument that are applicable when there is
-only a single output on the upstream operator/fragment and a single input on the downstream
-operator/fragment.
+
+2.) Subgraph variants: Connect operators and subgraphs in any combination
+    - add_flow(operator, subgraph, port_pairs=None)
+    - add_flow(subgraph, operator, port_pairs=None)
+    - add_flow(subgraph, subgraph, port_pairs=None)
+
+3.) All variants support connector_type parameter:
+    - add_flow(..., connector_type)
+    - add_flow(..., port_pairs, connector_type)
+
+4.) There are also variants that omit the `port_pairs` argument that are applicable when there is
+only a single output on the upstream operator/fragment/subgraph and a single input on the downstream
+operator/fragment/subgraph.
 
 )doc")
 
@@ -422,4 +432,4 @@ the Resource if a Resource type is requested.
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_CORE_FRAGMENT_PYDOC_HPP
+#endif /* PYHOLOSCAN_CORE_FRAGMENT_PYDOC_HPP */

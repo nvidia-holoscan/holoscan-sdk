@@ -19,6 +19,7 @@ import os
 from argparse import ArgumentParser
 
 import cupy as cp
+import pytest
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
@@ -170,7 +171,8 @@ class InferenceOpTestApp(Application):
         self.add_flow(infer_op, result_checker_op, {("transmitter", "input")})
 
 
-def test_inference_torch(green_context: bool = False):
+@pytest.mark.parametrize("green_context", [False, True])
+def test_inference_torch(green_context: bool):
     app = InferenceOpTestApp(green_context)
     app.run()
 

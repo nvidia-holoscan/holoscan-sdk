@@ -62,6 +62,7 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
 6. [**Custom CUDA kernel 1d**](custom_cuda_kernel_1d_sample): application demonstrating ingestion of 1D custom CUDA kernel in Holoscan SDK
 7. [**Custom CUDA kernel multi sample**](custom_cuda_kernel_multi_sample): application demonstrating ingestion of multiple custom CUDA kernels of multi dimension in Holoscan SDK
 8. [**Flow Control**](flow_control): demonstrate how to control dynamic operator execution flow in a pipeline (e.g. condition flow paths and loops)
+9. [**Subgraphs**](subgraph): applications demonstrating composition of a fragment via smaller, possibly nested, subgraphs
 
 ## Core: additional configurations
 

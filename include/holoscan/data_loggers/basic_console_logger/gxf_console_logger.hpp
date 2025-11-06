@@ -49,7 +49,8 @@ class GXFConsoleLogger : public BasicConsoleLogger {
   bool log_backend_specific(const std::any& data, const std::string& unique_id,
                             int64_t acquisition_timestamp = -1,
                             const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                            IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                            IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                            std::optional<cudaStream_t> stream = std::nullopt) override;
 };
 
 }  // namespace data_loggers

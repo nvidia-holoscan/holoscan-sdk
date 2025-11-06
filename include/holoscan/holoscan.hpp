@@ -29,6 +29,7 @@
 #include "./core/execution_context.hpp"
 #include "./core/executor.hpp"
 #include "./core/fragment.hpp"
+#include "./core/gpu_resident_operator.hpp"
 #include "./core/graph.hpp"
 #include "./core/io_context.hpp"
 #include "./core/message.hpp"
@@ -37,6 +38,7 @@
 #include "./core/operator.hpp"
 #include "./core/resource.hpp"
 #include "./core/scheduler.hpp"
+#include "./core/subgraph.hpp"
 
 // Domain objects
 #include "./core/gxf/entity.hpp"

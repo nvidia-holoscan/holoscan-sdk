@@ -160,6 +160,14 @@ class GXFOutputContext : public OutputContext {
    */
   void set_cuda_stream(const cudaStream_t stream, const char* output_port_name = nullptr) override;
 
+  /**
+   * @brief Get the CUDA stream to be emitted on the specified output port.
+   *
+   * @param output_port_name The name of the output port.
+   * @return Optional CUDA stream configured for this output port.
+   */
+  std::optional<cudaStream_t> stream_to_emit(const char* output_port_name = nullptr) override;
+
  protected:
   void emit_impl(std::any data, const char* name = nullptr, OutputType out_type = OutputType::kAny,
                  const int64_t acq_timestamp = -1, bool omit_data_logging = false) override;

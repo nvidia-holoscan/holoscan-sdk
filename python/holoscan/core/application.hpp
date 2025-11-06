@@ -33,6 +33,7 @@
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "tensor.hpp"
 
 namespace py = pybind11;
@@ -91,9 +92,44 @@ class PYBIND11_EXPORT PyApplication : public Application {
                 const std::shared_ptr<Operator>& downstream_op,
                 std::set<std::pair<std::string, std::string>> io_map,
                 IOSpec::ConnectorType connector_type) override;
+  // Fragment add_flow overloads
   void add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                 const std::shared_ptr<Fragment>& downstream_frag,
                 std::set<std::pair<std::string, std::string>> port_pairs) override;
+
+  // Subgraph add_flow overloads
+  void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                std::set<std::pair<std::string, std::string>> port_pairs = {}) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Operator>& downstream_op,
+                std::set<std::pair<std::string, std::string>> port_pairs = {}) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                std::set<std::pair<std::string, std::string>> port_pairs = {}) override;
+
+  // Subgraph add_flow connector type overloads
+  void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                const IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Operator>& upstream_op,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                std::set<std::pair<std::string, std::string>> port_pairs,
+                const IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Operator>& downstream_op,
+                const IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Operator>& downstream_op,
+                std::set<std::pair<std::string, std::string>> port_pairs,
+                const IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                const IOSpec::ConnectorType connector_type) override;
+  void add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
+                const std::shared_ptr<Subgraph>& downstream_subgraph,
+                std::set<std::pair<std::string, std::string>> port_pairs,
+                const IOSpec::ConnectorType connector_type) override;
   void compose() override;
   void run() override;
 

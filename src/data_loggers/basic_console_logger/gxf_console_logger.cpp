@@ -45,7 +45,8 @@ extern std::mutex console_output_mutex;
 bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::string& unique_id,
                                             int64_t acquisition_timestamp,
                                             const std::shared_ptr<MetadataDictionary>& metadata,
-                                            IOSpec::IOType io_type) {
+                                            IOSpec::IOType io_type,
+                                            std::optional<cudaStream_t> stream) {
   HOLOSCAN_LOG_TRACE("{}: log_backend_specific called for unique_id: {}", name(), unique_id);
   // Check if this message should be logged based on allowlist/denylist patterns
   if (!should_log_message(unique_id)) {
@@ -119,7 +120,7 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
         if (tensor_map.size() > 0) {
           // Log the tensor map found in the entity
           if (!log_tensormap_data(
-                  tensor_map, unique_id, acquisition_timestamp, metadata, io_type)) {
+                  tensor_map, unique_id, acquisition_timestamp, metadata, io_type, stream)) {
             HOLOSCAN_LOG_ERROR("{}: Logging of TensorMap data from Entity failed", name());
             return false;
           }
@@ -140,7 +141,8 @@ bool GXFConsoleLogger::log_backend_specific(const std::any& data, const std::str
             continue;
           }
           auto buffer_handle = maybe_buffer_handle.value();
-          if (!log_data(buffer_handle, unique_id, acquisition_timestamp, metadata, io_type)) {
+          if (!log_data(
+                  buffer_handle, unique_id, acquisition_timestamp, metadata, io_type, stream)) {
             HOLOSCAN_LOG_ERROR("{}: Logging of VideoBuffer data from Entity failed", name());
             return false;
           }

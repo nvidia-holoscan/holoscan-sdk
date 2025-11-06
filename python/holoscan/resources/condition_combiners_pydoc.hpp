@@ -34,8 +34,8 @@ the default AND combination behavior.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 terms : list of holoscan.core.Condition
     The conditions to be OR combined.
 name : str, optional

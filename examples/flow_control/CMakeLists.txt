@@ -14,6 +14,7 @@
 # limitations under the License.
 
 add_subdirectory(sequential)
+add_subdirectory(sequential_with_subgraph)
 add_subdirectory(conditional)
 add_subdirectory(conditional_routing)
 add_subdirectory(fork_join)

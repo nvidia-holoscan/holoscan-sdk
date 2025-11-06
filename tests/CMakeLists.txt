@@ -96,6 +96,14 @@ if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
 endif()
 
 # ##################################################################################################
+# * gpu_resident tests ----------------------------------------------------------------------------------
+ConfigureTest(GPU_RESIDENT_TEST
+  gpu_resident/gpu_resident_fragment.cpp
+  gpu_resident/error_conditions.cpp
+  system/env_wrapper.cpp
+)
+
+# ##################################################################################################
 # * pose_tree tests ----------------------------------------------------------------------------------
 ConfigureTest(POSE_TREE_TEST
   pose_tree/pose_tree.cpp
@@ -143,6 +151,26 @@ target_link_libraries(OPERATORS_CLASSES_TEST
 add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 
 # ##################################################################################################
+# * ping_rx tests ----------------------------------------------------------------------------------
+ConfigureTest(PING_RX_TEST
+  operators/test_ping_rx.cpp
+)
+target_link_libraries(PING_RX_TEST
+  PRIVATE
+  holoscan::ops::ping_rx
+)
+
+# ##################################################################################################
+# * ping_rx tests ----------------------------------------------------------------------------------
+ConfigureTest(PING_TX_TEST
+  operators/test_ping_tx.cpp
+)
+target_link_libraries(PING_TX_TEST
+  PRIVATE
+  holoscan::ops::ping_tx
+)
+
+# ##################################################################################################
 # * data logger class unit tests ----------------------------------------------------------------------------------
 ConfigureTest(DATA_LOGGER_CLASSES_TEST
   data_loggers/data_logger_classes.cpp
@@ -185,6 +213,7 @@ ConfigureTest(
   system/ping_tx_op.cpp
   system/realtime_ping_app.cpp
   system/receive_as_entity_test.cpp
+  system/subgraph_apps.cpp
   system/tensor_compare_op.cpp
   system/timestamp_emit_receive.cpp
   system/video_stream_replayer_op.cpp
@@ -203,6 +232,7 @@ target_link_libraries(SYSTEM_TEST
   holoscan::ops::ping_tensor_tx
   holoscan::ops::video_stream_replayer
 )
+add_dependencies(SYSTEM_TEST gxf_ucx_holoscan)
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
   # Exclude tests that are known to fail with ASAN

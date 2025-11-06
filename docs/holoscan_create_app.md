@@ -1121,7 +1121,349 @@ If there is a cycle in the graph with an implicit root operator which has no inp
 
 ![Fragment graph with a cycle and an implicit root operator](Cycle_Implicit_Root.png)
 
-(building-and-running-your-application)=
+(creating-and-using-subgraphs)=
+
+### Creating and Using Subgraphs
+
+A Subgraph ({cpp:class}`C++ <holoscan::Subgraph>`/{py:class}`Python <holoscan.core.Subgraph>`) encapsulates a group of related operators and their connections behind a clean interface, enabling modular application design and code reuse.
+
+#### Features of Subgraphs
+
+Subgraphs enable:
+- **Reusable components**: Create a subgraph once and instantiate it multiple times within an application
+- **Encapsulation**: Hide internal complexity behind well-defined interface ports
+- **Modular design**: Organize complex applications into logical, maintainable components
+- **Hierarchical composition**: Nest subgraphs within other subgraphs for multi-level decomposition
+- **Flexible connections**: Connect subgraphs to other subgraphs or operators using the same `add_flow` API
+
+#### Creating a Subgraph
+
+A Subgraph is created by inheriting from the `Subgraph` base class and implementing the `compose()` method. Within `compose()`, you create operators, define flows between them, and expose interface ports that external components can connect to.
+
+The APIs used to add operators, conditions and resources to a subgraph look the same as the ones for adding them to a `Fragment` or `Application`. A unique aspect of Subgraph creation as compared to defining a `Fragment`/`Application` is the definition of "interface ports" (described further below).
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:emphasize-lines: 8-9,12,16
+:name: holoscan-create-subgraph-cpp
+
+class PingTxSubgraph : public holoscan::Subgraph {
+ public:
+  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
+      : holoscan::Subgraph(fragment, instance_name) {}
+
+  void compose() override {
+    // Create operators within the subgraph
+    auto tx_op = make_operator<ops::PingTxOp>("transmitter", make_condition<CountCondition>(8));
+    auto forwarding_op = make_operator<ops::ForwardingOp>("forwarding");
+
+    // Define internal connections
+    add_flow(tx_op, forwarding_op);
+
+    // Expose external interface port
+    // The "out" port of forwarding_op is exposed as "data_out"
+    add_output_interface_port("data_out", forwarding_op, "out");
+  }
+};
+```
+
+**Key points:**
+- The constructor takes a `Fragment*` and `instance_name` which are passed to the base class
+- Operators created with `make_operator` are automatically qualified with the instance name. Specifically, the operator added to the fragment via a subgraph will have a name that is the subgraph `instance_name` followed by an underscore and then the operator name provided within `Subgraph::compose`.
+- `add_flow` defines internal connections between operators (and/or nested subgraphs)
+- `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:emphasize-lines: 7-8,11,15
+:name: holoscan-create-subgraph-python
+
+class PingTxSubgraph(Subgraph):
+    def __init__(self, fragment, instance_name):
+        super().__init__(fragment, instance_name)
+
+    def compose(self):
+        # Create operators within the subgraph
+        tx_op = PingTxOp(self, CountCondition(self, count=8), name="transmitter")
+        forwarding_op = ForwardingOp(self, name="forwarding")
+
+        # Define internal connections
+        self.add_flow(tx_op, forwarding_op, {("out", "in")})
+
+        # Expose external interface port
+        # The "out" port of forwarding_op is exposed as "data_out"
+        self.add_output_interface_port("data_out", forwarding_op, "out")
+```
+
+**Key points:**
+- The `__init__` method receives `fragment` and `instance_name` and passes them to the base class
+- Operators are created with the subgraph (`self`) as their fragment. An operator added to the fragment via a subgraph will have a name that is the subgraph `instance_name` followed by an underscore and then the operator name provided within `Subgraph.compose`.
+- `add_flow` defines internal connections between operators (and/or nested subgraphs)
+- `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
+
+````
+`````
+
+
+:::{note}
+Subgraphs are a convenience for graph composition but do not affect operator scheduling. At runtime, an application using subgraphs will behave exactly the same as one composed without them. Any `add_operator` and `add_flow` calls within a subgraph directly add nodes (with qualified names) and edges to the operator graph maintained by the Fragment passed to the subgraph constructor. It is this final, flattened fragment that the application runs.
+:::
+
+#### Interface Ports
+
+Interface ports define the external API of a subgraph. They map external port names to internal operator ports, allowing external components to connect to the subgraph without knowing its internal structure.
+
+- **Input interface ports** (`add_input_interface_port`): Allow data to flow into the subgraph
+- **Output interface ports** (`add_output_interface_port`): Allow data to flow out of the subgraph
+
+Interface ports support both single-receiver and multi-receiver patterns, depending on the underlying operator's port configuration. Because interface ports map to an existing operator port, the conditions or other properties defined for the operator port automatically apply to the interface port.
+
+:::{note}
+It is not supported to define an input interface port with the same name as an output interface port. This differs from Operators, where such naming is currently allowed but not recommended, as it can lead to ambiguous logging when port names are not unique.
+:::
+
+#### Instantiating and Connecting Subgraphs
+
+Once defined, subgraphs are instantiated from a `Fragment` or `Application` using `make_subgraph` and connected like regular operators using `add_flow`.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-use-subgraph-cpp
+
+// compose method override of an Application or Fragment class
+void compose() override {
+  // Create subgraph instances with unique names
+  auto tx_subgraph1 = make_subgraph<PingTxSubgraph>("tx1");
+  auto tx_subgraph2 = make_subgraph<PingTxSubgraph>("tx2");
+
+  // Create a multi-receiver subgraph (with interface port defined with `IOSpec::kAnySize`)
+  auto rx_subgraph = make_subgraph<PingRxSubgraph>("rx");
+
+  // Connect subgraphs via their interface ports
+  add_flow(tx_subgraph1, rx_subgraph, {{"data_out", "data_in"}});
+  add_flow(tx_subgraph2, rx_subgraph, {{"data_out", "data_in"}});
+}
+```
+
+:::{tip}
+The {cpp:func}`Fragment::make_subgraph<holoscan::Fragment::make_subgraph>` and {cpp:func}`Subgraph::make_subgraph<holoscan::Subgraph::make_subgraph>` methods create and then automatically call `compose()` on the newly created subgraph. The application author will not need to call `compose` manually.
+:::
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-use-subgraph-python
+
+# compose method of an Application or Fragment
+def compose(self):
+    # Create subgraph instances with unique names
+    tx_subgraph1 = PingTxSubgraph(self, "tx1")
+    tx_subgraph2 = PingTxSubgraph(self, "tx2")
+
+    # Create a multi-receiver subgraph (with interface port defined with `size=IOSpec.ANY_SIZE`)
+    rx_subgraph = PingRxSubgraph(self, "rx")
+
+    # Connect subgraphs via their interface ports
+    self.add_flow(tx_subgraph1, rx_subgraph, {("data_out", "data_in")})
+    self.add_flow(tx_subgraph2, rx_subgraph, {("data_out", "data_in")})
+```
+
+:::{tip}
+The {py:func}`Fragment.make_subgraph<holoscan.core.Fragment.make_subgraph>` and {py:func}`Subgraph.make_subgraph<holoscan.core.Subgraph.make_subgraph>` methods create and then automatically call `compose()` on the created subgraph. The application author will not need to call `compose` manually.
+:::
+
+
+````
+`````
+
+#### Qualified Naming
+
+When a subgraph is instantiated, all operators within it are automatically assigned qualified names by prepending the instance name. This ensures uniqueness when the same subgraph class is used multiple times.
+
+For example, if `PingTxSubgraph` contains a `"transmitter"` operator:
+- Instance `"tx1"` creates operator `"tx1_transmitter"`
+- Instance `"tx2"` creates operator `"tx2_transmitter"`
+
+This naming scheme extends to nested subgraphs, creating hierarchical names like `"parent_child_operator"`.
+
+Note that it is the qualified name that will show up in tools such as {ref}`NSight Systems traces <nsight-profiling>`, {ref}`data flow tracking <holoscan-flow-tracking>` output, {ref}`GXF JobStatistics <gxf-job-satistics>` reports, and {ref}`DataLogger <holoscan-data-logging>` topic names. This ensures that it is possible to uniquely distinguish which instance of an operator any given log message or measurement corresponds to.
+
+:::{warning}
+For the Python API, it is important while in `Subgraph.compose()`, to pass `self` and **not** `self.fragment` as the first argument to any operator constructors. The later would bypass the qualified naming logic and may lead to composition errors due to duplicate node names if there is more than one instance of the subgraph.
+:::
+
+#### Mixed Connections
+
+Subgraphs can be connected to both other subgraphs and regular operators interchangeably. As for operator-to-operator connections, in cases where there is only a single port or interface port on the operator/subgraph on either end of a connection, the port name mapping can be omitted.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-mixed-connections-cpp
+
+// Subgraph to Subgraph
+add_flow(tx_subgraph, rx_subgraph, {{"data_out", "data_in"}});
+
+// Operator to Subgraph
+add_flow(tx_operator, rx_subgraph, {{"out", "data_in"}});
+
+// Subgraph to Operator
+add_flow(tx_subgraph, rx_operator, {{"data_out", "in"}});
+
+// Operator to Operator (standard)
+add_flow(tx_operator, rx_operator);
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-mixed-connections-python
+
+# Subgraph to Subgraph
+self.add_flow(tx_subgraph, rx_subgraph, {("data_out", "data_in")})
+
+# Operator to Subgraph
+self.add_flow(tx_operator, rx_subgraph, {("out", "data_in")})
+
+# Subgraph to Operator
+self.add_flow(tx_subgraph, rx_operator, {("data_out", "in")})
+
+# Operator to Operator (standard)
+self.add_flow(tx_operator, rx_operator, {("out", "in")})
+```
+
+````
+`````
+
+#### Nested Subgraphs
+
+Subgraphs can contain other subgraphs, enabling hierarchical composition. Nested subgraphs are created using `make_subgraph` within a parent subgraph's `compose()` method. Interface ports from nested subgraphs can be exposed as the parent subgraph's interface ports.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:emphasize-lines: 8,12,15
+:name: holoscan-nested-subgraph-cpp
+
+class NestedSubgraph : public holoscan::Subgraph {
+ public:
+  NestedSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
+      : holoscan::Subgraph(fragment, instance_name) {}
+
+  void compose() override {
+    // Create a nested subgraph
+    auto inner_subgraph = make_subgraph<PingTxSubgraph>("inner");
+    auto forwarding_op = make_operator<ops::ForwardingOp>("forwarding");
+
+    // Connect nested subgraph to operator
+    add_flow(inner_subgraph, forwarding_op, {{"data_out", "in"}});
+
+    // Expose the forwarding operator's port as this subgraph's interface
+    add_output_interface_port("data_out", forwarding_op, "out");
+
+    // Alternative: expose the nested subgraph's interface port directly
+    // add_output_interface_port("data_out", inner_subgraph, "data_out");
+  }
+};
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:emphasize-lines: 7,11,14
+:name: holoscan-nested-subgraph-python
+
+class NestedSubgraph(Subgraph):
+    def __init__(self, fragment, instance_name):
+        super().__init__(fragment, instance_name)
+
+    def compose(self):
+        # Create a nested subgraph
+        inner_subgraph = PingTxSubgraph(self, "inner")
+        forwarding_op = ForwardingOp(self, name="forwarding")
+
+        # Connect nested subgraph to operator
+        self.add_flow(inner_subgraph, forwarding_op, {("data_out", "in")})
+
+        # Expose the forwarding operator's port as this subgraph's interface
+        self.add_output_interface_port("data_out", forwarding_op, "out")
+
+        # Alternative: expose the nested subgraph's interface port directly
+        # self.add_output_interface_port("data_out", inner_subgraph, "data_out")
+```
+
+````
+`````
+
+#### Multi-Receiver Pattern
+
+Subgraphs support the multi-receiver pattern when the underlying operator port is configured with `IOSpec::kAnySize` (C++) or `IOSpec.ANY_SIZE` (Python). This allows multiple sources to connect to a single input interface port of the subgraph.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:emphasize-lines: 4
+:name: holoscan-subgraph-multireceiver-cpp
+
+// Define multi-receiver operator
+void setup(OperatorSpec& spec) override {
+  // Port accepts connections from multiple sources
+  spec.input<std::vector<int>>("receivers", IOSpec::kAnySize);
+}
+
+// In subgraph, expose as interface port
+add_input_interface_port("data_in", multi_rx_op, "receivers");
+
+// Multiple connections to the same interface port
+add_flow(tx_subgraph1, rx_subgraph, {{"data_out", "data_in"}});
+add_flow(tx_subgraph2, rx_subgraph, {{"data_out", "data_in"}});
+add_flow(tx_subgraph3, rx_subgraph, {{"data_out", "data_in"}});
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:emphasize-lines: 4
+:name: holoscan-subgraph-multireceiver-python
+
+# Define multi-receiver operator
+def setup(self, spec: OperatorSpec):
+    # Port accepts connections from multiple sources
+    spec.input("receivers", size=IOSpec.ANY_SIZE)
+
+# In subgraph, expose as interface port
+self.add_input_interface_port("data_in", multi_rx_op, "receivers")
+
+# Multiple connections to the same interface port
+self.add_flow(tx_subgraph1, rx_subgraph, {("data_out", "data_in")})
+self.add_flow(tx_subgraph2, rx_subgraph, {("data_out", "data_in")})
+self.add_flow(tx_subgraph3, rx_subgraph, {("data_out", "data_in")})
+```
+
+````
+`````
+
+:::{tip}
+Complete working examples demonstrating subgraph functionality are available in the [subgraph examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/subgraph) directory, including the `ping_multi_receiver` example that showcases reusable subgraphs, interface ports, qualified naming, and multi-receiver patterns.
+:::
 
 ### Dynamic Flow Control for Complex Workflows
 
@@ -1205,6 +1547,8 @@ For a complete example of how to use these methods to implement advanced monitor
 1. A source operator that runs for a limited number of iterations
 2. A monitor operator that independently tracks the status of other operators
 3. Automatic application shutdown when all processing operators have completed
+
+(building-and-running-your-application)=
 
 ## Building and running your Application
 
@@ -1332,7 +1676,7 @@ auto input_tensors = op_input.receive<TensorMap>("in");
 auto meta = metadata();
 
 // Retrieve existing values.
-// Use get<Type> to automatically cast the `std::any` contained within the `holsocan::Message`
+// Use get<Type> to automatically cast the `std::any` contained within the `holoscan::Message`
 auto name = meta->get<std::string>("patient_name");
 auto age = meta->get<int>("age");
 

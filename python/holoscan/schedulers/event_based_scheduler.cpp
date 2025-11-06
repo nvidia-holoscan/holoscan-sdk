@@ -24,6 +24,7 @@
 #include <string>
 #include <vector>
 
+#include "../core/component_util.hpp"
 #include "./event_based_scheduler_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -74,15 +75,15 @@ class PyEventBasedScheduler : public EventBasedScheduler {
     if (pin_cores.has_value()) {
       this->add_arg(Arg("pin_cores", pin_cores.value()));
     }
-    name_ = name;
-    fragment_ = fragment;
+    if (!fragment) {
+      throw std::invalid_argument("fragment cannot be None");
+    }
     if (clock) {
       this->add_arg(Arg{"clock", clock});
     } else {
-      this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
+      this->add_arg(Arg{"clock", fragment->make_resource<RealtimeClock>("realtime_clock")});
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment, name);
   }
 };
 

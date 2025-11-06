@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,10 +16,13 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -28,6 +31,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/gxf_codelet/gxf_codelet.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -53,16 +57,20 @@ class PyGXFCodeletOp : public GXFCodeletOp {
   using GXFCodeletOp::GXFCodeletOp;
 
   // Define a constructor that fully initializes the object.
-  PyGXFCodeletOp(const py::object& op, Fragment* fragment, const std::string& gxf_typename,
-                 const py::args& args, const std::string& name, const py::kwargs& kwargs)
+  PyGXFCodeletOp(const py::object& op,
+                 const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                 const std::string& gxf_typename, const py::args& args, const std::string& name,
+                 const py::kwargs& kwargs)
       : GXFCodeletOp(gxf_typename.c_str()),
         py_op_(op),
         py_initialize_(py::getattr(op, "initialize")) {
     add_positional_condition_and_resource_args(this, args);
     add_kwargs(this, kwargs);
 
-    name_ = name;
-    fragment_ = fragment;
+    auto [frag_ptr, qualified_name] =
+        get_fragment_ptr_name_pair(fragment_or_subgraph, name, "operator");
+    fragment_ = frag_ptr;
+    name_ = qualified_name;
   }
 
   void initialize() override {
@@ -98,7 +106,7 @@ PYBIND11_MODULE(_gxf_codelet, m) {
       m, "GXFCodeletOp", doc::GXFCodeletOp::doc_GXFCodeletOp)
       .def(py::init<>())
       .def(py::init<py::object,
-                    Fragment*,
+                    std::variant<Fragment*, Subgraph*>,
                     const std::string&,
                     const py::args&,
                     const std::string&,

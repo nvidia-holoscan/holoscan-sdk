@@ -224,4 +224,38 @@ void DataFlowTracker::write_to_logfile(std::string text) {
   }
 }
 
+uint64_t DataFlowTracker::generate_frame_number(const std::string& operator_name) {
+  std::scoped_lock lock(port_frame_numbers_mutex_);
+  return ++operator_counters_[operator_name];
+}
+
+void DataFlowTracker::reset_frame_numbers() {
+  std::scoped_lock lock(port_frame_numbers_mutex_);
+  operator_counters_.clear();
+  port_frame_numbers_.clear();
+}
+
+void DataFlowTracker::set_port_frame_number(const std::string& operator_name,
+                                            const std::string& port_name, uint64_t frame_number) {
+  std::scoped_lock lock(port_frame_numbers_mutex_);
+  std::string port_key = operator_name + "-" + port_name;
+  port_frame_numbers_[port_key] = frame_number;
+}
+
+std::map<std::string, uint64_t> DataFlowTracker::get_port_frame_numbers(
+    const std::string& operator_name) const {
+  std::scoped_lock lock(port_frame_numbers_mutex_);
+  std::map<std::string, uint64_t> result;
+
+  std::string prefix = operator_name + "-";
+  for (const auto& [port_key, frame_number] : port_frame_numbers_) {
+    if (port_key.substr(0, prefix.length()) == prefix) {
+      // Keep full operator-port key for consistency with non-root operators
+      result[port_key] = frame_number;
+    }
+  }
+
+  return result;
+}
+
 }  // namespace holoscan

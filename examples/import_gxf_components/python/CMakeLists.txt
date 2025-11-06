@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,6 +48,7 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
@@ -55,7 +56,7 @@ if(HOLOSCAN_BUILD_TESTS)
   file(WRITE ${CONFIG_FILE} ${CONFIG_STRING})
 
   add_test(NAME EXAMPLE_PYTHON_IMPORT_GXF_COMPONENTS_TEST
-    COMMAND python3 import_gxf_components.py --config ${CONFIG_FILE}
+    COMMAND ${Python3_EXECUTABLE} import_gxf_components.py --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_IMPORT_GXF_COMPONENTS_TEST PROPERTIES

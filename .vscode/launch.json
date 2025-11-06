@@ -1438,6 +1438,24 @@
             ]
         },
         {
+            "name": "(gdb) examples/holoviz/cpp/holoviz_conditions",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/holoviz/cpp/holoviz_conditions",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/holoviz/cpp/holoviz_geometry",
             "type": "cppdbg",
             "request": "launch",
@@ -2870,6 +2888,7 @@
             "cwd": "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/modules/holoviz/examples/demo",
             "externalConsole": false,
             "MIMode": "gdb",
+            "environment": [],
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",
@@ -2907,6 +2926,29 @@
                 {
                     "description": "Set Disassembly Flavor to Intel",
                     "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/gpu_resident_example/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/gpu_resident_example/gpu_resident_example",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
                     "ignoreFailures": true
                 }
             ]

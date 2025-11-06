@@ -15,8 +15,9 @@
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_PING_VECTOR_TEST
-    COMMAND python3 ping_vector.py
+    COMMAND ${Python3_EXECUTABLE} ping_vector.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_PING_VECTOR_TEST PROPERTIES

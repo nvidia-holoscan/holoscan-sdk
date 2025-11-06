@@ -46,8 +46,8 @@ This requires `import datetime`.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 recess_period : int or datetime.timedelta
     The recess (pause) period value used by the condition.
     If an integer is provided, the units are in nanoseconds.

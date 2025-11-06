@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_GXF_GXF_WRAPPER_HPP
 
 #include <memory>
+#include <string>
 
 #include "gxf/core/parameter_parser_std.hpp"
 #include "gxf/core/registrar.hpp"
@@ -104,6 +105,16 @@ class GXFWrapper : public nvidia::gxf::Codelet {
   void store_exception();
   /// Initialize the local contexts (input/output/execution) for the operator.
   void initialize_contexts();
+  /// Create post-compute NVTX child range with frame information
+  void create_post_compute_nvtx_range();
+  /// Get fragment cycle detection result (with caching)
+  bool get_fragment_has_cycles() const;
+  /// Check if the current operator is a root operator
+  bool is_root_operator(bool has_cycles) const;
+  /// Get frame information string for root operators
+  std::string get_root_operator_frame_info() const;
+  /// Get frame information string for non-root operators
+  std::string get_non_root_operator_frame_info() const;
 
   Operator* op_{};
   /// The execution context of the operator. Copied from the operator.

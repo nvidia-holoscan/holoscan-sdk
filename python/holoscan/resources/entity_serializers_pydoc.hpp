@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,8 +31,8 @@ UCX entity serializer.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 component_serializer : list of holoscan.resource.Resource
     The component serializers used by the entity serializer.
 verbose_warning : bool, optional

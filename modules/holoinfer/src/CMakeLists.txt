@@ -63,9 +63,15 @@ set(holoinfer_src
 add_library(${PROJECT_NAME} SHARED ${holoinfer_src})
 add_library(holoscan::infer ALIAS ${PROJECT_NAME})
 
+target_compile_definitions(${PROJECT_NAME}
+    PRIVATE
+        PROJECT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
+)
+
 target_include_directories(${PROJECT_NAME}
     PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/manager>
     PUBLIC
         $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
         $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>

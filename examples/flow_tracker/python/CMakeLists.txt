@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,10 +40,13 @@ install(FILES CMakeLists.min.txt
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_FLOW_TRACKER_TEST
-    COMMAND python3 flow_tracker.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/flow_tracker.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'Data Flow Tracking Results' \
+        --pass-pattern 'Path 1: root1,middle1,leaf1' \
+        --pass-pattern 'Path 2: root1,middle1,leaf2' \
+        --pass-pattern 'Path 3: root2,middle2,leaf2'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
-  set_tests_properties(EXAMPLE_PYTHON_FLOW_TRACKER_TEST PROPERTIES
-                       PASS_REGULAR_EXPRESSION "Data Flow Tracking Results"
-                       PASS_REGULAR_EXPRESSION "Path 1: root1,middle1,leaf1")
 endif()

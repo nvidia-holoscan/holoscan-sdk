@@ -63,7 +63,7 @@ class HoloInferTests {
   std::vector<std::string> out_tensor_names = {"m1_infer", "m2_infer"};
 
   std::string model_folder = "../tests/holoinfer/test_models/";
-  std::vector<std::vector<int32_t>> batch_sizes = {{1, 1, 1}};
+  std::map<std::string, std::vector<std::string>> batch_sizes = {{"model_1", {"1, 1, 1"}}};
   bool dynamic_inputs = false;
 
   std::map<std::string, std::string> model_path_map = {

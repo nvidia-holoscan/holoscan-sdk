@@ -53,7 +53,7 @@ Holoinfer Processing operator.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment (constructor only)
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 allocator : holoscan.resources.Allocator
     Memory allocator to use for the output.

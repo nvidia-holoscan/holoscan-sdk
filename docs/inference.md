@@ -38,8 +38,8 @@ Required parameters and related features available with the Holoscan Inference M
             - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
             - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
             - Libtorch is included in the Holoscan NGC container, extracted from the [PyTorch wheel](https://pytorch.org/get-started/locally/) (from [Jetson AI Lab PyPI](https://pypi.jetson-ai-lab.dev/jp6) for JP6 and IGX OS 1.x iGPU). To use the Holoscan SDK torch backend outside of these containers, we can either
-                - install the `torch` wheel in your environment (e.g. `pip install torch==2.8.0+cu126`) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=$(python -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).parent / "lib")'):$LD_LIBRARY_PATH`).
-                - extract the `libtorch` installation from the Holoscan NGC container on your system (e.g. `docker cp $(docker create --rm nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu):/opt/libtorch ~/libtorch`) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=~/libtorch/<VERSION>/lib:$LD_LIBRARY_PATH`).
+                - install the `torch` wheel in your environment (refer to Dockerfile for versions) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=$(python -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).parent / "lib")'):$LD_LIBRARY_PATH`).
+                - extract the `libtorch` installation from the Holoscan NGC container on your system (e.g. `docker cp $(docker create --rm nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-dgpu):/opt/libtorch ~/libtorch`) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=~/libtorch/<VERSION>/lib:$LD_LIBRARY_PATH`).
             - Torch backend expects input models to be in `torchscript` format.
                 - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
                 - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
@@ -122,16 +122,21 @@ Required parameters and related features available with the Holoscan Inference M
                     "model_3_unique_identifier": "torch"
             ```
     - `trt_opt_profile`: This parameter is optional and is activated with TensorRT backend. This parameter is applicable on models with dynamic input shapes.
-        - Parameter is specified as a vector of vectors. Each input parameter is specific with one set of vectors. 
-        - For example if the model has only one input with shape of `[c, h, w]`, and `c` is dynamic, then optimization profile is specified as: `{{i, j, k}}`. First value is the minimum batch size for dimension c, second is the optimum batch size and third value is the maximum batch size. Each dynamic dimension must be accompanied by 3 values for minimum, optimum and maximum value. In the same example if dimension `c` and `h` both are dynamic, then the 3 values for the second dimension must follow the 3 values of the first dimension. Optimization profile in this case will look like `{{i, j, k, p, q, r}}`, where `i, j, k` are optimization profile for dimension `c` and `p, q, r` are optimization profiles for dimension `h`.
-        - If there are multiple dynamic inputs, we must use another vector in the optimization profile. For example, if a model has 2 inputs and both are dynamic, then optimization profile must be specified as `{{profile_for_first_input}, {profile_for_second_input}}`
+        - Parameter is specified as a map of vector of strings. For every model, optimization profiles for input dimensions are specified as a vector of strings. Each string represents optimization profile for each input.
+        - For example, if the model (`model_1`) has one input with shape of `[c, h, w]` and `c` is dynamic, then the optimization profile is specified as: `"model_1": ["i, j, k"]`. The first value in the string is the minimum batch size for dimension c, the second is the optimum batch size and the third value is the maximum batch size. Each dynamic dimension must be accompanied by these three values (minimum, optimum and maximum). In the same example, if dimension `c` and `h` are both dynamic, then the three values for the second dimension must follow the three values of the first dimension in the same string. The optimization profile in this case will look like `"model_1": ["i, j, k, p, q, r"]`, where `i, j, k` are the optimization profile for dimension `c` and `p, q, r` are the optimization profiles for dimension `h`.
+        - If there are multiple dynamic inputs, we must use another string in the optimization profile. For example, if a model (`model_1`) has two inputs and both are dynamic, then the optimization profile must be specified as `"model_1": ["profile_for_first_input", "profile_for_second_input"]`
+        - TensorRT optimization profiles are supported for multiple models. For example if there are two models (`model_1` and `model_2`) with single input and in both the models the inputs are dynamic, the optimization profiles are specified as shown below.
+            ```yaml
+                trt_opt_profile:
+                    "model_1": ["opt_profile_input_model1"]
+                    "model_2": ["opt_profile_input_model2"]
+            ```
         - This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
     - `dynamic_input_dims`: This parameter is optional and if activated, allows the Inference Operator to ingest dynamic inputs. The parameter is supported for all the backends. It must be set to `true` in the inference parameter set.
         - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested. 
         - For `onnx` and `torch` backend, maximum allowed buffer size in bytes for each input is 2GB.
-        - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `{1,1,1}` will be used.
+        - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `"1,1,1"` will be used.
         - Maximum allowed batch size for `tensorRT` backend is 256
-        - Current limitation is that `tensorRT` backend: with multiple models, multiple optimization profiles are not supported. This enhancement will come in future releases. 
 
 - Other features: The table below illustrates other features and supported values in the current release.
 

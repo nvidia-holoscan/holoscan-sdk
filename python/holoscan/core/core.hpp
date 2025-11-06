@@ -41,6 +41,7 @@ void init_data_logger(py::module_&);
 void init_scheduler(py::module_&);
 void init_executor(py::module_&);
 void init_fragment(py::module_&);
+void init_subgraph(py::module_&);
 void init_application(py::module_&);
 void init_data_flow_tracker(py::module_&);
 void init_cli(py::module_&);

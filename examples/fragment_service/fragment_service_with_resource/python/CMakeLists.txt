@@ -39,15 +39,16 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_FRAGMENT_SERVICE_WITH_RESOURCE_TEST
-    COMMAND python3 fragment_service_with_resource.py
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_FRAGMENT_SERVICE_WITH_RESOURCE_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "MyService value \\(via FragmentService\\): 20"
-    PASS_REGULAR_EXPRESSION "MyService value \\(via MyServiceResource\\): 20"
-    PASS_REGULAR_EXPRESSION "MyResourceManager value \\(via MyResourceManagerSelfRef\\): 30"
-    PASS_REGULAR_EXPRESSION "MyResourceManager value \\(via MyResourceManagerEnabledShared\\): 40"
-    FAIL_REGULAR_EXPRESSION "error|ERROR"
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/fragment_service_with_resource.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'MyService value \\(via FragmentService\\): 20' \
+        --pass-pattern 'MyService value \\(via MyServiceResource\\): 20' \
+        --pass-pattern 'MyResourceManager value \\(via MyResourceManagerSelfRef\\): 30' \
+        --pass-pattern 'MyResourceManager value \\(via MyResourceManagerEnabledShared\\): 40' \
+        --fail-pattern 'error|ERROR'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 endif()

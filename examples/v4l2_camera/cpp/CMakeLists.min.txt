@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the \"License\");
@@ -14,11 +14,17 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.20)
-project(holoscan_basic_workflow CXX)
+project(v4l2_camera CXX)
 
 # Finds the package holoscan
 find_package(holoscan REQUIRED CONFIG
              PATHS "/opt/nvidia/holoscan" "/workspace/holoscan-sdk/install")
+
+# Add example C++ passthrough operator header
+add_library(v4l2_camera_passthrough INTERFACE)
+target_link_libraries(v4l2_camera_passthrough INTERFACE holoscan::core)
+target_include_directories(v4l2_camera_passthrough INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>")
+add_library(holoscan::ops::v4l2_camera_passthrough ALIAS v4l2_camera_passthrough)
 
 # Create example
 add_executable(v4l2_camera
@@ -30,6 +36,8 @@ target_link_libraries(v4l2_camera
   holoscan::core
   holoscan::ops::v4l2
   holoscan::ops::holoviz
+  holoscan::ops::format_converter
+  holoscan::ops::v4l2_camera_passthrough
 )
 
 # Copy config file
@@ -61,6 +69,8 @@ if(BUILD_TESTING AND HOLOSCAN_BUILD_V4L2_TESTS)
     holoscan::core
     holoscan::ops::v4l2
     holoscan::ops::holoviz
+    holoscan::ops::format_converter
+    holoscan::ops::v4l2_camera_passthrough
   )
 
   add_dependencies(v4l2_camera_test racerx_data)

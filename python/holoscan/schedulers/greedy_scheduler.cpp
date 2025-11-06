@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 
+#include "../core/component_util.hpp"
 #include "./greedy_scheduler_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
@@ -66,16 +67,15 @@ class PyGreedyScheduler : public GreedyScheduler {
     if (max_duration_ms >= 0) {
       this->add_arg(Arg{"max_duration_ms", max_duration_ms});
     }
-    name_ = name;
-    fragment_ = fragment;
+    if (!fragment) {
+      throw std::invalid_argument("fragment cannot be None");
+    }
     if (clock) {
       this->add_arg(Arg{"clock", clock});
     } else {
-      this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
+      this->add_arg(Arg{"clock", fragment->make_resource<RealtimeClock>("realtime_clock")});
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    HOLOSCAN_LOG_TRACE("in PyGreedyScheduler constructor");
-    setup(*spec_);
+    init_component_base(this, fragment, name);
   }
 };
 void init_greedy_scheduler(py::module_& m) {

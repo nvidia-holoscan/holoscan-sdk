@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYHOLOSCAN_RESOURCES_COMPONENT_SERIALIZERS_PYDOC_HPP
-#define PYHOLOSCAN_RESOURCES_COMPONENT_SERIALIZERS_PYDOC_HPP
+#ifndef PYHOLOSCAN_RESOURCES_RECEIVERS_PYDOC_HPP
+#define PYHOLOSCAN_RESOURCES_RECEIVERS_PYDOC_HPP
 
 #include <string>
 
@@ -53,8 +53,8 @@ New messages are first pushed to a back stage.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 capacity : int, optional
     The capacity of the receiver.
 policy : int, optional
@@ -74,8 +74,8 @@ New messages are first pushed to a back stage.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 buffer : holoscan.resource.UcxSerializationBuffer
     The serialization buffer used by the transmitter.
 capacity : int, optional
@@ -101,8 +101,8 @@ The latest message is received asynchronously.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 name : str, optional
     The name of the receiver.
 )doc")
@@ -111,4 +111,4 @@ name : str, optional
 
 }  // namespace holoscan::doc
 
-#endif  // PYHOLOSCAN_RESOURCES_COMPONENT_SERIALIZERS_PYDOC_HPP
+#endif  // PYHOLOSCAN_RESOURCES_RECEIVERS_PYDOC_HPP

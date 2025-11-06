@@ -17,6 +17,8 @@
 
 #include "framebuffer_sequence.hpp"
 
+#include <algorithm>
+#include <array>
 #include <stdexcept>
 #include <vector>
 
@@ -85,24 +87,30 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
                                            int(surface_format.value().color_space_)));
     }
   } else {
-    // else pick the 8-bit non-srgb image format, this matches the previous Holoviz behavior
-    for (auto&& cur_surface_format : surface_formats) {
-      if ((cur_surface_format.image_format_ == ImageFormat::B8G8R8A8_UNORM) ||
-          (cur_surface_format.image_format_ == ImageFormat::R8G8B8A8_UNORM) ||
-          (cur_surface_format.image_format_ == ImageFormat::A8B8G8R8_UNORM_PACK32)) {
-        surface_format = cur_surface_format;
+    // else pick the 8-bit image format, this matches the previous Holoviz behavior
+    const std::array<ImageFormat, 3> preferred_image_formats = {ImageFormat::R8G8B8A8_UNORM,
+                                                                ImageFormat::B8G8R8A8_UNORM,
+                                                                ImageFormat::A8B8G8R8_UNORM_PACK32};
+    for (auto image_format : preferred_image_formats) {
+      auto it = std::find_if(surface_formats.begin(),
+                             surface_formats.end(),
+                             [&image_format](const SurfaceFormat& surface_format) {
+                               return surface_format.image_format_ == image_format;
+                             });
+      if (it != surface_formats.end()) {
+        surface_format = *it;
         found_surface_format = true;
         break;
       }
     }
     if (!found_surface_format) {
       // not found, pick the first one
+      surface_format = surface_formats[0];
       HOLOSCAN_LOG_WARN("Surface format '{}, {}' not found, using first available format '{}, {}'",
                         int(surface_format.value().image_format_),
                         int(surface_format.value().color_space_),
                         int(surface_formats[0].image_format_),
                         int(surface_formats[0].color_space_));
-      surface_format = surface_formats[0];
     }
   }
 
@@ -445,6 +453,23 @@ void FramebufferSequence::cmd_update_barriers(vk::CommandBuffer cmd) const {
   if (swap_chain_) {
     swap_chain_->cmdUpdateBarriers(cmd);
   }
+}
+
+vk::Result FramebufferSequence::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
+  if (!swap_chain_) {
+    // No presentation happening – treat as immediately satisfied.
+    return vk::Result::eSuccess;
+  }
+  return device_.waitForPresentKHR(swap_chain_->getSwapchain(), present_id, timeout_ns);
+}
+
+uint64_t FramebufferSequence::get_swapchain_vblank_counter() const {
+  uint64_t vblank_counter = 0;
+  if (swap_chain_) {
+    vblank_counter = device_.getSwapchainCounterEXT(swap_chain_->getSwapchain(),
+                                                    vk::SurfaceCounterFlagBitsEXT::eVblank);
+  }
+  return vblank_counter;
 }
 
 }  // namespace holoscan::viz

@@ -39,8 +39,10 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_STREAMING_WITH_MONITOR_TEST
-    COMMAND python3 streaming_with_monitor.py
+    COMMAND ${Python3_EXECUTABLE} streaming_with_monitor.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_STREAMING_WITH_MONITOR_TEST PROPERTIES

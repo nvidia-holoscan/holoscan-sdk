@@ -229,3 +229,6 @@ data/*
 
 # Auto-generated files
 generated/
+
+# Build system output
+compile_commands.json

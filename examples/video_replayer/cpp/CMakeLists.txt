@@ -70,6 +70,7 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.yaml"
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME video_replayer_output)
@@ -117,21 +118,20 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add the test and make sure it runs
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer_test ${CONFIG_FILE}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    # check strings expected due to data_logging: true
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
-    # data logging is happening as expected
-    PASS_REGULAR_EXPRESSION ", data=\\["
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/video_replayer_test ${CONFIG_FILE} 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:replayer.output\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz.receivers:0\\]' \
+        --pass-pattern '\\[Stream: none\\]' \
+        --pass-pattern ', data=\\['"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_RENDER_TEST
-      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}
@@ -146,16 +146,15 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add the dual-window test and make sure it runs
   add_test(NAME EXAMPLE_CPP_VIDEO_REPLAYER_DUAL_WINDOW_TEST
-    COMMAND ${CMAKE_CURRENT_BINARY_DIR}/video_replayer ${DUAL_WINDOW_CONFIG_FILE}
-    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_CPP_VIDEO_REPLAYER_DUAL_WINDOW_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    # check strings expected due to data_logging: true
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz2.receivers:0\\]"
-    # data logging is happening as expected
-    PASS_REGULAR_EXPRESSION ", data=\\["
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/video_replayer ${DUAL_WINDOW_CONFIG_FILE} 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:replayer.output\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz.receivers:0\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz2.receivers:0\\]' \
+        --pass-pattern '\\[Stream: none\\]' \
+        --pass-pattern ', data=\\['"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 endif()

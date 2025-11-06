@@ -29,6 +29,7 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/fragment.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "kwarg_handling.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
@@ -152,6 +153,26 @@ void init_condition(py::module_& m) {
   condition_class
       .def(py::init<const py::object&, Fragment*, const py::args&, const py::kwargs&>(),
            doc::Condition::doc_Condition_args_kwargs)
+      .def(py::init([](py::object condition,
+                       std::shared_ptr<Subgraph>
+                           subgraph,
+                       const py::args& args,
+                       const py::kwargs& kwargs) {
+             // Extract the fragment from the subgraph
+             Fragment* fragment = subgraph->fragment();
+
+             // Create the PyCondition in the Subgraph's fragment
+             auto py_condition = std::make_shared<PyCondition>(condition, fragment, args, kwargs);
+
+             // Apply qualified naming using the subgraph's instance name
+             std::string qualified_name =
+                 subgraph->get_qualified_name(py_condition->name(), "condition");
+             py_condition->name(qualified_name);
+
+             return py_condition;
+           }),
+           "condition"_a,
+           "subgraph"_a)
       .def_property(
           "name",
           py::overload_cast<>(&Condition::name, py::const_),

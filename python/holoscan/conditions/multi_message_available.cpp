@@ -23,14 +23,17 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "../core/component_util.hpp"
 #include "./multi_message_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/multi_message_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -55,14 +58,12 @@ class PyMultiMessageAvailableCondition : public MultiMessageAvailableCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyMultiMessageAvailableCondition(
-      Fragment* fragment,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       std::variant<MultiMessageAvailableCondition::SamplingMode, std::string> sampling_mode =
           MultiMessageAvailableCondition::SamplingMode::kSumOfAll,
       std::optional<size_t> min_sum = std::nullopt,
       std::optional<std::vector<size_t>> min_sizes = std::nullopt,
       const std::string& name = "multi_message_condition") {
-    name_ = name;
-    fragment_ = fragment;
     if (min_sum.has_value()) {
       this->add_arg(Arg("min_sum", min_sum.value()));
     }
@@ -84,8 +85,7 @@ class PyMultiMessageAvailableCondition : public MultiMessageAvailableCondition {
       }
     }
     // Note "receivers" parameter is set automatically from GXFExecutor
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -105,7 +105,7 @@ void init_multi_message_available(py::module_& m) {
       .value("PER_RECEIVER", MultiMessageAvailableCondition::SamplingMode::kPerReceiver);
 
   multi_message_condition
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::variant<MultiMessageAvailableCondition::SamplingMode, std::string>,
                     std::optional<size_t>,
                     std::optional<std::vector<size_t>>,

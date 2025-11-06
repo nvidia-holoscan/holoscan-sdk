@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,19 +57,23 @@ install(TARGETS ping_simple_thread_pool
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_CPP_PING_SIMPLE_THREAD_POOL_TEST
-           COMMAND ping_simple_thread_pool
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
+    COMMAND bash -c
+      "${CMAKE_CURRENT_BINARY_DIR}/ping_simple_thread_pool 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'ThreadPool \\[cid: \\d+, name: pool1\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: tx1\\]' \
+        --pass-pattern 'ThreadPool \\[cid: \\d+, name: pool1\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: rx1\\]' \
+        --pass-pattern 'ThreadPool \\[cid: \\d+, name: pool2\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: tx2\\]' \
+        --pass-pattern 'ThreadPool \\[cid: \\d+, name: pool2\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: rx2\\]' \
+        --pass-pattern 'Rx message value: 10' \
+        --pass-pattern 'Rx message value: 15' \
+        --fail-pattern 'Rx message value: 16' \
+        --fail-pattern 'error'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
   set_tests_properties(EXAMPLE_CPP_PING_SIMPLE_THREAD_POOL_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    # Note: the following regular expressions are specific to the logging within GXF itself not Holoscan
-    PASS_REGULAR_EXPRESSION "ThreadPool \\[cid: \\d+, name: pool1\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: tx1\\]"
-    PASS_REGULAR_EXPRESSION "ThreadPool \\[cid: \\d+, name: pool1\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: rx2\\]"
-    PASS_REGULAR_EXPRESSION "ThreadPool \\[cid: \\d+, name: pool2\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: tx2\\]"
-    PASS_REGULAR_EXPRESSION "ThreadPool \\[cid: \\d+, name: pool2\\] created thread \\[uid: \\d+\\] for pinned entity \\[eid: \\d+, name: rx2\\]"
-    PASS_REGULAR_EXPRESSION "Rx message value: 10"
-    PASS_REGULAR_EXPRESSION "Rx message value: 15"
   )
 endif()
 

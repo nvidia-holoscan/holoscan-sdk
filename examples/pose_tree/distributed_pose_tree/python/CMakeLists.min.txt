@@ -15,8 +15,9 @@
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_DISTRIBUTED_POSE_TREE_TEST
-    COMMAND python3 distributed_pose_tree.py
+    COMMAND ${Python3_EXECUTABLE} distributed_pose_tree.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_DISTRIBUTED_POSE_TREE_TEST PROPERTIES

@@ -20,8 +20,9 @@
 ############################################################
 ARG ONNX_RUNTIME_VERSION=1.22.1
 ARG ONNX_RUNTIME_STRATEGY=downloader # or builder
-ARG LIBTORCH_CU12_VERSION=2.8.0
-ARG LIBTORCH_CU13_VERSION=2.9.0.dev20250828
+ARG LIBTORCH_CU12_IGPU_VERSION=2.8.0
+ARG LIBTORCH_CU12_DGPU_VERSION=2.8.0+cu129
+ARG LIBTORCH_CU13_VERSION=2.9.0+cu130
 ARG GRPC_VERSION=1.54.2
 ARG GXF_CU12_VERSION=5.1.0_20250820_2ac8c610f_holoscan-sdk-cu12
 ARG GXF_CU13_VERSION=5.1.0_20250909_2ac8c610f_holoscan-sdk-cu13
@@ -186,15 +187,9 @@ for pattern in "$@"; do
 done
 EOF
 
-#  nvcc: needed by holoviz, holoinfer (cuda kernels)
+#  nvcc: needed by holoviz, holoinfer (cuda kernels), cmake (find CUDAToolkit)
 #  cudart-dev: needed by holoscan core
 #  nvrtc-dev: needed by holoscan core, and cupy (runtime only)
-#  libnpp-dev: needed by bayer_demosaic, format_converter
-#  libcublas-dev: needed by matx
-#  libcufft-dev: needed by matx
-#  libcurand-dev: needed by matx
-#  libcusolver-dev: needed by matx
-#  libcusparse-dev: needed by matx
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
     apt-get update \
@@ -203,14 +198,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         cuda-nvcc-${CUDA_MAJOR_MINOR} \
         cuda-cudart-dev-${CUDA_MAJOR_MINOR} \
         cuda-nvrtc-dev-${CUDA_MAJOR_MINOR} \
-        libnpp-dev-${CUDA_MAJOR_MINOR} \
-        libcublas-dev-${CUDA_MAJOR_MINOR} \
-        libcufft-dev-${CUDA_MAJOR_MINOR} \
-        libcurand-dev-${CUDA_MAJOR_MINOR} \
-        libcusolver-dev-${CUDA_MAJOR_MINOR} \
-        libcusparse-dev-${CUDA_MAJOR_MINOR} \
     && echo "-- Deleting unused static libs:" \
-    && packages=$(dpkg -l | grep -e cuda-nvrtc -e libnpp | awk '{print $2}') \
+    && packages=$(dpkg -l | grep cuda-nvrtc | awk '{print $2}') \
     && static_libs=$(dpkg -L $packages | grep '\.a$' || true) \
     && cleanup_unwanted_libs $static_libs
 
@@ -221,28 +210,31 @@ FROM cuda-dev AS infer-dev
 ARG TENSORRT_CU12_VERSION
 ARG TENSORRT_CU13_VERSION
 
-#  libnvinfer*0dev: needed by holoinfer (trt)
-#  libnvonnxparsers: needed by holoinfer (trt)
-#  libcudnn: needed by libtorch, onnxruntime
-#  cuda-nvtx: needed by libtorch/caffe2
-#  libcublas: needed by libtorch, onnxruntime, cupy-cuda
-#  libcufft: needed by libtorch, onnxruntime, cupy
-#  libcurand: needed by libtorch, cupy-cuda
-#  libcusparse: needed by libtorch, cupy-cuda
-#  libcusparselt0: needed by libtorch (x86_64 and aarch64 dgpu/sbsa only)
-#  libcusolver: needed by libtorch, cupy-cuda
-#  libcufile: needed by libtorch
-#  libnvjitlink: needed by libtorch, cupy-cuda
-#  cuda-cupti: needed by libtorch
-#  libnccl: needed by libtorch (x86_64 and aarch64 dgpu/sbsa only), cupy-cuda (optional)
-#  nvpl-*: needed by libtorch (aarch64 dgpu/sbsa only)
-#  libopenblas0 - needed by libtorch (aarch64 igpu/jetson only)
+# CONDITIONAL_LIBS:
+#  libcusparselt0: needed by libtorch (x86_64 and aarch64 dgpu/sbsa only).
+#  libnccl: needed by libtorch (x86_64 and aarch64 dgpu/sbsa only), cupy-cuda (optional).
+#  libopenblas0 - needed by libtorch (aarch64 igpu/jetson only).
+#  nvpl-*: needed by libtorch (aarch64 dgpu/sbsa only).
+# ALWAYS:
+#  cuda-cupti: needed by libtorch.
+#  cuda-nvtx: needed by libtorch/caffe2.
+#  libcublas: runtime needed by libtorch, onnxruntime, cupy-cuda, and headers (-dev) for matx.
+#  libcudnn: needed by libtorch, onnxruntime.
+#  libcufft: runtime needed by libtorch, onnxruntime, cupy, and headers (-dev) for matx.
+#  libcufile: needed by libtorch.
+#  libcurand: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
+#  libcusolver: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
+#  libcusparse: runtime needed by libtorch, cupy-cuda, and headers (-dev) for matx.
+#  libnpp-dev: needed by bayer_demosaic, format_converter.
+#  libnvinfer*0dev: needed by holoinfer (trt).
+#  libnvjitlink: needed by libtorch, cupy-cuda.
+#  libnvonnxparsers: needed by holoinfer (trt).
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
     apt-get update \
     && CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 --output-delimiter="-") \
     && if [ ${GPU_TYPE} = "dgpu" ]; then \
-        CONDITIONAL_LIBS="libnccl2 libcusparselt0"; \
+        CONDITIONAL_LIBS="libcusparselt0-cuda-${CUDA_MAJOR} libnccl2"; \
         if [ $(uname -m) = "aarch64" ]; then \
             CONDITIONAL_LIBS="${CONDITIONAL_LIBS} nvpl-blas nvpl-lapack"; \
         fi; \
@@ -252,27 +244,41 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
     && TRT_VERSION_VAR_NAME="TENSORRT_CU${CUDA_MAJOR}_VERSION" \
     && TRT_VERSION=$(apt-cache madison libnvinfer10 | grep "${!TRT_VERSION_VAR_NAME}" | grep "+cuda${CUDA_MAJOR}" | head -n 1 | awk '{print $3}') \
     && apt-get install --no-install-recommends -y \
-        libnvonnxparsers-dev="${TRT_VERSION}" \
-        libnvonnxparsers10="${TRT_VERSION}" \
-        libnvinfer-plugin-dev="${TRT_VERSION}" \
-        libnvinfer-headers-plugin-dev="${TRT_VERSION}" \
-        libnvinfer-plugin10="${TRT_VERSION}" \
+        ${CONDITIONAL_LIBS} \
+        cuda-cupti-${CUDA_MAJOR_MINOR} \
+        cuda-nvtx-${CUDA_MAJOR_MINOR} \
+        libcublas-dev-${CUDA_MAJOR_MINOR} \
+        libcudnn9-cuda-${CUDA_MAJOR} \
+        libcufft-dev-${CUDA_MAJOR_MINOR} \
+        libcufile-${CUDA_MAJOR_MINOR} \
+        libcurand-dev-${CUDA_MAJOR_MINOR} \
+        libcusolver-dev-${CUDA_MAJOR_MINOR} \
+        libcusparse-dev-${CUDA_MAJOR_MINOR} \
+        libnpp-dev-${CUDA_MAJOR_MINOR} \
         libnvinfer-dev="${TRT_VERSION}" \
         libnvinfer-headers-dev="${TRT_VERSION}" \
+        libnvinfer-headers-plugin-dev="${TRT_VERSION}" \
+        libnvinfer-plugin-dev="${TRT_VERSION}" \
+        libnvinfer-plugin10="${TRT_VERSION}" \
         libnvinfer10="${TRT_VERSION}" \
-        libcudnn9-cuda-${CUDA_MAJOR} \
-        cuda-nvtx-${CUDA_MAJOR_MINOR} \
-        libcublas-${CUDA_MAJOR_MINOR} \
-        libcufft-${CUDA_MAJOR_MINOR} \
-        libcurand-${CUDA_MAJOR_MINOR} \
-        libcusparse-${CUDA_MAJOR_MINOR} \
-        libcusolver-${CUDA_MAJOR_MINOR} \
-        libcufile-${CUDA_MAJOR_MINOR} \
         libnvjitlink-${CUDA_MAJOR_MINOR} \
-        cuda-cupti-${CUDA_MAJOR_MINOR} \
-        ${CONDITIONAL_LIBS} \
+        libnvonnxparsers-dev="${TRT_VERSION}" \
+        libnvonnxparsers10="${TRT_VERSION}" \
     && echo "-- Deleting unused static libs:" \
-    && packages=$(dpkg -l | grep -e libnvinfer -e libnvonnxparsers -e libcudnn -e cuda-nvtx -e cuda-cupti | awk '{print $2}') \
+    && packages=$(dpkg -l | grep \
+        -e cuda-cupti \
+        -e cuda-nvtx \
+        -e libcublas \
+        -e libcudnn \
+        -e libcufft \
+        -e libcurand \
+        -e libcusolver \
+        -e libcusparse \
+        -e libnvinfer \
+        -e libnvonnxparsers \
+        -e libnvjitlink \
+        -e libnccl \
+        | awk '{print $2}') \
     && static_libs=$(dpkg -L $packages | grep '\.a$' || true) \
     && cleanup_unwanted_libs $static_libs \
     && echo "-- Deleting large unused libs:" \
@@ -285,6 +291,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         "${SYSTEM_LIBS_ROOT}/libcudnn_adv.*" \
         "${SYSTEM_LIBS_ROOT}/libcudnn_ops.*" \
         "${SYSTEM_LIBS_ROOT}/libcudnn_heuristic.*"
+
+# Ensure cuSPARSELt is found by the dynamic linker.
+RUN cusparselt_pkg="libcusparselt0-cuda-${CUDA_MAJOR}"; \
+if dpkg -s "${cusparselt_pkg}" 2>&1 >/dev/null; then \
+    dpkg -L "${cusparselt_pkg}" | grep -E ".so[\\.0-9]+" | xargs dirname | uniq | tee /etc/ld.so.conf.d/cusparseLt-cu${CUDA_MAJOR}.conf; \
+    ldconfig; \
+fi
 
 ############################################################
 # NGC CLI
@@ -330,18 +343,6 @@ RUN ORT_REPO_PREFIX=https://github.com/microsoft/onnxruntime/commit/ && \
 FROM infer-dev AS onnxruntime-builder
 ARG ORT_DIR=/opt/onnxruntime
 ARG ONNX_RUNTIME_VERSION
-
-# Build dependencies
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
-    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
-    apt-get update \
-    && CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 --output-delimiter='-') \
-    && apt-get install --no-install-recommends -y \
-        libcublas-dev-${CUDA_MAJOR_MINOR} \
-        libcufft-dev-${CUDA_MAJOR_MINOR} \
-        libcurand-dev-${CUDA_MAJOR_MINOR} \
-        libcusparse-dev-${CUDA_MAJOR_MINOR} \
-        libcudnn9-dev-cuda-${CUDA_MAJOR}
 
 # Create user for non-root build
 ARG BUILD_UID=1000
@@ -425,7 +426,8 @@ FROM onnxruntime-${ONNX_RUNTIME_STRATEGY} AS onnxruntime
 # Libtorch
 ############################################################
 FROM python-base AS libtorch-downloader
-ARG LIBTORCH_CU12_VERSION
+ARG LIBTORCH_CU12_IGPU_VERSION
+ARG LIBTORCH_CU12_DGPU_VERSION
 ARG LIBTORCH_CU13_VERSION
 ARG GPU_TYPE
 
@@ -434,9 +436,9 @@ ARG TORCH_WHL_DIR=/tmp/torch-whl
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
     if [ "$GPU_TYPE" = "dgpu" ]; then \
         if [ "${CUDA_MAJOR}" = "12" ]; then \
-            LIBTORCH_VERSION="${LIBTORCH_CU12_VERSION}+cu129"; \
+            LIBTORCH_VERSION="${LIBTORCH_CU12_DGPU_VERSION}"; \
         else \
-            LIBTORCH_VERSION="${LIBTORCH_CU13_VERSION}+cu130"; \
+            LIBTORCH_VERSION="${LIBTORCH_CU13_VERSION}"; \
         fi; \
         INDEX_URL="https://download.pytorch.org/whl"; \
         python3 -m pip install \
@@ -444,8 +446,6 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGET
             --no-deps \
             --target ${TORCH_WHL_DIR} \
             --index-url ${INDEX_URL} \
-            --extra-index-url "${INDEX_URL}/test" \
-            --extra-index-url "${INDEX_URL}/nightly" \
             torch==${LIBTORCH_VERSION}; \
     else \
         python3 -m pip install \
@@ -453,7 +453,7 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGET
             --python-version 3.10 \
             --target ${TORCH_WHL_DIR} \
             --index-url "https://pypi.jetson-ai-lab.io/jp6/cu126" \
-            torch=="${LIBTORCH_CU12_VERSION}"; \
+            torch=="${LIBTORCH_CU12_IGPU_VERSION}"; \
     fi; \
     if ! find ${TORCH_WHL_DIR} -name "libtorch_cuda.so" > /dev/null; then \
         echo "ERROR: Could not find libtorch_cuda.so in ${TORCH_WHL_DIR}, please check the download"; \
@@ -461,9 +461,9 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGET
     fi;
 
 # Copy libtorch C++
-WORKDIR /opt/libtorch/${LIBTORCH_VERSION}
+WORKDIR /opt/libtorch/
 RUN TORCH_INSTALL="${TORCH_WHL_DIR}/torch" \
-    && echo "-- Copying libtorch ${LIBTORCH_VERSION} from ${TORCH_INSTALL} to $(pwd)" \
+    && echo "-- Copying libtorch from ${TORCH_INSTALL} to $(pwd)" \
     && mkdir -p lib \
     && cp -v \
         "${TORCH_INSTALL}/lib/libc10.so" \
@@ -530,7 +530,7 @@ ARG GXF_CU12_VERSION
 ARG GXF_CU13_VERSION
 ARG CUDA_MAJOR
 
-WORKDIR /opt/nvidia/gxf
+WORKDIR /tmp/gxf
 RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
         GXF_VERSION="${GXF_CU13_VERSION}"; \
     else \
@@ -542,7 +542,9 @@ RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
         echo "ERROR: Downloaded gxf.tgz is too small. Download may have failed."; \
         exit 1; \
     fi
-RUN tar xzf gxf.tgz --strip-components 1 --no-same-owner --no-same-permissions
+
+WORKDIR /opt/nvidia/gxf
+RUN tar xzf /tmp/gxf/gxf.tgz --strip-components 2 --no-same-owner --no-same-permissions
 
 ############################################################
 # APT repository configs
@@ -571,7 +573,7 @@ RUN DOCA_ARCH=$(uname -m); \
 ############################################################
 # UCX
 ############################################################
-FROM cuda-dev as ucx-builder
+FROM cuda-dev AS ucx-builder
 
 WORKDIR /opt/ucx
 ARG UCX_VERSION
@@ -609,9 +611,9 @@ RUN make install
 # configure:    Configuration dir:   ${prefix}/etc/ucx
 # configure:                   CC:   gcc
 # configure:                  CXX:   g++
-# configure:             CPPFLAGS:   -DCPU_FLAGS="" -I${abs_top_srcdir}/src -I${abs_top_builddir} -I${abs_top_builddir}/src 
-# configure:               CFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch -Wno-pointer-sign -Werror-implicit-function-declaration -Wno-format-zero-length -Wnested-externs -Wshadow -Werror=declaration-after-statement 
-# configure:             CXXFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch 
+# configure:             CPPFLAGS:   -DCPU_FLAGS="" -I${abs_top_srcdir}/src -I${abs_top_builddir} -I${abs_top_builddir}/src
+# configure:               CFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch -Wno-pointer-sign -Werror-implicit-function-declaration -Wno-format-zero-length -Wnested-externs -Wshadow -Werror=declaration-after-statement
+# configure:             CXXFLAGS:   -O3 -g -Wall -Werror -funwind-tables -Wframe-larger-than=8192 -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-label -Wno-long-long -Wno-endif-labels -Wno-sign-compare -Wno-multichar -Wno-deprecated-declarations -Winvalid-pch
 # configure:           ASAN check:   no
 # configure:         Multi-thread:   enabled
 # configure:            MPI tests:   disabled
@@ -750,10 +752,9 @@ COPY --from=grpc-builder ${GRPC} ${GRPC}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GRPC}"
 
 # Copy GXF
-ENV GXF=/opt/nvidia/gxf/gxf-install
+ENV GXF=/opt/nvidia/gxf
 COPY --from=gxf-downloader ${GXF} ${GXF}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${GXF}"
-ENV PYTHONPATH="${PYTHONPATH}:/opt/nvidia/gxf/${GXF_VERSION}/python"
 
 # Copy UCX
 ENV UCX=/opt/hpcx/ucx

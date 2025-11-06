@@ -15,6 +15,12 @@
 
 list(APPEND CMAKE_MESSAGE_CONTEXT "deps")
 
+# Disable FetchContent_Populate deprecation warnings for older CPM version
+# See: https://cmake.org/cmake/help/latest/policy/CMP0169.html
+# TODO: Re-enable this warning when we update rapids-cmake
+cmake_policy(SET CMP0169 OLD)
+set(CMAKE_POLICY_DEFAULT_CMP0169 OLD)
+
 function(superbuild_depend module_name)
     cmake_parse_arguments(PARSE_ARGV 1 _SUPER_BUILD "" "COMPONENT" "")
     # Set CMAKE_INSTALL_DEFAULT_COMPONENT_NAME before including .cmake file
@@ -36,10 +42,7 @@ endfunction()
 rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps/rapids-cmake-packages.json")
 
 # Define packages to override the default ones.
-
-# CCCL is a dependency of matx.
-include(${rapids-cmake-dir}/cpm/cccl.cmake)
-rapids_cpm_cccl()
+superbuild_depend(cccl)
 # fmt must be populated before rmm and spdlog to ensure fmt headers are installed in the package
 superbuild_depend(fmt_rapids)
 # rmm is fetched by spdlog but need to call this first because a patch needs to be applied to rmm
@@ -78,3 +81,5 @@ if(HOLOSCAN_BUILD_PYTHON)
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
     superbuild_depend(pybind11)
 endif()
+
+unset(CMAKE_POLICY_DEFAULT_CMP0169)

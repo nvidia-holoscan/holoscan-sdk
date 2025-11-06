@@ -34,8 +34,8 @@ blocks it is possible to specify the memory via `min_blocks` instead if desired.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment the condition will be associated with
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment (or subgraph) the condition will be associated with
 min_bytes: int, optional
     The minimum number of bytes that must be available in order for the associated operator to
     execute. Exclusive with `min_blocks` (only one of the two can be set).

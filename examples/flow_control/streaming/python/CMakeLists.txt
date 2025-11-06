@@ -39,8 +39,10 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_STREAMING_EXECUTION_TEST
-    COMMAND python3 streaming_execution.py
+    COMMAND ${Python3_EXECUTABLE} streaming_execution.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_STREAMING_EXECUTION_TEST PROPERTIES

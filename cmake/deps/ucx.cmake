@@ -67,3 +67,15 @@ foreach(ucx_target ucm ucp ucs uct)
     COMPONENT "holoscan-dependencies"
   )
 endforeach()
+
+install(
+  FILES ${ucx_DIR}/ucx-config-version.cmake
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ucx"
+  COMPONENT "holoscan-dependencies"
+)
+install(
+  FILES ${CMAKE_CURRENT_LIST_DIR}/configs/ucx-config.cmake.in
+  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ucx"
+  COMPONENT "holoscan-dependencies"
+  RENAME "ucx-config.cmake"
+)

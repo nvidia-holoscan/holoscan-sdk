@@ -101,6 +101,7 @@
 - {ref}`exhale_class_classholoscan_1_1ParameterWrapper`
 - {ref}`exhale_class_classholoscan_1_1Resource`
 - {ref}`exhale_class_classholoscan_1_1Scheduler`
+- {ref}`exhale_class_classholoscan_1_1Subgraph`
 - {ref}`exhale_class_classholoscan_1_1ThreadPool`
 
 ### Operators

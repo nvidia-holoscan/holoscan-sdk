@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -40,6 +40,20 @@ void SwapChain::init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue q
   m_imageUsage = imageUsage;
   m_surfaceFormat = format;
   m_surfaceColor = color_space;
+
+  uint32_t count;
+  std::vector<VkExtensionProperties> extensionProperties;
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
+  extensionProperties.resize(count);
+  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(
+      physicalDevice, nullptr, &count, extensionProperties.data()));
+
+  for (const auto& extension : extensionProperties) {
+    if (strcmp(extension.extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0) {
+      m_has_present_id_extension = true;
+      break;
+    }
+  }
 }
 
 bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
@@ -49,7 +63,8 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
 
   VkSwapchainKHR oldSwapchain = m_swapchain;
 
-  if (NVVK_CHECK(waitIdle())) return false;
+  if (NVVK_CHECK(waitIdle()))
+    return false;
 
   // Check the surface capabilities and formats
   VkSurfaceCapabilitiesKHR surfCapabilities;
@@ -76,7 +91,7 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   // Determine the number of VkImage's to use in the swap chain (we desire to
   // own only 1 image at a time, besides the images being displayed and
   // queued for display):
-  uint32_t desiredNumberOfSwapchainImages = surfCapabilities.minImageCount + 1;
+  uint32_t desiredNumberOfSwapchainImages = surfCapabilities.minImageCount;
   if ((surfCapabilities.maxImageCount > 0) &&
       (desiredNumberOfSwapchainImages > surfCapabilities.maxImageCount)) {
     // Application must settle for fewer images than desired:
@@ -107,7 +122,8 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   swapchain.oldSwapchain = oldSwapchain;
   swapchain.clipped = true;
 
-  if (NVVK_CHECK(vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain))) return false;
+  if (NVVK_CHECK(vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain)))
+    return false;
 
   nvvk::DebugUtil debugUtil(m_device);
 
@@ -202,15 +218,19 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   m_currentSemaphore = 0;
   m_currentImage = 0;
 
-  if (dimensions) *dimensions = swapchainExtent;
+  if (dimensions)
+    *dimensions = swapchainExtent;
   return true;
 }
 
 void SwapChain::deinitResources() {
-  if (!m_device) return;
+  if (!m_device)
+    return;
 
   VkResult result = waitIdle();
-  if (nvvk::checkResult(result, __FILE__, __LINE__)) { exit(-1); }
+  if (nvvk::checkResult(result, __FILE__, __LINE__)) {
+    exit(-1);
+  }
 
   for (auto&& it : m_entries) {
     vkDestroyImageView(m_device, it.imageView, nullptr);
@@ -261,7 +281,9 @@ bool SwapChain::acquireCustom(VkSemaphore argSemaphore, int width, int height, b
     m_updateHeight = height;
     didRecreate = true;
   }
-  if (pRecreated != nullptr) { *pRecreated = didRecreate; }
+  if (pRecreated != nullptr) {
+    *pRecreated = didRecreate;
+  }
 
   // try recreation a few times
   for (int i = 0; i < 2; i++) {
@@ -307,7 +329,8 @@ VkImageView SwapChain::getActiveImageView() const {
 }
 
 VkImage SwapChain::getImage(uint32_t i) const {
-  if (i >= m_imageCount) return nullptr;
+  if (i >= m_imageCount)
+    return nullptr;
   return m_entries[i].image;
 }
 
@@ -317,7 +340,17 @@ void SwapChain::present(VkQueue queue) {
 
   presentCustom(presentInfo);
 
+  VkPresentIdKHR present_id = {VK_STRUCTURE_TYPE_PRESENT_ID_KHR};
+  if (m_has_present_id_extension) {
+    present_id.swapchainCount = 1;
+    present_id.pPresentIds = &m_current_present_id;
+    presentInfo.pNext = &present_id;
+  }
+
   result = vkQueuePresentKHR(queue, &presentInfo);
+  if ((result == VK_SUCCESS) && m_has_present_id_extension) {
+    m_current_present_id++;
+  }
   // assert(result == VK_SUCCESS); // can fail on application exit
 }
 
@@ -352,7 +385,8 @@ uint32_t SwapChain::getChangeID() const {
 }
 
 VkImageView SwapChain::getImageView(uint32_t i) const {
-  if (i >= m_imageCount) return nullptr;
+  if (i >= m_imageCount)
+    return nullptr;
   return m_entries[i].imageView;
 }
 

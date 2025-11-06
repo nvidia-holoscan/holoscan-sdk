@@ -30,7 +30,14 @@ add_custom_target(python_v4l2_camera_yaml
   BYPRODUCTS "v4l2_camera.yaml"
 )
 
-add_dependencies(python_v4l2_camera python_v4l2_camera_yaml)
+add_dependencies(python_v4l2_camera
+  python_v4l2_camera_yaml
+  v4l2_camera_passthrough_python
+  holoscan::core
+  holoscan::ops::v4l2
+  holoscan::ops::holoviz
+  holoscan-python
+)
 
 # Install the app
 install(FILES
@@ -40,9 +47,17 @@ install(FILES
     COMPONENT "holoscan-examples"
 )
 
+# Install the minimal CMakeLists.txt file
+install(FILES CMakeLists.min.txt
+  RENAME "CMakeLists.txt"
+  DESTINATION "${app_relative_dest_path}"
+  COMPONENT holoscan-examples
+)
+
 # Testing
 option(HOLOSCAN_BUILD_V4L2_TESTS "Build tests for V4L2 loopback" OFF)
 if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   # Assumes that the v4l2 video loopback has already been mounted and the yaml files have been
   # updated to use the virtual loopback device.
 
@@ -55,12 +70,14 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
   file(WRITE ${PYTHON_SOURCE_FILE} "${PYTHON_SOURCE_STRING}")
 
   add_test(NAME EXAMPLE_PYTHON_V4L2_CAMERA_TEST
-           COMMAND python3 v4l2_camera_test.py
+           COMMAND ${Python3_EXECUTABLE} v4l2_camera_test.py
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   set_tests_properties(EXAMPLE_PYTHON_V4L2_CAMERA_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Application has finished running"
   )
+
+  add_dependencies(python_v4l2_camera racerx_data)
 
 endif()

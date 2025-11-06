@@ -19,8 +19,10 @@
 #define HOLOSCAN_OPERATORS_HOLOVIZ_HOLOVIZ_HPP
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <optional>
+#include <shared_mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -41,6 +43,11 @@ namespace holoscan::viz {
 typedef void* InstanceHandle;
 
 }  // namespace holoscan::viz
+
+namespace holoscan {
+class FirstPixelOutCondition;
+class PresentDoneCondition;
+}  // namespace holoscan
 
 namespace holoscan::ops {
 
@@ -1065,6 +1072,9 @@ class HolovizOp : public Operator {
   void disable_via_window_close();
 
  private:
+  friend class ::holoscan::FirstPixelOutCondition;
+  friend class ::holoscan::PresentDoneCondition;
+
   bool enable_conditional_port(const std::string& name,
                                bool set_none_condition_on_disabled = false);
   void set_input_spec(const InputSpec& input_spec);
@@ -1078,6 +1088,31 @@ class HolovizOp : public Operator {
                         const BufferInfo& buffer_info_depth_map,
                         InputSpec* const input_spec_depth_map_color,
                         const BufferInfo& buffer_info_depth_map_color);
+
+  /**
+   * Block until either the present_id is greater than or equal to the presentation index, or
+   * timeout_ns nanoseconds passes. The present ID is initially zero and increments after each
+   * present.
+   *
+   * This function is thread-safe and can be called asynchronously to the operator execution.
+   *
+   * @param present_id the presentation presentId to wait for
+   * @param timeout_ns timeout in nanoseconds
+   * @return true if the present_id is greater than or equal to the presentation index, false if
+   * timeout_ns nanoseconds passes
+   */
+  bool wait_for_present(uint64_t present_id, uint64_t timeout_ns);
+
+  /**
+   * Block until either the first pixel of the next display refresh cycle leaves the display engine
+   * for the display or timeout_ns nanoseconds passes.
+   *
+   * This function is thread-safe and can be called asynchronously to the operator execution.
+   *
+   * @param timeout_ns timeout in nanoseconds
+   * @return true if the first pixel out event is detected, false if timeout_ns nanoseconds passes
+   */
+  bool wait_for_first_pixel_out(uint64_t timeout_ns);
 
   Parameter<holoscan::IOSpec*> render_buffer_input_;
   Parameter<holoscan::IOSpec*> render_buffer_output_;
@@ -1124,6 +1159,17 @@ class HolovizOp : public Operator {
 
   // internal state
   viz::InstanceHandle instance_ = nullptr;
+
+  // prevents that holoviz is shutdown while wait_for_first_pixel_out or wait_for_present is running
+  std::shared_mutex running_state_mutex_;
+  // operator running state
+  enum class RunningState {
+    NOT_STARTED,
+    STARTED,
+    STOPPED,
+  };
+  std::atomic<RunningState> running_state_ = RunningState::NOT_STARTED;
+
   std::vector<float> lut_;
   std::vector<InputSpec> initial_input_spec_;
   bool render_buffer_input_enabled_ = false;
@@ -1441,17 +1487,15 @@ struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
  *
  * @tparam TYPE
  */
-#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                 \
-  template <>                                                                        \
-  struct YAML::convert<TYPE> {                                                       \
-    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */ \
-    static Node encode(TYPE&) {                                                      \
-      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
-    }                                                                                \
-    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */ \
-    static bool decode(const Node&, TYPE&) {                                         \
-      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
-    }                                                                                \
+#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                         \
+  template <>                                                                                \
+  struct YAML::convert<TYPE> {                                                               \
+    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */         \
+    static Node encode(TYPE&) { throw std::runtime_error(#TYPE " is unsupported in YAML"); } \
+    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */         \
+    static bool decode(const Node&, TYPE&) {                                                 \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                             \
+    }                                                                                        \
   };
 
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);

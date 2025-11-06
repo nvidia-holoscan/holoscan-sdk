@@ -131,7 +131,7 @@ A2: The prerequisites include:
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
 * If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 3.6 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
-* If you are installing Holsocan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
+* If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
 | :---- | :---- | :---- | :---- | :---- |
@@ -205,7 +205,7 @@ A3: Integrating your own AI models involves:
 1. Converting your model to a compatible format (e.g., TensorRT, ONNX).
 1. Ensuring that your data preprocessing and postprocessing steps align with the model's requirements.
 
-For more information on how to bring your own model in Holsocan SDK and build an inference example, please refer to [this](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/bring_your_own_model) example .
+For more information on how to bring your own model in Holoscan SDK and build an inference example, please refer to [this](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/bring_your_own_model) example .
 
 **Q4: How can I update the VideoStreamReplayerOp and the VideoStreamRecorderOp to use a custom file format ?**
 
@@ -1264,10 +1264,10 @@ export __GLX_VENDOR_LIBRARY_NAME=nvidia
 
 **Q1: Can I use DLA cores with the Holoscan SDK?**
 
-A1: There are 2 situations in which Holsocan SDK can support Deep Learning Accelerator (DLA) cores. You can configure your application to offload certain inference tasks to DLA cores to improve performance and efficiency.
+A1: There are 2 situations in which Holoscan SDK can support Deep Learning Accelerator (DLA) cores. You can configure your application to offload certain inference tasks to DLA cores to improve performance and efficiency.
 
 * User created engine file:
-If the TensorRT engine file is created with `–useDLACore=0` and the engine file is used in the Holsocan SDK inference framework, then it will use DLA (core 0) as HoloInfer just guides the execution to TensorRT and it will automatically pick it up.The user must give the path to engine file in `model_path_map` and enable the flag `is_engine_path=true` in the inference parameter set.
+If the TensorRT engine file is created with `–useDLACore=0` and the engine file is used in the Holoscan SDK inference framework, then it will use DLA (core 0) as HoloInfer just guides the execution to TensorRT and it will automatically pick it up.The user must give the path to engine file in `model_path_map` and enable the flag `is_engine_path=true` in the inference parameter set.
 
 * If user is creating engine file via HoloInfer:
 HoloInfer currently does not support using any DLA cores for engine creation (even if it’s available) and it defaults to GPU.

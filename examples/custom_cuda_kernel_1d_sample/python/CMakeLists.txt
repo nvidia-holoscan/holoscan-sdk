@@ -47,6 +47,8 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_1d_sample.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING "${CONFIG_STRING}")
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/python_custom_cuda_kernel_1d_sample_config.yaml)
@@ -54,7 +56,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add the test and make sure it runs
   add_test(NAME EXAMPLE_PYTHON_CUSTOM_CUDA_1D_SAMPLE_TEST
-    COMMAND python3 custom_cuda_kernel_1d_sample.py --config python_custom_cuda_kernel_1d_sample_config.yaml
+    COMMAND ${Python3_EXECUTABLE} custom_cuda_kernel_1d_sample.py --config python_custom_cuda_kernel_1d_sample_config.yaml
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUSTOM_CUDA_1D_SAMPLE_TEST PROPERTIES

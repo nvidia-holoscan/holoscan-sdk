@@ -21,8 +21,13 @@ install(FILES "${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt"
 )
 
 # Copy LICENSE file for installation
+if(HOLOSCAN_ALLOW_SYSTEM_INSTALL)
+  set(LICENSE_DESTINATION "/usr/share/doc/holoscan/")
+else()
+  set(LICENSE_DESTINATION ".")
+endif()
 install(FILES "${CMAKE_BINARY_DIR}/LICENSE.txt"
-    DESTINATION "/usr/share/doc/holoscan/"
+    DESTINATION ${LICENSE_DESTINATION}
     RENAME copyright
     COMPONENT holoscan-cpack
 )

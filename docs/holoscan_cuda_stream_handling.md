@@ -396,7 +396,8 @@ Example usage is as follows
 // The code below would appear within `Application::compose` (or `Fragment::compose`)
 
 // assuming the Operator has a port named "in", we can create the condition
-auto stream_cond = make_condition<CudaStreamCondition>(name="stream_sync", receiver="in")
+auto stream_cond = make_condition<CudaStreamCondition>("stream_sync",
+                                                       Arg("receiver", std::string{"in"}));
 
 // it can then be passed as an argument to `make_operator`
 auto my_op = make_operator<ops::MyOperator>("my_op",

@@ -160,10 +160,12 @@ static ONNXTensorElementDataType get_onnx_datatype(holoinfer_datatype data_type)
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8;
     case holoinfer_datatype::h_Float16:
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16;
+    case holoinfer_datatype::h_Bool:
+      return ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL;
     default:
       HOLOSCAN_LOG_INFO(
           "Onnxruntime backend is supported with following input data types: float, float16, int8, "
-          "int32, int64, uint8");
+          "int32, int64, uint8, bool");
       HOLOSCAN_LOG_ERROR("Unsupported datatype in Onnx backend tensor creation.");
       return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   }

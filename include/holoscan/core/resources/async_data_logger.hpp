@@ -126,6 +126,7 @@ struct DataEntry {
   int64_t emit_timestamp;         ///< time when emit (or receive) was called
   IOSpec::IOType io_type;
   std::shared_ptr<MetadataDictionary> metadata{};
+  std::optional<cudaStream_t> stream;  ///< optional CUDA stream for GPU operations
 
   std::variant<std::any, std::shared_ptr<holoscan::Tensor>, holoscan::TensorMap> data;
 
@@ -135,19 +136,23 @@ struct DataEntry {
         acquisition_timestamp(-1),
         emit_timestamp(-1),
         io_type(IOSpec::IOType::kOutput),
+        stream(std::nullopt),
         data(std::any{}) {}
 
   // Constructors for different types
   DataEntry(std::any data_arg, const std::string& id, int64_t acq_time, int64_t emit_time,
-            IOSpec::IOType io_type, std::shared_ptr<MetadataDictionary> meta = nullptr);
+            IOSpec::IOType io_type, std::shared_ptr<MetadataDictionary> meta = nullptr,
+            std::optional<cudaStream_t> stream = std::nullopt);
 
   DataEntry(std::shared_ptr<holoscan::Tensor> tensor, const std::string& id, int64_t acq_time,
             int64_t emit_time, IOSpec::IOType io_type,
-            std::shared_ptr<MetadataDictionary> meta = nullptr);
+            std::shared_ptr<MetadataDictionary> meta = nullptr,
+            std::optional<cudaStream_t> stream = std::nullopt);
 
   DataEntry(holoscan::TensorMap tensor_map, const std::string& id, int64_t acq_time,
             int64_t emit_time, IOSpec::IOType io_type,
-            std::shared_ptr<MetadataDictionary> meta = nullptr);
+            std::shared_ptr<MetadataDictionary> meta = nullptr,
+            std::optional<cudaStream_t> stream = std::nullopt);
 };
 
 /**
@@ -226,23 +231,27 @@ class AsyncDataLoggerResource : public DataLoggerResource {
   bool log_data(const std::any& data, const std::string& unique_id,
                 int64_t acquisition_timestamp = -1,
                 const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                std::optional<cudaStream_t> stream = std::nullopt) override;
 
   bool log_tensor_data(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,
                        int64_t acquisition_timestamp = -1,
                        const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                       IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                       IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                       std::optional<cudaStream_t> stream = std::nullopt) override;
 
   bool log_tensormap_data(const TensorMap& tensor_map, const std::string& unique_id,
                           int64_t acquisition_timestamp = -1,
                           const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-                          IOSpec::IOType io_type = IOSpec::IOType::kOutput) override;
+                          IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+                          std::optional<cudaStream_t> stream = std::nullopt) override;
 
   bool log_backend_specific(
       [[maybe_unused]] const std::any& data, [[maybe_unused]] const std::string& unique_id,
       [[maybe_unused]] int64_t acquisition_timestamp = -1,
       [[maybe_unused]] const std::shared_ptr<MetadataDictionary>& metadata = nullptr,
-      [[maybe_unused]] IOSpec::IOType io_type = IOSpec::IOType::kOutput) override {
+      [[maybe_unused]] IOSpec::IOType io_type = IOSpec::IOType::kOutput,
+      [[maybe_unused]] std::optional<cudaStream_t> stream = std::nullopt) override {
     // Default implementation: backend-specific logging is not supported
     return false;
   }

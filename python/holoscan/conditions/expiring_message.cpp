@@ -24,7 +24,9 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./expiring_message_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
@@ -32,6 +34,7 @@
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -57,45 +60,49 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
 
   // Define a constructor that fully initializes the object.
   explicit PyExpiringMessageAvailableCondition(
-      Fragment* fragment, int64_t max_batch_size, int64_t max_delay_ns,
-      std::shared_ptr<gxf::Clock> clock = nullptr,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int64_t max_batch_size,
+      int64_t max_delay_ns, std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, max_delay_ns) {
-    name_ = name;
-    fragment_ = fragment;
+    auto [frag_ptr, qualified_name] =
+        get_fragment_ptr_name_pair(fragment_or_subgraph, name, "condition");
     if (clock) {
       this->add_arg(Arg{"clock", clock});
     } else {
-      this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
+      this->add_arg(Arg{"clock", frag_ptr->make_resource<RealtimeClock>("realtime_clock")});
     }
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
+    fragment_ = frag_ptr;
+    name_ = qualified_name;
+    spec_ = std::make_shared<ComponentSpec>(fragment_);
     setup(*spec_);
   }
 
   template <typename Rep, typename Period>
   PyExpiringMessageAvailableCondition(
-      Fragment* fragment, int64_t max_batch_size,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int64_t max_batch_size,
       std::chrono::duration<Rep, Period> recess_period_duration,
       std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_expiring_message_available_condition")
       : ExpiringMessageAvailableCondition(max_batch_size, recess_period_duration) {
-    name_ = name;
-    fragment_ = fragment;
+    auto [frag_ptr, qualified_name] =
+        get_fragment_ptr_name_pair(fragment_or_subgraph, name, "condition");
     if (clock) {
       this->add_arg(Arg{"clock", clock});
     } else {
-      this->add_arg(Arg{"clock", fragment_->make_resource<RealtimeClock>("realtime_clock")});
+      this->add_arg(Arg{"clock", frag_ptr->make_resource<RealtimeClock>("realtime_clock")});
     }
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "receiver" parameter is set automatically from GXFExecutor
+    fragment_ = frag_ptr;
+    name_ = qualified_name;
+    spec_ = std::make_shared<ComponentSpec>(fragment_);
     setup(*spec_);
   }
 };
@@ -111,7 +118,7 @@ void init_expiring_message_available(py::module_& m) {
       // TODO(unknown): sphinx API doc build complains if more than one
       // ExpiringMessageAvailableCondition init method has a docstring specified. For now just set
       // the docstring for the overload using datetime.timedelta for the max_delay.
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int64_t,
                     int64_t,
                     std::shared_ptr<gxf::Clock>,
@@ -123,7 +130,7 @@ void init_expiring_message_available(py::module_& m) {
            "clock"_a = py::none(),
            "receiver"_a = py::none(),
            "name"_a = "noname_expiring_message_available_condition"s)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int64_t,
                     std::chrono::nanoseconds,
                     std::shared_ptr<gxf::Clock>,

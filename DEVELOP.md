@@ -173,14 +173,32 @@ Run `./run help` for more commands related to the user guide documentation.
 
 ### VSCode
 
-Visual Studio Code can be utilized to develop the Holoscan SDK. The `.devcontainer` folder holds the configuration for setting up a [development container](https://code.visualstudio.com/docs/remote/containers) with all necessary tools and libraries installed.
+Visual Studio Code (or Cursor) can be utilized to develop the Holoscan SDK. The `.devcontainer` folder holds the configuration for setting up a [development container](https://code.visualstudio.com/docs/remote/containers) with all necessary tools and libraries installed.
 
-The `./run` script contains `vscode` and `vscode_remote` commands for launching Visual Studio Code in a container or from a remote machine, respectively.
+The `./run` script contains `vscode` and `vscode_remote` commands for launching Visual Studio Code or Cursor in a container or from a remote machine, respectively.
 
-- To launch Visual Studio Code in a dev container, use `./run vscode` (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). For more information, refer to the instructions from `./run vscode -h`.
+- To launch an IDE in a dev container, use `./run vscode` (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). The command automatically detects and launches Cursor if available, otherwise defaults to VSCode. For more information, refer to the instructions from `./run vscode -h`.
 - To attach to an existing dev container from a remote machine, use `./run vscode_remote`. For more information, refer to the instructions from `./run vscode_remote -h`.
 
-Once Visual Studio Code is launched, the development container will be built and the recommended extensions will be installed automatically, along with CMake being configured.
+Once the IDE is launched, the development container will be built and the recommended extensions will be installed automatically, along with CMake being configured.
+
+#### IDE Selection Options
+
+The `./run vscode` command supports multiple IDE options:
+
+- **Automatic Detection**: Cursor is launched if available, otherwise VSCode is used
+- **Manual Selection**: Use `--ide <ide_name>` to specify the IDE (vscode, vscode-insiders, cursor)
+- **Quick Options**: Use `--code` or `--cursor` for direct IDE selection
+- **Custom Binary**: Use `--cmd <path>` to specify a custom IDE binary
+
+**Examples:**
+```bash
+./run vscode                    # Auto-detect (Cursor if available, otherwise VSCode)
+./run vscode --code             # Force VSCode
+./run vscode --cursor           # Force Cursor
+./run vscode --ide cursor       # Specify Cursor explicitly
+./run vscode --cursor --cmd /path/to/cursor_binary # Use custom Cursor binary
+```
 
 #### Configuring CMake in the Development Container
 

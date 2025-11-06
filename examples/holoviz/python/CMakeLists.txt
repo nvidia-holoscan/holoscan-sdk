@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,8 @@ install(FILES
 
 # Holoviz Geometry Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_holoviz_geometry_output)
   set(VALIDATION_FRAMES_DIR ${Holoscan-examples_SOURCE_DIR}/../tests/data/validation_frames/holoviz_geometry/)
@@ -53,18 +55,17 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_TEST
-    COMMAND python3 holoviz_geometry_test.py --count 10
+    COMMAND ${Python3_EXECUTABLE} holoviz_geometry_test.py --count 10
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   set_tests_properties(EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Received camera pose:"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
 
     # Add a test to check the validity of the frames
     add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_RENDER_TEST
-    COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+    COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
     --source_video_dir ${RECORDING_DIR}
     --source_video_basename ${SOURCE_VIDEO_BASENAME}
     --output_dir ${RECORDING_DIR}
@@ -123,7 +124,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_3D_TEST
-    COMMAND python3 holoviz_geometry_3d_test.py --count 10
+    COMMAND ${Python3_EXECUTABLE} holoviz_geometry_3d_test.py --count 10
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
@@ -133,7 +134,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
     # Add a test to check the validity of the frames
     add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_GEOMETRY_3D_RENDER_TEST
-    COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+    COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
     --source_video_dir ${RECORDING_DIR}
     --source_video_basename ${SOURCE_VIDEO_BASENAME}
     --output_dir ${RECORDING_DIR}
@@ -185,7 +186,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_VIEWS_TEST
-    COMMAND python3 holoviz_views_test.py --count 10
+    COMMAND ${Python3_EXECUTABLE} holoviz_views_test.py --count 10
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
@@ -195,7 +196,7 @@ if(HOLOSCAN_BUILD_TESTS)
 
     # Add a test to check the validity of the frames
     add_test(NAME EXAMPLE_PYTHON_HOLOVIZ_VIEWS_RENDER_TEST
-    COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+    COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
     --source_video_dir ${RECORDING_DIR}
     --source_video_basename ${SOURCE_VIDEO_BASENAME}
     --output_dir ${RECORDING_DIR}

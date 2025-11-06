@@ -413,7 +413,7 @@ void HoloInferTests::inference_tests() {
       status, test_module, 46, test_identifier_infer.at(46), HoloInfer::holoinfer_code::H_ERROR);
 
   // same setup as above but now wrong batch size
-  batch_sizes[0] = {1, 2};
+  batch_sizes["model_1"] = {"1, 2"};
   cleanup_engines();
   status = prepare_for_inference();
   for (const auto& td : in_tensor_dimensions) {
@@ -424,7 +424,7 @@ void HoloInferTests::inference_tests() {
       status, test_module, 47, test_identifier_infer.at(47), HoloInfer::holoinfer_code::H_ERROR);
 
   // same setup as above but now with correct batch size
-  batch_sizes[0] = {1, 2, 8};
+  batch_sizes["model_1"] = {"1, 2, 8"};
   cleanup_engines();
   status = prepare_for_inference();
   for (const auto& td : in_tensor_dimensions) {
@@ -440,7 +440,7 @@ void HoloInferTests::inference_tests() {
 
   in_tensor_dimensions["m1_pre_proc"] = {2, 256, 256};
   in_tensor_dimensions["m2_pre_proc"] = {8, 32, 256};
-  batch_sizes[0] = {1, 2, 8};
+  batch_sizes["model_1"] = {"1, 2, 8"};
   cleanup_engines();
   status = prepare_for_inference();
   for (const auto& td : in_tensor_dimensions) {
@@ -451,7 +451,7 @@ void HoloInferTests::inference_tests() {
       status, test_module, 49, test_identifier_infer.at(49), HoloInfer::holoinfer_code::H_ERROR);
 
   // same setup as above with correct trt profile
-  batch_sizes[0] = {1, 2, 8, 32, 128, 256};
+  batch_sizes["model_1"] = {"1, 2, 8, 32, 128, 256"};
   cleanup_engines();
   status = prepare_for_inference();
   for (const auto& td : in_tensor_dimensions) {

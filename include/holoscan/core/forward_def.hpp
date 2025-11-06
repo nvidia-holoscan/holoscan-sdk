@@ -32,6 +32,7 @@ class CLIOptions;
 class CLIParser;
 template <typename typeT>
 struct codec;
+class CodecRegistry;
 class ComponentBase;
 class Component;
 class ComponentSpec;
@@ -47,6 +48,8 @@ class Executor;
 class Fragment;
 template <typename NodeT, typename EdgeDataElementT>
 class Graph;
+class GPUResidentOperator;
+class GPUResidentExecutor;
 class GXFParameterAdaptor;
 class FragmentService;
 class FragmentServiceProvider;
@@ -73,11 +76,11 @@ enum class ParameterFlag;
 class NetworkContext;
 class Resource;
 class Scheduler;
+class Subgraph;
 
 // holoscan::gxf
 namespace gxf {
 class Clock;
-class CodecRegistry;
 class Endpoint;
 class Entity;
 class EntityGroup;

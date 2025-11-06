@@ -24,7 +24,7 @@ namespace holoscan::gxf {
 FragmentWrapper::FragmentWrapper() : Fragment() {
   // Create a GXFExecutor without creating a GXF Context
   // This is because the GXF Context is already created by the GXF executor (gxe).
-  executor_ = make_executor<gxf::GXFExecutor>(this, false);
+  make_executor<gxf::GXFExecutor>(false);
 }
 
 }  // namespace holoscan::gxf

@@ -49,6 +49,7 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME python_video_replayer_output)
@@ -80,23 +81,24 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST
-    COMMAND python3 video_replayer_test.py --config python_video_replayer_config.yaml
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} video_replayer_test.py --config python_video_replayer_config.yaml 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:replayer.output\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz.receivers:0\\]' \
+        --pass-pattern '\\[Stream: none\\]' \
+        --pass-pattern ', data=\\['"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 
   set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_TEST PROPERTIES
     DEPENDS "video_replayer_test.py"
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    # check strings expected due to data_logging: true
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
-    # data logging is happening as expected
-    PASS_REGULAR_EXPRESSION ", data=\\["
   )
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_RENDER_TEST
-      COMMAND python3 ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}
@@ -111,16 +113,15 @@ if(HOLOSCAN_BUILD_TESTS)
 
   # Add the dual-window test and make sure it runs
   add_test(NAME EXAMPLE_PYTHON_VIDEO_REPLAYER_DUAL_WINDOW_TEST
-    COMMAND python3 video_replayer.py --config python_video_replayer_dual_window_config.yaml
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} video_replayer.py --config python_video_replayer_dual_window_config.yaml 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:replayer.output\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz.receivers:0\\]' \
+        --pass-pattern 'AsyncConsoleLogger\\[ID:holoviz-2.receivers:0\\]' \
+        --pass-pattern '\\[Stream: none\\]' \
+        --pass-pattern ', data=\\['"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_VIDEO_REPLAYER_DUAL_WINDOW_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
-    # check strings expected due to data_logging: true
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:replayer.output\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz.receivers:0\\]"
-    PASS_REGULAR_EXPRESSION "BasicConsoleLogger\\[ID:holoviz-2.receivers:0\\]"
-    # data logging is happening as expected
-    PASS_REGULAR_EXPRESSION ", data=\\["
   )
 endif()

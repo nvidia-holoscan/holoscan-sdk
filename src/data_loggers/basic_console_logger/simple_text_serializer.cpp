@@ -324,7 +324,8 @@ std::string SimpleTextSerializer::serialize_metadata_to_string(
 }
 
 std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_ptr<Tensor>& tensor,
-                                                             bool log_data_content) {
+                                                             bool log_data_content,
+                                                             std::optional<cudaStream_t> stream) {
   std::ostringstream oss;
 
   // Add basic tensor information
@@ -378,11 +379,28 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
         if (is_device_memory || is_cuda_managed) {
           // For CUDA device memory, copy only the elements we need to show
           host_data.resize(elements_to_show);
-          cudaError_t result = HOLOSCAN_CUDA_CALL(
-              cudaMemcpy(host_data.data(),
-                         tensor->data(),
-                         elements_to_show * sizeof(T),
-                         is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
+          cudaError_t result;
+          if (stream.has_value() && stream.value() != cudaStreamDefault &&
+              stream.value() != nullptr) {
+            // Use async copy with the provided stream
+            result = HOLOSCAN_CUDA_CALL(
+                cudaMemcpyAsync(host_data.data(),
+                                tensor->data(),
+                                elements_to_show * sizeof(T),
+                                is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost,
+                                stream.value()));
+            if (cudaSuccess == result) {
+              // Synchronize the stream to ensure the copy is complete before accessing the data
+              result = HOLOSCAN_CUDA_CALL(cudaStreamSynchronize(stream.value()));
+            }
+          } else {
+            // Use synchronous copy
+            result = HOLOSCAN_CUDA_CALL(
+                cudaMemcpy(host_data.data(),
+                           tensor->data(),
+                           elements_to_show * sizeof(T),
+                           is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
+          }
           if (cudaSuccess != result) {
             HOLOSCAN_LOG_ERROR(
                 "Copy of GPU data back to host failed... cannot log the data values");
@@ -489,8 +507,8 @@ std::string SimpleTextSerializer::serialize_tensor_to_string(const std::shared_p
   return oss.str();
 }
 
-std::string SimpleTextSerializer::serialize_tensormap_to_string(const TensorMap& tensor_map,
-                                                                bool log_data_content) {
+std::string SimpleTextSerializer::serialize_tensormap_to_string(
+    const TensorMap& tensor_map, bool log_data_content, std::optional<cudaStream_t> stream) {
   std::ostringstream oss;
 
   oss << "TensorMap(size=" << tensor_map.size() << ") {";
@@ -504,7 +522,7 @@ std::string SimpleTextSerializer::serialize_tensormap_to_string(const TensorMap&
     oss << "'" << key << "': ";
     if (tensor_ptr) {
       // Recursively serialize the individual tensor
-      oss << serialize_tensor_to_string(tensor_ptr, log_data_content);
+      oss << serialize_tensor_to_string(tensor_ptr, log_data_content, stream);
     } else {
       oss << "null";
     }
@@ -515,7 +533,8 @@ std::string SimpleTextSerializer::serialize_tensormap_to_string(const TensorMap&
 }
 
 std::string SimpleTextSerializer::serialize_video_buffer_to_string(
-    const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video_buffer) {
+    const nvidia::gxf::Handle<nvidia::gxf::VideoBuffer>& video_buffer,
+    std::optional<cudaStream_t> stream) {
   std::ostringstream oss;
 
   auto maybe_frame_ptr = video_buffer.try_get();
@@ -598,11 +617,28 @@ std::string SimpleTextSerializer::serialize_video_buffer_to_string(
           // For CUDA device memory, copy only the data we need to show
           size_t bytes_to_copy = pixels_to_show * format_info.channels * element_size;
           host_data.resize(bytes_to_copy);
-          cudaError_t result = HOLOSCAN_CUDA_CALL(
-              cudaMemcpy(host_data.data(),
-                         frame->pointer(),
-                         bytes_to_copy,
-                         is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
+          cudaError_t result;
+          if (stream.has_value() && stream.value() != cudaStreamDefault &&
+              stream.value() != nullptr) {
+            // Use async copy with the provided stream
+            result = HOLOSCAN_CUDA_CALL(
+                cudaMemcpyAsync(host_data.data(),
+                                frame->pointer(),
+                                bytes_to_copy,
+                                is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost,
+                                stream.value()));
+            if (cudaSuccess == result) {
+              // Synchronize the stream to ensure the copy is complete before accessing the data
+              result = HOLOSCAN_CUDA_CALL(cudaStreamSynchronize(stream.value()));
+            }
+          } else {
+            // Use synchronous copy
+            result = HOLOSCAN_CUDA_CALL(
+                cudaMemcpy(host_data.data(),
+                           frame->pointer(),
+                           bytes_to_copy,
+                           is_cuda_managed ? cudaMemcpyDefault : cudaMemcpyDeviceToHost));
+          }
           if (cudaSuccess != result) {
             HOLOSCAN_LOG_ERROR(
                 "Copy of GPU video buffer data back to host failed... cannot log the data values");

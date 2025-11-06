@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,14 +39,15 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_RESOURCES_PYTHON_NATIVE_RESOURCE_TEST
-    COMMAND python3 native_resource.py
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} native_resource.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'native resource setup method called' \
+        --pass-pattern 'MinimalOp compute method called' \
+        --fail-pattern 'error' \
+        --fail-pattern 'Exception occurred'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_RESOURCES_PYTHON_NATIVE_RESOURCE_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "native resource setup method called"
-    PASS_REGULAR_EXPRESSION "MinimalOp compute method called"
-    FAIL_REGULAR_EXPRESSION "error"
-    FAIL_REGULAR_EXPRESSION "Exception occurred"
   )
 endif()

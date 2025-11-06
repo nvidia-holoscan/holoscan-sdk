@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,19 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./boolean_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -49,13 +53,11 @@ class PyBooleanCondition : public BooleanCondition {
   using BooleanCondition::BooleanCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyBooleanCondition(Fragment* fragment, bool enable_tick = true,
+  explicit PyBooleanCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                              bool enable_tick = true,
                               const std::string& name = "noname_boolean_condition")
       : BooleanCondition(Arg{"enable_tick", enable_tick}) {
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -65,7 +67,7 @@ void init_boolean(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<BooleanCondition>>(
       m, "BooleanCondition", doc::BooleanCondition::doc_BooleanCondition)
-      .def(py::init<Fragment*, bool, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>, bool, const std::string&>(),
            "fragment"_a,
            "enable_tick"_a = true,
            "name"_a = "noname_boolean_condition"s,

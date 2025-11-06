@@ -33,6 +33,123 @@ A data logger captures and persists data flowing through the Holoscan pipeline.
 It can log data from input ports, output ports, and metadata.
 )doc")
 
+PYDOC(log_data, R"doc(
+Log generic data.
+
+Parameters
+----------
+data : object
+    The data to log.
+unique_id : str
+    A unique identifier for the message.
+acquisition_timestamp : int, optional
+    Timestamp when the data was acquired (-1 if unknown).
+metadata : MetadataDictionary, optional
+    Associated metadata dictionary for the message.
+io_type : holoscan.core.IOType, optional
+    The type of I/O port (IOType.INPUT or IOType.OUTPUT).
+stream_ptr : int, optional
+    Memory address of the CUDA stream for GPU operations.
+
+Returns
+-------
+bool
+    True if logging was successful, False otherwise.
+)doc")
+
+PYDOC(log_tensor_data, R"doc(
+Log tensor data.
+
+Parameters
+----------
+tensor : holoscan.core.Tensor
+    The Tensor to log.
+unique_id : str
+    A unique identifier for the message.
+acquisition_timestamp : int, optional
+    Timestamp when the data was acquired (-1 if unknown).
+metadata : MetadataDictionary, optional
+    Associated metadata dictionary for the message.
+io_type : holoscan.core.IOType, optional
+    The type of I/O port (IOType.INPUT or IOType.OUTPUT).
+stream_ptr : int, optional
+    Memory address of the CUDA stream for GPU operations.
+
+Returns
+-------
+bool
+    True if logging was successful, False otherwise.
+)doc")
+
+PYDOC(log_tensormap_data, R"doc(
+Log tensor map data.
+
+Parameters
+----------
+tensor_map : holoscan.core.TensorMap
+    The TensorMap to log.
+unique_id : str
+    A unique identifier for the message.
+acquisition_timestamp : int, optional
+    Timestamp when the data was acquired (-1 if unknown).
+metadata : MetadataDictionary, optional
+    Associated metadata dictionary for the message.
+io_type : holoscan.core.IOType, optional
+    The type of I/O port (IOType.INPUT or IOType.OUTPUT).
+stream_ptr : int, optional
+    Memory address of the CUDA stream for GPU operations.
+
+Returns
+-------
+bool
+    True if logging was successful, False otherwise.
+)doc")
+
+PYDOC(log_backend_specific, R"doc(
+Log backend-specific data types.
+
+This method is called for logging backend-specific data types. The default
+implementation returns False indicating backend-specific logging is not supported.
+
+Parameters
+----------
+data : object
+    The backend-specific data to log.
+unique_id : str
+    A unique identifier for the message.
+acquisition_timestamp : int, optional
+    Timestamp when the data was acquired (-1 if unknown).
+metadata : MetadataDictionary, optional
+    Associated metadata dictionary for the message.
+io_type : holoscan.core.IOType, optional
+    The type of I/O port (IOType.INPUT or IOType.OUTPUT).
+stream_ptr : int, optional
+    Memory address of the CUDA stream for GPU operations.
+
+Returns
+-------
+bool
+    True if logging was successful, False if backend-specific logging is not supported.
+)doc")
+
+PYDOC(should_log_output, R"doc(
+Check if the logger should log output ports.
+
+Returns
+-------
+bool
+    True if the logger should log output ports, False otherwise.
+)doc")
+
+PYDOC(should_log_input, R"doc(
+Check if the logger should log input ports.
+
+Returns
+-------
+bool
+    True if the logger should log input ports, False otherwise.
+)doc")
+
 }  // namespace DataLogger
 
 namespace DataLoggerResource {

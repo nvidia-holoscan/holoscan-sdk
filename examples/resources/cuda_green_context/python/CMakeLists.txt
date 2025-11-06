@@ -44,47 +44,56 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST
-    COMMAND python3 cuda_green_context.py --count=10 -d
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} cuda_green_context.py --count=10 -d 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received default CUDA stream from port in' \
+        --pass-pattern 'rx received message 10' \
+        --fail-pattern 'rx received message 11'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "rx received default CUDA stream from port 'in'"
-    # PASS_REGULAR_EXPRESSION "rx received message 10"
-    FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 
   add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NON_DEFAULT_STREAM_TEST
-    COMMAND python3 cuda_green_context.py --count=10 -g
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} cuda_green_context.py --count=10 -g 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received non-default CUDA stream from port in' \
+        --pass-pattern 'rx received message 10' \
+        --fail-pattern 'rx received message 11'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NON_DEFAULT_STREAM_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "rx received non-default CUDA stream from port 'in'"
-    # PASS_REGULAR_EXPRESSION "rx received message 10"
-    FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 
   add_test(NAME EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_TEST
-    COMMAND python3 cuda_default_green_context.py --count=10
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} cuda_default_green_context.py --count=10 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received non-default CUDA stream from port in' \
+        --pass-pattern 'rx received message 10' \
+        --fail-pattern 'rx received message 11'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "rx received non-default CUDA stream from port 'in'"
-    # PASS_REGULAR_EXPRESSION "rx received message 10"
-    FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 
   add_test(NAME EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_DEFAULT_STREAM_TEST
-    COMMAND python3 cuda_default_green_context.py --count=10 -d
-    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} cuda_default_green_context.py --count=10 -d 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+        --pass-pattern 'rx received default CUDA stream from port in' \
+        --pass-pattern 'rx received message 10' \
+        --fail-pattern 'rx received message 11'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_DEFAULT_STREAM_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
-    PASS_REGULAR_EXPRESSION "rx received default CUDA stream from port 'in'"
-    # PASS_REGULAR_EXPRESSION "rx received message 10"
-    FAIL_REGULAR_EXPRESSION "rx received message 11"
   )
 endif()

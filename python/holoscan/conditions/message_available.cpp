@@ -21,13 +21,16 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./message_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -52,18 +55,15 @@ class PyMessageAvailableCondition : public MessageAvailableCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyMessageAvailableCondition(
-      Fragment* fragment, uint64_t min_size = 1UL, size_t front_stage_max_size = 1UL,
-      std::optional<const std::string> receiver = std::nullopt,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, uint64_t min_size = 1UL,
+      size_t front_stage_max_size = 1UL, std::optional<const std::string> receiver = std::nullopt,
       const std::string& name = "noname_message_available_condition")
       : MessageAvailableCondition(
             ArgList{Arg{"min_size", min_size}, Arg{"front_stage_max_size", front_stage_max_size}}) {
-    name_ = name;
-    fragment_ = fragment;
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -73,7 +73,7 @@ void init_message_available(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<MessageAvailableCondition>>(
       m, "MessageAvailableCondition", doc::MessageAvailableCondition::doc_MessageAvailableCondition)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     uint64_t,
                     size_t,
                     std::optional<const std::string>,

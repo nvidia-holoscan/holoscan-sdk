@@ -30,6 +30,16 @@ target_link_libraries(holoviz_camera
   holoscan::ops::holoviz
 )
 
+add_executable(holoviz_conditions
+  holoviz_conditions.cpp
+)
+
+target_link_libraries(holoviz_conditions
+  PRIVATE
+  holoscan::core
+  holoscan::ops::holoviz
+)
+
 add_executable(holoviz_geometry
   holoviz_geometry.cpp
 )
@@ -43,6 +53,8 @@ target_link_libraries(holoviz_geometry
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   set(RECORDING_DIR ${CMAKE_CURRENT_BINARY_DIR}/recording_output)
   set(SOURCE_VIDEO_BASENAME holoviz_geometry_output)
   set(VALIDATION_FRAMES_DIR ${CMAKE_SOURCE_DIR}/testing/validation_frames/holoviz_geometry/)
@@ -77,19 +89,18 @@ if(BUILD_TESTING)
     holoscan::ops::format_converter
   )
 
-  # Add the test and make sure it runs
+  # Add the geometry test and make sure it runs
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST
     COMMAND ${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry_test --count 10
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_GEOMETRY_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Received camera pose:"
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
 
   # Add a test to check the validity of the frames
   add_test(NAME EXAMPLE_CPP_HOLOVIZ_GEOMETRY_RENDER_TEST
-      COMMAND python3 ${CMAKE_SOURCE_DIR}/../bin/video_validation.py
+      COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/../bin/video_validation.py
       --source_video_dir ${RECORDING_DIR}
       --source_video_basename ${SOURCE_VIDEO_BASENAME}
       --output_dir ${RECORDING_DIR}
@@ -108,7 +119,6 @@ if(BUILD_TESTING)
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_HOLOVIZ_CAMERA_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Received camera pose:"
-    PASS_REGULAR_EXPRESSION "Scheduler stopped: Some entities are waiting for execution, but there are no periodic or async entities to get out of the deadlock."
+    PASS_REGULAR_EXPRESSION "Received camera pose:.*Scheduler stopped: Some entities are waiting for execution"
   )
 endif()

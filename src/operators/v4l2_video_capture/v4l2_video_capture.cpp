@@ -213,7 +213,6 @@ static const V4L2VideoCaptureOp::FormatList v4l2_to_gxf_format{
          new GxfFormatTemplate<nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_NV24>())},
     // these V4L2 formats have no equivalent GXF video buffer format, output as tensor instead
     {V4L2_PIX_FMT_YUYV, std::shared_ptr<GxfFormat>(new GxfFormatTensor(V4L2_PIX_FMT_YUYV))},
-    {V4L2_PIX_FMT_MJPEG, nullptr},
 };
 
 static void YUYVToRGBA(const void* yuyv, void* rgba, size_t width, size_t height) {

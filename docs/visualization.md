@@ -649,6 +649,53 @@ viz::SetKeyCallback(user_pointer, &key_callback);
 ````
 `````
 
+## Scheduling Conditions
+
+Holoviz provides specialized scheduling conditions that enable operators to synchronize their execution with display events. These conditions are particularly useful for rate-limiting and ensuring that frame generation is synchronized with the display's refresh cycle, reducing latency and improving visual quality.
+
+### FirstPixelOut Condition
+
+The {cpp:class}`C++ <holoscan::FirstPixelOutCondition>` allows an operator to synchronize its execution with the time when the first pixel of the next display refresh cycle leaves the display engine for the display (FirstPixelOut). By synchronizing with FirstPixelOut, applications can ensure minimal tearing and optimal frame pacing.
+
+The condition internally waits for the next FirstPixelOut signal from the display hardware. When FirstPixelOut occurs, the condition transitions to a ready state, allowing the operator to execute. After execution, the condition transitions back to a waiting state until the next FirstPixelOut.
+
+**Use cases:**
+- Synchronizing frame generation with display refresh rate
+- Minimizing display tearing in real-time visualization
+- Rate-limiting operators to match the display's capabilities
+
+### Present Done Condition
+
+The {cpp:class}`C++ <holoscan::PresentDoneCondition>` allows an operator to synchronize its execution with the completion of frame presentation. This condition waits until a specific frame has been fully presented to the display before allowing the next operator execution.
+
+The condition tracks presentation IDs, which increment with each frame presented. It blocks until a specific presentation ID is reached or a timeout occurs, ensuring that the application doesn't generate frames faster than the display can present them.
+
+**Use cases:**
+- Preventing frame queue buildup by matching generation to presentation rate
+- Reducing end-to-end latency in interactive applications
+- Ensuring smooth frame pacing without dropped frames
+
+### Example Usage
+
+The [holoviz_conditions](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/cpp/holoviz_conditions.cpp) example demonstrates how to use these conditions to rate-limit a source operator:
+
+```cpp
+#include <holoscan/operators/holoviz/conditions/present_done.hpp>
+
+void compose() override {
+  using namespace holoscan;
+
+  auto visualizer = make_operator<ops::HolovizOp>("holoviz");
+
+  auto source = make_operator<ops::SourceOp>(
+      "source",
+      // Run on every present completion
+      make_condition<PresentDoneCondition>("present_limiter", visualizer));
+
+  add_flow(source, visualizer, {{"output", "receivers"}});
+}
+```
+
 ## Multiprocess Synchronization
 
 The HoloViz operator supports multiprocess synchronization using a file-based
@@ -755,3 +802,67 @@ Holoviz example app
 ### Holoviz Module Examples
 
 There are multiple [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/modules/holoviz/examples) showing how to use various features of the Holoviz module.
+
+### Fullscreen vs Exclusive Display Mode
+
+Holoviz offers two different modes for rendering to a display taking up the
+entire screen: **fullscreen mode** and **exclusive display mode**. While both modes
+render content to fill the entire display, they differ significantly in how they
+interact with the windowing system.
+
+#### Fullscreen Mode
+
+Fullscreen mode creates a borderless window that covers the entire display using GLFW (Graphics Library Framework). In this mode:
+
+- **Window Manager Integration**: The window is still managed by the Linux window manager. Keyboard and mouse interactions are supported.
+- **Desktop Compositor**: When the window covers the entire screen, the desktop
+  compositor switches to flip mode, bypassing the compositing step. Therefore,
+  the performance in fullscreen mode is better than in the windowed mode.
+  However, the desktop compositor is still involved in the rendering path.
+- **Simpler Setup**: No special display configuration is required. The
+  application can switch to full-screen mode at runtime.
+- **G-SYNC Support**: [G-SYNC](https://developer.nvidia.com/g-sync) is supported in fullscreen mode once it is enabled
+  from NVIDIA Control Panel.
+
+To enable fullscreen mode, set the `fullscreen` parameter to `true`:
+
+`````{tab-set}
+````{tab-item} Operator (C++)
+```cpp
+auto visualizer = make_operator<ops::HolovizOp>("holoviz",
+    Arg("fullscreen", true)
+    );
+```
+````
+````{tab-item} Operator (Python)
+```python
+visualizer = HolovizOp(
+    self,
+    name="holoviz",
+    fullscreen=True
+)
+```
+````
+`````
+
+#### Exclusive Display Mode
+
+Exclusive display mode renders directly to a display using Vulkan's
+`VK_KHR_display` extension, completely bypassing the window manager and desktop
+compositor. This mode takes up the entire screen, just like the fullscreen mode.
+However, there are a few differences with the fullscreen mode. In this mode:
+
+- **Direct Rendering**: The GPU writes pixels to a memory area, and the display controller reads from this memory and sends the pixels to the display. Vulkan's present call switches which memory region the display controller reads from, bypassing the window manager and compositor.
+- **Performance**: Eliminating the involvement of the window manager anddesktop
+  compositor altogether, this mode provides maximum rendering performance and minimal
+  latency.
+- **Display Control**: Takes exclusive control of the specified display,
+  preventing other applications from using it. Keyboard and mouse interactions
+  are not supported.
+- **Setup Required**: Requires the display to be disabled in the X server configuration or the display manager to be stopped (see [Configure a Display for Exclusive Use](#configure-a-display-for-exclusive-use)).
+- **Vulkan Extensions**: Uses Vulkan's direct display extensions.
+- **G-SYNC Support**: G-SYNC is currently not supported in exclusive display mode.
+
+To enable exclusive display mode, set the `use_exclusive_display` parameter to
+`true` (as shown in [Enable Exclusive Display in
+Holoviz](#enable-exclusive-display-in-holoviz)).

@@ -20,18 +20,21 @@
 
 #include <memory>
 #include <string>
+#include <variant>
 #include <vector>
 
+#include "../../core/component_util.hpp"
 #include "../../core/emitter_receiver_registry.hpp"  // EmitterReceiverRegistry
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
+#include "holoscan/core/codec_registry.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/codec_registry.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/inference/codecs.hpp"
 #include "holoscan/operators/inference/inference.hpp"
 
@@ -73,7 +76,8 @@ class PyInferenceOp : public InferenceOp {
   using InferenceOp::InferenceOp;
 
   // Define a constructor that fully initializes the object.
-  PyInferenceOp(Fragment* fragment, const py::args& args, const std::string& backend,
+  PyInferenceOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                const py::args& args, const std::string& backend,
                 std::shared_ptr<::holoscan::Allocator> allocator,
                 const py::dict& inference_map,      // InferenceOp::DataVecMap
                 const py::dict& model_path_map,     // InferenceOp::DataMap
@@ -84,10 +88,9 @@ class PyInferenceOp : public InferenceOp {
                 const py::dict& activation_map,     // InferenceOp::DataMap
                 const py::dict& backend_map,        // InferenceOp::DataMap
                 const std::vector<std::string>& in_tensor_names,
-                const std::vector<std::string>& out_tensor_names,
-                const std::vector<std::vector<int32_t>>& trt_opt_profile, bool infer_on_cpu = false,
-                bool parallel_inference = true, bool input_on_cuda = true,
-                bool output_on_cuda = true, bool transmit_on_cuda = true,
+                const std::vector<std::string>& out_tensor_names, const py::dict& trt_opt_profile,
+                bool infer_on_cpu = false, bool parallel_inference = true,
+                bool input_on_cuda = true, bool output_on_cuda = true, bool transmit_on_cuda = true,
                 bool dynamic_input_dims = false, bool enable_fp16 = false,
                 bool enable_cuda_graphs = true, int32_t dla_core = -1, bool dla_gpu_fallback = true,
                 bool is_engine_path = false,
@@ -99,7 +102,6 @@ class PyInferenceOp : public InferenceOp {
                             Arg{"allocator", allocator},
                             Arg{"in_tensor_names", in_tensor_names},
                             Arg{"out_tensor_names", out_tensor_names},
-                            Arg{"trt_opt_profile", trt_opt_profile},
                             Arg{"infer_on_cpu", infer_on_cpu},
                             Arg{"parallel_inference", parallel_inference},
                             Arg{"input_on_cuda", input_on_cuda},
@@ -115,8 +117,6 @@ class PyInferenceOp : public InferenceOp {
       this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
 
     // Workaround to maintain backwards compatibility with the v0.5 API:
     // convert any single str values to List[str].
@@ -194,8 +194,10 @@ class PyInferenceOp : public InferenceOp {
     auto pre_processor_datamap = _dict_to_inference_datavecmap(pre_processor_map.cast<py::dict>());
     this->add_arg(Arg("pre_processor_map", pre_processor_datamap));
 
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    auto trt_opt_profile_datamap = _dict_to_inference_datavecmap(trt_opt_profile.cast<py::dict>());
+    this->add_arg(Arg("trt_opt_profile", trt_opt_profile_datamap));
+
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -211,7 +213,7 @@ PYBIND11_MODULE(_inference, m) {
   py::class_<InferenceOp, PyInferenceOp, Operator, std::shared_ptr<InferenceOp>> inference_op(
       m, "InferenceOp", doc::InferenceOp::doc_InferenceOp);
 
-  inference_op.def(py::init<Fragment*,
+  inference_op.def(py::init<std::variant<Fragment*, Subgraph*>,
                             const py::args&,
                             const std::string&,
                             std::shared_ptr<::holoscan::Allocator>,
@@ -225,7 +227,7 @@ PYBIND11_MODULE(_inference, m) {
                             py::dict,
                             const std::vector<std::string>&,
                             const std::vector<std::string>&,
-                            const std::vector<std::vector<int32_t>>&,
+                            py::dict,
                             bool,
                             bool,
                             bool,
@@ -252,7 +254,7 @@ PYBIND11_MODULE(_inference, m) {
                    "backend_map"_a = py::dict(),
                    "in_tensor_names"_a = std::vector<std::string>{},
                    "out_tensor_names"_a = std::vector<std::string>{},
-                   "trt_opt_profile"_a = std::vector<std::vector<int32_t>>{{1, 1, 1}},
+                   "trt_opt_profile"_a = py::dict(),
                    "infer_on_cpu"_a = false,
                    "parallel_inference"_a = true,
                    "input_on_cuda"_a = true,
@@ -287,9 +289,8 @@ PYBIND11_MODULE(_inference, m) {
            "Set model active flag",
            py::arg("active") = true);
 
-  gxf::CodecRegistry::get_instance()
-      .add_codec<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
-          "std::vector<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>", true);
+  CodecRegistry::get_instance().add_codec<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>(
+      "std::vector<std::vector<holoscan::ops::InferenceOp::ActivationSpec>>", true);
   // See python bindings for holoviz operator
   m.def("register_types", [](EmitterReceiverRegistry& registry) {
     HOLOSCAN_LOG_INFO("Call in register types for ActivationSpec");

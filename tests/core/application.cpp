@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,11 +17,13 @@
 
 #include <gtest/gtest.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
 
+#include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/graphs/flow_graph.hpp"
 
 namespace holoscan {
@@ -227,6 +229,21 @@ TEST(Application, TestReservedFragmentName) {
   EXPECT_TRUE(log_output.find("Fragment name 'all' is reserved") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
+}
+
+TEST(Application, TestAddFlowWithDifferentExecutors) {
+  auto app = make_application<Application>();
+
+  auto fragment1 = app->make_fragment<Fragment>("fragment1");
+  auto fragment2 = app->make_fragment<Fragment>("fragment2");
+
+  // Assign different executors to fragments
+  fragment1->executor(std::make_shared<gxf::GXFExecutor>(fragment1.get()));
+  fragment2->executor(std::make_shared<Executor>(fragment2.get()));
+
+  // the port pair parameter does not matter, as it should throw error even
+  // before checking whether the port pairs are valid.
+  EXPECT_THROW(app->add_flow(fragment1, fragment2, {{"op1", "op2"}}), std::runtime_error);
 }
 
 }  // namespace holoscan

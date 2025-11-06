@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,7 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/byom.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
@@ -56,7 +57,7 @@ if(HOLOSCAN_BUILD_TESTS)
   file(WRITE ${CONFIG_FILE} ${CONFIG_STRING})
 
   add_test(NAME EXAMPLE_PYTHON_BYOM_TEST
-    COMMAND python3 byom.py --config python_byom_config.yaml
+    COMMAND ${Python3_EXECUTABLE} byom.py --config python_byom_config.yaml
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 

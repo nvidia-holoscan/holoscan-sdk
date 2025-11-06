@@ -38,7 +38,7 @@ class NativeMessageAvailableCondition(Condition):
     ----------
     fragment : holoscan.core.Fragment
         The fragment (or Application) to which this condition will belong.
-    port_name : str
+    receiver : str
         The name of the input port on the operator whose Receiver queue this condition will apply
         to.
     min_size : int, optional
@@ -46,8 +46,8 @@ class NativeMessageAvailableCondition(Condition):
         operator is allowed to execute.
     """
 
-    def __init__(self, fragment, port_name: str, *args, min_size: int = 1, **kwargs):
-        self.port_name = port_name
+    def __init__(self, fragment, receiver_name: str, *args, min_size: int = 1, **kwargs):
+        self.receiver_name = receiver_name
 
         if not isinstance(min_size, int) or min_size <= 0:
             raise ValueError("min_size must be a positive integer")
@@ -57,16 +57,18 @@ class NativeMessageAvailableCondition(Condition):
         self.current_state = SchedulingStatusType.WAIT
         # timestamp when the state changed the last time
         self.last_state_change_ = 0
-        super().__init__(fragment, *args, **kwargs)
+        # Must pass 'receiver_name' or 'transmitter_name' as a kwarg to the parent constructor
+        # to avoid creation of a default condition for the operator port with that name.
+        super().__init__(fragment, *args, receiver_name=receiver_name, **kwargs)
 
     def setup(self, spec: ComponentSpec):
         print("** native condition setup method called **")
 
     def initialize(self):
         print("** native condition initialize method called **")
-        self.receiver_obj = self.receiver(self.port_name)
+        self.receiver_obj = self.receiver(self.receiver_name)
         if self.receiver_obj is None:
-            raise RuntimeError(f"Receiver for port '{self.port_name}' not found")
+            raise RuntimeError(f"Receiver for port '{self.receiver_name}' not found")
 
     def check_min_size(self):
         return self.receiver_obj.back_size + self.receiver_obj.size >= self.min_size
@@ -102,11 +104,11 @@ class MyPingApp(Application):
             name="tx",
         )
 
-        # port_name must be the name of the input port of the PingRxOpNoCondition operator
+        # receiver must be the name of the input port of the PingRxOp operator
         message_cond = NativeMessageAvailableCondition(
             self,
             name="in_native_message_available",
-            port_name="in",
+            receiver_name="in",
             min_size=1,
         )
         rx = PingRxOp(self, message_cond, name="rx")

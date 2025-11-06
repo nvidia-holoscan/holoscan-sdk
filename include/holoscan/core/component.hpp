@@ -329,6 +329,38 @@ class Component : public ComponentBase {
   /// Set the parameters based on defaults (sets GXF parameters for GXF operators)
   virtual void set_parameters() {}
 
+  /**
+   * @brief Set the component spec.
+   *
+   * @param spec The component spec.
+   * @return The reference to this component.
+   */
+  Component& spec(const std::shared_ptr<ComponentSpec>& spec) {
+    spec_ = spec;
+    return *this;
+  }
+
+  /**
+   * @brief Get a pointer to the component spec.
+   *
+   * @return The pointer to the component spec.
+   */
+  ComponentSpec* spec() {
+    if (!spec_) {
+      HOLOSCAN_LOG_WARN("ComponentSpec of Component '{}' is not initialized, returning nullptr",
+                        name_);
+      return nullptr;
+    }
+    return spec_.get();
+  }
+
+  /**
+   * @brief Get a shared pointer to the component spec.
+   *
+   * @return The shared pointer to the component spec.
+   */
+  std::shared_ptr<ComponentSpec> spec_shared() { return spec_; }
+
  protected:
   using ComponentBase::update_params_from_args;
 

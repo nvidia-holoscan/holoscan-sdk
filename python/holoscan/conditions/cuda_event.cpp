@@ -22,13 +22,16 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./cuda_event_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/cuda_event.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/receiver.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -53,17 +56,15 @@ class PyCudaEventCondition : public CudaEventCondition {
   using CudaEventCondition::CudaEventCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCudaEventCondition(Fragment* fragment, const std::string& event_name = "",
+  explicit PyCudaEventCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                                const std::string& event_name = "",
                                 std::optional<const std::string> receiver = std::nullopt,
                                 const std::string& name = "noname_cuda_event_condition")
       : CudaEventCondition(Arg("event_name", event_name)) {
-    name_ = name;
-    fragment_ = fragment;
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -73,7 +74,7 @@ void init_cuda_event(py::module_& m) {
              gxf::GXFCondition,
              std::shared_ptr<CudaEventCondition>>(
       m, "CudaEventCondition", doc::CudaEventCondition::doc_CudaEventCondition)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const std::string&,
                     std::optional<const std::string>,
                     const std::string&>(),

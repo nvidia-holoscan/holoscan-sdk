@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
-#define HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
+#ifndef PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
+#define PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP
 
 #include <string>
 
@@ -35,8 +35,8 @@ Example tensor receive operator.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment that the operator belongs to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph that the operator belongs to.
 receive_as_tensormap : bool, optional
     Whether to receive the tensor as a TensorMap. If false, receive<std::shared_ptr<Tensor>> is
     used instead. Default value is ``True``.
@@ -46,4 +46,4 @@ name : str, optional
 
 }  // namespace holoscan::doc::PingTensorRxOp
 
-#endif /* HOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP */
+#endif /* PYHOLOSCAN_OPERATORS_PING_TENSOR_RX_PYDOC_HPP */

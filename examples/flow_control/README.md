@@ -29,3 +29,10 @@ This folder contains examples of how to use dynamic flow control with different 
 9. [State-based Monitoring](./state_based_monitoring)
   - [state_based_monitoring.cpp](./state_based_monitoring/cpp/state_based_monitoring.cpp)
   - [state_based_monitoring.py](./state_based_monitoring/python/state_based_monitoring.py)
+
+There is also a variant of the sequential example demonstrating that flow control can also be used
+with subgraph interface ports in applications making use of subgraphs.
+
+10. [Sequential With Subgraph](./sequential_with_subgraph)
+  - [sequential_with_subgraph.cpp](./sequential_with_subgraph/cpp/sequential_with_subgraph.cpp)
+  - [sequential_with_subgraph.py](./sequential_with_subgraph/python/sequential_with_subgraph.py)

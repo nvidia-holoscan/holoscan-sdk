@@ -18,6 +18,9 @@
 #include "holoscan/core/flow_tracking_annotation.hpp"
 
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <mutex>
 #include <utility>
 
 #include "holoscan/core/fragment.hpp"
@@ -26,6 +29,7 @@
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/logger/logger.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan {
 
@@ -54,12 +58,60 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
 
     std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
 
-    bool is_current_op_root = op->is_root() || op->is_user_defined_root() ||
+    // Thread-safe cache for cycle detection results since graph structure doesn't change at runtime
+    static std::unordered_map<std::string, bool> fragment_has_cycles_cache;
+    static std::mutex cache_mutex;
+    const std::string& fragment_name = op->fragment()->name();
+
+    bool has_cycles;
+    {
+      std::lock_guard<std::mutex> lock(cache_mutex);
+      auto cache_it = fragment_has_cycles_cache.find(fragment_name);
+      if (cache_it != fragment_has_cycles_cache.end()) {
+        has_cycles = cache_it->second;
+      } else {
+        auto cyclic_roots = op->fragment()->graph().has_cycle();
+        has_cycles = !cyclic_roots.empty();
+        fragment_has_cycles_cache[fragment_name] = has_cycles;
+
+        // Clear cache if it grows too large (unlikely but prevents unbounded growth)
+        constexpr size_t MAX_CACHE_SIZE = 1000;
+        if (fragment_has_cycles_cache.size() > MAX_CACHE_SIZE) {
+          HOLOSCAN_LOG_DEBUG("Clearing fragment cycle cache due to size limit");
+          fragment_has_cycles_cache.clear();
+          fragment_has_cycles_cache[fragment_name] = has_cycles;
+        }
+      }
+    }
+
+    bool is_current_op_root = op->is_root() || (op->is_user_defined_root() && has_cycles) ||
                               holoscan::Operator::is_all_operator_predecessor_virtual(
                                   std::move(op_shared_ptr), op->fragment()->graph());
-    if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
-        (op->fragment()->data_flow_tracker()->limited_tracking() &&
-         is_current_op_root)) {  // update the last timestamp if limited tracking is not enabled
+
+    // Generate frame number for root operators (only if data flow tracking AND profiling are
+    // enabled)
+    if (is_current_op_root && op->fragment()->data_flow_tracker() &&
+        holoscan::profiler::trace_enabled()) {
+      uint64_t frame_number =
+          op->fragment()->data_flow_tracker()->generate_frame_number(op->qualified_name());
+      m.set_frame_number(op->qualified_name(), transmitter_name, frame_number);
+
+      // Store port-specific frame number in DataFlowTracker for NVTX display
+      op->fragment()->data_flow_tracker()->set_port_frame_number(
+          op->qualified_name(), transmitter_name, frame_number);
+
+      HOLOSCAN_LOG_DEBUG("Generated frame number {} for root operator {} port {}",
+                         frame_number,
+                         op->qualified_name(),
+                         transmitter_name);
+    }
+
+    // Frame numbers are available in the message label for tracking
+
+    if (op->fragment()->data_flow_tracker() &&
+        (!op->fragment()->data_flow_tracker()->limited_tracking() ||
+         (op->fragment()->data_flow_tracker()->limited_tracking() &&
+          is_current_op_root))) {  // update the last timestamp if limited tracking is not enabled
       m.update_last_op_publish();
     }
 
@@ -131,9 +183,10 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
       bool is_current_op_leaf =
           op->is_leaf() || holoscan::Operator::is_all_operator_successor_virtual(
                                std::move(op_shared_ptr), op->fragment()->graph());
-      if (!op->fragment()->data_flow_tracker()->limited_tracking() ||
-          (op->fragment()->data_flow_tracker()->limited_tracking() &&
-           is_current_op_leaf)) {  // add a new timestamp if limited tracking is not enabled
+      if (op->fragment()->data_flow_tracker() &&
+          (!op->fragment()->data_flow_tracker()->limited_tracking() ||
+           (op->fragment()->data_flow_tracker()->limited_tracking() &&
+            is_current_op_leaf))) {  // add a new timestamp if limited tracking is not enabled
         m.add_new_op_timestamp(cur_op_timestamp);
       }
       HOLOSCAN_LOG_DEBUG("deannotate_message: MessageLabel: {}", m.to_string());
@@ -147,6 +200,19 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
       cur_op_timestamp.pub_timestamp = cur_op_timestamp.rec_timestamp;
       m.add_new_op_timestamp(cur_op_timestamp);
       MessageLabel label_wo_cycles;
+
+      // Preserve frame numbers from the original message label (only when profiling is enabled)
+      if (holoscan::profiler::trace_enabled()) {
+        const auto& frame_numbers = m.get_frame_numbers();
+        for (const auto& frame : frame_numbers) {
+          // Parse operator-port key to extract operator name and port name using helper function
+          auto [operator_name, port_name] = Operator::parse_operator_port_key(frame.first);
+          if (!operator_name.empty() && !port_name.empty()) {
+            label_wo_cycles.set_frame_number(operator_name, port_name, frame.second);
+          }
+        }
+      }
+
       // For each cyclic path in m, update the flow tracker
       // For all non-cyclic paths, add to the label_wo_cycles
       int cycle_index = 0;

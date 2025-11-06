@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,16 +40,12 @@ HeadlessWindow::HeadlessWindow(uint32_t width, uint32_t height, InitFlags flags)
 
 void HeadlessWindow::init_im_gui() {}
 
-const char** HeadlessWindow::get_required_instance_extensions(uint32_t* count) {
-  static char const* extensions[]{};
-
-  *count = sizeof(extensions) / sizeof(extensions[0]);
-  return extensions;
+std::vector<Window::InstanceExtensionInfo> HeadlessWindow::get_required_instance_extensions() {
+  return {};
 }
 
-const char** HeadlessWindow::get_required_device_extensions(uint32_t* count) {
-  *count = 0;
-  return nullptr;
+std::vector<Window::DeviceExtensionInfo> HeadlessWindow::get_required_device_extensions() {
+  return {};
 }
 
 uint32_t HeadlessWindow::select_device(vk::Instance instance,

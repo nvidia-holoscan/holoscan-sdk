@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_HPP
-#define PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_HPP
+#ifndef PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_PYDOC_HPP
+#define PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_PYDOC_HPP
 
 #include <string>
 
@@ -31,6 +31,8 @@ ThreadPool for operators scheduled by EventBasedScheduler or MultiThreadSchedule
 
 Parameters
 ----------
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 initialize_size : int, optional
     The initial number of worker threads in the pool.
 name : str, optional
@@ -86,4 +88,4 @@ list[Operator]
 
 }  // namespace holoscan::doc
 
-#endif /* PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_HPP */
+#endif /* PYHOLOSCAN_RESOURCES_SYSTEM_RESOURCES_PYDOC_HPP */

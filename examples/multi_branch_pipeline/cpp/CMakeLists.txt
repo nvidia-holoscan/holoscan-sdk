@@ -68,15 +68,15 @@ install(FILES
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME EXAMPLE_CPP_MULTI_BRANCH_OPERATOR_TEST
-           COMMAND multi_branch_pipeline
-           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-          )
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
-  # rx2 should receive close to 100 message (values 0 - 99)
-  # rx1 will receive only some of these, but it is hard to know exactly which ones so just verify the first
-  set_tests_properties(EXAMPLE_CPP_MULTI_BRANCH_OPERATOR_TEST PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Push failed on 'in'"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx2' received value: 90"
-                       PASS_REGULAR_EXPRESSION "receiver 'rx1' received value: 0")
+  add_test(NAME EXAMPLE_CPP_MULTI_BRANCH_PIPELINE_TEST
+    COMMAND bash -c
+    "${CMAKE_CURRENT_BINARY_DIR}/multi_branch_pipeline 2>&1 | \
+    ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
+      --pass-pattern 'receiver rx2 received value: 90' \
+      --pass-pattern 'receiver rx1 received value: 0' \
+      --fail-pattern 'Push failed on in'"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
 endif()

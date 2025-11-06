@@ -20,6 +20,7 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <fmt/format.h>
 #include <iostream>
 #include <memory>
 #include <optional>
@@ -168,6 +169,32 @@ class IOSpec {
   }
 
   /**
+   * @brief Construct a new IOSpec object with memory block size. This type of IOSpec is used for
+   * GPU-resident execution. We don't allow queue_size or queue_policy for this type of IOSpec.
+   *
+   * @param op_spec The pointer to the operator specification that contains this input/output.
+   * @param name The name of this input/output.
+   * @param io_type The type of this input/output.
+   * @param memory_block_size The memory block size of this input/output.
+   */
+  IOSpec(OperatorSpec* op_spec, const std::string& name, size_t memory_block_size, IOType io_type)
+      : op_spec_(op_spec), io_type_(io_type), memory_block_size_(memory_block_size) {
+    if (name.find(".") != std::string::npos) {
+      throw std::invalid_argument(fmt::format(
+          "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
+          name));
+    }
+    // catch error early - memory block size must be non zero
+    if (memory_block_size == 0) {
+      throw std::invalid_argument(
+          fmt::format("The memory block size must be non zero for device input/output ports. "
+                      "Please check the memory block size of the input/output port '{}'.",
+                      name));
+    }
+    name_ = name;
+  }
+
+  /**
    * @brief Get the operator specification that contains this input/output.
    *
    * @return The pointer to the operator specification that contains this input/output.
@@ -201,6 +228,13 @@ class IOSpec {
    * @return The type info of the data of this input/output.
    */
   const std::type_info* typeinfo() const { return typeinfo_; }
+
+  /**
+   * @brief Get the memory block size of this input/output.
+   *
+   * @return The memory block size of this input/output.
+   */
+  size_t memory_block_size() const { return memory_block_size_; }
 
   /**
    * @brief Get the conditions of this input/output.
@@ -494,6 +528,7 @@ class IOSpec {
   ConnectorType connector_type_ = ConnectorType::kDefault;
   IOSize queue_size_ = kSizeOne;
   std::optional<QueuePolicy> queue_policy_ = std::nullopt;
+  size_t memory_block_size_ = 0;
   std::string unique_id_;
 };
 

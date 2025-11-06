@@ -15,6 +15,7 @@
 
 # Testing
 if(BUILD_TESTING)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING ${CONFIG_STRING})
@@ -22,7 +23,7 @@ if(BUILD_TESTING)
   file(WRITE ${CONFIG_FILE} ${CONFIG_STRING})
 
   add_test(NAME EXAMPLE_PYTHON_IMPORT_GXF_COMPONENTS_TEST
-    COMMAND python3 import_gxf_components.py --config ${CONFIG_FILE}
+    COMMAND ${Python3_EXECUTABLE} import_gxf_components.py --config ${CONFIG_FILE}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_IMPORT_GXF_COMPONENTS_TEST PROPERTIES

@@ -35,6 +35,7 @@ namespace holoscan::viz {
  */
 struct ExclusiveWindow::Impl {
   std::string display_name_;
+  vk::DisplayKHR display_;
   uint32_t desired_width_ = 0;
   uint32_t desired_height_ = 0;
   uint32_t desired_refresh_rate_ = 0;
@@ -42,6 +43,8 @@ struct ExclusiveWindow::Impl {
   uint32_t width_ = 0;
   uint32_t height_ = 0;
   uint32_t refresh_rate_ = 0;
+  vk::PhysicalDevicePresentIdFeaturesKHR present_id_feature_;
+  vk::PhysicalDevicePresentWaitFeaturesKHR present_wait_feature_;
 };
 
 ExclusiveWindow::~ExclusiveWindow() {}
@@ -53,50 +56,71 @@ ExclusiveWindow::ExclusiveWindow(const char* display_name, uint32_t width, uint3
   impl_->desired_width_ = width;
   impl_->desired_height_ = height;
   impl_->desired_refresh_rate_ = refresh_rate;
+  impl_->present_id_feature_.presentId = true;
+  impl_->present_wait_feature_.presentWait = true;
 }
 
 void ExclusiveWindow::init_im_gui() {}
 
-const char** ExclusiveWindow::get_required_instance_extensions(uint32_t* count) {
-  static char const* extensions[]{VK_KHR_SURFACE_EXTENSION_NAME, VK_KHR_DISPLAY_EXTENSION_NAME};
-
-  *count = sizeof(extensions) / sizeof(extensions[0]);
-  return extensions;
+std::vector<Window::InstanceExtensionInfo> ExclusiveWindow::get_required_instance_extensions() {
+  return {{VK_KHR_SURFACE_EXTENSION_NAME},
+          {VK_KHR_DISPLAY_EXTENSION_NAME},
+          {VK_EXT_DISPLAY_SURFACE_COUNTER_EXTENSION_NAME}};
 }
 
-const char** ExclusiveWindow::get_required_device_extensions(uint32_t* count) {
-  static char const* extensions[]{VK_KHR_SWAPCHAIN_EXTENSION_NAME};
-
-  *count = sizeof(extensions) / sizeof(extensions[0]);
-  return extensions;
+std::vector<Window::DeviceExtensionInfo> ExclusiveWindow::get_required_device_extensions() {
+  std::vector<Window::DeviceExtensionInfo> device_extensions = {
+      {VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+      {VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME},
+      {VK_KHR_PRESENT_ID_EXTENSION_NAME, true /*optional*/, &impl_->present_id_feature_},
+      {VK_KHR_PRESENT_WAIT_EXTENSION_NAME, true /*optional*/, &impl_->present_wait_feature_},
+  };
+  return device_extensions;
 }
 
 uint32_t ExclusiveWindow::select_device(vk::Instance instance,
                                         const std::vector<vk::PhysicalDevice>& physical_devices) {
   std::string first_display;
+  bool found_display = false;
+  uint32_t display_index;
   uint32_t first_device_index = 0;
-  for (uint32_t index = 0; index < physical_devices.size(); ++index) {
+
+  HOLOSCAN_LOG_INFO("____________________");
+  HOLOSCAN_LOG_INFO("Available displays :");
+  for (uint32_t index = 0; (index < physical_devices.size()) && (!found_display); ++index) {
     const std::vector<vk::DisplayPropertiesKHR> display_properties =
         physical_devices[index].getDisplayPropertiesKHR();
     for (auto&& displayProperty : display_properties) {
+      HOLOSCAN_LOG_INFO("{}", displayProperty.displayName);
       if (std::string(displayProperty.displayName).find(impl_->display_name_) !=
           std::string::npos) {
-        return index;
+        impl_->display_ = displayProperty.display;
+        display_index = index;
+        found_display = true;
+        break;
       }
 
       if (first_display.empty()) {
         first_display = displayProperty.displayName;
+        impl_->display_ = displayProperty.display;
         first_device_index = index;
       }
     }
   }
-  if (first_display.empty()) {
-    throw std::runtime_error("No device with a connected display found");
+  if (!found_display) {
+    if (first_display.empty()) {
+      throw std::runtime_error("No device with a connected display found");
+    }
+
+    HOLOSCAN_LOG_WARN("Display \"{}\" not found, using the first available display \"{}\" instead",
+                      impl_->display_name_.c_str(),
+                      first_display.c_str());
+    return first_device_index;
   }
-  HOLOSCAN_LOG_WARN("Display \"{}\" not found, using the first available display \"{}\" instead",
-                    impl_->display_name_.c_str(),
-                    first_display.c_str());
-  return first_device_index;
+
+  HOLOSCAN_LOG_INFO("");
+  HOLOSCAN_LOG_INFO("Using display \"{}\"", impl_->display_name_);
+  return display_index;
 }
 
 void ExclusiveWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
@@ -110,27 +134,9 @@ void ExclusiveWindow::get_window_size(uint32_t* width, uint32_t* height) {
 
 vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_device,
                                                vk::Instance instance) {
-  const std::vector<vk::DisplayPropertiesKHR> display_properties =
-      physical_device.getDisplayPropertiesKHR();
-
-  // pick the display
-  HOLOSCAN_LOG_INFO("____________________");
-  HOLOSCAN_LOG_INFO("Available displays :");
-  vk::DisplayPropertiesKHR selected_display = display_properties[0];
-  for (auto&& displayProperty : display_properties) {
-    HOLOSCAN_LOG_INFO("{}", displayProperty.displayName);
-    if (std::string(displayProperty.displayName).find(impl_->display_name_) != std::string::npos) {
-      selected_display = displayProperty;
-    }
-  }
-  HOLOSCAN_LOG_INFO("");
-  HOLOSCAN_LOG_INFO("Using display \"{}\"", selected_display.displayName);
-
-  const vk::DisplayKHR display = selected_display.display;
-
   // pick highest available resolution
   const std::vector<vk::DisplayModePropertiesKHR> modes =
-      physical_device.getDisplayModePropertiesKHR(display);
+      physical_device.getDisplayModePropertiesKHR(impl_->display_);
   vk::DisplayModePropertiesKHR mode_properties = modes[0];
   // find the mode
   for (const auto& m : modes) {
@@ -173,14 +179,14 @@ vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_devic
     auto p = planes[i];
 
     // skip planes bound to different display
-    if (p.currentDisplay && (p.currentDisplay != display)) {
+    if (p.currentDisplay && (p.currentDisplay != impl_->display_)) {
       continue;
     }
 
     const std::vector<vk::DisplayKHR> displays =
         physical_device.getDisplayPlaneSupportedDisplaysKHR(i);
     for (auto& d : displays) {
-      if (d == display) {
+      if (d == impl_->display_) {
         found_plane = true;
         plane_index = i;
         break;
@@ -250,6 +256,10 @@ void ExclusiveWindow::end() {
 
 float ExclusiveWindow::get_aspect_ratio() {
   return float(impl_->width_) / float(impl_->height_);
+}
+
+vk::DisplayKHR ExclusiveWindow::get_display() {
+  return impl_->display_;
 }
 
 }  // namespace holoscan::viz

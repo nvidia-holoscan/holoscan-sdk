@@ -175,7 +175,7 @@ class InferenceOp : public holoscan::Operator {
   Parameter<std::vector<std::string>> out_tensor_names_;
 
   /// @brief Optimization profile for models with dynamic input shapes
-  Parameter<std::vector<std::vector<int32_t>>> trt_opt_profile_;
+  Parameter<DataVecMap> trt_opt_profile_;
 
   ///  @brief Memory allocator
   Parameter<std::shared_ptr<Allocator>> allocator_;

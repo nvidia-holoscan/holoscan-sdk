@@ -16,10 +16,13 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <memory>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
@@ -28,6 +31,7 @@
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
@@ -53,8 +57,8 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
   using BayerDemosaicOp::BayerDemosaicOp;
 
   // Define a constructor that fully initializes the object.
-  PyBayerDemosaicOp(Fragment* fragment, const py::args& args,
-                    std::shared_ptr<holoscan::Allocator> pool,
+  PyBayerDemosaicOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                    const py::args& args, std::shared_ptr<holoscan::Allocator> pool,
                     std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                     const std::string& in_tensor_name = "", const std::string& out_tensor_name = "",
                     int interpolation_mode = 0, int bayer_grid_pos = 2, bool generate_alpha = false,
@@ -70,10 +74,7 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
       this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool});
     }
     add_positional_condition_and_resource_args(this, args);
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -89,7 +90,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
   py::class_<BayerDemosaicOp, PyBayerDemosaicOp, Operator, std::shared_ptr<BayerDemosaicOp>>(
       m, "BayerDemosaicOp", doc::BayerDemosaicOp::doc_BayerDemosaicOp)
       .def(py::init<>())
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
                     std::shared_ptr<holoscan::Allocator>,
                     std::shared_ptr<holoscan::CudaStreamPool>,

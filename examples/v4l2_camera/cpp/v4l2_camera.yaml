@@ -35,4 +35,9 @@ source:  # V4L2VideoCaptureOp
   # exposure_time: 500
   # gain: 100
 
+format_converter:  # FormatConverterOp
+  # Pool is configured in the application code
+
 visualizer:  # Holoviz
+
+rmm_allocator:  # RMMAllocator

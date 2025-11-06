@@ -17,14 +17,20 @@
 
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 
+#include <fmt/format.h>
+#include <chrono>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_execution_context.hpp"
 #include "holoscan/core/io_context.hpp"
+#include "holoscan/profiler/nvtx3.hpp"
+#include "holoscan/profiler/profiler.hpp"
 
 #include "gxf/std/transmitter.hpp"
 
@@ -126,8 +132,24 @@ gxf_result_t GXFWrapper::tick() {
 
   HOLOSCAN_LOG_TRACE("Calling operator: {}", op_->name());
   try {
-    PROF_SCOPED_EVENT(op_->id(), event_compute);
-    op_->compute(*op_input_, *op_output_, *exec_context_);
+    // Only create custom NVTX events when both features are enabled
+    if (op_->fragment()->data_flow_tracker() && holoscan::profiler::trace_enabled()) {
+      // Create custom NVTX event - just "compute" without frame info
+      std::string message_str = event_compute::message;
+
+      {
+        holoscan::profiler::scoped_range p{
+            PROF_CATEGORY(op_->id()), nvtx3::message{message_str.c_str()}, event_compute::color};
+
+        op_->compute(*op_input_, *op_output_, *exec_context_);
+
+        // Create post-compute NVTX child range with frame information
+        create_post_compute_nvtx_range();
+      }
+    } else {
+      // Fall back to simple compute call without NVTX frame tracking
+      op_->compute(*op_input_, *op_output_, *exec_context_);
+    }
   } catch (const std::exception& e) {
     // Note: Rethrowing the exception (using `throw;`) would cause the Python interpreter to exit.
     //       To avoid this, we store the exception and return GXF_FAILURE.
@@ -313,6 +335,146 @@ void GXFWrapper::initialize_contexts() {
     exec_context_ = static_cast<GXFExecutionContext*>(op_->execution_context().get());
     op_input_ = exec_context_->input().get();
     op_output_ = exec_context_->output().get();
+  }
+}
+
+void GXFWrapper::create_post_compute_nvtx_range() {
+  // Add post-compute child NVTX range to show actual frame numbers after processing
+  // Conditions are already checked before calling this function
+  HOLOSCAN_LOG_DEBUG("POST-COMPUTE DEBUG: Starting post-compute frame collection for operator '{}'",
+                     op_->name());
+
+  // Determine operator type and get frame information
+  bool has_cycles = get_fragment_has_cycles();
+  bool is_current_op_root = is_root_operator(has_cycles);
+
+  std::string processed_frame_info =
+      is_current_op_root ? get_root_operator_frame_info() : get_non_root_operator_frame_info();
+
+  // Create NVTX child range if we have frame info
+  if (!processed_frame_info.empty()) {
+    std::string post_compute_marker = fmt::format("{}{}", op_->name(), processed_frame_info);
+
+    // Create a child range inside the main compute range
+    {
+      holoscan::profiler::scoped_range post_range{PROF_CATEGORY(op_->id()),
+                                                  nvtx3::message{post_compute_marker.c_str()},
+                                                  event_compute::color};
+      // Range duration depends on debug logging and natural overhead
+    }
+
+    HOLOSCAN_LOG_DEBUG("POST-COMPUTE SUCCESS: Created NVTX child range '{}' for operator '{}'",
+                       post_compute_marker,
+                       op_->name());
+  } else {
+    HOLOSCAN_LOG_DEBUG(
+        "POST-COMPUTE DEBUG: Operator '{}' -> no frame numbers available after compute",
+        op_->name());
+  }
+}
+
+bool GXFWrapper::get_fragment_has_cycles() const {
+  // Thread-safe cache for cycle detection results
+  static std::unordered_map<std::string, bool> fragment_has_cycles_cache;
+  static std::mutex cache_mutex;
+  const std::string& fragment_name = op_->fragment()->name();
+
+  std::lock_guard<std::mutex> lock(cache_mutex);
+  auto cache_it = fragment_has_cycles_cache.find(fragment_name);
+  if (cache_it != fragment_has_cycles_cache.end()) {
+    return cache_it->second;
+  }
+
+  // Cache miss - compute and store result
+  auto cyclic_roots = op_->fragment()->graph().has_cycle();
+  bool has_cycles = !cyclic_roots.empty();
+  fragment_has_cycles_cache[fragment_name] = has_cycles;
+
+  // Clear cache if it grows too large (unlikely but prevents unbounded growth)
+  constexpr size_t MAX_CACHE_SIZE = 1000;
+  if (fragment_has_cycles_cache.size() > MAX_CACHE_SIZE) {
+    HOLOSCAN_LOG_DEBUG("Clearing fragment cycle cache due to size limit");
+    fragment_has_cycles_cache.clear();
+    fragment_has_cycles_cache[fragment_name] = has_cycles;
+  }
+
+  return has_cycles;
+}
+
+bool GXFWrapper::is_root_operator(bool has_cycles) const {
+  return op_->is_root() || (op_->is_user_defined_root() && has_cycles) ||
+         holoscan::Operator::is_all_operator_predecessor_virtual(
+             std::shared_ptr<holoscan::Operator>(op_, [](Operator*) {}), op_->fragment()->graph());
+}
+
+std::string GXFWrapper::get_root_operator_frame_info() const {
+  // For root operators: get port-specific frame numbers from DataFlowTracker
+  auto data_flow_tracker = op_->fragment()->data_flow_tracker();
+  auto port_frame_numbers = data_flow_tracker->get_port_frame_numbers(op_->qualified_name());
+
+  HOLOSCAN_LOG_DEBUG("POST-COMPUTE DEBUG: Root operator '{}' has {} port frame numbers",
+                     op_->name(),
+                     port_frame_numbers.size());
+
+  if (port_frame_numbers.empty()) {
+    return "";
+  }
+
+  // port_frame_numbers already contains operator-port keys, use directly
+  fmt::memory_buffer processed_buffer;
+  fmt::format_to(std::back_inserter(processed_buffer), ": frames ");
+  bool processed_first = true;
+  for (const auto& [operator_port_key, frame_number] : port_frame_numbers) {
+    HOLOSCAN_LOG_DEBUG("POST-COMPUTE DEBUG: Operator '{}' post-compute frame from '{}': {}",
+                       op_->name(),
+                       operator_port_key,
+                       frame_number);
+    fmt::format_to(std::back_inserter(processed_buffer),
+                   "{}{}:{}",
+                   processed_first ? "" : " ",
+                   operator_port_key,
+                   frame_number);
+    processed_first = false;
+  }
+  return fmt::to_string(processed_buffer);
+}
+
+std::string GXFWrapper::get_non_root_operator_frame_info() const {
+  // For non-root operators: get frame numbers from input messages
+  try {
+    const auto& processed_frame_numbers = op_->get_consolidated_input_label().get_frame_numbers();
+    HOLOSCAN_LOG_DEBUG("POST-COMPUTE DEBUG: Operator '{}' has {} post-compute frame numbers",
+                       op_->name(),
+                       processed_frame_numbers.size());
+
+    if (processed_frame_numbers.empty()) {
+      return "";
+    }
+
+    // Show all frames with their operator-port keys (handles both single and multiple)
+    fmt::memory_buffer processed_buffer;
+    fmt::format_to(std::back_inserter(processed_buffer), ": frames ");
+    bool processed_first = true;
+    for (const auto& [operator_port_key, frame_number] : processed_frame_numbers) {
+      HOLOSCAN_LOG_DEBUG("POST-COMPUTE DEBUG: Operator '{}' post-compute frame from '{}': {}",
+                         op_->name(),
+                         operator_port_key,
+                         frame_number);
+      fmt::format_to(std::back_inserter(processed_buffer),
+                     "{}{}:{}",
+                     processed_first ? "" : " ",
+                     operator_port_key,
+                     frame_number);
+      processed_first = false;
+    }
+    return fmt::to_string(processed_buffer);
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_DEBUG(
+        "POST-COMPUTE ERROR: Failed to get post-compute frame numbers for operator "
+        "'{}': {}",
+        op_->name(),
+        e.what());
+    return "";
   }
 }
 

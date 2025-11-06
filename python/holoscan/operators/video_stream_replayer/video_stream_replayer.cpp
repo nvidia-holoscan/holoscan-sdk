@@ -16,17 +16,21 @@
  */
 
 #include <pybind11/pybind11.h>
+#include <pybind11/stl.h>
 
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
 
@@ -54,9 +58,10 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
 
   // Define a constructor that fully initializes the object.
   PyVideoStreamReplayerOp(
-      Fragment* fragment, const py::args& args, const std::string& directory,
-      const std::string& basename, size_t batch_size = 1UL, bool ignore_corrupted_entities = true,
-      float frame_rate = 0.F, bool realtime = true, bool repeat = false, uint64_t count = 0UL,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      const std::string& directory, const std::string& basename, size_t batch_size = 1UL,
+      bool ignore_corrupted_entities = true, float frame_rate = 0.F, bool realtime = true,
+      bool repeat = false, uint64_t count = 0UL,
       std::optional<std::shared_ptr<holoscan::Allocator>> allocator = std::nullopt,
       std::optional<std::shared_ptr<holoscan::Resource>> entity_serializer = std::nullopt,
       const std::string& name = "video_stream_replayer")
@@ -75,10 +80,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
     if (entity_serializer.has_value()) {
       this->add_arg(Arg{"entity_serializer", entity_serializer.value()});
     }
-    name_ = name;
-    fragment_ = fragment;
-    spec_ = std::make_shared<OperatorSpec>(fragment);
-    setup(*spec_);
+    init_operator_base(this, fragment_or_subgraph, name);
   }
 };
 
@@ -96,7 +98,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
              Operator,
              std::shared_ptr<VideoStreamReplayerOp>>(
       m, "VideoStreamReplayerOp", doc::VideoStreamReplayerOp::doc_VideoStreamReplayerOp)
-      .def(py::init<Fragment*,
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
                     const std::string&,
                     const std::string&,
@@ -114,7 +116,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
            "basename"_a,
            "batch_size"_a = 1UL,
            "ignore_corrupted_entities"_a = true,
-           "frame_rate"_a = 1.F,
+           "frame_rate"_a = 0.F,
            "realtime"_a = true,
            "repeat"_a = false,
            "count"_a = 0UL,

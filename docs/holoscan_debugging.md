@@ -18,10 +18,33 @@ The [Holoscan SDK](https://github.com/nvidia-holoscan/holoscan-sdk) can be effec
 
 ### Launching VSCode with the Holoscan SDK
 
-- **Local Development**: Use the `./run vscode` command to launch Visual Studio Code in a development container (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). For more information, refer to the instructions from `./run vscode -h`.
+- **Local Development**: Use the `./run vscode` command to launch Visual Studio Code in a development container (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). If Cursor is installed and available, it will be launched automatically instead of VSCode. For more information, refer to the instructions from `./run vscode -h`.
 - **Remote Development**: For attaching to an existing dev container from a remote machine, use `./run vscode_remote`. Additional instructions can be accessed via `./run vscode_remote -h`.
 
-Upon launching Visual Studio Code, the development container will automatically be built. This process also involves the installation of recommended extensions and the configuration of CMake.
+Upon launching Visual Studio Code (or Cursor), the development container will automatically be built. This process also involves the installation of recommended extensions and the configuration of CMake.
+
+#### IDE Selection Options
+
+The `./run vscode` command now supports multiple IDE options:
+
+- **Automatic Detection**: By default, if Cursor is installed, it will be launched automatically. Otherwise, VSCode will be used.
+- **Manual Selection**: Use `--ide <ide_name>` to specify which IDE to use:
+  - `--ide vscode` - Launch VSCode
+  - `--ide vscode-insiders` - Launch VSCode Insiders
+  - `--ide cursor` - Launch Cursor
+- **Quick Options**: Use shorthand flags for common IDEs:
+  - `--code` - Force launch VSCode
+  - `--cursor` - Force launch Cursor
+- **Custom Binary**: Use `--cmd <path>` to specify a custom IDE binary path
+
+**Examples:**
+```bash
+./run vscode                    # Auto-detect (Cursor if available, otherwise VSCode)
+./run vscode --code             # Force VSCode
+./run vscode --cursor           # Force Cursor
+./run vscode --ide cursor       # Specify Cursor explicitly
+./run vscode --cursor --cmd /path/to/cursor_binary # Use custom Cursor binary
+```
 
 ### Configuring CMake
 

@@ -67,6 +67,7 @@ create a custom application.
     holoscan.core.SchedulingStatusType
     holoscan.core.ServiceDriverEndpoint
     holoscan.core.ServiceWorkerEndpoint
+    holoscan.core.Subgraph
     holoscan.core.Tensor
     holoscan.core.Tracker
     holoscan.core.kwargs_to_arglist
@@ -141,6 +142,7 @@ from ._core import PyOutputContext as OutputContext
 from ._core import PyRegistryContext as _RegistryContext
 from ._core import PyTensor as Tensor
 from ._core import Resource as _Resource
+from ._core import Subgraph as _Subgraph
 from ._core import register_types as _register_types
 
 # Get a logger instance for this module
@@ -199,6 +201,7 @@ __all__ = [
     "ServiceDriverEndpoint",
     "ServiceWorkerEndpoint",
     "START_OPERATOR_NAME",
+    "Subgraph",
     "Tensor",
     "Tracker",
     "arg_to_py_object",
@@ -477,6 +480,85 @@ Fragment.__doc__ = _Fragment.__doc__
 Fragment.__init__.__doc__ = _Fragment.__init__.__doc__
 
 
+class Subgraph(_Subgraph):
+    def __init__(self, fragment, instance_name):
+        if not isinstance(fragment, (_Fragment, _Subgraph)):
+            raise ValueError(
+                "The first argument to a Subgraph's constructor must be the Fragment "
+                "(Application) or Subgraph to which it belongs."
+            )
+
+        # It is recommended to not use super()
+        # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
+        _Subgraph.__init__(self, self, fragment, instance_name)
+
+        # store Fragment as an attribute so it is accessible from Operator constructor, etc.
+        if isinstance(fragment, _Subgraph):
+            fragment = fragment.fragment
+
+        self.fragment = fragment
+
+        # Compose immediately after Python object is fully constructed
+        # This matches the behavior of Fragment::make_subgraph() in C++
+        if not self.is_composed():
+            self.compose()
+            self.set_composed(True)
+
+    def compose(self):
+        pass
+
+    def add_flow(self, upstream, downstream, port_pairs=None, connector_type=None):
+        """
+        Add a flow between components within this Subgraph.
+
+        This method delegates to the fragment's add_flow method, providing a convenient
+        way to connect operators and subgraphs within a Subgraph's compose() method.
+
+        Parameters
+        ----------
+        upstream : Operator or Subgraph
+            The upstream component
+        downstream : Operator or Subgraph
+            The downstream component
+        port_pairs : set of tuple of str, optional
+            Port connections as (upstream_port, downstream_port) pairs
+        connector_type : IOSpec.ConnectorType, optional
+            The connector type to use for the connection
+        """
+
+        # Make sure operator names are updated to the qualified name via `add_operator`
+        #
+        # Note: The name will already be prefixed for operators where a Subgraph was passed as the
+        # first argument to the constructor, but it is still safe to call `add_operator` as it
+        # guards against adding a second copy of the prefix. This will allow robustly making sure
+        # the prefix is added even if the Operator was constructed by passing the Fragment as the
+        # first argument to the constructor or if the Python bindings of a C++ operator did not use
+        # the `get_fragment_ptr_name_pair` utility function to handle the prefixing automatically
+        # during operator construction.
+        if isinstance(upstream, _Operator):
+            self.add_operator(upstream)
+        if isinstance(downstream, _Operator):
+            self.add_operator(downstream)
+
+        # Call the PyFragment::add_flow method to handle the connections. This ensures that the
+        # overloads handling additions to the PyFragment's python_operator_registry_ are used.
+        if connector_type is not None:
+            if port_pairs is not None:
+                self.fragment.add_flow(upstream, downstream, port_pairs, connector_type)
+            else:
+                self.fragment.add_flow(upstream, downstream, connector_type)
+        else:
+            if port_pairs is not None:
+                self.fragment.add_flow(upstream, downstream, port_pairs)
+            else:
+                self.fragment.add_flow(upstream, downstream)
+
+
+# copy docstrings defined in core_pydoc.hpp
+Subgraph.__doc__ = _Subgraph.__doc__
+Subgraph.__init__.__doc__ = _Subgraph.__init__.__doc__
+
+
 class Operator(_Operator):
     _readonly_attributes = [
         "fragment",
@@ -492,10 +574,10 @@ class Operator(_Operator):
         super().__setattr__(name, value)
 
     def __init__(self, fragment, *args, **kwargs):
-        if not isinstance(fragment, _Fragment):
+        if not isinstance(fragment, (_Fragment, _Subgraph)):
             raise ValueError(
                 "The first argument to an Operator's constructor must be the Fragment "
-                "(Application) to which it belongs."
+                "(Application) or Subgraph to which it belongs."
             )
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
@@ -545,19 +627,39 @@ class Condition(_Condition):
         super().__setattr__(name, value)
 
     def __init__(self, fragment, *args, **kwargs):
-        if not isinstance(fragment, _Fragment):
+        if not isinstance(fragment, (_Fragment, _Subgraph)):
             raise ValueError(
-                "The first argument to an Condition's constructor must be the Fragment "
-                "(Application) to which it belongs."
+                "The first argument to an Operator's constructor must be the Fragment "
+                "(Application) or Subgraph to which it belongs."
             )
+
+        # Extract receiver/transmitter kwargs for automatic argument detection
+        # This enables user-supplied condition detection in the C++ backend
+
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
         _Condition.__init__(self, self, fragment, *args, **kwargs)
+
         # Create a PyComponentSpec object and pass it to the C++ API
         spec = ComponentSpec(fragment=self.fragment, component=self)
         self.spec = spec
         # Call setup method in PyCondition class
         self.setup(spec)
+
+        # If a "receiver_name" or "transmitter_name" kwarg was passed in so the
+        # Operator::find_ports_used_by_condition_args() will avoid adding a default condition to
+        # that port, then we should also add a C++ Parameter with that name to avoid a warning
+        # being raised about specifying an argument for which there is no corresponding parameter
+        # defined.
+        receiver_name = kwargs.get("receiver_name")
+        transmitter_name = kwargs.get("transmitter_name")
+        spec_repr = repr(spec)
+        # add Parameter for "receiver_name" if it doesn't already exist
+        if receiver_name is not None and "receiver_name" not in spec_repr:
+            spec.param("receiver_name", receiver_name)
+        # add Parameter for "transmitter_name" if it doesn't already exist
+        if transmitter_name is not None and "transmitter_name" not in spec_repr:
+            spec.param("transmitter_name", transmitter_name)
 
     def setup(self, spec: ComponentSpec):
         """Default implementation of setup method."""
@@ -645,11 +747,12 @@ class Resource(_Resource):
         super().__setattr__(name, value)
 
     def __init__(self, fragment, *args, **kwargs):
-        if not isinstance(fragment, _Fragment):
+        if not isinstance(fragment, (_Fragment, _Subgraph)):
             raise ValueError(
-                "The first argument to an Resource's constructor must be the Fragment "
-                "(Application) to which it belongs."
+                "The first argument to an Operator's constructor must be the Fragment "
+                "(Application) or Subgraph to which it belongs."
             )
+
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
         _Resource.__init__(self, self, fragment, *args, **kwargs)

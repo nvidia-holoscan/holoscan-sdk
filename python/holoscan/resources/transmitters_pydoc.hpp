@@ -54,8 +54,8 @@ Messages are pushed to a back stage after they are published.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 capacity : int, optional
     The capacity of the transmitter.
 policy : int, optional
@@ -75,8 +75,8 @@ Messages are pushed to a back stage after they are published.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 buffer : holoscan.resource.UcxSerializationBuffer
     The serialization buffer used by the transmitter.
 capacity : int, optional
@@ -109,8 +109,8 @@ The latest message is pushed asynchronously.
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
-    The fragment to assign the resource to.
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph
+    The fragment or subgraph to assign the resource to.
 name : str, optional
     The name of the transmitter.
 )doc")

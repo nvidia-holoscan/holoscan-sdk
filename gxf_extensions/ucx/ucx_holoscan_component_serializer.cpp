@@ -25,6 +25,8 @@
 
 #include <gxf/ucx/ucx_serialization_buffer.hpp>
 
+#include "holoscan/core/codec_registry.hpp"
+#include "holoscan/core/gxf/endpoint.hpp"
 #include "holoscan/utils/timer.hpp"
 
 namespace nvidia {
@@ -118,7 +120,7 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
 
   // retrieve the name of the codec corresponding to the data in the Message
   auto index = std::type_index(message.value().type());
-  auto& registry = holoscan::gxf::CodecRegistry::get_instance();
+  auto& registry = holoscan::CodecRegistry::get_instance();
   auto maybe_name = registry.index_to_name(index);
   if (!maybe_name) {
     GXF_LOG_ERROR("No codec found for type_index with name: %s", index.name());
@@ -135,11 +137,12 @@ Expected<size_t> UcxHoloscanComponentSerializer::serializeHoloscanMessage(
 
   // serialize the message contents
   auto serialize_func = registry.get_serializer(codec_name);
-  maybe_size = serialize_func(message, endpoint);
-  if (!maybe_size) {
-    return ForwardError(maybe_size);
+  auto holoscan_endpoint = holoscan::gxf::Endpoint(endpoint);
+  auto maybe_message_size = serialize_func(message, &holoscan_endpoint);
+  if (!maybe_message_size) {
+    return Unexpected{GXF_FAILURE};
   }
-  total_size += maybe_size.value();
+  total_size += maybe_message_size.value();
   return total_size;
 }
 
@@ -154,9 +157,14 @@ Expected<holoscan::Message> UcxHoloscanComponentSerializer::deserializeHoloscanM
   }
 
   // deserialize the message contents
-  auto& registry = holoscan::gxf::CodecRegistry::get_instance();
+  auto& registry = holoscan::CodecRegistry::get_instance();
   auto deserialize_func = registry.get_deserializer(maybe_codec_name.value());
-  return deserialize_func(endpoint);
+  auto holoscan_endpoint = holoscan::gxf::Endpoint(endpoint);
+  auto message = deserialize_func(&holoscan_endpoint);
+  if (!message) {
+    return Unexpected{GXF_FAILURE};
+  }
+  return message.value();
 }
 
 Expected<size_t> UcxHoloscanComponentSerializer::serializeMetadataDictionary(

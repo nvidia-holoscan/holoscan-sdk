@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,8 @@ enum class holoinfer_datatype {
   h_Int64 = 3,
   h_UInt8 = 4,
   h_Float16 = 5,
-  h_Unsupported = 6
+  h_Bool = 6,
+  h_Unsupported = 7
 };
 /// @brief Data processor implementation codes
 enum class holoinfer_data_processor { h_CUDA = 0, h_HOST = 1, h_CUDA_AND_HOST = 2 };

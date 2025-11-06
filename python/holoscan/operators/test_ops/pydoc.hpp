@@ -38,7 +38,7 @@ On each tick, it transmits a fixed value of the specified `data_type` on the out
 
 Parameters
 ----------
-fragment : holoscan.core.Fragment
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 data_type : str, optional
     A string representing the data type for the generated tensor. Must be one of
@@ -65,6 +65,11 @@ On each tick, it receives a std::any and prints the type name.
 
     in : <data_type>
         Receives value as std::any type.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
+    The fragment that the operator belongs to.
 )doc")
 
 }  // namespace DataTypeRxTestOp

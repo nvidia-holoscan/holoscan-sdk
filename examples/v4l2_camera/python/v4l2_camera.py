@@ -15,73 +15,28 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-import os
+import os  # noqa: I001
 
-from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.core._core import Tensor as TensorBase
-from holoscan.operators import HolovizOp, V4L2VideoCaptureOp
+from holoscan.core import Application
+from holoscan.operators import FormatConverterOp, HolovizOp, V4L2VideoCaptureOp
+from holoscan.resources import RMMAllocator
 
-
-# This operator uses the metadata provided by the V4L2VideoCaptureOp and translates it to a
-# HolovizOp::InputSpec so HolovizOp can display the video data. It also sets the YCbCr encoding
-# model and quantization range.
-# For V4L2 pixel formats that have a equivalent nvidia::gxf::VideoFormat enum this is not required
-# since that information is then part of the video buffer send by V4L2VideoCaptureOp.
-class V4L2FormatTranslateOp(Operator):
-    def setup(self, spec: OperatorSpec):
-        spec.input("input")
-        spec.output("output_specs")
-
-    def compute(self, op_input, op_output, context):
-        if not self.is_metadata_enabled:
-            raise RuntimeError("Metadata needs to be enabled for this operator")
-
-        # we don't need the image data, just the metadata
-        entities = op_input.receive("input")
-
-        if len(entities) != 0 and isinstance(entities[""], TensorBase):
-            # use the metadata provided by the V4L2VideoCaptureOp to build the input spec for the
-            # HolovizOp
-            specs = []
-            spec = HolovizOp.InputSpec("", "color")
-            specs.append(spec)
-
-            v4l2_pixel_format = self.metadata["V4L2_pixel_format"]
-            if v4l2_pixel_format == "YUYV":
-                spec.image_format = HolovizOp.ImageFormat.Y8U8Y8V8_422_UNORM
-
-                # also set the encoding and quantization
-                if self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_601":
-                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_601
-                elif self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_709":
-                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_709
-                elif self.metadata["V4L2_ycbcr_encoding"] == "V4L2_YCBCR_ENC_2020":
-                    spec.yuv_model_conversion = HolovizOp.YuvModelConversion.YUV_2020
-
-                if self.metadata["V4L2_quantization"] == "V4L2_QUANTIZATION_FULL_RANGE":
-                    spec.yuv_range = HolovizOp.YuvRange.ITU_FULL
-                elif self.metadata["V4L2_quantization"] == "V4L2_QUANTIZATION_LIM_RANGE":
-                    spec.yuv_range = HolovizOp.YuvRange.ITU_NARROW
-            else:
-                raise RuntimeError(f"Unhandled V4L2 pixel format {v4l2_pixel_format}")
-
-            # don't pass the meta data along to avoid errors when MetadataPolicy is `kRaise`
-            self.metadata.clear()
-
-            # emit the output specs
-            op_output.emit(specs, "output_specs")
+from holoscan.operators.v4l2_camera_passthrough import V4L2CameraPassthroughOp
 
 
-# Now define a simple application using the operators defined above
 class App(Application):
-    """Example of an application that uses the operators defined above.
+    """Example of an application that uses conditional routing for video format conversion.
 
     This application has the following operators:
 
     - V4L2VideoCaptureOp
+    - FormatConverterOp
     - HolovizOp
 
-    The V4L2VideoCaptureOp captures a video streams and visualizes it using HolovizOp.
+    The V4L2VideoCaptureOp captures video streams. Based on the pixel format metadata,
+    the application conditionally routes frames:
+    - If YUYV format: source -> format_converter -> visualizer
+    - Otherwise: source -> visualizer (direct)
     """
 
     def compose(self):
@@ -93,7 +48,14 @@ class App(Application):
             **source_args,
         )
 
-        format_translate = V4L2FormatTranslateOp(self, name="format_translate")
+        # Create format converter for YUYV to RGBA conversion
+        format_converter = FormatConverterOp(
+            self,
+            name="format_converter",
+            pool=RMMAllocator(self, name="rmm-allocator", **self.kwargs("rmm_allocator")),
+            in_dtype="yuyv",
+            out_dtype="rgb888",
+        )
 
         viz_args = self.kwargs("visualizer")
         if "width" in source_args and "height" in source_args:
@@ -107,15 +69,37 @@ class App(Application):
             **viz_args,
         )
 
-        self.add_flow(source, format_translate, {("signal", "input")})
-        self.add_flow(format_translate, visualizer, {("output_specs", "input_specs")})
-        self.add_flow(source, visualizer, {("signal", "receivers")})
+        # Use a C++ passthrough operator to work around two issues:
+        # 1. Connecting multiple operators to HolovizOp "receivers" would create multiple
+        #    input ports with MessageAvailableConditions, resulting in a deadlock
+        # 2. Pure Python operators cannot forward GXF::VideoBuffer objects
+        passthrough = V4L2CameraPassthroughOp(self, name="passthrough")
 
-        # enable metadata so V4L2FormatTranslateOp can translate the format
+        self.add_flow(passthrough, visualizer, {("output", "receivers")})
 
-        # As of Holoscan 3.0, metadata is enabled by default at the Fragment
-        # level. If we wanted to override that default for some operator, we
-        # would call ``self.enable_metadata(False)``.
+        # 1. Flow for YUYV format, not supported directly by Holoviz in display drivers >=R550
+        # source -> format_converter -> passthrough -> visualizer
+        self.add_flow(source, format_converter, {("signal", "source_video")})
+        self.add_flow(format_converter, passthrough, {("tensor", "input")})
+
+        # 2. Flow for other VideoBuffer formats (NV12, RGB24, etc.) directly compatible with Holoviz
+        # source -> passthrough -> visualizer
+        self.add_flow(source, passthrough, {("signal", "input")})
+
+        def dynamic_flow_callback(op):
+            """Route based on V4L2 pixel format metadata.
+
+            YUYV is not supported directly by Holoviz in display drivers >=R550.
+            """
+            pixel_format = op.metadata.get("V4L2_pixel_format", "")
+
+            if "YUYV" in pixel_format.upper():
+                op.add_dynamic_flow("signal", format_converter, "source_video")
+            else:
+                op.add_dynamic_flow("signal", passthrough, "input")
+
+        # Set up conditional routing on source operator
+        self.set_dynamic_flows(source, dynamic_flow_callback)
 
 
 def main(config_file):

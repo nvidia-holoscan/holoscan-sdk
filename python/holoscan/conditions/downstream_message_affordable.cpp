@@ -22,13 +22,16 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <variant>
 
+#include "../core/component_util.hpp"
 #include "./downstream_message_affordable_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/transmitter.hpp"
+#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -54,18 +57,15 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
 
   // Define a constructor that fully initializes the object.
   explicit PyDownstreamMessageAffordableCondition(
-      Fragment* fragment, uint64_t min_size = 1L,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, uint64_t min_size = 1L,
       std::optional<const std::string> transmitter = std::nullopt,
       const std::string& name = "noname_downstream_affordable_condition")
       : DownstreamMessageAffordableCondition(Arg{"min_size", min_size}) {
-    name_ = name;
-    fragment_ = fragment;
     if (transmitter.has_value()) {
       this->add_arg(Arg("transmitter", transmitter.value()));
     }
-    spec_ = std::make_shared<ComponentSpec>(fragment);
     // Note "transmitter" parameter is set automatically from GXFExecutor
-    setup(*spec_);
+    init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
 
@@ -77,7 +77,10 @@ void init_downstream_message_affordable(py::module_& m) {
       m,
       "DownstreamMessageAffordableCondition",
       doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
-      .def(py::init<Fragment*, uint64_t, std::optional<const std::string>, const std::string&>(),
+      .def(py::init<std::variant<Fragment*, Subgraph*>,
+                    uint64_t,
+                    std::optional<const std::string>,
+                    const std::string&>(),
            "fragment"_a,
            "min_size"_a = 1L,
            "transmitter"_a = py::none(),
