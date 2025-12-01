@@ -17,10 +17,7 @@ limitations under the License.
 
 import pytest
 
-from holoscan.core import Component
-from holoscan.core import _Condition as ConditionBase
-from holoscan.core import _Operator as OperatorBase
-from holoscan.core import _Resource as ResourceBase
+from holoscan.core import Component, ConditionBase, OperatorBase, ResourceBase
 from holoscan.gxf import (
     Entity,
     GXFComponent,

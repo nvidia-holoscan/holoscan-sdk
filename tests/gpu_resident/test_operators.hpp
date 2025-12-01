@@ -88,6 +88,21 @@ class TestMultiInputGpuOp : public GPUResidentOperator {
                [[maybe_unused]] ExecutionContext& context) override {}
 };
 
+// Test GPU-resident operator with two output ports
+class TestTwoOutGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(TestTwoOutGpuOp, GPUResidentOperator)
+  TestTwoOutGpuOp() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.device_output("out0", sizeof(int) * 64);
+    spec.device_output("out1", sizeof(int) * 64);
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+};
+
 // Test operator with zero-size memory block (for error testing)
 class ZeroSizeMemoryOp : public GPUResidentOperator {
  public:

@@ -17,6 +17,7 @@
 
 #include "holoscan/core/distributed/app_worker/server.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <utility>
@@ -39,8 +40,6 @@ AppWorkerServer::AppWorkerServer(holoscan::AppWorker* app_worker, bool need_heal
     : app_worker_(app_worker), need_health_check_(need_health_check) {}
 
 AppWorkerServer::~AppWorkerServer() = default;
-
-constexpr int kFragmentExecutorsShutdownTimeoutSeconds = 6;
 
 void AppWorkerServer::start() {
   // Update server address
@@ -100,14 +99,10 @@ void AppWorkerServer::stop() {
   should_stop_ = true;
   cv_.notify_all();
 
-  if (fragment_executors_future_.valid()) {
-    // Add timeout to avoid potential deadlock
-    auto status = fragment_executors_future_.wait_for(
-        std::chrono::seconds(kFragmentExecutorsShutdownTimeoutSeconds));
-    if (status == std::future_status::timeout) {
-      HOLOSCAN_LOG_WARN("Timeout waiting for fragment executors to complete");
-    }
-  }
+  // Note: Do NOT need to wait for fragment_executors_future_ here:
+  // 1. When fragments finish naturally, they're already done before stop() is called
+  // 2. When forcing shutdown, the wait happens in terminate_scheduled_fragments()
+  // The server thread will exit cleanly once should_stop_ is set and cv_ is notified
 
   // Disconnect worker endpoints for distributed fragment services
   app_worker_->handle_worker_disconnect();

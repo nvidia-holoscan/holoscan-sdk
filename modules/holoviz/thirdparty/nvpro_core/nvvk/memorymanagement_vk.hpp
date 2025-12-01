@@ -295,7 +295,8 @@ public:
                      const VkMemoryDedicatedAllocateInfo* dedicated,
                      VkResult&                            result)
   {
-    return allocInternal(memReqs, memProps, isLinear, dedicated, result, true, m_defaultState);
+    return allocInternal(memReqs, memProps, isLinear, dedicated, nullptr, result, true,
+      m_defaultState);
   }
 
   // make individual raw allocations.
@@ -308,7 +309,7 @@ public:
                      State&                               state,
                      VkResult&                            result)
   {
-    return allocInternal(memReqs, memProps, isLinear, dedicated, result, true, state);
+    return allocInternal(memReqs, memProps, isLinear, dedicated, nullptr, result, true, state);
   }
 
   AllocationID alloc(const VkMemoryRequirements& memReqs,
@@ -317,7 +318,8 @@ public:
                      const VkMemoryDedicatedAllocateInfo* dedicated = nullptr)
   {
     VkResult result;
-    return allocInternal(memReqs, memProps, isLinear, dedicated, result, true, m_defaultState);
+    return allocInternal(memReqs, memProps, isLinear, dedicated, nullptr, result, true,
+      m_defaultState);
   }
 
   // unless you use the freeAll mechanism, each allocation must be freed individually
@@ -445,6 +447,7 @@ protected:
     // a memory block is either fully linear, or non-linear
     bool                  isLinear    = false;
     bool                  isDedicated = false;
+    bool                  isExportable = false;
     bool                  isFirst     = false;  // first memory block of a type
     float                 priority    = 0.0F;
     VkMemoryAllocateFlags allocateFlags{};
@@ -503,6 +506,7 @@ protected:
                              VkMemoryPropertyFlags       memProps,
                              bool isLinear,  // buffers are linear, optimal tiling textures are not
                              const VkMemoryDedicatedAllocateInfo* dedicated,
+                             const VkExportMemoryAllocateInfo* exportInfo,
                              VkResult&                            result,
                              bool                                 preferDevice,
                              const State&                         state);

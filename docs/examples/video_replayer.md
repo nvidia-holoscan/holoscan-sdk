@@ -88,7 +88,7 @@ using `from_config()` (C++) and `self.**kwargs()` (Python).
 ````{tab-item} C++
 ```{code-block} cpp
 :linenos: true
-:emphasize-lines: 2-3, 11-12, 15, 28
+:emphasize-lines: 2-3, 16-20, 23, 36
 :name: holoscan-one-operator-workflow-cpp
 
 #include <holoscan/holoscan.hpp>
@@ -97,12 +97,20 @@ using `from_config()` (C++) and `self.**kwargs()` (Python).
 
 class VideoReplayerApp : public holoscan::Application {
  public:
+  void on_window_closed() {
+    // Stop the entire application when the Holoviz window is closed
+    stop_execution();
+  }
+
   void compose() override {
     using namespace holoscan;
 
     // Define the replayer and holoviz operators and configure using yaml configuration
     auto replayer = make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"));
-    auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
+    auto visualizer = make_operator<ops::HolovizOp>(
+        "holoviz", from_config("holoviz"), Arg("window_close_callback", [this]() {
+          on_window_closed();
+        }));
 
     // Define the workflow: replayer -> holoviz
     add_flow(replayer, visualizer, {{"output", "receivers"}});
@@ -124,20 +132,19 @@ int main(int argc, char** argv) {
   return 0;
 }
 ```
-- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are included from lines 1 and 2, respectively.
-- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using the call to `from_config()` (line 11).
-- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using the call to `from_config()` (line 12).
-- The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 34).
-- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 28. If no argument is passed to the executable, the application looks for a file with the name "video_replayer.yaml" in the same directory as the executable (lines 21-22), otherwise it treats the argument as the path to the application's YAML configuration file (lines 23-25).
+- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are included from lines 2 and 3, respectively.
+- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using the call to `from_config()` (line 16).
+- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using the call to `from_config()`, and pass a `window_close_callback` that calls `stop_execution()` so the application terminates cleanly when the Holoviz window is closed (lines 17-20).
+- The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 23).
+- The application's YAML configuration file contains the parameters for our operators, and is loaded before `app->run()` (line 36). If no argument is passed to the executable, the application looks for a file with the name "video_replayer.yaml" in the same directory as the executable; otherwise it treats the argument as the path to the application's YAML configuration file (lines 30–34).
 ````
 ````{tab-item} Python
 ```{code-block} python
 :linenos: true
-:emphasize-lines: 5, 28-30, 31, 34, 45
+:emphasize-lines: 4, 31-39, 42, 48
 :name: holoscan-one-operator-workflow-python
 
 import os
-import sys
 
 from holoscan.core import Application
 from holoscan.operators import HolovizOp, VideoStreamReplayerOp
@@ -157,6 +164,10 @@ class VideoReplayerApp(Application):
     The HolovizOp displays the frames.
     """
 
+    def on_window_closed(self):
+        # Stop the entire application when the Holoviz window is closed
+        self.stop_execution()
+
     def compose(self):
         video_dir = os.path.join(sample_data_path, "racerx")
         if not os.path.exists(video_dir):
@@ -166,7 +177,12 @@ class VideoReplayerApp(Application):
         replayer = VideoStreamReplayerOp(
             self, name="replayer", directory=video_dir, **self.kwargs("replayer")
         )
-        visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
+        visualizer = HolovizOp(
+            self,
+            name="holoviz",
+            window_close_callback=self.on_window_closed,
+            **self.kwargs("holoviz"),
+        )
 
         # Define the workflow
         self.add_flow(replayer, visualizer, {("output", "receivers")})
@@ -183,12 +199,13 @@ if __name__ == "__main__":
     config_file = os.path.join(os.path.dirname(__file__), "video_replayer.yaml")
     main(config_file=config_file)
 ```
-- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are imported on line 5.
-- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using `**self.kwargs()` (lines 28-30).
-- For the Python script, the path to the GXF entity video data is not set in the application configuration file, but determined by the code on lines 7 and 23 and is passed directly as the "directory" argument (line 29). This allows more flexibility for the user to run the script from any directory by setting the `HOLOSCAN_INPUT_PATH` directory (line 7).
-- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using `**self.kwargs()` (line 31).
-- The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 34).
-- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 45. If no argument is passed to the Python script, the application looks for a file with the name "video_replayer.yaml" in the same directory as the script (line 39). Otherwise it treats the argument as the path to the app's YAML configuration file (lines 41-42).
+- The built-in **VideoStreamReplayerOp** and **HolovizOp** operators are imported on line 4.
+- We define an `on_window_closed()` method that calls `self.stop_execution()` to cleanly terminate the application when the Holoviz window is closed (lines 21–23).
+- We create an instance of **VideoStreamReplayerOp** named "replayer" with parameters initialized from the YAML configuration file using `**self.kwargs()` (lines 31–33).
+- For the Python script, the path to the GXF entity video data is not set in the application configuration file, but determined by the code on lines 6 and 26 and is passed directly as the `directory` argument (line 32). This allows more flexibility for the user to run the script from any directory by setting the `HOLOSCAN_INPUT_PATH` environment variable (line 6).
+- We create an instance of **HolovizOp** named "holoviz" with parameters initialized from the YAML configuration file using `**self.kwargs()`, and pass `window_close_callback=self.on_window_closed` so the application terminates cleanly when the Holoviz window is closed (lines 34–39).
+- The "output" port of "replayer" operator is connected to the "receivers" port of the "holoviz" operator and defines the application workflow (line 42).
+- The application's YAML configuration file contains the parameters for our operators, and is loaded on line 48. If no argument is passed to the Python script, the application looks for a file with the name "video_replayer.yaml" in the same directory as the script (line 53). Otherwise it treats the argument as the path to the app's YAML configuration file.
 ````
 `````
 

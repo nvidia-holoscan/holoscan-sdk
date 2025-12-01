@@ -20,11 +20,11 @@
 
 #include <ctime>
 #include <iterator>
+#include <map>
+#include <mutex>
 #include <string>
 #include <unordered_set>
 #include <vector>
-#include <map>
-#include <mutex>
 
 #include "./forward_def.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -168,7 +168,8 @@ class MessageLabel {
    */
   std::vector<std::string> get_all_path_names();
 
-  std::vector<TimestampedPath> paths() const { return message_paths; }
+  std::vector<TimestampedPath>& paths() { return message_paths; }
+  const std::vector<TimestampedPath>& paths() const { return message_paths; }
 
   /**
    * @brief Get the current end-to-end latency of a path in microseconds.

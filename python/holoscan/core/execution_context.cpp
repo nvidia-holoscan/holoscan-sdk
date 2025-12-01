@@ -112,6 +112,7 @@ void init_execution_context(py::module_& m) {
           },
           "op_name"_a = "",
           doc::ExecutionContext::doc_find_operator)
+      .def_property_readonly("is_gpu_available", &PyExecutionContext::is_gpu_available)
       .def(
           "get_operator_status",
           [](ExecutionContext& context, const std::string& op_name = "") -> py::object {

@@ -36,7 +36,7 @@ namespace holoscan {
 template <typename typeT>
 static void register_py_type() {
   auto& arg_setter = ArgumentSetter::get_instance();
-  arg_setter.add_argument_setter<typeT>([](ParameterWrapper& param_wrap, Arg& arg) {
+  arg_setter.add_argument_setter<typeT>([](ParameterWrapper& param_wrap, Arg& arg) -> bool {
     std::any& any_param = param_wrap.value();
     // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
     auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
@@ -65,7 +65,7 @@ static void register_py_type() {
           (py::getattr(op_obj, key).is(py::none()) && param.has_default_value())) {
         py::setattr(op_obj, key, param.default_value());
       }
-      return;
+      return true;
     }
 
     // `PyOperatorSpec.py_param` will have stored the actual Operator class from Python
@@ -75,6 +75,7 @@ static void register_py_type() {
     // We can then set that Class attribute's value to the value contained in Arg.
     // Here we use the `arg_to_py_object` utility to convert from `Arg` to `py::object`.
     py::setattr(op_obj, param.key().c_str(), arg_to_py_object(arg));
+    return true;
   });
 }
 

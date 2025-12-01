@@ -148,7 +148,7 @@ void init_condition(py::module_& m) {
       .value("WAIT_EVENT", SchedulingStatusType::kWaitEvent);
 
   py::class_<Condition, Component, PyCondition, std::shared_ptr<Condition>> condition_class(
-      m, "Condition", py::dynamic_attr(), doc::Condition::doc_Condition);
+      m, "ConditionBase", py::dynamic_attr(), doc::Condition::doc_Condition);
 
   condition_class
       .def(py::init<const py::object&, Fragment*, const py::args&, const py::kwargs&>(),

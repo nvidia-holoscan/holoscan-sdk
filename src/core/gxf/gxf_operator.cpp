@@ -16,6 +16,7 @@
  */
 
 #include <string>
+#include <vector>
 
 #include "holoscan/core/gxf/gxf_operator.hpp"
 
@@ -57,13 +58,28 @@ void GXFOperator::set_parameters() {
   }
 
   // Set Handler parameters
+  std::vector<std::string> errors;
   for (auto& [key, param_wrap] : spec_->params()) {
-    HOLOSCAN_GXF_CALL_WARN_MSG(::holoscan::gxf::GXFParameterAdaptor::set_param(
-                                   gxf_context_, gxf_cid_, key.c_str(), param_wrap),
-                               "GXFOperator '{}':: failed to set GXF parameter '{}'",
-                               name_,
-                               key);
     HOLOSCAN_LOG_TRACE("GXFOperator '{}':: setting GXF parameter '{}'", name_, key);
+    gxf_result_t result = ::holoscan::gxf::GXFParameterAdaptor::set_param(
+        gxf_context_, gxf_cid_, key.c_str(), param_wrap);
+    if (result != GXF_SUCCESS) {
+      std::string error_msg = fmt::format("Parameter '{}': {} (error code: {})",
+                                          key,
+                                          GxfResultStr(result),
+                                          static_cast<int>(result));
+      HOLOSCAN_LOG_ERROR("GXFOperator '{}': failed to set GXF parameter - {}", name_, error_msg);
+      errors.push_back(error_msg);
+    }
+  }
+
+  if (!errors.empty()) {
+    throw std::runtime_error(
+        fmt::format("GXFOperator '{}' (type '{}'): failed to set {} GXF parameter(s):\n  - {}",
+                    name_,
+                    gxf_typename(),
+                    errors.size(),
+                    fmt::join(errors, "\n  - ")));
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,8 @@
 // clang-format off
 #include "holoscan/core/component_spec.hpp"  // must be before argument_setter import
 #include "holoscan/core/argument_setter.hpp"
+#include "holoscan/core/parameter.hpp"
+#include "holoscan/core/arg.hpp"
 // clang-format on
 
 namespace holoscan {
@@ -39,6 +41,30 @@ TEST(ArgumentSetter, TestArgumentSetterInstance) {
   // get the setter corresponding to float
   float f = 1.0;
   auto func = instance.get_argument_setter(typeid(f));
+}
+
+TEST(ArgumentSetter, SetParamThrowsOnBadAnyCast) {
+  // Prepare an int parameter
+  Parameter<int32_t> param_int;
+  ParameterWrapper param_wrap(param_int);
+
+  // Provide a mismatched native type (std::string) to trigger bad_any_cast path
+  Arg arg("beta");
+  arg = std::string("not_an_int");
+
+  // Expect ArgumentSetter::set_param to throw with a descriptive message
+  EXPECT_THROW(
+      {
+        try {
+          ArgumentSetter::set_param(param_wrap, arg);
+        } catch (const std::runtime_error& e) {
+          std::string msg(e.what());
+          EXPECT_NE(msg.find("Failed to set parameter 'beta'"), std::string::npos);
+          EXPECT_NE(msg.find("arg_type"), std::string::npos);
+          throw;
+        }
+      },
+      std::runtime_error);
 }
 
 }  // namespace holoscan

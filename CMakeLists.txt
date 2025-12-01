@@ -29,11 +29,11 @@ option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
 option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
 option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
+option(HOLOSCAN_USE_SCCACHE "Use sccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
 option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
-option(HOLOSCAN_REGISTER_GXF_EXTENSIONS "Register extensions with the Graph Composer registry" OFF)
 option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" ON)
 
 # ##############################################################################
@@ -150,8 +150,11 @@ set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory to use for caching data fo
 mark_as_advanced(HOLOSCAN_CACHE_DIR)
 
 # HOLOSCAN_USE_CCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
-# CCache is not available.
+# if CCache is not available.
 set(HOLOSCAN_USE_CCACHE_SKIPPED FALSE)
+# HOLOSCAN_USE_SCCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
+# if SCCache is not available.
+set(HOLOSCAN_USE_SCCACHE_SKIPPED FALSE)
 include(SetupCache)
 
 # ##############################################################################
@@ -184,10 +187,15 @@ if(HOLOSCAN_ENABLE_CLANG_TIDY)
   #   and --exclude-header-filter is not available until clang-tidy>=19.0.
   set(CMAKE_CXX_CLANG_TIDY
       clang-tidy
-      "--checks='*,-llvmlibc-restrict-system-libc-headers,-abseil-string-find-str-contains,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument'"
+      "--checks='*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument'"
       "--extra-arg=-std=c++17"
   )
 endif()
+
+# Suppress the warning: "warning #128: type qualifiers ignored on cast result type"
+add_compile_options(
+  $<$<COMPILE_LANGUAGE:CUDA>:--diag-suppress=128>
+)
 
 # ##############################################################################
 # # Build sub modules (holoviz, holoinfer)
@@ -442,13 +450,6 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
     if(NOT GXF_${_component}_LOCATION)
         get_target_property(GXF_${_component}_LOCATION GXF::${_component} IMPORTED_LOCATION)
     endif()
-    if("${_component}" STREQUAL "gxe")
-        install(FILES ${HOLOSCAN_GXE_LOCATION}
-            DESTINATION "bin"
-            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-            COMPONENT "holoscan-gxf_libs"
-        )
-    else()
         install(FILES "${GXF_${_component}_LOCATION}"
             DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
             COMPONENT "holoscan-gxf_libs"
@@ -461,7 +462,7 @@ foreach(_component ${HOLOSCAN_GXF_COMPONENTS})
             # "internal" targets are a build detail and are no-ops for public interface
             list(FILTER interface_targets EXCLUDE REGEX ".*_internal.*")
             # RMM headers are embedded in the Holoscan SDK package
-            list(FILTER interface_targets EXCLUDE REGEX "^rmm::rmm$")
+            #list(FILTER interface_targets EXCLUDE REGEX "^rmm::rmm$")
             set(HOLOSCAN_GXF_INSTALL_HOOK "${HOLOSCAN_GXF_INSTALL_HOOK}
 if(TARGET GXF::${_component})
 set_target_properties(GXF::${_component} PROPERTIES \
@@ -470,7 +471,6 @@ set_target_properties(GXF::${_component} PROPERTIES \
 endif()"
             )
         endif()
-    endif()
 endforeach()
 
 if(HOLOSCAN_BUILD_PYTHON AND GXF_PYTHON_MODULE_PATH)
@@ -480,32 +480,6 @@ if(HOLOSCAN_BUILD_PYTHON AND GXF_PYTHON_MODULE_PATH)
     COMPONENT "holoscan-gxf_libs"
   )
 endif()
-
-# Install CMake script to build GXE applications
-install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/GenerateGXEAppInstall.cmake"
-RENAME GenerateGXEApp.cmake
-DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
-COMPONENT "holoscan-gxf_libs"
-)
-
-# Install CMake script for GXF wrapping of extensions
-install(
-FILES
-  "${CMAKE_SOURCE_DIR}/cmake/modules/WrapAsGXFComponent.cmake"
-  "${CMAKE_SOURCE_DIR}/cmake/modules/WrapOperatorAsGXFExtension.cmake"
-DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
-COMPONENT "holoscan-gxf_libs"
-)
-
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/cmake/modules/wrap_operator_as_gxf_template"
-DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
-COMPONENT "holoscan-gxf_libs"
-)
-
-install(DIRECTORY "${CMAKE_SOURCE_DIR}/cmake/modules/wrap_resource_as_gxf_template"
-DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
-COMPONENT "holoscan-gxf_libs"
-)
 
 # Install CMake scripts to download data from NGC so it can be reused by HoloHub
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
@@ -532,7 +506,7 @@ endif()
 set(_GXF_components @HOLOSCAN_GXF_COMPONENTS@)
 
 foreach(gxf_component IN LISTS _GXF_components)
-  if(NOT TARGET GXF::${gxf_component} AND NOT (${gxf_component} STREQUAL "gxe"))
+  if(NOT TARGET GXF::${gxf_component})
     add_library(GXF::${gxf_component} SHARED IMPORTED)
     set_target_properties(GXF::${gxf_component} PROPERTIES
       IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libgxf_${gxf_component}.so"
@@ -553,6 +527,14 @@ if(TARGET GXF::ucx)
         APPEND PROPERTY
             INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucx"
     )
+endif()
+
+if(NOT TARGET rmm::rmm)
+  add_library(rmm::rmm SHARED IMPORTED)
+  set_target_properties(rmm::rmm PROPERTIES
+    INTERFACE_COMPILE_DEFINITIONS "LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE"
+    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/librmm.so"
+  )
 endif()
 
 # Find holoscan::ucp that is prerequisite of holoscan::ucxx
@@ -590,17 +572,10 @@ if(NOT TARGET holoscan::ucxx)
   )
 endif()
 
-if(NOT TARGET GXF::gxe)
-  add_executable(GXF::gxe IMPORTED)
-  set_target_properties(GXF::gxe PROPERTIES
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/bin/gxe"
-  )
-endif()
-
 set(GXF_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
 set(GXF_EXTENSIONS_DIR "${PACKAGE_PREFIX_DIR}/lib/gxf_extensions")
 
-# Add the directory containing cmake files such as WrapAsGXFComponent.cmake
+# Add the directory containing cmake files
 # to the search paths so that find_dependency can find it.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}")
 

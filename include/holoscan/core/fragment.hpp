@@ -101,6 +101,8 @@ class Fragment : public FragmentServiceProvider {
    */
   class GPUResidentAccessor {
    public:
+    // Delete default constructor
+    GPUResidentAccessor() = delete;
     /**
      * @brief Construct a new GPUResidentAccessor object
      *
@@ -143,6 +145,65 @@ class Fragment : public FragmentServiceProvider {
      * @return true if the CUDA graph has been launched, false otherwise.
      */
     bool is_launched();
+
+    /**
+     * @brief Get the CUDA graph of the main workload in this fragment. This
+     * returns a clone of the main workload graph, and certain CUDA graph nodes
+     * (e.g. memory allocation, memory free, conditional nodes) are not
+     * supported for cloning.
+     *
+     * @return A clone of the CUDA graph of the main workload in this fragment.
+     */
+    cudaGraph_t workload_graph();
+
+    /**
+     * @brief Get the CUDA device pointer for the data_ready signal.
+     *
+     * This returns the actual device memory address that the GPU-resident CUDA graph
+     * uses to check if data is ready for processing. Can be used for advanced
+     * GPU-resident applications that need direct access to these control signals.
+     *
+     * @return Pointer to the device memory location for data_ready signal.
+     */
+    void* data_ready_device_address();
+
+    /**
+     * @brief Get the CUDA device pointer for the result_ready signal.
+     *
+     * Similar to data_ready_device_address(), but for the result_ready signal.
+     *
+     * @return Pointer to the device memory location for result_ready signal.
+     */
+    void* result_ready_device_address();
+
+    /**
+     * @brief Get the CUDA device pointer for the tear_down signal.
+     *
+     * Similar to data_ready_device_address(), but for the tear_down signal.
+     *
+     * @return Pointer to the device memory location for tear_down signal.
+     */
+    void* tear_down_device_address();
+
+    /**
+     * @brief Register a data ready handler to this fragment. The data ready handler
+     * will be executed at the beginning of every iteration of the GPU-resident CUDA
+     * Graph. The data ready handler will usually indicate whether input data is ready
+     * for processing. If the data ready handler marks data to be ready, then main
+     * workload CUDA graph will be executed on this iteration, otherwise main workload
+     * processing will be skipped for this iteration.
+     *
+     * @param data_ready_handler_fragment Shared pointer to a fragment that
+     * will be added as the data ready handler to this fragmemt.
+     */
+    void register_data_ready_handler(std::shared_ptr<Fragment> data_ready_handler_fragment);
+
+    /**
+     * @brief Get the registered data ready handler fragment.
+     *
+     * @return The data ready handler fragment, or nullptr if none is registered.
+     */
+    std::shared_ptr<Fragment> data_ready_handler_fragment();
 
    private:
     Fragment* fragment_;  ///< Pointer to the parent Fragment
@@ -251,6 +312,7 @@ class Fragment : public FragmentServiceProvider {
    * @param config_file The path to the configuration file.
    * @param prefix The prefix string that is prepended to the key of the configuration. (not
    * implemented yet)
+   * @throws RuntimeError if the config_file is non-empty and the file doesn't exist.
    */
   void config(const std::string& config_file, [[maybe_unused]] const std::string& prefix = "");
 

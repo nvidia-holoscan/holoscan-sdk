@@ -57,6 +57,13 @@ class GPUResidentOperator : public holoscan::Operator {
   std::shared_ptr<cudaStream_t> cuda_stream();
 
   /**
+   * @brief Get the CUDA stream for the operator to launch a data ready handler CUDA workload.
+   *
+   * @return std::shared_ptr<cudaStream_t>
+   */
+  std::shared_ptr<cudaStream_t> data_ready_handler_cuda_stream();
+
+  /**
    * @brief Get the device memory address of an input or output port corresponding to a given port
    * name.
    *
@@ -65,6 +72,28 @@ class GPUResidentOperator : public holoscan::Operator {
    * not exist or is the port does not correspond to a device memory address.
    */
   void* device_memory(const std::string& port_name);
+
+  /**
+   * @brief Get the CUDA device pointer for the data_ready signal.
+   *
+   * This address can be used in CUDA kernels to signal that data is ready for processing
+   * in the GPU-resident execution pipeline. The data ready handler GPU-resident
+   * operators can use this address to atomically signal the data is now ready
+   * for processing.
+   *
+   * @return Pointer to the device memory location for the data_ready signal.
+   */
+  void* data_ready_device_address();
+
+  /**
+   * @brief Get the CUDA device pointer for the result_ready signal.
+   *
+   * This address can be used in CUDA kernels to signal that results from the
+   * GPU-resident execution are ready for consumption.
+   *
+   * @return Pointer to the device memory location for the result_ready signal.
+   */
+  void* result_ready_device_address();
 };
 
 }  // namespace holoscan

@@ -670,6 +670,14 @@ The {cpp:class}`C++ <holoscan::PresentDoneCondition>` allows an operator to sync
 
 The condition tracks presentation IDs, which increment with each frame presented. It blocks until a specific presentation ID is reached or a timeout occurs, ensuring that the application doesn't generate frames faster than the display can present them.
 
+:::{note}
+This condition is not supported on Orin iGPU because the required `VK_KHR_present_wait` extension is not available.
+:::
+
+:::{note}
+Applications using this condition might hang or crash when using tools to remotely access the desktop.
+:::
+
 **Use cases:**
 - Preventing frame queue buildup by matching generation to presentation rate
 - Reducing end-to-end latency in interactive applications

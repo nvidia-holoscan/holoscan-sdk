@@ -36,13 +36,13 @@ import numpy as np
 
 from holoscan.conditions import BooleanCondition
 from holoscan.core import (
+    ConditionBase,
     ConditionType,
     IOSpec,
     Operator,
     OperatorSpec,
+    ResourceBase,
 )
-from holoscan.core import _Condition as ConditionBase
-from holoscan.core import _Resource as ResourceBase
 from holoscan.core._core import Fragment as FragmentBase
 from holoscan.core._core import Tensor as TensorBase
 

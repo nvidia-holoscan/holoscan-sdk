@@ -19,11 +19,13 @@
 #include <algorithm>
 #include <iostream>
 #include <iterator>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/data_logger.hpp"  // for console_output_mutex
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
@@ -49,6 +51,9 @@ int64_t MessageLabel::get_e2e_latency(int index) {
 }
 
 void MessageLabel::print_all() {
+  // Use shared console output mutex to prevent interleaved output with other console writers
+  std::lock_guard<std::mutex> lock(console_output_mutex);
+
   if (!num_paths()) {
     std::cout << "No paths in MessageLabel.\n";
     return;
@@ -159,8 +164,12 @@ std::vector<int> MessageLabel::has_operator(const std::string& op_name) const {
   std::vector<int> valid_paths;
   valid_paths.reserve(DEFAULT_NUM_PATHS);
 
+  auto alt_name = op_name + "_old";  // for asynchronous buffer's old message handling
+
   for (int i = 0; i < num_paths(); i++) {
     if (message_path_operators[i].find(op_name) != message_path_operators[i].end()) {
+      valid_paths.push_back(i);
+    } else if (message_path_operators[i].find(alt_name) != message_path_operators[i].end()) {
       valid_paths.push_back(i);
     }
   }

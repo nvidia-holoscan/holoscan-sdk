@@ -146,6 +146,15 @@ expected<int, RuntimeError> GXFExecutionContext::device_from_stream(cudaStream_t
                                       "from streams being managed by Holoscan SDK"));
 }
 
+// @brief check if GPU capability is present on the system
+bool GXFExecutionContext::is_gpu_available() const {
+  if (cuda_object_handler_ != nullptr) {
+    return cuda_object_handler_->is_gpu_available();
+  }
+  // If no CUDA object handler is initialized, assume GPU is unavailable
+  return false;
+}
+
 std::shared_ptr<Operator> GXFExecutionContext::find_operator(
     const std::string& op_name /* = "" */) {
   if (op_name.empty()) {

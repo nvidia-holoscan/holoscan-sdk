@@ -16,12 +16,11 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(nvtx3 3.1
+rapids_cpm_find(nvtx3 3.3
     GLOBAL_TARGETS nvtx3-c nvtx3-cpp
-
     CPM_ARGS
     GITHUB_REPOSITORY NVIDIA/NVTX
-    GIT_TAG v3.1.0-c-cpp
+    GIT_TAG v3.3.0-c-cpp
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
 )

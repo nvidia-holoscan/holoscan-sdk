@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 #include <gxf/core/gxf.h>
 
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -163,17 +164,19 @@ TEST(Fragment, TestFragmentConfigNonexistentFile) {
 
   const std::string config_file = "nonexistent.yaml";
 
-  // capture stderr
-  testing::internal::CaptureStderr();
-  F.config(config_file);
-
-  // verify that an error is logged when the YAML file doesn't exist
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
-                                                               << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find("Config file 'nonexistent.yaml' doesn't exist") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+  // Fragment::config should throw an exception when the YAML file doesn't exist
+  EXPECT_THROW(
+      {
+        try {
+          F.config(config_file);
+        } catch (const RuntimeError& e) {
+          // Verify the exception message contains the expected text
+          EXPECT_TRUE(std::string(e.what()).find("Config file 'nonexistent.yaml' doesn't exist") !=
+                      std::string::npos);
+          throw;
+        }
+      },
+      RuntimeError);
 }
 
 TEST(Fragment, TestFragmentGraph) {
@@ -355,6 +358,37 @@ TEST(Fragment, TestAddFlowAsyncBufferReceiversTwoOutputs) {
   std::string log_output = testing::internal::GetCapturedStderr();
   // expect no error
   EXPECT_TRUE(log_output.find("error") == std::string::npos);
+}
+
+TEST(Fragment, TestAddFlowAsyncBufferDownstreamIndegreeNonZero) {
+  Fragment F;
+
+  auto tx1 = F.make_operator<ops::PingTxOp>("tx1");
+  auto tx2 = F.make_operator<ops::PingTxOp>("tx2");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+
+  // First, connect an async edge to rx.in so indegree(rx.in) gets to 1
+  F.add_flow(tx1, rx, {{"out", "in"}}, IOSpec::ConnectorType::kAsyncBuffer);
+
+  // Then, attempt to connect another async buffer edge to the same input port; expect RuntimeError
+  EXPECT_THROW(F.add_flow(tx2, rx, {{"out", "in"}}, IOSpec::ConnectorType::kAsyncBuffer),
+               holoscan::RuntimeError);
+}
+
+TEST(Fragment, TestAddFlowAsyncBufferTwoOutputsToOneInput_InSingleCall) {
+  Fragment F;
+
+  auto tx = F.make_operator<holoscan::TwoInTwoOutOp>("tx");
+  auto rx = F.make_operator<ops::PingRxOp>("rx");
+
+  // Map two different upstream outputs to the same downstream input via async buffer in one call
+  // This should be rejected as kAsyncBuffer must be one-to-one
+  const std::pair<std::string, std::string> p1{"out0", "in"};
+  const std::pair<std::string, std::string> p2{"out1", "in"};
+  std::set<std::pair<std::string, std::string>> port_pairs{p1, p2};
+
+  EXPECT_THROW(F.add_flow(tx, rx, port_pairs, IOSpec::ConnectorType::kAsyncBuffer),
+               holoscan::RuntimeError);
 }
 
 TEST(Fragment, TestOperatorOrder) {

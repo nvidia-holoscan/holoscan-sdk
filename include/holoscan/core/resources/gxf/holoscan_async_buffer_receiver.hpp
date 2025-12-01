@@ -62,6 +62,7 @@ class HoloscanAsyncBufferReceiver : public nvidia::gxf::AsyncBufferReceiver {
  private:
   holoscan::Operator* op_ = nullptr;  ///< The operator that this receiver is attached to.
   bool tracking_ = false;             ///< Used to decide whether to use data flow tracking or not.
+  gxf_uid_t last_received_uid_ = kNullUid;  ///< The last received message UID.
 };
 
 }  // namespace holoscan

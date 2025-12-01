@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,13 +41,15 @@ class Config {
    * @param config_file The path to the configuration file.
    * @param prefix The prefix string that is prepended to the key of the configuration. (not
    * implemented yet)
+   * @throws RuntimeError if the config_file is non-empty and the file doesn't exist.
    */
   explicit Config(const std::string& config_file, const std::string& prefix = "")
       : config_file_(config_file), prefix_(prefix) {
     if (std::filesystem::exists(config_file)) {
       parse_file(config_file);
     } else if (config_file != "") {
-      HOLOSCAN_LOG_WARN("Config file '{}' doesn't exist", config_file);
+      throw RuntimeError(ErrorCode::kNotFound,
+                         fmt::format("Config file '{}' doesn't exist", config_file));
     }
   }
   virtual ~Config() = default;

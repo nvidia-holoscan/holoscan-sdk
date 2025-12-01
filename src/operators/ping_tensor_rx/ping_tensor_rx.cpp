@@ -33,23 +33,26 @@ void PingTensorRxOp::setup(OperatorSpec& spec) {
              true);
 }
 
-void PingTensorRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext&) {
+void PingTensorRxOp::compute(InputContext& op_input, OutputContext&, ExecutionContext& context) {
   if (receive_as_tensormap_.get()) {
     auto maybe_in_message = op_input.receive<holoscan::TensorMap>("in");
     if (!maybe_in_message) {
       HOLOSCAN_LOG_ERROR("Failed to receive message from port 'in'");
       return;
     }
-    cudaStream_t stream = op_input.receive_cuda_stream("in", false);
 
-    HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port 'in'",
-                      name(),
-                      stream == cudaStreamDefault ? "" : "non-");
+    if (context.is_gpu_available()) {
+      cudaStream_t stream = op_input.receive_cuda_stream("in", false);
 
-    // have this operator wait for any work on the stream to complete
-    cudaError_t status = cudaStreamSynchronize(stream);
-    if (status != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(status));
+      HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port 'in'",
+                        name(),
+                        stream == cudaStreamDefault ? "" : "non-");
+
+      // have this operator wait for any work on the stream to complete
+      cudaError_t status = cudaStreamSynchronize(stream);
+      if (status != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(status));
+      }
     }
 
     auto in_message = maybe_in_message.value();
@@ -72,15 +75,17 @@ void PingTensorRxOp::compute(InputContext& op_input, OutputContext&, ExecutionCo
       return;
     }
 
-    cudaStream_t stream = op_input.receive_cuda_stream("in", false);
-    HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port 'in'",
-                      name(),
-                      stream == cudaStreamDefault ? "" : "non-");
+    if (context.is_gpu_available()) {
+      cudaStream_t stream = op_input.receive_cuda_stream("in", false);
+      HOLOSCAN_LOG_INFO("{} received {}default CUDA stream from port 'in'",
+                        name(),
+                        stream == cudaStreamDefault ? "" : "non-");
 
-    // have this operator wait for any work on the stream to complete
-    cudaError_t status = cudaStreamSynchronize(stream);
-    if (status != cudaSuccess) {
-      HOLOSCAN_LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(status));
+      // have this operator wait for any work on the stream to complete
+      cudaError_t status = cudaStreamSynchronize(stream);
+      if (status != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Failed to synchronize stream: {}", cudaGetErrorString(status));
+      }
     }
 
     auto tensor = maybe_tensor.value();

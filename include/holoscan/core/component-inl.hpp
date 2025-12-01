@@ -33,7 +33,7 @@ namespace holoscan {
 template <typename typeT>
 void ComponentBase::register_argument_setter() {
   ArgumentSetter::get_instance().add_argument_setter<typeT>(
-      [](ParameterWrapper& param_wrap, Arg& arg) {
+      [](ParameterWrapper& param_wrap, Arg& arg) -> bool {
         std::any& any_param = param_wrap.value();
 
         // If arg has no name and value, that indicates that we want to set the default value for
@@ -41,7 +41,7 @@ void ComponentBase::register_argument_setter() {
         if (arg.name().empty() && !arg.has_value()) {
           auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
           param.set_default_value();
-          return;
+          return true;
         }
 
         std::any& any_arg = arg.value();
@@ -65,16 +65,29 @@ void ComponentBase::register_argument_setter() {
           bool parse_ok = YAML::convert<typeT>::decode(arg_value, new_value);
           if (!parse_ok) {
             HOLOSCAN_LOG_ERROR("Unable to parse YAML node for parameter '{}'", arg.name());
+            return false;
           } else {
             param = std::move(new_value);
+            return true;
           }
         } else {
           try {
             auto& arg_value = std::any_cast<typeT&>(any_arg);
             param = arg_value;
+            return true;
           } catch (const std::bad_any_cast& e) {
-            HOLOSCAN_LOG_ERROR(
-                "Bad any cast exception caught for argument '{}': {}", arg.name(), e.what());
+            // Capture type information for detailed error reporting
+            const char* expected = typeid(typeT).name();
+            const std::type_info& actual_type = any_arg.type();
+            const char* actual = actual_type == typeid(void) ? "<empty>" : actual_type.name();
+            std::string error_message =
+                fmt::format("Bad any cast while setting argument '{}': expected '{}', got '{}'. {}",
+                            arg.name(),
+                            expected,
+                            actual,
+                            e.what());
+            HOLOSCAN_LOG_ERROR(error_message);
+            return false;
           }
         }
       });

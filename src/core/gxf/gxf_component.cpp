@@ -169,12 +169,28 @@ void GXFComponent::set_gxf_parameter(const std::string& component_name, const st
                      component_name,
                      gxf_typename(),
                      key);
-  HOLOSCAN_GXF_CALL_WARN_MSG(::holoscan::gxf::GXFParameterAdaptor::set_param(
-                                 gxf_context_, gxf_cid_, key.c_str(), param_wrap),
-                             "component '{}':: failed to set GXF parameter '{}'",
-                             component_name,
-                             key);
-  // TODO(unknown): handle error
+  // If the component has not been added to a GraphEntity yet, skip setting parameters now.
+  // They will be set when the component is added and initialized by the executor.
+  if (gxf_context_ == nullptr || gxf_cid_ == 0) {
+    HOLOSCAN_LOG_WARN(
+        "Skipping setting GXF parameter '{}' for component '{}' (type '{}') because the component "
+        "is not yet attached to a GraphEntity",
+        key,
+        component_name,
+        gxf_typename());
+    return;
+  }
+  gxf_result_t result = ::holoscan::gxf::GXFParameterAdaptor::set_param(
+      gxf_context_, gxf_cid_, key.c_str(), param_wrap);
+  if (result != GXF_SUCCESS) {
+    throw std::runtime_error(fmt::format(
+        "Failed to set GXF parameter '{}' for component '{}' of type '{}': {} (error code: {})",
+        key,
+        component_name,
+        gxf_typename(),
+        GxfResultStr(result),
+        static_cast<int>(result)));
+  }
 }
 
 std::string GXFComponent::gxf_entity_group_name() {

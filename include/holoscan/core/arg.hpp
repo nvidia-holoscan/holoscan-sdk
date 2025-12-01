@@ -22,6 +22,7 @@
 
 #include <any>
 #include <complex>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <sstream>
@@ -367,6 +368,15 @@ class Arg {
 
   template <typename ArgT>
   void set_value_(const ArgT& value) {
+    // If this argument is a nullary callable returning void, store as std::function<void()>
+    if constexpr (std::is_invocable_r_v<void, ArgT>) {
+      arg_type_ = ArgType::create<std::function<void()>>();
+      HOLOSCAN_LOG_DEBUG(
+          "Arg::set_value detected callable(void) for '{}', storing as std::function<void()>",
+          name_);
+      value_ = std::function<void()>(value);
+      return;
+    }
     arg_type_ = ArgType::create<ArgT>();
     HOLOSCAN_LOG_TRACE(
         "Arg::set_value(const ArgT& value)({}) parameter: {}, element_type: {}, container_type: {}",
@@ -398,6 +408,16 @@ class Arg {
 
   template <typename ArgT>
   void set_value_(ArgT&& value) {
+    // If this argument is a nullary callable returning void, store as std::function<void()>
+    if constexpr (std::is_invocable_r_v<void, ArgT>) {
+      arg_type_ = ArgType::create<std::function<void()>>();
+      HOLOSCAN_LOG_DEBUG(
+          "Arg::set_value detected callable(void) rvalue for '{}', storing as "
+          "std::function<void()>",
+          name_);
+      value_ = std::function<void()>(std::forward<ArgT>(value));
+      return;
+    }
     arg_type_ = ArgType::create<ArgT>();
     HOLOSCAN_LOG_TRACE(
         "Arg::set_value(ArgT&& value)({}) parameter: {}, element_type: {}, container_type: {}, "

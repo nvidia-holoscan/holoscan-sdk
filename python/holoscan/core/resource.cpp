@@ -111,7 +111,7 @@ void PyResource::setup(ComponentSpec& spec) {
 void init_resource(py::module_& m) {
   // note: added py::dynamic_attr() to allow dynamically adding attributes in a Python subclass
   py::class_<Resource, Component, PyResource, std::shared_ptr<Resource>> resource_class(
-      m, "Resource", py::dynamic_attr(), doc::Resource::doc_Resource_args_kwargs);
+      m, "ResourceBase", py::dynamic_attr(), doc::Resource::doc_Resource_args_kwargs);
 
   resource_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),

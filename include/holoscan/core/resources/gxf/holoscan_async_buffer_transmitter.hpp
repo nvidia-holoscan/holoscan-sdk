@@ -58,7 +58,7 @@ class HoloscanAsyncBufferTransmitter : public nvidia::gxf::AsyncBufferTransmitte
    * @param op The operator that this transmitter is attached to.
    */
   void op(holoscan::Operator* op) { this->op_ = op; }
-  void track() { tracking_ = true; }
+  void track();
 
  private:
   holoscan::Operator* op_ = nullptr;  ///< The operator that this transmitter is attached to.

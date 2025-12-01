@@ -94,8 +94,8 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
     for (auto image_format : preferred_image_formats) {
       auto it = std::find_if(surface_formats.begin(),
                              surface_formats.end(),
-                             [&image_format](const SurfaceFormat& surface_format) {
-                               return surface_format.image_format_ == image_format;
+                             [&image_format](const SurfaceFormat& surf_fmt) {
+                               return surf_fmt.image_format_ == image_format;
                              });
       if (it != surface_formats.end()) {
         surface_format = *it;

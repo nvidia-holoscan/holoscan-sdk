@@ -27,12 +27,12 @@ namespace holoscan::doc {
 namespace Resource {
 
 PYDOC(Resource, R"doc(
-Class representing a resource.
+Base class representing either a wrapped C++ resource or native Python resource.
 )doc")
 
 //  Constructor
 PYDOC(Resource_args_kwargs, R"doc(
-Class representing a resource.
+Base class representing either a wrapped C++ resource or native Python resource.
 
 Can be initialized with any number of Python positional and keyword arguments.
 

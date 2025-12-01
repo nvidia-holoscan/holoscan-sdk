@@ -22,6 +22,7 @@
 
 #include <functional>
 #include <iterator>  // for std::back_inserter
+#include <map>
 #include <memory>
 #include <mutex>  // for std::call_once
 #include <set>
@@ -849,6 +850,64 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
   }
 
+  // check indegree constraints
+  // cur_indegree_size tracks the indegree of the target ports for current add_flow call
+  std::map<std::string, size_t> cur_indegree_size;  // size_t will be initialized to 0
+  for (const auto& [source_port, target_ports] : *port_map) {
+    // iterate through target_ports set
+    for (const auto& target_port : target_ports) {
+      // if there is already a connection to the target port, then disallow async buffer and
+      // GPU-resident connections
+      if (graph().get_indegree(downstream_op, target_port) > 0) {
+        if (connector_type == IOSpec::ConnectorType::kAsyncBuffer) {
+          auto err_msg = fmt::format(
+              "add_flow failed. The downstream operator ({})'s input port '{}' is already connected"
+              " to other upstream operators. It cannot be connected to the upstream operator "
+              "({})'s output port '{}' with the connector type "
+              "IOSpec::ConnectorType::kAsyncBuffer.",
+              downstream_op->name(),
+              target_port,
+              upstream_op->name(),
+              source_port);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+        }
+        if (is_gpu_resident_) {
+          auto err_msg = fmt::format(
+              "add_flow failed. The downstream operator ({})'s input port '{}' is already "
+              "connected to other upstream operators. It cannot be connected to the upstream "
+              "operator ({})'s output port '{}' for GPU-resident connection.",
+              downstream_op->name(),
+              target_port,
+              upstream_op->name(),
+              source_port);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+        }
+      } else if (cur_indegree_size[target_port] > 0) {
+        if (connector_type == IOSpec::ConnectorType::kAsyncBuffer) {
+          auto err_msg = fmt::format(
+              "add_flow failed. The downstream operator ({})'s input port '{}' is trying to be "
+              "connected to multiple output ports of the upstream operator ({}). It is not allowed "
+              "for IOSpec::ConnectorType::kAsyncBuffer connector type.",
+              downstream_op->name(),
+              target_port,
+              upstream_op->name());
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+        }
+        if (is_gpu_resident_) {
+          auto err_msg = fmt::format(
+              "add_flow failed. The downstream operator ({})'s input port '{}' is trying to be "
+              "connected to multiple output ports of the upstream operator ({}) for GPU-resident "
+              "connection. It is not allowed for GPU-resident connections.",
+              downstream_op->name(),
+              target_port,
+              upstream_op->name());
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
+        }
+      }
+      cur_indegree_size[target_port]++;
+    }
+  }
+
   upstream_op->set_self_shared(upstream_op);
   downstream_op->set_self_shared(downstream_op);
   if (is_gpu_resident_) {
@@ -1261,6 +1320,44 @@ void Fragment::GPUResidentAccessor::data_ready() {
 bool Fragment::GPUResidentAccessor::is_launched() {
   auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
   return gpu_resident_executor->is_launched();
+}
+
+cudaGraph_t Fragment::GPUResidentAccessor::workload_graph() {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  return gpu_resident_executor->workload_graph_clone();
+}
+
+void* Fragment::GPUResidentAccessor::data_ready_device_address() {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  return gpu_resident_executor->data_ready_device_address();
+}
+
+void* Fragment::GPUResidentAccessor::result_ready_device_address() {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  return gpu_resident_executor->result_ready_device_address();
+}
+
+void* Fragment::GPUResidentAccessor::tear_down_device_address() {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  return gpu_resident_executor->tear_down_device_address();
+}
+
+void Fragment::GPUResidentAccessor::register_data_ready_handler(
+    std::shared_ptr<Fragment> data_ready_handler_fragment) {
+  if (!data_ready_handler_fragment) {
+    auto err_msg = fmt::format(
+        "Data ready handler fragment is nullptr. Cannot register data ready "
+        "handler for fragment '{}'",
+        fragment_->name());
+    throw std::runtime_error(err_msg);
+  }
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  gpu_resident_executor->data_ready_handler(data_ready_handler_fragment);
+}
+
+std::shared_ptr<Fragment> Fragment::GPUResidentAccessor::data_ready_handler_fragment() {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  return gpu_resident_executor->data_ready_handler_fragment();
 }
 
 // ========== Helper functions for port auto-resolution ==========

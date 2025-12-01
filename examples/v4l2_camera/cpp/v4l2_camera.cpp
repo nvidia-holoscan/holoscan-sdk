@@ -88,7 +88,7 @@ class App : public holoscan::Application {
 
     // Define conditional routing based on pixel format metadata
     set_dynamic_flows(source, [format_converter, passthrough](const std::shared_ptr<Operator>& op) {
-      std::string pixel_format = op->metadata()->get<std::string>("V4L2_pixel_format", "");
+      auto pixel_format = op->metadata()->get<std::string>("V4L2_pixel_format", "");
 
       // Route based on pixel format
       if (!pixel_format.empty() && (pixel_format.find("YUYV") != std::string::npos ||

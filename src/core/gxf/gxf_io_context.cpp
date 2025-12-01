@@ -107,8 +107,8 @@ gxf_result_t GXFInputContext::retrieve_cuda_streams(nvidia::gxf::Entity& message
     return GXF_FAILURE;
   }
 
-  // TODO: handle legacy parameter-based multi-receiver properly? Currently this will store keys:
-  // "receivers:0", "receivers:1", ..., "receivers:n".
+  // Note: For multi-receiver ports, input_name may have a suffix like "receivers:0", "receivers:1".
+  // The streams_from_message function strips this suffix when storing streams in the map.
   auto result = object_handler->streams_from_message(context, message, input_name);
   if (result != GXF_SUCCESS) {
     HOLOSCAN_LOG_ERROR("Failed to retrieve CUDA streams from the incoming message: {}",

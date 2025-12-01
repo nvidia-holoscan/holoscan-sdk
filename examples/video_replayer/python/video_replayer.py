@@ -37,6 +37,10 @@ class VideoReplayerApp(Application):
     The HolovizOp displays the frames.
     """
 
+    def on_window_closed(self):
+        # Stop the entire application when the Holoviz window is closed
+        self.stop_execution()
+
     def compose(self):
         video_dir = os.path.join(sample_data_path, "racerx")
         if not os.path.exists(video_dir):
@@ -54,7 +58,12 @@ class VideoReplayerApp(Application):
             **self.kwargs("replayer"),
             allocator=rmm_allocator,
         )
-        visualizer = HolovizOp(self, name="holoviz", **self.kwargs("holoviz"))
+        visualizer = HolovizOp(
+            self,
+            name="holoviz",
+            window_close_callback=self.on_window_closed,
+            **self.kwargs("holoviz"),
+        )
 
         # Define the workflow
         self.add_flow(replayer, visualizer, {("output", "receivers")})
@@ -62,7 +71,12 @@ class VideoReplayerApp(Application):
         # Check if the YAML dual_window parameter is set and add a second visualizer in that case
         dual_window = self.kwargs("dual_window").get("dual_window", False)
         if dual_window:
-            visualizer2 = HolovizOp(self, name="holoviz-2", **self.kwargs("holoviz"))
+            visualizer2 = HolovizOp(
+                self,
+                name="holoviz-2",
+                window_close_callback=self.on_window_closed,
+                **self.kwargs("holoviz"),
+            )
             self.add_flow(replayer, visualizer2, {("output", "receivers")})
 
 

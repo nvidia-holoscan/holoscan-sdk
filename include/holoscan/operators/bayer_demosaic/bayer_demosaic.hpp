@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,6 +96,16 @@ namespace holoscan::ops {
  * device, only a single memory block is needed. However, if the input is on the host, a
  * second memory block will also be needed in order to make an internal copy of the input to the
  * device. The memory buffer must be on device (`storage_type` = 1).
+ *
+ * ==Notes==
+ *
+ * This operator may launch CUDA kernels that execute asynchronously on a CUDA stream. As a result,
+ * the `compute` method may return before all GPU work has completed. Downstream operators that
+ * receive data from this operator should call `op_input.receive_cuda_stream(<port_name>)` to
+ * synchronize the CUDA stream with the downstream operator's dedicated internal stream. This
+ * ensures proper synchronization before accessing the data. For more details on CUDA stream
+ * handling in Holoscan, see:
+ * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
  */
 class BayerDemosaicOp : public holoscan::Operator {
  public:

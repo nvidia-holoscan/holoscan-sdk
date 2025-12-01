@@ -107,10 +107,8 @@ class GXFWrapper : public nvidia::gxf::Codelet {
   void initialize_contexts();
   /// Create post-compute NVTX child range with frame information
   void create_post_compute_nvtx_range();
-  /// Get fragment cycle detection result (with caching)
-  bool get_fragment_has_cycles() const;
   /// Check if the current operator is a root operator
-  bool is_root_operator(bool has_cycles) const;
+  bool is_root_operator() const;
   /// Get frame information string for root operators
   std::string get_root_operator_frame_info() const;
   /// Get frame information string for non-root operators

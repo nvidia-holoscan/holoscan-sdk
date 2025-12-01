@@ -163,6 +163,16 @@ enum class FormatConversionType {
  *
  * Thus when declaring the memory pool, `num_blocks` should be between 1-3 and `block_size` should
  * be set to the maximum of the individual blocks sizes described above.
+ *
+ * ==Notes==
+ *
+ * This operator may launch CUDA kernels that execute asynchronously on a CUDA stream. As a result,
+ * the `compute` method may return before all GPU work has completed. Downstream operators that
+ * receive data from this operator should call `op_input.receive_cuda_stream(<port_name>)` to
+ * synchronize the CUDA stream with the downstream operator's dedicated internal stream. This
+ * ensures proper synchronization before accessing the data. For more details on CUDA stream
+ * handling in Holoscan, see:
+ * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
  */
 class FormatConverterOp : public holoscan::Operator {
  public:

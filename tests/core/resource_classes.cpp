@@ -489,7 +489,7 @@ TEST_F(ResourceClassesWithGXFContext, TestUcxTransmitterDefaultConstructor) {
 
 TEST_F(ResourceClassesWithGXFContext, TestCPUThread) {
   const std::string name{"thread0"};
-  Arg pin_arg{"pin_entity", true};
+  Arg pin_arg{"pin_operator", true};
   auto resource = F.make_resource<CPUThread>(name, pin_arg);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(pin_arg)));
@@ -503,7 +503,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadDefaultConstructor) {
 TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithPinCores) {
   const std::string name{"thread0"};
   std::vector<uint32_t> pin_cores{0, 2};
-  ArgList arglist{Arg{"pin_entity", true}, Arg{"pin_cores", pin_cores}};
+  ArgList arglist{Arg{"pin_operator", true}, Arg{"pin_cores", pin_cores}};
   auto resource = F.make_resource<CPUThread>(name, arglist);
 
   EXPECT_EQ(resource->name(), name);
@@ -514,7 +514,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithPinCores) {
 TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeScheduling) {
   const std::string name{"thread0"};
   std::vector<uint32_t> pin_cores{0, 2};
-  ArgList arglist{Arg{"pin_entity", true},
+  ArgList arglist{Arg{"pin_operator", true},
                   Arg{"pin_cores", pin_cores},
                   Arg{"sched_policy", "SCHED_DEADLINE"},
                   Arg{"sched_priority", static_cast<uint32_t>(1)},
@@ -526,6 +526,18 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeScheduling) {
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
+
+  // Have to initialize to be able to retrieve and check the parameter values
+  // (this is expected to cause a warning due to the manual initialization)
+  resource->initialize();
+
+  EXPECT_EQ(resource->pinned(), true);
+  EXPECT_EQ(resource->pin_cores().size(), 2);
+  EXPECT_EQ(resource->sched_policy().value(), SchedulingPolicy::kDeadline);
+  EXPECT_EQ(resource->sched_priority().value(), 1);
+  EXPECT_EQ(resource->sched_runtime().value(), 1000000);
+  EXPECT_EQ(resource->sched_deadline().value(), 1000000000);
+  EXPECT_EQ(resource->sched_period().value(), 1000000000);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeSchedulingFromYAMLEnum) {
@@ -542,7 +554,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeSchedulingFromYAM
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
 
-  // have to initialize to be able to retrieve and check the parameter values
+  // Have to initialize to be able to retrieve and check the parameter values
   // (this is expected to cause a warning due to the manual initialization)
   resource->initialize();
   const auto& maybe_policy = resource->sched_policy();
@@ -580,7 +592,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCPUThreadWithRealtimeSchedulingFromYAM
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<CPUThread>(arglist)));
   EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CPUThread"s);
 
-  // have to initialize to be able to retrieve and check the parameter values
+  // Have to initialize to be able to retrieve and check the parameter values
   // (this is expected to cause a warning due to the manual initialization)
   resource->initialize();
   const auto& maybe_policy = resource->sched_policy();

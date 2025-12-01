@@ -227,6 +227,25 @@ These parameters can also be configured using the helper functions:
 {cpp:func}`set_skip_latencies <holoscan::DataFlowTracker::set_skip_latencies>`,
 and {cpp:func}`set_limited_tracking <holoscan::DataFlowTracker::set_limited_tracking>`,
 
+## Data Flow Tracking with Asynchronous Lock-free Buffers
+
+When using asynchronous lock-free buffers (`IOSpec::ConnectorType::kAsyncBuffer` in {cpp:class}`C++ <holoscan::IOSpec>`/`IOSpec.ConnectorType.ASYNC_BUFFER` in {py:class}`python <holoscan.core.IOSpec>`) in your application, the data flow tracking module handles old (buffered) messages with special node naming to distinguish them from newly received messages.
+
+### Reading Buffered Messages from an Upstream Operator
+
+When an operator with an asynchronous lock-free buffer receiver reads an old (previously buffered) message instead of the most recent one, the flow tracking system marks this in the path as `<operator_name>_old` where `<operator_name>` is the name of the upstream operator. For example, for a `tx->rx` asynchronous buffer connection, there could be two paths: `tx->rx` and `tx_old->rx`. This suffix is added to differentiate the source of the message, but it's important to understand that:
+
+- `<operator_name>_old` represents the *same operator* as `<operator_name>`
+- The `_old` suffix indicates that the same message was retrieved from the asynchronous buffer
+- This allows developers to track and analyze the flow of both newly received and buffered messages through the application
+
+This distinction helps understand the behavior of an application when asynchronous lock-free buffers are in use and allows analyzing the latency characteristics of both new and buffered message flows separately.
+
+:::{note}
+The `_old` suffix is for tracking purposes. Both `<operator_name>` and `<operator_name>_old` refer to the same operator instance in your application graph.
+:::
+
+
 ## Logging
 
 The Data Flow Tracking API provides the ability to log every message's graph-traversal information to a file. This enables you to analyze the data flow at a granular level. When logging is enabled, every message's received and sent timestamps at every operator between the root and the leaf operators are logged after a message has been processed at the leaf operator.
@@ -265,6 +284,41 @@ The logger file logs the paths of the messages after a leaf operator has finishe
 
 This log file can further be analyzed to understand latency distributions, bottlenecks, data flow,
 and other characteristics of an application.
+
+### Logging for Distributed Applications
+
+For distributed applications, the logging can be enabled by calling the `enable_logging` method in {cpp:func}`C++ <holoscan::DataFlowTracker::enable_logging>` for individual fragments. There will be separate log files for each fragment. 
+Logging for distributed applications follows a progressive pattern where every connected fragment contains timing information of its predecessor fragments. The final or leaf fragments (fragments with no successors) will log the timings of the messages across the full distributed application. The logfiles can be analyzed using [Holoscan Flow Benchmarking tools](https://nvidia-holoscan.github.io/holohub/benchmarks/holoscan_flow_benchmarking/). For application-wide analysis spanning multiple fragments, the logfiles of the leaf fragments can be used with the Holoscan Flow Benchmarking tools.
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:emphasize-lines: 3
+:name: holoscan-flow-tracking-logging-cpp
+auto app = holoscan::make_application<MyPingApp>();
+auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+for (const auto& [fragment_name, tracker] : trackers) {
+  tracker->enable_logging(std::string(fragment_name) + "_logger.log");
+}
+// ...
+app->run();
+```
+````
+````{tab-item} Python
+```{code-block} python
+:emphasize-lines: 4
+:name: holoscan-flow-tracking-logging-python
+from holoscan.core import Tracker
+# ...
+app = MyPingApp()
+with Tracker(app) as trackers:
+  for fragment_name, tracker in trackers.items():
+    tracker.enable_logging(fragment_name + "_logger.log")
+  # ...
+  app.run()
+```
+````
+`````
 
 ## Configuring Clock Synchronization in Multiple Machines for Distributed Application Flow Tracking
 

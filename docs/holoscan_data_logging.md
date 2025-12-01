@@ -220,9 +220,9 @@ class MyApp(Application):
 The example above shows example code adding the logger within the `compose` method, but it can
 also be added from the `main` application file via as done in the following example applications:
 
-1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.8.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.8.0/examples/tensor_interop/python/tensor_interop.py))
-2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.8.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.8.0/examples/multithread/python/multithread.py))
-3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.8.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.8.0/examples/video_replayer/python/video_replayer.py))
+1. Tensor Interop ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.9.0/examples/tensor_interop/cpp/tensor_interop.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.9.0/examples/tensor_interop/python/tensor_interop.py))
+2. Multithread Scheduling ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.9.0/examples/multithread/cpp/multithread.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.9.0/examples/multithread/python/multithread.py))
+3. Video Replayer ([C++](https://github.com/nvidia-holoscan/holoscan-sdk/tree/v3.9.0/examples/video_replayer/cpp/video_replayer.cpp), [Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v3.9.0/examples/video_replayer/python/video_replayer.py))
 
 As with any other resource or operator in the SDK, parameters can be passed in directly via
 arguments or indirectly via reading from the YAML config.

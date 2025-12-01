@@ -26,7 +26,7 @@
 #include <memory>
 #include <thread>
 
-#include "controlcommand.hpp"
+#include "holoscan/core/executors/gpu_resident/controlcommand.hpp"
 #include "holoscan/utils/cuda/buffer.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 

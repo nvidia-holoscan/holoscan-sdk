@@ -27,6 +27,7 @@
 #include <utility>
 #include <vector>
 
+#include "gil_guarded_pyobject.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
@@ -103,8 +104,8 @@ void init_subgraph(py::module_& m) {
            "instance_name"_a)
       .def_property_readonly(
           "instance_name", &Subgraph::instance_name, doc::Subgraph::doc_instance_name)
-      // .def_property_readonly("fragment", &Subgraph::fragment, doc::Subgraph::doc_fragment,
-      //     py::return_value_policy::reference_internal)
+      // Note: `set_dynamic_flows` is not added here, but as a Python method to dispatch to
+      // `Fragment.set_dynamic_flows` which will handle the operator lifetime.
       .def("add_operator", &Subgraph::add_operator, "op"_a, doc::Subgraph::doc_add_operator)
       // Note: add_flow methods are implemented in Python via delegation to self.fragment.add_flow
       // Interface port methods - Operator overloads

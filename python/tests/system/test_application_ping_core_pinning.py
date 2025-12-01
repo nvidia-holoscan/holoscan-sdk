@@ -33,7 +33,7 @@ class PingRxOp(Operator):
     def compute(self, op_input, op_output, context):
         values = op_input.receive("receivers")
         assert values is not None
-        print(f"received message {self.count}")
+        print(f"received message {self.count}", flush=True)
         self.count += 1
 
 

@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "holoscan/core/fragment.hpp"
 
@@ -70,6 +71,7 @@ void GXFComponentResource::set_parameters() {
   auto& parameter_map = gxf_component_info_->parameter_info_map();
   bool has_dev_id_param = parameter_map.find("dev_id") != parameter_map.end();
   std::optional<int32_t> dev_id_value;
+  std::vector<std::string> errors;
   for (auto& arg : args_) {
     // Issue 4336947: dev_id parameter for allocator needs to be handled manually
     if (arg.name().compare(std::string("dev_id")) == 0 && has_dev_id_param) {
@@ -86,9 +88,26 @@ void GXFComponentResource::set_parameters() {
     }
     // Set the parameter if it is found in the parameter map
     if (parameter_map.find(arg.name()) != parameter_map.end()) {
-      holoscan::gxf::GXFParameterAdaptor::set_param(
+      gxf_result_t result = holoscan::gxf::GXFParameterAdaptor::set_param(
           gxf_context(), gxf_cid(), arg.name().c_str(), arg.arg_type(), arg.value());
+      if (result != GXF_SUCCESS) {
+        std::string error_msg = fmt::format("Parameter '{}': {} (error code: {})",
+                                            arg.name(),
+                                            GxfResultStr(result),
+                                            static_cast<int>(result));
+        HOLOSCAN_LOG_ERROR(
+            "GXFComponentResource '{}': failed to set GXF parameter - {}", name(), error_msg);
+        errors.push_back(error_msg);
+      }
     }
+  }
+
+  if (!errors.empty()) {
+    throw std::runtime_error(
+        fmt::format("GXFComponentResource '{}': failed to set {} GXF parameter(s):\n  - {}",
+                    name(),
+                    errors.size(),
+                    fmt::join(errors, "\n  - ")));
   }
   if (has_dev_id_param) {
     if (!gxf_graph_entity_) {

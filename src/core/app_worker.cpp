@@ -21,7 +21,9 @@
 #include <csignal>   // Add this line for signal handling functions
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
+#include <future>
 #include <memory>
 #include <string>
 #include <thread>
@@ -36,6 +38,8 @@
 #include "holoscan/core/distributed/app_worker/server.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
+#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
+#include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 #include "holoscan/core/signal_handler.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
@@ -45,9 +49,6 @@
 namespace holoscan {
 
 // Constants
-constexpr int kWorkerTerminationGracePeriodMs = 500;
-constexpr int kFragmentShutdownGracePeriodMs = 250;
-constexpr int kWorkerShutdownTimeoutSeconds = 10;
 constexpr int kDefaultFragmentServiceDriverPort = 13337;
 
 AppWorker::AppWorker(Application* app) : app_(app) {
@@ -189,11 +190,22 @@ bool AppWorker::execute_fragments(
 
   // Launch fragments
   need_notify_execution_finished_ = true;  // Set the flag to true
-  std::vector<std::future<void>> futures;
+  std::vector<std::shared_future<void>> futures;
   futures.reserve(scheduled_fragments.size());
+
+  // Store individual fragment futures for checking completion status
+  fragment_futures_.clear();
+
   for (auto& fragment : scheduled_fragments) {
     HOLOSCAN_LOG_INFO("Launching fragment: {}", fragment->name());
-    futures.push_back(fragment->executor().run_async(fragment->graph()));
+    auto frag_future = fragment->executor().run_async(fragment->graph());
+
+    // Convert to shared_future immediately so we can store copies in multiple places
+    auto shared_future = frag_future.share();
+
+    // Store in both places
+    fragment_futures_[fragment->name()] = shared_future;
+    futures.push_back(shared_future);
   }
 
   auto future = std::async(
@@ -217,7 +229,9 @@ bool AppWorker::execute_fragments(
 
 std::shared_ptr<distributed::AppDriverClient> AppWorker::app_driver_client() const {
   if (!worker_server_) {
-    HOLOSCAN_LOG_WARN("AppWorker::app_driver_client() called but worker_server_ is null");
+    HOLOSCAN_LOG_DEBUG(
+        "AppWorker::app_driver_client() called but worker_server_ is null "
+        "(expected if the distributed application is running in local mode)");
     return nullptr;
   }
   return worker_server_->app_driver_client();
@@ -295,6 +309,50 @@ bool AppWorker::terminate_scheduled_fragments() {
     return false;
   }
   auto& fragment_graph = *fragment_graph_;
+
+  // Calculate maximum fragment shutdown time from schedulers
+  // This is used when waiting for other workers to terminate their root fragments
+  int64_t max_stop_on_deadlock_timeout = 5000L;  // Default fallback
+  for (auto& fragment : scheduled_fragments_) {
+    auto scheduler = fragment->scheduler();
+    int64_t timeout = 5000L;
+
+    try {
+      if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
+        timeout = ebs->stop_on_deadlock_timeout();
+      } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
+        timeout = mts->stop_on_deadlock_timeout();
+      } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
+        timeout = gs->stop_on_deadlock_timeout();
+      }
+    } catch (const std::runtime_error&) {
+      // Parameter not set on scheduler, try environment variable
+      if (app_) {
+        auto env_result = app_->get_stop_on_deadlock_timeout_env();
+        if (env_result.has_value()) {
+          timeout = env_result.value();
+        }
+        // else: keep default 5000ms
+      }
+    }
+    max_stop_on_deadlock_timeout = std::max(max_stop_on_deadlock_timeout, timeout);
+  }
+  int64_t worker_termination_grace_period_ms = max_stop_on_deadlock_timeout + 500;
+
+  // Calculate watchdog timeout for the entire shutdown process
+  // Worst case: fragments are in a linear dependency chain, so we wait for each sequentially
+  // Add extra buffer of 1 second for safety and overhead
+  int64_t fragment_shutdown_time_ms = max_stop_on_deadlock_timeout + 250;
+  int64_t total_shutdown_timeout_ms =
+      scheduled_fragments_.size() * fragment_shutdown_time_ms + 1000;
+  worker_shutdown_timeout_ms_ = total_shutdown_timeout_ms;
+
+  HOLOSCAN_LOG_DEBUG(
+      "Worker shutdown watchdog timeout: {} ms (based on {} fragments with max timeout {} ms)",
+      worker_shutdown_timeout_ms_,
+      scheduled_fragments_.size(),
+      max_stop_on_deadlock_timeout);
+
   while (!scheduled_fragments_.empty()) {
     // Find current root fragments scheduled on this worker
     std::vector<FragmentNodeType> current_roots;
@@ -328,27 +386,78 @@ bool AppWorker::terminate_scheduled_fragments() {
             fragment->name());
         current_roots.push_back(fragment);
       }
-      // wait some time for other workers that may have root fragments to terminate
-      std::this_thread::sleep_for(std::chrono::milliseconds(kWorkerTerminationGracePeriodMs));
+      // Wait for other workers that may have root fragments to terminate them
+      HOLOSCAN_LOG_DEBUG(
+          "No root fragments on this worker, waiting {} ms for other workers to terminate theirs",
+          worker_termination_grace_period_ms);
+      std::this_thread::sleep_for(std::chrono::milliseconds(worker_termination_grace_period_ms));
     }
 
     // Terminate current root fragments
     for (auto& root_fragment : current_roots) {
-      HOLOSCAN_LOG_INFO("Terminating fragment '{}' via stop_execution()", root_fragment->name());
+      // Check if this fragment has already finished execution
+      bool fragment_already_done = false;
+      auto it = fragment_futures_.find(root_fragment->name());
+      if (it != fragment_futures_.end()) {
+        auto status = it->second.wait_for(std::chrono::milliseconds(0));
+        if (status == std::future_status::ready) {
+          fragment_already_done = true;
+          HOLOSCAN_LOG_DEBUG(
+              "Fragment '{}' has already finished execution, skipping stop_execution() and wait",
+              root_fragment->name());
+        }
+      }
 
-      // Important: use `root_fragment->stop_execution()` instead of
-      // `root_fragment->executor().interrupt()`. With interrupt, any already queued UCX messages
-      // will not have a chance to be sent, resulting in several errors being logged.
-      // TODO (grelee): May need to check if stop_on_deadlock() is set to false and fallback to
-      // interrupt in that case.
-      root_fragment->stop_execution();
+      if (!fragment_already_done) {
+        HOLOSCAN_LOG_INFO("Terminating fragment '{}' via stop_execution()", root_fragment->name());
 
-      // clang-format off
-      // Wait for 250 ms to give the fragment time to properly shut down.
-      // The exact wait time needed is likely hardware/network dependent. 30 ms was sufficient on
-      // an x86_64 test system where both nodes were on the same machine.
-      // Without any wait, for example, any UCX messages that had not yet been sent will be lost,
-      // resulting in some errors logged at the GXF level:
+        // Get the stop_on_deadlock_timeout from this fragment's scheduler
+        // This is the time the scheduler waits before confirming a deadlock and exiting
+        // when all operators have been stopped via stop_execution()
+        int64_t stop_on_deadlock_timeout = 5000L;  // Default fallback value
+        auto scheduler = root_fragment->scheduler();
+
+        // Try to cast to known scheduler types that have stop_on_deadlock_timeout()
+        try {
+          if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
+            stop_on_deadlock_timeout = ebs->stop_on_deadlock_timeout();
+          } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
+            stop_on_deadlock_timeout = mts->stop_on_deadlock_timeout();
+          } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
+            stop_on_deadlock_timeout = gs->stop_on_deadlock_timeout();
+          }
+        } catch (const std::runtime_error&) {
+          // Parameter not set on scheduler, try environment variable
+          if (app_) {
+            auto env_result = app_->get_stop_on_deadlock_timeout_env();
+            if (env_result.has_value()) {
+              stop_on_deadlock_timeout = env_result.value();
+            }
+            // else: keep default 5000ms
+          }
+        }
+
+        // Add extra margin (250ms) to account for any processing overhead
+        int64_t fragment_shutdown_grace_period_ms = stop_on_deadlock_timeout + 250;
+
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': using shutdown grace period of {} ms (stop_on_deadlock_timeout={} ms)",
+            root_fragment->name(),
+            fragment_shutdown_grace_period_ms,
+            stop_on_deadlock_timeout);
+
+        // Important: use `root_fragment->stop_execution()` instead of
+        // `root_fragment->executor().interrupt()`. With interrupt, any already queued UCX messages
+        // will not have a chance to be sent, resulting in several errors being logged.
+        // TODO (grelee): May need to check if stop_on_deadlock() is set to false and fallback to
+        // interrupt in that case.
+        root_fragment->stop_execution();
+
+        // clang-format off
+      // Wait to give the fragment time to properly shut down based on its scheduler's timeout.
+      // The exact wait time needed is hardware/network dependent. Without sufficient wait time,
+      // any UCX messages that had not yet been sent will be lost, resulting in errors logged at
+      // the GXF level:
       //   [error] [ucx_transmitter.cpp:275] unable to send UCX message (Connection reset by remote peer)  // NOLINT
       //   [error] [ucx_transmitter.cpp:306] Failed to send entity [error]
       //   [entity_executor.cpp:624] Failed to sync outbox for entity: fragment1__replayer code: GXF_FAILURE  // NOLINT
@@ -362,8 +471,11 @@ bool AppWorker::terminate_scheduled_fragments() {
       //   [warning] [gxf_executor.cpp:2429] GXF call GxfGraphWait(context) in line 2429 of file /workspace/holoscan-sdk/src/core/executors/gxf/gxf_executor.cpp failed with 'GXF_FAILURE'  // NOLINT
       //   [info] [gxf_executor.cpp:2439] [fragment1] Graph execution finished.
       //   [error] [gxf_executor.cpp:2447] [fragment1] Graph execution error: GXF_FAILURE
-      // clang-format on
-      std::this_thread::sleep_for(std::chrono::milliseconds(kFragmentShutdownGracePeriodMs));
+        // clang-format on
+
+        // Wait for the fragment to shut down gracefully
+        std::this_thread::sleep_for(std::chrono::milliseconds(fragment_shutdown_grace_period_ms));
+      }  // end if (!fragment_already_done)
 
       terminated_fragments.insert(root_fragment->name());
 
@@ -537,12 +649,12 @@ void AppWorker::setup_signal_handlers() {
       }
 
       // Create a watchdog thread to ensure we exit even if clean shutdown hangs
-      std::thread([signum]() {
+      std::thread([this, signum]() {
         // Wait for a reasonable time for clean shutdown
-        std::this_thread::sleep_for(std::chrono::seconds(kWorkerShutdownTimeoutSeconds));
+        std::this_thread::sleep_for(std::chrono::milliseconds(worker_shutdown_timeout_ms_));
 
-        HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after {} seconds. Forcing exit...",
-                           kWorkerShutdownTimeoutSeconds);
+        HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after {} ms. Forcing exit...",
+                           worker_shutdown_timeout_ms_);
         std::signal(signum, SIG_DFL);
         std::raise(signum);
       }).detach();

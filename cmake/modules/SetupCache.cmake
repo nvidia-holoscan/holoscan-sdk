@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
 
 list(APPEND CMAKE_MESSAGE_CONTEXT "cache")
 
-message(STATUS "Configuring Cache for CPM and CCache")
+message(STATUS "Configuring Cache for CPM and Compiler Cache (CCache/SCCache)")
 
 function(check_cache_dir cache_dir_name)
     list(APPEND CMAKE_MESSAGE_CONTEXT "check_cache_dir")
@@ -35,18 +35,21 @@ function(check_cache_dir cache_dir_name)
         file(MAKE_DIRECTORY "${${cache_dir_name}}")
     endif()
 
-    # Update the cache directory
-    set(${cache_dir_name} "${${cache_dir_name}}" PARENT_SCOPE)
+    # Resolve symlinks to get the real path
+    get_filename_component(RESOLVED_CACHE_DIR "${${cache_dir_name}}" REALPATH)
 
-    message(STATUS "Cache directory: ${${cache_dir_name}}")
+    # Update the cache directory with the resolved path
+    set(${cache_dir_name} "${RESOLVED_CACHE_DIR}" PARENT_SCOPE)
+
+    message(STATUS "Cache directory: ${RESOLVED_CACHE_DIR}")
 
     # If CMAKE_FIND_ROOT_PATH is set, add the cache directory to it
     if(NOT "${CMAKE_FIND_ROOT_PATH}" STREQUAL "")
-        message(STATUS "Cache directory '${${cache_dir_name}}'(by ${cache_dir_name}) "
+        message(STATUS "Cache directory '${RESOLVED_CACHE_DIR}'(by ${cache_dir_name}) "
             " is not accessible from CMAKE_FIND_ROOT_PATH('${CMAKE_FIND_ROOT_PATH}'). "
             " Appending the cache path to CMAKE_FIND_ROOT_PATH for CPM to find the downloaded packages...")
 
-        list(APPEND CMAKE_FIND_ROOT_PATH "${${cache_dir_name}}")
+        list(APPEND CMAKE_FIND_ROOT_PATH "${RESOLVED_CACHE_DIR}")
         set(CMAKE_FIND_ROOT_PATH "${CMAKE_FIND_ROOT_PATH}" PARENT_SCOPE)
     endif()
 endfunction()
@@ -63,10 +66,11 @@ endfunction()
 # This function requires the following arguments:
 # - LANGUAGE: The language to be configured
 # - TEMP_DIR: The temporary directory to be used for the cache (default: /tmp)
-function(gen_ccache_launcher)
-    list(APPEND CMAKE_MESSAGE_CONTEXT "gen_ccache_launcher")
+# - LAUNCHER_TYPE: The type of launcher (ccache or sccache)
+function(gen_cache_launcher)
+    list(APPEND CMAKE_MESSAGE_CONTEXT "gen_cache_launcher")
     set(options "")
-    set(one_value LANGUAGE TEMP_DIR)
+    set(one_value LANGUAGE TEMP_DIR LAUNCHER_TYPE)
     set(multi_value "")
     cmake_parse_arguments(GEN_BIN "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
@@ -82,6 +86,10 @@ function(gen_ccache_launcher)
         message(FATAL_ERROR "Language is not defined")
     endif()
 
+    if(NOT DEFINED GEN_BIN_LAUNCHER_TYPE)
+        set(GEN_BIN_LAUNCHER_TYPE "ccache")
+    endif()
+
     if(NOT DEFINED GEN_BIN_TEMP_DIR)
         # TODO(gbae): Update this implementation if we support other platforms (such as Windows)
         set(GEN_BIN_TEMP_DIR "/tmp")
@@ -93,29 +101,37 @@ function(gen_ccache_launcher)
     # Set GEN_BIN_LANGUAGE_LOWERCASE to the lowercase of LANGUAGE.
     string(TOLOWER ${GEN_BIN_LANGUAGE} GEN_BIN_LANGUAGE_LOWERCASE)
 
-    # Set CCACHE_COMPILERTYPE explicitly to make it work with arbitrary compiler executable names (e.g. c++ in Conda build).
-    if("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "GNU")
-        set(CCACHE_COMPILERTYPE "gcc")
-    elseif("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "Clang")
-        set(CCACHE_COMPILERTYPE "clang")
-    elseif("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "NVIDIA")
-        set(CCACHE_COMPILERTYPE "nvcc")
-    else()
-        set(CCACHE_COMPILERTYPE "auto")
+    # Set CCACHE_COMPILERTYPE explicitly for ccache (not used for sccache)
+    if("${GEN_BIN_LAUNCHER_TYPE}" STREQUAL "ccache")
+        if("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "GNU")
+            set(CCACHE_COMPILERTYPE "gcc")
+        elseif("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "Clang")
+            set(CCACHE_COMPILERTYPE "clang")
+        elseif("${CMAKE_${GEN_BIN_LANGUAGE}_COMPILER_ID}" STREQUAL "NVIDIA")
+            set(CCACHE_COMPILERTYPE "nvcc")
+        else()
+            set(CCACHE_COMPILERTYPE "auto")
+        endif()
     endif()
 
-    set(GEN_BIN_EXECUTABLE_PATH "${CMAKE_CURRENT_BINARY_DIR}/launch_ccache_${GEN_BIN_LANGUAGE_LOWERCASE}")
+    set(GEN_BIN_EXECUTABLE_PATH "${CMAKE_CURRENT_BINARY_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}")
 
-    configure_file("${CMAKE_CURRENT_LIST_DIR}/ccache/launch_ccache.sh.in" "${GEN_BIN_TEMP_DIR}/launch_ccache_${GEN_BIN_LANGUAGE_LOWERCASE}" @ONLY)
+    configure_file("${CMAKE_CURRENT_LIST_DIR}/ccache/launch_${GEN_BIN_LAUNCHER_TYPE}.sh.in" "${GEN_BIN_TEMP_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}" @ONLY)
 
     # Since 'file(CHMOD)' is supported since later CMake versions(>=3.19), we use 'file(COPY)' instead to add permission(+x), using the temporary file
     file(
-        COPY "${GEN_BIN_TEMP_DIR}/launch_ccache_${GEN_BIN_LANGUAGE_LOWERCASE}" # ${GEN_BIN_EXECUTABLE_PATH}
+        COPY "${GEN_BIN_TEMP_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}"
         DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
         FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
     )
 
     # Expose the executable path to the caller
+    set(GEN_BIN_EXECUTABLE_PATH "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
+endfunction()
+
+# Legacy function for backwards compatibility
+function(gen_ccache_launcher)
+    gen_cache_launcher(LAUNCHER_TYPE ccache ${ARGN})
     set(GEN_BIN_EXECUTABLE_PATH "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
 endfunction()
 
@@ -154,6 +170,37 @@ function(configure_ccache cache_dir_name)
     set(CCACHE_DIR "${CCACHE_DIR}" PARENT_SCOPE)
 endfunction()
 
+function(configure_sccache cache_dir_name)
+    list(APPEND CMAKE_MESSAGE_CONTEXT "configure_sccache")
+
+    find_program(SCCACHE_BIN_PATH sccache DOC "Path of sccache executable")
+
+    if(NOT SCCACHE_BIN_PATH)
+        message(FATAL_ERROR "Option 'HOLOSCAN_USE_SCCACHE' is set to TRUE but cannot find sccache executable. "
+            "Please install sccache.")
+    endif()
+
+    set(SCCACHE_DIR "${${cache_dir_name}}/sccache")
+    set(SCCACHE_CACHE_SIZE "20G")
+
+    # Create the sccache directory if it doesn't exist
+
+    message(STATUS "SCCache executable path: ${SCCACHE_BIN_PATH}")
+    message(STATUS "SCCache data directory : ${SCCACHE_DIR}")
+
+    gen_cache_launcher(LANGUAGE C LAUNCHER_TYPE sccache)
+    set(CMAKE_C_COMPILER_LAUNCHER "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
+    gen_cache_launcher(LANGUAGE CXX LAUNCHER_TYPE sccache)
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
+    gen_cache_launcher(LANGUAGE CUDA LAUNCHER_TYPE sccache)
+    set(CMAKE_CUDA_COMPILER_LAUNCHER "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
+
+    message(STATUS "Configured sccache for C, C++, and CUDA compilation.")
+
+    # Expose SCCACHE_DIR to the caller
+    set(SCCACHE_DIR "${SCCACHE_DIR}" PARENT_SCOPE)
+endfunction()
+
 # ##############################################################################
 if(${HOLOSCAN_CACHE_DIR} STREQUAL " ")
     message(STATUS " HOLOSCAN_CACHE_DIR is not set. Defaulting to '${CMAKE_SOURCE_DIR}/.cache' ... ")
@@ -165,6 +212,10 @@ configure_cpm(HOLOSCAN_CACHE_DIR)
 
 if(HOLOSCAN_USE_CCACHE)
     configure_ccache(HOLOSCAN_CACHE_DIR)
+endif()
+
+if(HOLOSCAN_USE_SCCACHE)
+    configure_sccache(HOLOSCAN_CACHE_DIR)
 endif()
 
 list(POP_BACK CMAKE_MESSAGE_CONTEXT)

@@ -45,6 +45,7 @@ RUN apt update \
         ccache \
         gdb \
         git-lfs \
+        clangd \
     && rm -rf /var/lib/apt/lists/*
 ENV CMAKE_GENERATOR=Ninja
 

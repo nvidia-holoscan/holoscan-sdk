@@ -218,7 +218,7 @@ namespace Operator {
 
 //  Constructor
 PYDOC(Operator_args_kwargs, R"doc(
-Operator class.
+Base class representing either a wrapped C++ operator or native Python operator.
 
 Can be initialized with any number of Python positional and keyword arguments.
 

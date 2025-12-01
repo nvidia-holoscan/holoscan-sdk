@@ -183,10 +183,8 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'HolovizOpAutoClose: compute called 30 times' \
         --pass-pattern 'Terminating fragment fragment1 via stop_execution()' \
-        --fail-pattern 'HolovizOpAutoClose: compute called 31 times'"
-        # Cannot currently use the following fail pattern due to existing issue with non-clean
-        # window-close shutdown (there is no segfault, but some residual errors are logged)
-        # --fail-pattern '\\[error\\]'"
+        --fail-pattern 'HolovizOpAutoClose: compute called 31 times' \
+        --fail-pattern '\\[error\\]'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 endif()

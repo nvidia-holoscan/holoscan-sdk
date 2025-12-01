@@ -37,6 +37,10 @@ void AsyncBufferTransmitter::track() {
   auto transmitter_ptr = static_cast<holoscan::HoloscanAsyncBufferTransmitter*>(gxf_cptr_);
   if (transmitter_ptr) {
     transmitter_ptr->track();
+  } else {
+    throw std::runtime_error(
+        "gxf_cptr_ not found. Cannot enable data flow tracking for asynchronous buffer "
+        "transmitter.");
   }
 }
 

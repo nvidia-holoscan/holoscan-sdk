@@ -40,11 +40,14 @@ install(FILES CMakeLists.min.txt
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
   add_test(NAME EXAMPLE_PYTHON_PING_SIMPLE_ASYNC_BUFFER_TEST
-    COMMAND ${Python3_EXECUTABLE} ping_simple_async_buffer.py
+    COMMAND bash -c
+      "${Python3_EXECUTABLE} ping_simple_async_buffer.py 2>&1 | \
+      ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+        --pass-pattern 'Rx message value: 20' \
+        --pass-pattern 'tx,rx' \
+        --pass-pattern 'tx_old,rx'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  )
-  set_tests_properties(EXAMPLE_PYTHON_PING_SIMPLE_ASYNC_BUFFER_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Rx message value: 20"
   )
 endif()

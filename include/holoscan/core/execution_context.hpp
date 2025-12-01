@@ -96,6 +96,11 @@ class ExecutionContext {
         ErrorCode::kFailure, "device_from_stream not implemented in base ExecutionContext"));
   }
 
+  /// @brief check if GPU capability is present on the system
+  virtual bool is_gpu_available() const {
+    throw std::runtime_error("is_gpu_available is not implemented");
+  }
+
   /**
    * @brief Find an operator by name.
    *

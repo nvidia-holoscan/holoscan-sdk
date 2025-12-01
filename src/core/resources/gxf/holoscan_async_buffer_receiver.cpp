@@ -17,6 +17,7 @@
 
 #include "holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp"
 #include "holoscan/core/flow_tracking_annotation.hpp"
+#include "holoscan/logger/logger.hpp"
 
 #include <gxf/std/async_buffer_receiver.hpp>
 
@@ -26,7 +27,14 @@ gxf_result_t HoloscanAsyncBufferReceiver::receive_abi(gxf_uid_t* uid) {
   gxf_result_t code = nvidia::gxf::AsyncBufferReceiver::receive_abi(uid);
 
   if (tracking_ && code == GXF_SUCCESS) {
-    deannotate_message(uid, context(), op(), name());
+    HOLOSCAN_LOG_DEBUG("Receiving message with UID: {}", *uid);
+    if (*uid == kNullUid) {
+      HOLOSCAN_LOG_WARN("Invalid message received. Ignoring data flow tracking annotation.");
+      return code;
+    }
+    // last argument tells message is old or not
+    deannotate_message(uid, context(), op(), name(), (*uid == last_received_uid_));
+    last_received_uid_ = *uid;
   }
 
   return code;

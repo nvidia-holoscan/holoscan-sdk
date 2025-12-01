@@ -345,8 +345,7 @@ void GXFWrapper::create_post_compute_nvtx_range() {
                      op_->name());
 
   // Determine operator type and get frame information
-  bool has_cycles = get_fragment_has_cycles();
-  bool is_current_op_root = is_root_operator(has_cycles);
+  bool is_current_op_root = is_root_operator();
 
   std::string processed_frame_info =
       is_current_op_root ? get_root_operator_frame_info() : get_non_root_operator_frame_info();
@@ -373,36 +372,9 @@ void GXFWrapper::create_post_compute_nvtx_range() {
   }
 }
 
-bool GXFWrapper::get_fragment_has_cycles() const {
-  // Thread-safe cache for cycle detection results
-  static std::unordered_map<std::string, bool> fragment_has_cycles_cache;
-  static std::mutex cache_mutex;
-  const std::string& fragment_name = op_->fragment()->name();
 
-  std::lock_guard<std::mutex> lock(cache_mutex);
-  auto cache_it = fragment_has_cycles_cache.find(fragment_name);
-  if (cache_it != fragment_has_cycles_cache.end()) {
-    return cache_it->second;
-  }
-
-  // Cache miss - compute and store result
-  auto cyclic_roots = op_->fragment()->graph().has_cycle();
-  bool has_cycles = !cyclic_roots.empty();
-  fragment_has_cycles_cache[fragment_name] = has_cycles;
-
-  // Clear cache if it grows too large (unlikely but prevents unbounded growth)
-  constexpr size_t MAX_CACHE_SIZE = 1000;
-  if (fragment_has_cycles_cache.size() > MAX_CACHE_SIZE) {
-    HOLOSCAN_LOG_DEBUG("Clearing fragment cycle cache due to size limit");
-    fragment_has_cycles_cache.clear();
-    fragment_has_cycles_cache[fragment_name] = has_cycles;
-  }
-
-  return has_cycles;
-}
-
-bool GXFWrapper::is_root_operator(bool has_cycles) const {
-  return op_->is_root() || (op_->is_user_defined_root() && has_cycles) ||
+bool GXFWrapper::is_root_operator() const {
+  return op_->is_root() || op_->is_user_defined_root() ||
          holoscan::Operator::is_all_operator_predecessor_virtual(
              std::shared_ptr<holoscan::Operator>(op_, [](Operator*) {}), op_->fragment()->graph());
 }

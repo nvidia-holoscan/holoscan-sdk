@@ -22,6 +22,25 @@
 
 namespace holoscan::doc::HolovizOp {
 
+PYDOC(default_window_close_callback, R"doc(
+Default window-close behavior used by Holoviz.
+
+If the application is running in a distributed configuration, this method initiates
+distributed application shutdown. Otherwise it performs no-op (single-fragment shutdown
+continues via the associated window_close_condition).
+
+Use this inside a custom ``window_close_callback`` to preserve the default behavior.
+
+The example below assumes ``self.viz_op`` references your HolovizOp instance and that ``on_close``
+is the function passed to the ``window_close_callback`` parameter.
+
+.. code-block:: python
+
+    def on_close(self):
+        # custom actions...
+        self.viz_op.default_window_close_callback()
+)doc")
+
 // PyHolovizOp Constructor
 PYDOC(HolovizOp, R"doc(
 Holoviz visualization operator using Holoviz module.
@@ -182,6 +201,11 @@ framebuffer_size_callback : Callable[int, int], optional
     The callback function is called when the framebuffer is resized.
 window_size_callback : Callable[int, int], optional
     The callback function is called when the window is resized.
+window_close_callback : Callable[[], None], optional
+    The callback function is called when the window is closed. If not provided, Holoviz uses its
+    default behavior, which initiates distributed app shutdown when running distributed.
+    To preserve the default behavior from a custom callback, call
+    ``HolovizOp.default_window_close_callback()`` within your callback.
 font_path : str, optional
     File path for the font used for rendering text. Default value is ``""``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional
@@ -479,6 +503,17 @@ The details of the dictionary is as follows:
 
    The rendered framebuffer can be output to ``render_buffer_output`` and/or
    ``depth_buffer_output``.
+
+5. CUDA Stream Handling
+
+   When ``render_buffer_output`` or ``depth_buffer_output`` are enabled, this operator may launch
+   CUDA kernels that execute asynchronously on a CUDA stream. As a result, the ``compute`` method
+   may return before all GPU work has completed. Downstream operators that receive data from this
+   operator should call ``op_input.receive_cuda_stream(<port_name>)`` to synchronize the CUDA
+   stream with the downstream operator's dedicated internal stream. This ensures proper
+   synchronization before accessing the data. For more details on CUDA stream handling in Holoscan,
+   see:
+   https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
 )doc")
 
 }  // namespace holoscan::doc::HolovizOp

@@ -15,8 +15,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-from holoscan.core import AsyncDataLoggerResource, AsyncQueuePolicy, DataLogger, DataLoggerResource
-from holoscan.core import _Resource as ResourceBase
+from holoscan.core import (
+    AsyncDataLoggerResource,
+    AsyncQueuePolicy,
+    DataLogger,
+    DataLoggerResource,
+    ResourceBase,
+)
 from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.data_loggers import (
     AsyncConsoleLogger,

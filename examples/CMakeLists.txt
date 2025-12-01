@@ -56,12 +56,11 @@ include(CTest)
 # C++ only examples
 if(HOLOSCAN_CPP_EXAMPLES)
   add_subdirectory(gpu_resident_example)
+  add_subdirectory(gpu_resident_input)
   add_subdirectory(matx)
   add_subdirectory(ping_any)
   add_subdirectory(ping_conditional)
   add_subdirectory(ping_cycle)
-  add_subdirectory(wrap_holoscan_as_gxf_extension)
-  add_subdirectory(wrap_operator_as_gxf_extension)
 endif()
 
 # Python Only examples

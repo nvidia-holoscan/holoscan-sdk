@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,9 +43,12 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
  * @param context The GXF context.
  * @param op The operator that is receiving the message.
  * @param receiver_name The name of the receiver which is receiving the message.
+ * @param is_old_message Whether the message is an old message. For asynchronous
+ * receivers, same message can be received multiple times. This flag indicates
+ * that an old message is being deannotated.
  */
 gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                const char* receiver_name);
+                                const char* receiver_name, bool is_old_message = false);
 
 }  // namespace holoscan
 

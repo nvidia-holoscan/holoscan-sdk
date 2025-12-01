@@ -27,9 +27,9 @@ from holoscan.core import (
     MetadataDictionary,
     MetadataPolicy,
     Operator,
+    OperatorBase,
     OperatorSpec,
     Tensor,
-    _Operator,
 )
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.data_loggers import AsyncConsoleLogger, SimpleTextSerializer
@@ -450,7 +450,7 @@ class TestFormatConverterOp:
             ),
             **app.kwargs("recorder_format_converter"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert len(op.args) == 12
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
@@ -488,7 +488,7 @@ class TestInferenceOp:
             model_path_map=model_path_map,
             **app.kwargs("inference"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -507,7 +507,7 @@ class TestInferenceProcessorOp:
             allocator=UnboundedAllocator(app, name="pool"),
             **app.kwargs("inference_processor"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -525,7 +525,7 @@ class TestSegmentationPostprocessorOp:
             allocator=UnboundedAllocator(fragment=app, name="allocator"),
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -540,7 +540,7 @@ class TestVideoStreamRecorderOp:
         app.config(operators_config_file)
         name = "recorder"
         op = VideoStreamRecorderOp(name=name, fragment=app, **app.kwargs("recorder"))
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -561,7 +561,7 @@ class TestVideoStreamReplayerOp:
             directory=os.path.join(data_path, "racerx"),
             **app.kwargs("replayer"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -907,7 +907,7 @@ class TestHolovizOp:
     def test_kwarg_based_initialization(self, app, operators_config_file, capfd):
         app.config(operators_config_file)
         op = HolovizOp(app, name="visualizer", **app.kwargs("holoviz"))
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
 
         # assert no warnings or errors logged
@@ -1196,6 +1196,7 @@ class MyHolovizCallbackApp(Application):
             cursor_pos_callback=self.callback,
             framebuffer_size_callback=self.callback,
             window_size_callback=self.callback,
+            window_close_callback=self.callback,
         )
 
         self.add_flow(source, holoviz, {("", "receivers")})
@@ -1214,6 +1215,9 @@ def test_holoviz_callbacks(capfd):
     # assert no errors logged
     captured = capfd.readouterr()
     assert captured.err.count("[error]") == 0
+
+    # window_close_callback should not be invoked in this test run
+    assert all(len(args) == 2 for args in app.callback_invocations)
 
 
 class TestBayerDemosaicOp:
@@ -1242,7 +1246,7 @@ class TestBayerDemosaicOp:
             cuda_stream_pool=demosaic_stream_pool,
             **app.kwargs("demosaic"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1267,7 +1271,7 @@ class TestV4L2VideoCaptureOp:
             exposure_time=500,
             gain=100,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert len(op.args) == 10
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
@@ -1283,7 +1287,7 @@ class TestV4L2VideoCaptureOp:
             app,
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert len(op.args) == 8  # No hardcoded defaults for exposure and gain
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
@@ -1301,7 +1305,7 @@ class TestV4L2VideoCaptureOp:
             name=name,
             **app.kwargs("v4l2_video_capture"),
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert len(op.args) == 10
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
@@ -1320,7 +1324,7 @@ class TestV4L2VideoCaptureOp:
             allocator=UnboundedAllocator(app, name="pool"),
         )
 
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
 
         # assert no warnings or errors logged
         captured = capfd.readouterr()
@@ -1336,7 +1340,7 @@ class TestPingTensorRxOp:
             receive_as_tensormap=False,
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1352,7 +1356,7 @@ class TestPingTensorRxOp:
             fragment=app,
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1370,7 +1374,7 @@ class TestPingTensorTxOp:
             fragment=app,
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1423,7 +1427,7 @@ class TestPingTensorTxOp:
             tensor_name="image",
             name=name,
         )
-        assert isinstance(op, _Operator)
+        assert isinstance(op, OperatorBase)
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 

@@ -48,6 +48,9 @@ class StreamRxOp(Operator):
         tensors = op_input.receive("in")
         assert "tensor" in tensors
 
+        if not context.is_gpu_available:
+            print(f"No CUDA-capable GPU detected, returning early from {self.name}")
+
         allocate = self.use_default_pool
         stream = op_input.receive_cuda_stream("in", allocate=allocate)
         print(f"{stream=}")

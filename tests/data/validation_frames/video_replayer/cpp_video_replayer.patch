@@ -1,8 +1,8 @@
---- examples/video_replayer/cpp/video_replayer.cpp	2023-12-11 14:11:08.450220903 -0800
-+++ build-x86_64/examples/video_replayer/cpp/video_replayer_test.cpp	2023-12-11 14:33:13.446159002 -0800
-@@ -21,6 +21,12 @@
+--- a/public/examples/video_replayer/cpp/video_replayer.cpp
++++ b/public/examples/video_replayer/cpp/video_replayer.cpp
+@@ -22,6 +22,12 @@
  #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
- #include <holoscan/operators/holoviz/holoviz.hpp>
+ #include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
  
 +#ifdef RECORD_OUTPUT
 +#include <holoscan/operators/format_converter/format_converter.hpp>
@@ -12,9 +12,9 @@
 +
  class VideoReplayerApp : public holoscan::Application {
   public:
-   void compose() override {
-@@ -53,6 +59,9 @@ class VideoReplayerApp : public holoscan::Application {
-       auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
+   void on_window_closed() {
+@@ -65,6 +71,9 @@ class VideoReplayerApp : public holoscan::Application {
+           }));
        add_flow(replayer, visualizer2, {{"output", "receivers"}});
      }
 +
@@ -22,3 +22,4 @@
 +    RECORDER(visualizer);
    }
  };
+ 

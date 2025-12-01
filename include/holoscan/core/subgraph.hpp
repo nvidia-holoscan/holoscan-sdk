@@ -364,6 +364,21 @@ class Subgraph {
                 const IOSpec::ConnectorType connector_type);
 
   /**
+   * @brief Set a callback function to define dynamic flows for an operator at runtime.
+   *
+   * This method allows operators to modify their connections with other operators during execution.
+   * The callback function is called after the operator executes and can add dynamic flows using
+   * the operator's `add_dynamic_flow()` methods.
+   *
+   * @param op The operator to set dynamic flows for
+   * @param dynamic_flow_func The callback function that defines the dynamic flows. Takes a shared
+   *                          pointer to the operator as input and returns void.
+   */
+  virtual void set_dynamic_flows(
+      const std::shared_ptr<Operator>& op,
+      const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
+
+  /**
    * @brief Add an interface port that can be connected from external Subgraphs/Operators
    *
    * Validates that the internal operator has the specified port and that the port type

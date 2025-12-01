@@ -18,6 +18,8 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/execution_context.hpp"
@@ -171,29 +173,28 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
   return nullptr;
 }
 
-bool GPUResidentExecutor::verify_graph_topology(OperatorGraph& graph) {
-  auto operators = graph.get_nodes();
+bool GPUResidentExecutor::verify_graph_topology(
+    std::shared_ptr<OperatorGraph> graph,
+    std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
+  auto operators = graph->get_nodes();
   // Check if the graph has a cycle
-  auto cycle = graph.has_cycle();
+  auto cycle = graph->has_cycle();
   if (cycle.size() > 0) {
     // throw error
     auto err_msg = fmt::format(
-        "Fragment graph ({}) has a cycle: {}. GPU-resident execution only supports a "
-        "linear chain of operators",
-        fragment_->name(),
-        cycle.size());
+        "Fragment graph has a cycle. GPU-resident execution only supports a "
+        "linear chain of operators");
     HOLOSCAN_LOG_ERROR(err_msg);
     return false;
   }
 
   // get the root nodes
-  auto root_nodes = graph.get_root_nodes();
+  auto root_nodes = graph->get_root_nodes();
   if (root_nodes.size() != 1) {
     // throw error
     auto err_msg = fmt::format(
-        "Fragment graph ({}) has ({}) root operators. GPU-resident execution only supports a "
+        "Fragment graph has ({}) root operators. GPU-resident execution only supports a "
         "linear chain of operators.",
-        fragment_->name(),
         root_nodes.size());
     HOLOSCAN_LOG_ERROR(err_msg);
     return false;
@@ -203,8 +204,8 @@ bool GPUResidentExecutor::verify_graph_topology(OperatorGraph& graph) {
   auto current_node = root_nodes[0];
   unsigned int visited_nodes = 1;
   while (current_node) {
-    topo_ordered_operators_.push_back(current_node);
-    auto next_nodes = graph.get_next_nodes(current_node);
+    topo_ordered_operators.push_back(current_node);
+    auto next_nodes = graph->get_next_nodes(current_node);
     if (next_nodes.size() > 1) {
       // throw error
       auto err_msg = fmt::format(
@@ -218,9 +219,8 @@ bool GPUResidentExecutor::verify_graph_topology(OperatorGraph& graph) {
       if (visited_nodes < operators.size()) {
         // throw error
         auto err_msg = fmt::format(
-            "Fragment graph ({}) has disconnected operators. GPU-resident execution only "
-            "supports a linear chain of operators.",
-            fragment_->name());
+            "Fragment graph has disconnected operators. GPU-resident execution only "
+            "supports a linear chain of operators.");
         HOLOSCAN_LOG_ERROR(err_msg);
         return false;
       }
@@ -233,43 +233,22 @@ bool GPUResidentExecutor::verify_graph_topology(OperatorGraph& graph) {
   return true;
 }
 
-bool GPUResidentExecutor::initialize_fragment() {
-  HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::initialize_fragment()");
+void GPUResidentExecutor::create_cuda_graph_from_operators(
+    std::vector<std::shared_ptr<Operator>>& topo_ordered_operators, cudaGraph_t& graph,
+    cudaStream_t capture_stream) {
+  HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::create_cuda_graph_from_operators()");
 
-  if (fragment_initialized_) {
-    HOLOSCAN_LOG_DEBUG("Fragment ({}) has already been initialized.", fragment_->name());
-    return true;
-  }
-
-  auto& graph = fragment_->graph();
-  if (!verify_graph_topology(graph)) {
-    throw std::runtime_error("Application graph topology is not valid for GPU-resident execution.");
-  }
-
-  // initialize CUDA and set device to 0
-  initialize_cuda();
-
-  // prepare the data flow connections between operators
-  prepare_data_flow(fragment_->graph_shared());
-
-  // call the start method of the operators
-  for (auto& op_node : topo_ordered_operators_) {
-    op_node->start();
-  }
-
-  // create the workload graph
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphCreate(&workload_graph_, 0),
-                                 "Failed to create the workload graph");
+  // create the graph
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphCreate(&graph, 0), "Failed to create the graph");
 
   // start capturing the graph as we call the compute method of the operators
-  cudaStream_t capture_stream = *graph_capture_stream();
   HOLOSCAN_CUDA_CALL_THROW_ERROR(
       cudaStreamBeginCaptureToGraph(
-          capture_stream, workload_graph_, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal),
+          capture_stream, graph, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal),
       "Failed to capture the workload graph");
 
   // call the compute method of the operators
-  for (auto& op_node : topo_ordered_operators_) {
+  for (auto& op_node : topo_ordered_operators) {
     HOLOSCAN_LOG_DEBUG("Processing operator: {}", op_node->name());
 
     // Get the execution context
@@ -283,20 +262,83 @@ bool GPUResidentExecutor::initialize_fragment() {
   }
 
   // end graph capture
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamEndCapture(capture_stream, &workload_graph_),
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamEndCapture(capture_stream, &graph),
                                  "Failed to end graph capture");
 
-  // get the number of nodes in the workload graph
+  // get the number of nodes in the graph
   size_t num_nodes = 0;
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphGetNodes(workload_graph_, nullptr, &num_nodes),
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphGetNodes(graph, nullptr, &num_nodes),
                                  "Failed to get the number of nodes in the workload graph");
-  HOLOSCAN_LOG_DEBUG("Number of nodes in the workload graph: {}", num_nodes);
+  HOLOSCAN_LOG_DEBUG("Number of nodes in the graph: {}", num_nodes);
   if (num_nodes <= 0) {
-    HOLOSCAN_LOG_WARN("Workload graph of GPU-resident execution is empty.");
+    HOLOSCAN_LOG_WARN("Graph of GPU-resident execution is empty.");
+  }
+}
+
+bool GPUResidentExecutor::initialize_fragment() {
+  HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::initialize_fragment()");
+
+  if (fragment_initialized_) {
+    HOLOSCAN_LOG_DEBUG("Main workload fragment ({}) has already been initialized.",
+                       fragment_->name());
+    if (data_ready_handler_fragment_) {
+      HOLOSCAN_LOG_DEBUG("Data ready handler fragment ({}) has already been initialized.",
+                         data_ready_handler_fragment_->name());
+    }
+    return true;
   }
 
+  if (data_ready_handler_fragment_) {
+    auto drh_fragment_graph = data_ready_handler_fragment_->graph_shared();
+    if (!verify_graph_topology(drh_fragment_graph, topo_ordered_drh_operators_)) {
+      throw std::runtime_error(
+          "Data ready handler graph topology is not valid for GPU-resident execution.");
+    }
+  }
+
+  auto main_fragment_graph = fragment_->graph_shared();
+  if (!verify_graph_topology(main_fragment_graph, topo_ordered_main_operators_)) {
+    throw std::runtime_error("Application graph topology is not valid for GPU-resident execution.");
+  }
+
+  if (data_ready_handler_fragment_ && !verify_distinct_operator_names()) {
+    auto err_msg = fmt::format(
+        "There are duplicate operator names between the main workload fragment ('{}') and the data "
+        "ready handler fragment ('{}'). Operator names must be distinct between the two fragments.",
+        fragment_->name(),
+        data_ready_handler_fragment_->name());
+    throw std::runtime_error(err_msg);
+  }
+
+  // initialize CUDA and set device to 0
+  initialize_cuda();
+
+  // prepare the data flow connections between operators
+  if (data_ready_handler_fragment_) {
+    prepare_data_flow(data_ready_handler_fragment_->graph_shared());
+  }
+  prepare_data_flow(fragment_->graph_shared());
+
+  // call the start method of the operators
+  for (auto& op_node : topo_ordered_drh_operators_) {
+    op_node->start();
+  }
+  for (auto& op_node : topo_ordered_main_operators_) {
+    op_node->start();
+  }
+
+  if (data_ready_handler_fragment_) {
+    create_cuda_graph_from_operators(
+        topo_ordered_drh_operators_, drh_graph_, *data_ready_handler_capture_stream());
+  }
+  create_cuda_graph_from_operators(
+      topo_ordered_main_operators_, workload_graph_, *graph_capture_stream());
+
   // call the stop method of the operators
-  for (auto& op_node : topo_ordered_operators_) {
+  for (auto& op_node : topo_ordered_drh_operators_) {
+    op_node->stop();
+  }
+  for (auto& op_node : topo_ordered_main_operators_) {
     op_node->stop();
   }
 
@@ -344,6 +386,14 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
           &if_node_handle, gpu_resident_graph_, 0, cudaGraphCondAssignDefault),
       "Failed to create the if node conditional handle");
 
+  cudaGraphNode_t drh_graph_node = nullptr;
+  if (data_ready_handler_fragment_) {
+    // if there is a data ready handler fragment, then add the drh_graph_ to the
+    // while_body_graph
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaGraphAddChildGraphNode(&drh_graph_node, while_body_graph, nullptr, 0, drh_graph_),
+        "Failed to add the data ready handler graph to the while body graph");
+  }
   // create the while controller kernel node and add it as the root node in the
   // body graph of the while node
   cudaKernelNodeParams while_controller_kernel_params{};
@@ -361,13 +411,15 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
       &data_ready_addr, &result_ready_addr, &tear_down_addr, &while_node_handle, &if_node_handle};
   while_controller_kernel_params.kernelParams = while_controller_args;
 
-  // add the while controller kernel node to the body graph
+  // add the while controller kernel node to the WHILE body graph
+  // drh node will be a dependency of this kernel, only if drh_graph_node was added, otherwise, the
+  // while controller kernel will be the root of the WHILE body graph
   cudaGraphNode_t while_controller_kernel_node;
   HOLOSCAN_CUDA_CALL_THROW_ERROR(
       cudaGraphAddKernelNode(&while_controller_kernel_node,
                              while_body_graph,
-                             nullptr,
-                             0,
+                             (drh_graph_node ? &drh_graph_node : nullptr),
+                             (drh_graph_node ? 1 : 0),
                              &while_controller_kernel_params),
       "Failed to add the while controller kernel node to the body graph");
 
@@ -518,6 +570,133 @@ std::shared_ptr<cudaStream_t> GPUResidentExecutor::graph_capture_stream() {
   }
 
   return graph_capture_stream_;
+}
+
+std::shared_ptr<cudaStream_t> GPUResidentExecutor::data_ready_handler_capture_stream() {
+  if (!drh_capture_stream_) {
+    // Create a CUDA stream with custom deleter
+    cudaStream_t* stream_ptr = new cudaStream_t();
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamCreateWithFlags(stream_ptr, cudaStreamNonBlocking),
+                                   "Failed to create a non-blocking CUDA stream");
+
+    drh_capture_stream_ = std::shared_ptr<cudaStream_t>(stream_ptr, [](cudaStream_t* stream) {
+      if (stream) {
+        HOLOSCAN_CUDA_CALL_ERR_MSG(cudaStreamDestroy(*stream), "Failed to destroy CUDA stream");
+        delete stream;
+      }
+    });
+  }
+  return drh_capture_stream_;
+}
+
+cudaGraph_t GPUResidentExecutor::workload_graph_clone() const {
+  cudaGraph_t workload_graph_clone;
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphClone(&workload_graph_clone, workload_graph_),
+                                 "Failed to clone the workload graph");
+  return workload_graph_clone;
+}
+
+void* GPUResidentExecutor::data_ready_device_address() {
+  if (!gpu_resident_deck_) {
+    throw std::runtime_error(
+        "GPUResidentExecutor::data_ready_device_address(): GPU-resident deck is not "
+        "initialized/found.");
+  }
+  return gpu_resident_deck_->data_ready_device_address();
+}
+
+void* GPUResidentExecutor::result_ready_device_address() {
+  if (!gpu_resident_deck_) {
+    throw std::runtime_error(
+        "GPUResidentExecutor::result_ready_device_address(): GPU-resident deck is not "
+        "initialized/found.");
+  }
+  return gpu_resident_deck_->result_ready_device_address();
+}
+
+void* GPUResidentExecutor::tear_down_device_address() {
+  if (!gpu_resident_deck_) {
+    throw std::runtime_error(
+        "GPUResidentExecutor::tear_down_device_address(): GPU-resident deck is not "
+        "initialized/found.");
+  }
+  return gpu_resident_deck_->tear_down_device_address();
+}
+
+void GPUResidentExecutor::data_ready_handler(std::shared_ptr<Fragment> fragment) {
+  if (data_ready_handler_fragment_) {
+    HOLOSCAN_LOG_WARN(
+        "There is already a data ready handler fragment registered. Overwriting it with the new "
+        "one.");
+  }
+  data_ready_handler_fragment_ = fragment;
+  // Set the executor for the data ready handler fragment so that operators in that fragment
+  // can access the same GPU resident executor
+  if (data_ready_handler_fragment_) {
+    data_ready_handler_fragment_->executor(fragment_->executor_shared());
+    // call this function so that the data ready handler capture
+    // stream is already created when it's required.
+    data_ready_handler_capture_stream();
+    // also compose the data ready handler fragment as a fail-safe mechanism
+    data_ready_handler_fragment_->compose_graph();
+
+    // check if it is a GPU-resident fragment here or throw error
+    if (!data_ready_handler_fragment_->is_gpu_resident()) {
+      auto err_msg = fmt::format(
+          "Data ready handler fragment '{}' is not a GPU-resident fragment. It cannot be "
+          "registered as a data ready handler for GPU-resident fragment '{}'.",
+          data_ready_handler_fragment_->name(),
+          fragment_->name());
+      throw std::runtime_error(err_msg);
+    }
+  }
+}
+
+std::shared_ptr<Fragment> GPUResidentExecutor::data_ready_handler_fragment() {
+  return data_ready_handler_fragment_;
+}
+
+bool GPUResidentExecutor::verify_distinct_operator_names() {
+  if (topo_ordered_drh_operators_.size() == 0) {
+    HOLOSCAN_LOG_DEBUG(
+        "Data ready handler fragment has no operators. No need to verify operator names.");
+    return true;
+  }
+
+  if (topo_ordered_main_operators_.size() == 0) {
+    HOLOSCAN_LOG_WARN("Main workload fragment has no operators. No need to verify operator names.");
+    return true;
+  }
+
+  const auto& smaller_list =
+      (topo_ordered_drh_operators_.size() <= topo_ordered_main_operators_.size())
+          ? topo_ordered_drh_operators_
+          : topo_ordered_main_operators_;
+  const auto& larger_list = (&smaller_list == &topo_ordered_drh_operators_)
+                                ? topo_ordered_main_operators_
+                                : topo_ordered_drh_operators_;
+
+  std::unordered_set<std::string> name_set;
+  // reserve extra capacity to minimize rehashing
+  name_set.reserve(smaller_list.size() * 2);
+
+  for (const auto& op_ptr : smaller_list) {
+    name_set.insert(op_ptr->name());
+  }
+
+  for (const auto& op_ptr : larger_list) {
+    if (name_set.find(op_ptr->name()) != name_set.end()) {
+      HOLOSCAN_LOG_ERROR(
+          "Operator name '{}' appears in both the main workload fragment ('{}') and the data ready "
+          "handler fragment ('{}').",
+          op_ptr->name(),
+          fragment_->name(),
+          data_ready_handler_fragment_->name());
+      return false;
+    }
+  }
+
+  return true;
 }
 
 }  // namespace holoscan

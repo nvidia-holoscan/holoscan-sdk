@@ -13,8 +13,14 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
+
+This example demonstrates multithreaded operator execution and uses Python's
+logging module for thread-safe output from operators. Python's logging module
+is thread-safe by default, making it more appropriate than print() statements
+in multithreaded contexts where concurrent output could cause race conditions.
 """  # noqa: E501
 
+import logging
 import multiprocessing
 import time
 from argparse import ArgumentParser
@@ -23,6 +29,41 @@ from holoscan.conditions import CountCondition
 from holoscan.core import Application, IOSpec, Operator, OperatorSpec, Tracker
 from holoscan.data_loggers import BasicConsoleLogger, SimpleTextSerializer
 from holoscan.schedulers import EventBasedScheduler, GreedyScheduler, MultiThreadScheduler
+
+# Configure logging for thread-safe output from operators
+# Python's logging module is thread-safe by default, making it suitable for
+# use in multithreaded operators where print() could cause race conditions
+
+
+# ANSI color codes to match Holoscan SDK's spdlog style
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter that adds colors to log levels to match spdlog output."""
+
+    COLORS = {
+        "DEBUG": "\033[36m",  # Cyan
+        "INFO": "\033[32m",  # Green
+        "WARNING": "\033[33m",  # Yellow
+        "ERROR": "\033[31m",  # Red
+        "CRITICAL": "\033[1;31m",  # Bold Red
+    }
+    RESET = "\033[0m"
+
+    def format(self, record):
+        # Color the level name
+        levelname = record.levelname
+        # levelname.lower() to match Holoscan C++ logging macro style
+        if levelname in self.COLORS:
+            record.levelname = f"{self.COLORS[levelname]}{levelname.lower()}{self.RESET}"
+        else:
+            record.levelname = levelname.lower()
+        return super().format(record)
+
+
+# Set up colored logging
+handler = logging.StreamHandler()
+handler.setFormatter(ColoredFormatter("[%(levelname)s] [%(filename)s:%(lineno)d] %(message)s"))
+logging.root.addHandler(handler)
+logging.root.setLevel(logging.INFO)
 
 
 class PingTxOp(Operator):
@@ -53,6 +94,7 @@ class DelayOp(Operator):
         self.delay = delay
         self.increment = increment
         self.silent = silent
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
@@ -67,13 +109,13 @@ class DelayOp(Operator):
 
         if self.delay > 0:
             if not self.silent:
-                print(f"{self.name}: now waiting {self.delay:0.3f} s")
+                self.logger.info(f"{self.name}: now waiting {self.delay:0.3f} s")
             time.sleep(self.delay)
             if not self.silent:
-                print(f"{self.name}: finished waiting")
+                self.logger.info(f"{self.name}: finished waiting")
         op_output.emit(self.name, "out_name")
         if not self.silent:
-            print(f"{self.name}: sending new value ({new_value})")
+            self.logger.info(f"{self.name}: sending new value ({new_value})")
         op_output.emit(new_value, "out_val")
 
 
@@ -86,6 +128,7 @@ class PingRxOp(Operator):
 
     def __init__(self, fragment, *args, silent=False, **kwargs):
         self.silent = silent
+        self.logger = logging.getLogger(self.__class__.__name__)
 
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
@@ -105,9 +148,9 @@ class PingRxOp(Operator):
         names = op_input.receive("names")
         values = op_input.receive("values")
         if not self.silent:
-            print(f"number of received names: {len(names)}")
-            print(f"number of received values: {len(values)}")
-            print(f"sum of received values: {sum(values)}")
+            self.logger.info(f"number of received names: {len(names)}")
+            self.logger.info(f"number of received values: {len(values)}")
+            self.logger.info(f"sum of received values: {sum(values)}")
 
 
 # Now define a simple application using the operators defined above

@@ -55,12 +55,21 @@ def validate_log_patterns(
     # Read from stdin if no file path is provided
     if log_file_path is None:
         try:
-            log_content = sys.stdin.read()
+            # Read stdin as bytes first to handle encoding issues
+            stdin_bytes = sys.stdin.buffer.read()
+            # Try to decode with UTF-8, replacing invalid sequences
+            log_content = stdin_bytes.decode("utf-8", errors="replace")
+
+            # Check for replacement characters that indicate binary/invalid UTF-8
+            if "\ufffd" in log_content:  # Unicode replacement character
+                replacement_count = log_content.count("\ufffd")
+                print(f"WARNING: Found {replacement_count} invalid UTF-8 byte(s) in stdin")
+
+            if verbose:
+                print(f"Read from stdin ({len(log_content)} characters)")
         except Exception as e:
             print(f"ERROR: Failed to read from stdin: {e}")
             return False
-        if verbose:
-            print(f"Read from stdin ({len(log_content)} characters)")
     else:
         if not Path(log_file_path).exists():
             print(f"ERROR: Log file {log_file_path} does not exist")
@@ -84,34 +93,43 @@ def validate_log_patterns(
         if verbose:
             print(f"Stripped quotes: {original_length} -> {len(log_content)} characters")
 
+    success = True
     # Check fail patterns first - any match means failure
     if fail_patterns:
         for pattern in fail_patterns:
             match = re.search(pattern, log_content, re.MULTILINE)
             if match:
+                success = False
                 print(f"FAIL: Found prohibited pattern: '{pattern}'")
                 print(f"  Match: {match.group()}")
+                print("\n" + "=" * 80)
                 # Show context around the match
-                start = max(0, match.start() - 50)
-                end = min(len(log_content), match.end() + 50)
+                start = max(0, match.start() - 20)
+                end = min(len(log_content), match.end() + 20)
                 context = log_content[start:end].replace("\n", "\\n")
-                print(f"  Context: ...{context}...")
-                return False
-
-        print(f"PASS: No prohibited patterns found ({len(fail_patterns)} patterns checked)")
+                print("LOCAL LOG CONTEXT AROUND THE FAILURE:\n\n")
+                print(context)
 
     # Check pass patterns - all must match
     if pass_patterns:
         for pattern in pass_patterns:
             match = re.search(pattern, log_content, re.MULTILINE)
             if not match:
+                success = False
                 print(f"FAIL: Required pattern not found: '{pattern}'")
-                if verbose:
-                    print(f"  Searched in {len(log_content)} characters")
-                return False
             elif verbose:
                 print(f"  Found required pattern: '{pattern}' -> {match.group()}")
 
+    if not success:
+        print("\n" + "=" * 80)
+        print("FULL LOG CONTENT:\n\n")
+        print(log_content)
+        print("=" * 80 + "\n")
+        return False
+
+    if fail_patterns:
+        print(f"PASS: No prohibited patterns found ({len(fail_patterns)} patterns checked)")
+    if pass_patterns:
         print(f"PASS: All required patterns found ({len(pass_patterns)} patterns checked)")
 
     return True

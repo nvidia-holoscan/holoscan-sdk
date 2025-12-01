@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,22 +34,19 @@ TEST(Config, TestDefault) {
 TEST(Config, TestNonexistentFile) {
   std::string fname1 = "nonexistent.yaml";
 
-  // capture stderr
-  testing::internal::CaptureStderr();
-
-  // constructor called with nonexistent YAML file
-  Config C = Config(fname1, "temp1");
-  ASSERT_EQ(C.config_file(), fname1);
-  ASSERT_EQ(C.prefix(), "temp1");
-  ASSERT_EQ(C.yaml_nodes().size(), 0);
-
-  // verify expected warning was logged to stderr
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("warning") != std::string::npos) << "=== LOG ===\n"
-                                                               << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find("Config file 'nonexistent.yaml' doesn't exist") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+  // constructor called with nonexistent YAML file should throw an exception
+  EXPECT_THROW(
+      {
+        try {
+          Config C = Config(fname1, "temp1");
+        } catch (const RuntimeError& e) {
+          // Verify the exception message contains the expected text
+          EXPECT_TRUE(std::string(e.what()).find("Config file 'nonexistent.yaml' doesn't exist") !=
+                      std::string::npos);
+          throw;
+        }
+      },
+      RuntimeError);
 }
 
 }  // namespace holoscan

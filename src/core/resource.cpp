@@ -16,6 +16,8 @@
  */
 
 #include "holoscan/core/resource.hpp"
+#include <string>
+#include <vector>
 
 #include "holoscan/core/component_spec.hpp"
 
@@ -71,10 +73,25 @@ void Resource::set_parameters() {
   // Set default values for unspecified arguments if the resource is native
   if (resource_type_ == ResourceType::kNative) {
     // Set only default parameter values
+    std::vector<std::string> errors;
     for (auto& [key, param_wrap] : spec_->params()) {
       // If no value is specified, the default value will be used by setting an empty argument.
       Arg empty_arg("");
-      ArgumentSetter::set_param(param_wrap, empty_arg);
+      try {
+        ArgumentSetter::set_param(param_wrap, empty_arg);
+      } catch (const std::exception& e) {
+        std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
+        HOLOSCAN_LOG_ERROR("Resource '{}': failed to set default parameter - {}", name_, error_msg);
+        errors.push_back(error_msg);
+      }
+    }
+
+    if (!errors.empty()) {
+      throw std::runtime_error(
+          fmt::format("Resource '{}': failed to set {} default parameter(s):\n  - {}",
+                      name_,
+                      errors.size(),
+                      fmt::join(errors, "\n  - ")));
     }
   }
 }

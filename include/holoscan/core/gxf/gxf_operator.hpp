@@ -225,7 +225,8 @@ class GXFOperator : public holoscan::Operator {
            gxf_uid_t uid,
            const char* key,
            const ArgType& arg_type,
-           const std::any& any_value) {
+           const std::any& any_value) -> gxf_result_t {
+          const std::type_info& actual_type = any_value.type();
           try {
             auto& param = *std::any_cast<Parameter<typeT>*>(any_value);
 
@@ -253,10 +254,22 @@ class GXFOperator : public holoscan::Operator {
                   "Unable to get argument for key '{}' with type '{}'", key, typeid(typeT).name());
             }
           } catch (const std::bad_any_cast& e) {
-            HOLOSCAN_LOG_ERROR(
-                "Bad any cast exception caught for argument '{}': {}", key, e.what());
+            const char* expected = typeid(Parameter<typeT>*).name();
+            const char* actual = actual_type == typeid(void) ? "<empty>" : actual_type.name();
+            std::string error_message = fmt::format(
+                "Bad any cast while handling parameter '{}': expected '{}', got '{}'. {}",
+                key,
+                expected,
+                actual,
+                e.what());
+            HOLOSCAN_LOG_ERROR(error_message);
+            return GXF_FAILURE;
           }
 
+          HOLOSCAN_LOG_DEBUG(
+              "GXFOperator parameter handler: '{}' not set via YAML/custom path; returning "
+              "GXF_FAILURE",
+              key);
           return GXF_FAILURE;
         });
   }

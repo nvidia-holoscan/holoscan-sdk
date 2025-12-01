@@ -49,7 +49,8 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
     string_split(tensor_name, tensor_tokens, ':');
   }
 
-  // Single operation supported on multi-tensor data
+  // Single operation supported on multi-tensor data (may support multiple in future)
+  InferStatus last_result(holoinfer_code::H_SUCCESS);
   for (const auto& operation_name : operation_names) {
     std::map<std::string, void*> all_tensor_data;
     std::map<std::string, std::vector<int>> all_tensor_dims;
@@ -73,14 +74,21 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
       all_tensor_dims[tensor] = dimensions;
     }
 
-    return infer_data_->process_transform(operation_name,
-                                          tensor_name,
-                                          all_tensor_data,
-                                          all_tensor_dims,
-                                          processed_data_map_,
-                                          processed_dims_map_);
+    last_result = infer_data_->process_transform(operation_name,
+                                                  tensor_name,
+                                                  all_tensor_data,
+                                                  all_tensor_dims,
+                                                  processed_data_map_,
+                                                  processed_dims_map_);
+
+    if (last_result.get_code() != holoinfer_code::H_SUCCESS) {
+      return last_result;  // Return immediately on error
+    }
+
+    // In a future release, may update inferred_result_map and dimension_map here to chain
+    // operations together
   }
-  return InferStatus();
+  return last_result;
 }
 
 InferStatus ManagerProcessor::process(const MultiMappings& tensor_oper_map,

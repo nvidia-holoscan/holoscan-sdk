@@ -212,11 +212,8 @@ class Operator : public ComponentBase {
    * @return The reference to this operator.
    */
   Operator& name(const std::string& name) {
-    // Operator::parse_port_name requires that "." is not allowed in the Operator name
-    if (name.find(".") != std::string::npos) {
-      throw std::invalid_argument(fmt::format(
-          "The . character is reserved and cannot be used in the operator name ('{}').", name));
-    }
+    // Validate name against restricted keywords and patterns
+    validate_operator_name(name);
     name_ = name;
     return *this;
   }
@@ -807,6 +804,24 @@ class Operator : public ComponentBase {
   /// Get the executor of the operator
   std::shared_ptr<Executor> executor();
 
+  /**
+   * @brief Validate operator name against restricted keywords and patterns.
+   *
+   * @param name The name to validate.
+   * @throws std::invalid_argument if the name contains restricted patterns.
+   */
+  static void validate_operator_name(const std::string& name) {
+    // Check for restricted substrings
+    for (const auto& restricted : kRestrictedSubstrings) {
+      if (name.find(restricted) != std::string::npos) {
+        throw std::invalid_argument(fmt::format(
+            "The substring '{}' is reserved and cannot be used in the operator name ('{}').",
+            restricted,
+            name));
+      }
+    }
+  }
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -825,11 +840,11 @@ class Operator : public ComponentBase {
   // Allow GXFWrapper to access protected helpers for profiling (e.g., consolidated input label)
   friend class holoscan::gxf::GXFWrapper;
   friend class holoscan::GPUResidentExecutor;
-  // Fragment must be able to call set_self_shared
+  // Fragment must be able to call set_self_shared and set_dynamic_flows
   friend class Fragment;
 
   friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                         const char* receiver_name);
+                                         const char* receiver_name, bool is_old_message);
   friend gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Operator* op,
                                        const char* transmitter_name);
 
@@ -916,6 +931,11 @@ class Operator : public ComponentBase {
   void reset_input_message_labels() { input_message_labels.clear(); }
 
   /**
+   * @brief Check if the operator has any input message labels.
+   */
+  bool has_input_message_labels() { return !input_message_labels.empty(); }
+
+  /**
    * @brief Get the number of published messages for each output port indexed by the output port
    * name.
    *
@@ -979,6 +999,12 @@ class Operator : public ComponentBase {
  private:
   /// An empty shared pointer to FlowInfo.
   static inline const std::shared_ptr<FlowInfo> kEmptyFlowInfo{nullptr};
+
+  /// List of restricted substrings that cannot be used in operator names.
+  static inline const std::vector<std::string> kRestrictedSubstrings = {
+      ".",      // Reserved for port name separation
+      "_old",   // Reserved suffix for asynchronous buffer's old message handling
+  };
 
   ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();

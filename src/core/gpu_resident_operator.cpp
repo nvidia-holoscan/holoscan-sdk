@@ -47,6 +47,11 @@ std::shared_ptr<cudaStream_t> GPUResidentOperator::cuda_stream() {
   return gr_executor->graph_capture_stream();
 }
 
+std::shared_ptr<cudaStream_t> GPUResidentOperator::data_ready_handler_cuda_stream() {
+  auto gr_executor = gpu_resident_executor();
+  return gr_executor->data_ready_handler_capture_stream();
+}
+
 void* GPUResidentOperator::device_memory(const std::string& port_name) {
   auto gr_executor = gpu_resident_executor();
   return gr_executor->device_memory(self_shared(), port_name);
@@ -59,6 +64,16 @@ std::shared_ptr<GPUResidentExecutor> GPUResidentOperator::gpu_resident_executor(
         "GPUResidentOperator is not configured with a GPU-resident holoscan executor.");
   }
   return gr_executor;
+}
+
+void* GPUResidentOperator::data_ready_device_address() {
+  auto gr_executor = gpu_resident_executor();
+  return gr_executor->data_ready_device_address();
+}
+
+void* GPUResidentOperator::result_ready_device_address() {
+  auto gr_executor = gpu_resident_executor();
+  return gr_executor->result_ready_device_address();
 }
 
 }  // namespace holoscan

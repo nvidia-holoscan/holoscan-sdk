@@ -543,6 +543,10 @@ Arguments:
   --build-python [true | false] : Build the SDK without python support
         Default: true
         Associated environment variable: HOLOSCAN_BUILD_PYTHON
+  --sccache [true | false] : Use sccache for build caching (speeds up rebuilds)
+        Default: false
+        Associated environment variable: HOLOSCAN_USE_SCCACHE
+        Optional: Set SCCACHE_MEMCACHED_ENDPOINT for distributed caching (e.g., server:11211)
 '
 }
 build() {
@@ -567,7 +571,24 @@ build() {
     local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
     local build_python="${HOLOSCAN_BUILD_PYTHON:-'ON'}"
     local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-'OFF'}"
+    local use_sccache="${HOLOSCAN_USE_SCCACHE:-'OFF'}"
     local config_args=""
+
+    # Check if memcached endpoint is reachable before passing it to container
+    local sccache_memcached_opt=""
+    if [ -n "${SCCACHE_MEMCACHED_ENDPOINT-}" ]; then
+        local endpoint="${SCCACHE_MEMCACHED_ENDPOINT}"
+        local host="${endpoint%:*}"
+        local port="${endpoint##*:}"
+
+        # Test if the endpoint is reachable (timeout after 5 seconds)
+        if timeout 5 bash -c "echo -n > /dev/tcp/${host}/${port}" 2>/dev/null; then
+            sccache_memcached_opt="-e SCCACHE_MEMCACHED_ENDPOINT"
+        else
+            c_echo_err Y "Warning: SCCACHE_MEMCACHED_ENDPOINT is set to ${endpoint} but server is not reachable."
+            c_echo_err Y "         Proceeding without distributed caching."
+        fi
+    fi
 
     # Parse args
     local extra_args=""
@@ -595,6 +616,17 @@ build() {
             tidy_val=$(get_boolean "$2")
             if [ "$tidy_val" == "true" ]; then
                 enable_clang_tidy='ON'
+            fi
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --sccache)
+            sccache_val=$(get_boolean "$2")
+            if [ "$sccache_val" == "true" ]; then
+                use_sccache='ON'
+            else
+                use_sccache='OFF'
             fi
             reconfigure=true
             shift
@@ -729,6 +761,7 @@ build() {
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk \
+        ${sccache_memcached_opt} \
         ${extra_args[@]} \
         $img \
         -c "set -e
@@ -739,11 +772,15 @@ build() {
                     -D HOLOSCAN_BUILD_PYTHON=${build_python} \
                     -D HOLOSCAN_PYTHON_EXAMPLES=${build_python} \
                     -D HOLOSCAN_ENABLE_CLANG_TIDY=${enable_clang_tidy} \
+                    -D HOLOSCAN_USE_SCCACHE=${use_sccache} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
                     -D CMAKE_BUILD_TYPE=${build_type} \
                     ${config_args}
             fi
             cmake --build ${build_path} -j ${build_njobs}
+            if [ '${use_sccache}' = 'ON' ]; then
+                sccache --show-stats > ${build_path}/sccache-stats.txt
+            fi
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions

@@ -195,6 +195,10 @@ int main() {
   if (data_flow_tracking_enabled) {
     // enable data flow tracking for a distributed app
     auto trackers = app->track_distributed(0, 0, 0);
+    // set separate log files for each fragment
+    for (const auto& [fragment_name, tracker] : trackers) {
+      tracker->enable_logging(std::string(fragment_name) + "_logger.log");
+    }
 
     // run the application
     app->run();

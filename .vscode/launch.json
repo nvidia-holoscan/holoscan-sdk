@@ -722,6 +722,63 @@
             ]
         },
         {
+            "name": "(gdb) examples/flow_control/sequential_with_subgraph/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/flow_control/sequential_with_subgraph/cpp/sequential_with_subgraph",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "HOLOSCAN_EXECUTOR_LOG_LEVEL",
+                    "value": "INFO"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/flow_control/sequential_with_subgraph/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/flow_control/sequential_with_subgraph/python/sequential_with_subgraph.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/flow_control/conditional/cpp",
             "type": "cppdbg",
             "request": "launch",
@@ -2026,6 +2083,29 @@
             ]
         },
         {
+            "name": "(gdb) examples/ping_simple_async_buffer/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/ping_simple_async_buffer/cpp/ping_simple_async_buffer",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/ping_simple_run_async/cpp",
             "type": "cppdbg",
             "request": "launch",
@@ -2397,6 +2477,63 @@
             ]
         },
         {
+            "name": "(gdb) examples/subgraph/ping_multi_receiver/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/subgraph/ping_multi_receiver/cpp/subgraph_ping",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/subgraph/ping_multi_receiver/python",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "/usr/bin/bash",
+            "args": [
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/.vscode/debug_python",
+                "${workspaceFolder}/${env:HOLOSCAN_PUBLIC_FOLDER}/examples/subgraph/ping_multi_receiver/python/subgraph_ping.py",
+            ],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                },
+                {
+                    "name": "PYTHONPATH",
+                    "value": "${command:cmake.buildDirectory}/python/lib"
+                },
+                {
+                    "name": "HOLOSCAN_INPUT_PATH",
+                    "value": "${command:cmake.buildDirectory}/../data"
+                },
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) examples/tensor_interop/cpp",
             "type": "cppdbg",
             "request": "launch",
@@ -2720,66 +2857,6 @@
             ]
         },
         {
-            "name": "(gdb) examples/wrap_operator_as_gxf_extension",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.buildDirectory}/bin/gxe",
-            "args": [
-                "--app",
-                "examples/wrap_operator_as_gxf_extension/gxf_app/ping.yaml",
-                "--manifest",
-                "examples/wrap_operator_as_gxf_extension/gxf_app/test_operator_as_gxf_ext_manifest.yaml",
-                "--severity",
-                "4"
-            ],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                },
-            ],
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
-            "name": "(gdb) examples/wrap_holoscan_as_gxf_extension",
-            "type": "cppdbg",
-            "request": "launch",
-            "program": "${command:cmake.buildDirectory}/bin/gxe",
-            "args": [
-                "--app",
-                "examples/wrap_holoscan_as_gxf_extension/gxf_app/ping.yaml",
-                "--manifest",
-                "examples/wrap_holoscan_as_gxf_extension/gxf_app/test_holoscan_as_gxf_ext_manifest.yaml",
-                "--severity",
-                "4"
-            ],
-            "stopAtEntry": false,
-            "cwd": "${command:cmake.buildDirectory}",
-            "environment": [
-                {
-                    "name": "HOLOSCAN_LOG_LEVEL",
-                    "value": "DEBUG"
-                },
-            ],
-            "MIMode": "gdb",
-            "setupCommands": [
-                {
-                    "description": "Enable pretty-printing for gdb",
-                    "text": "-enable-pretty-printing",
-                    "ignoreFailures": true
-                }
-            ]
-        },
-        {
             "name": "(gdb) Python: tests",
             "type": "cppdbg",
             "request": "launch",
@@ -2935,6 +3012,29 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${command:cmake.buildDirectory}/examples/gpu_resident_example/gpu_resident_example",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
+            "name": "(gdb) examples/gpu_resident_input/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/gpu_resident_input/gpu_resident_input",
             "args": [],
             "stopAtEntry": false,
             "cwd": "${command:cmake.buildDirectory}",

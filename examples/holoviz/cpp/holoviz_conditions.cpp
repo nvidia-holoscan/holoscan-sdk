@@ -105,20 +105,20 @@ class SourceOp : public Operator {
    * 3. Creates an InputSpec that tells Holoviz to render text with the frame number and rate
    * 4. Emits both the entity and the specs to the visualizer
    */
-  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     // Calculate frame rate
-    float frame_rate = 0.f;
+    float frame_rate = 0.F;
     if (start_time_.time_since_epoch().count() == 0) {
       // First frame: record the start time
       start_time_ = std::chrono::steady_clock::now();
     } else {
       // Calculate frames per second
       frame_rate = static_cast<float>(frame_index_) /
-                   std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - start_time_)
-                       .count() *
-                   1000.f;
+                   static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                          std::chrono::steady_clock::now() - start_time_)
+                                          .count()) *
+                   1000.F;
     }
 
     // Create a new entity to hold the tensor data

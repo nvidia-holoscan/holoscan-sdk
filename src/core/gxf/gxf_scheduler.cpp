@@ -16,6 +16,10 @@
  */
 
 #include <gxf/core/gxf.h>
+
+#include <string>
+#include <vector>
+
 #include <gxf/std/clock.hpp>
 
 #include "holoscan/core/component_spec.hpp"
@@ -37,8 +41,25 @@ void GXFScheduler::set_parameters() {
   update_params_from_args();
 
   // Set Handler parameters
+  std::vector<std::string> errors;
   for (auto& [key, param_wrap] : spec_->params()) {
-    set_gxf_parameter(name_, key, param_wrap);
+    HOLOSCAN_LOG_TRACE("GXFScheduler '{}':: setting GXF parameter '{}'", name_, key);
+    try {
+      set_gxf_parameter(name_, key, param_wrap);
+    } catch (const std::exception& e) {
+      std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
+      HOLOSCAN_LOG_ERROR("GXFScheduler '{}': failed to set GXF parameter - {}", name_, error_msg);
+      errors.push_back(error_msg);
+    }
+  }
+
+  if (!errors.empty()) {
+    throw std::runtime_error(
+        fmt::format("GXFScheduler '{}' (type '{}'): failed to set {} GXF parameter(s):\n  - {}",
+                    name_,
+                    gxf_typename(),
+                    errors.size(),
+                    fmt::join(errors, "\n  - ")));
   }
 }
 

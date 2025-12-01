@@ -17,10 +17,13 @@
 # requirement of 3.26.4 (see https://github.com/rapidsai/rapids-cmake/pull/627).
 
 # https://github.com/rapidsai/rapids-cmake#installation
-file(DOWNLOAD https://gitlab.com/nvidia/rapidsai/rapids-cmake/-/raw/branch-24.12/RAPIDS.cmake
-    ${CMAKE_BINARY_DIR}/RAPIDS.cmake
+if(NOT EXISTS ${CMAKE_BINARY_DIR}/RAPIDS.cmake)
+file(DOWNLOAD https://raw.githubusercontent.com/rapidsai/rapids-cmake/branch-25.10/RAPIDS.cmake
+     ${CMAKE_BINARY_DIR}/RAPIDS.cmake
 )
+endif()
 
+set(rapids-cmake-version 25.10)
 include(${CMAKE_BINARY_DIR}/RAPIDS.cmake)
 
 include(rapids-cmake)

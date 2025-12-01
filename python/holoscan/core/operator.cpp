@@ -227,7 +227,7 @@ void init_operator(py::module_& m) {
 
   // note: added py::dynamic_attr() to allow dynamically adding attributes in a Python subclass
   py::class_<Operator, ComponentBase, PyOperator, std::shared_ptr<Operator>> operator_class(
-      m, "Operator", py::dynamic_attr(), doc::Operator::doc_Operator_args_kwargs);
+      m, "OperatorBase", py::dynamic_attr(), doc::Operator::doc_Operator_args_kwargs);
 
   operator_class
       .def(py::init<py::object, Fragment*, const py::args&, const py::kwargs&>(),

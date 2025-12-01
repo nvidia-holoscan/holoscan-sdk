@@ -30,10 +30,10 @@
 namespace holoscan {
 
 void CPUThread::setup(ComponentSpec& spec) {
-  spec.param(pin_entity_,
+  spec.param(pin_operator_,
              "pin_entity",
-             "Pin Entity",
-             "Set the entity to be pinned to a worker thread or not.",
+             "Pin Operator ('pin_operator' can be used as an alias for 'pin_entity').",
+             "Set the operator(s) to be pinned to a worker thread or not.",
              false);
 
   spec.param(pin_cores_,
@@ -78,10 +78,14 @@ void CPUThread::initialize() {
   register_converter<SchedulingPolicy>();
   auto& current_args = args();
 
+  // Convert the SchedulingPolicy argument to a YAML node with a string representation
+  // (SCHED_FIFO, SCHED_RR, or SCHED_DEADLINE) since Holoscan cannot directly set GXF parameters
+  // with custom enum types.
   auto find_it = std::find_if(current_args.begin(), current_args.end(), [](const auto& arg) {
     return (arg.name() == "sched_policy" &&
             (arg.arg_type().element_type() == ArgElementType::kString ||
-             arg.arg_type().element_type() == ArgElementType::kCustom) &&
+             arg.arg_type().element_type() == ArgElementType::kCustom ||
+             arg.arg_type().element_type() == ArgElementType::kYAMLNode) &&
             arg.arg_type().container_type() == ArgContainerType::kNative);
   });
 
@@ -100,13 +104,28 @@ void CPUThread::initialize() {
             policy_string);
         yaml_conversion_failed = true;
       }
-    } else {
+    } else if (find_it->arg_type().element_type() == ArgElementType::kCustom) {
       try {
         auto policy_enum = std::any_cast<SchedulingPolicy>(find_it->value());
         policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy_enum);
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Unable to cast 'sched_policy' argument to a SchedulingPolicy enum: {}",
                            e.what());
+        yaml_conversion_failed = true;
+      }
+    } else if (find_it->arg_type().element_type() == ArgElementType::kYAMLNode) {
+      // GXF's CPUThread resource requires YAML nodes to use string values (SCHED_FIFO, SCHED_RR,
+      // or SCHED_DEADLINE) rather than integer strings, so we convert numeric values to their
+      // corresponding string representations.
+      SchedulingPolicy policy = SchedulingPolicy::kFirstInFirstOut;
+      policy_node = std::any_cast<YAML::Node>(find_it->value());
+      if (YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(policy_node, policy)) {
+        // Re-encode to convert numeric YAML values (e.g., "1", "2", "6") to string format.
+        policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy);
+      } else {
+        HOLOSCAN_LOG_ERROR(
+            "Unable to decode 'sched_policy' argument to a SchedulingPolicy enum: {}",
+            policy_node.Scalar());
         yaml_conversion_failed = true;
       }
     }
@@ -121,12 +140,22 @@ void CPUThread::initialize() {
     }
   }
 
+  // The underlying GXF nvidia::gxf::CPUThread component uses "pin_entity" as its parameter name,
+  // but Holoscan's API exposes this as "pin_operator" in both C++ and Python interfaces.
+  // If a "pin_operator" argument is provided, we must rename it to "pin_entity" before passing
+  // it to the GXF component.
+  for (auto& arg : current_args) {
+    if (arg.name() == "pin_operator") {
+      arg.name("pin_entity");
+    }
+  }
+
   // Call parent initialize
   gxf::GXFResource::initialize();
 }
 
 bool CPUThread::pinned() const {
-  return pin_entity_;
+  return pin_operator_;
 }
 
 std::vector<uint32_t> CPUThread::pin_cores() const {

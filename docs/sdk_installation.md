@@ -94,15 +94,15 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.9.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.9.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.9.0-cuda12-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````

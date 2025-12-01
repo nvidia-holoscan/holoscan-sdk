@@ -36,8 +36,7 @@ from holoscan.conditions import (
     PeriodicCondition,
     PeriodicConditionPolicy,
 )
-from holoscan.core import Application, ConditionType, Operator, SchedulingStatusType
-from holoscan.core import _Condition as ConditionBase
+from holoscan.core import Application, ConditionBase, ConditionType, Operator, SchedulingStatusType
 from holoscan.gxf import Entity, GXFCondition
 from holoscan.resources import RealtimeClock, UnboundedAllocator
 

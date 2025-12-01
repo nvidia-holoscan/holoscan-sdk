@@ -24,12 +24,14 @@ ARG LIBTORCH_CU12_IGPU_VERSION=2.8.0
 ARG LIBTORCH_CU12_DGPU_VERSION=2.8.0+cu129
 ARG LIBTORCH_CU13_VERSION=2.9.0+cu130
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.1.0_20250820_2ac8c610f_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.1.0_20250909_2ac8c610f_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.1.0_20251114_0652b7b15_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.1.0_20251114_0652b7b15_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.0.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.13
 ARG UCX_VERSION=1.19.0
+ARG NSYS_VERSION=2025.3.1  # at least 2025.3 required for CUDA 13.0 support
+
 
 ############################################################
 # Base image
@@ -203,10 +205,34 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
     && static_libs=$(dpkg -L $packages | grep '\.a$' || true) \
     && cleanup_unwanted_libs $static_libs
 
+
+############################################################
+# nsight-systems-cli
+############################################################
+FROM cuda-dev AS nsight-cli-dev
+
+# The cuda-nsight-systems-${CUDA_MAJOR_MINOR} package is large as it also includes nsys-ui.
+# We can install the lighter weight nsight-systems-cli instead, but this requires adding the
+# NVIDIA DevTools APT repo.
+ARG NSYS_VERSION
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    UBUNTU_RELEASE=$(source /etc/lsb-release && echo "$DISTRIB_RELEASE" | tr -d .) \
+    && ARCH_STRING=$(dpkg --print-architecture) \
+    && DEVTOOLS_REPO_URL="https://developer.download.nvidia.com/devtools/repos/ubuntu${UBUNTU_RELEASE}/${ARCH_STRING}" \
+    && echo "DEVTOOLS_REPO_URL=${DEVTOOLS_REPO_URL}" \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gnupg \
+    && curl -fsSL "${DEVTOOLS_REPO_URL}/nvidia.pub" | gpg --dearmor -o /usr/share/keyrings/nvidia-devtools.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/nvidia-devtools.gpg] ${DEVTOOLS_REPO_URL} /" | tee /etc/apt/sources.list.d/nvidia-devtools.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nsight-systems-cli-${NSYS_VERSION}
+
 ############################################################
 # Inference dev
 ############################################################
-FROM cuda-dev AS infer-dev
+FROM nsight-cli-dev AS infer-dev
 ARG TENSORRT_CU12_VERSION
 ARG TENSORRT_CU13_VERSION
 
@@ -311,6 +337,22 @@ RUN if [ $(uname -m) = "aarch64" ]; then ARCH=arm64; else ARCH=linux; fi \
     && unzip -q ngccli_linux.zip \
     && rm ngccli_linux.zip \
     && export ngc_exec=$(find . -type f -executable -name "ngc" | head -n1)
+
+############################################################
+# sccache
+############################################################
+FROM base AS sccache-downloader
+
+WORKDIR /opt/sccache
+
+# Set sccache version
+ENV SCCACHE_VERSION=v0.12.0-rapids.9
+ENV SCCACHE_BASE_URL=https://github.com/rapidsai/sccache/releases/download
+
+# Download and extract the binary
+RUN curl -S -# -L -o sccache.tar.gz \
+    ${SCCACHE_BASE_URL}/${SCCACHE_VERSION}/sccache-${SCCACHE_VERSION}-$(uname -m)-unknown-linux-musl.tar.gz && \
+    tar -xzf sccache.tar.gz -C /opt/sccache --strip-components=1 sccache-${SCCACHE_VERSION}-$(uname -m)-unknown-linux-musl/sccache
 
 ############################################################
 # ONNX Runtime (Source)
@@ -531,7 +573,8 @@ ARG GXF_CU13_VERSION
 ARG CUDA_MAJOR
 
 WORKDIR /tmp/gxf
-RUN if [ "${CUDA_MAJOR}" = "13" ]; then \
+RUN set -x; \
+    if [ "${CUDA_MAJOR}" = "13" ]; then \
         GXF_VERSION="${GXF_CU13_VERSION}"; \
     else \
         GXF_VERSION="${GXF_CU12_VERSION}"; \
@@ -723,6 +766,10 @@ ENV PATH="${PATH}:${NGC_CLI}"
 # https://jirasw.nvidia.com/browse/NGC-31306
 ENV PYTHONIOENCODING=utf-8 LC_ALL=C.UTF-8
 
+# Copy sccache
+ENV SCCACHE=/opt/sccache
+COPY --from=sccache-downloader ${SCCACHE}/sccache /usr/local/bin
+
 # Copy ONNX Runtime
 ARG ONNX_RUNTIME_VERSION
 ENV ONNX_RUNTIME=/opt/onnxruntime/${ONNX_RUNTIME_VERSION}
@@ -763,6 +810,14 @@ ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${UCX}"
 RUN echo "/opt/hpcx/ucx/lib" >> /etc/ld.so.conf.d/ucx.conf \
     && echo "/opt/hpcx/ucx/lib/ucx" >> /etc/ld.so.conf.d/ucx.conf \
     && ldconfig
+
+############################################################################################
+# GXF CMake build stage
+############################################################################################
+FROM build-generic AS build-gxf-cmake
+
+# Prevent existing GXF package from being visible in GXF build environment
+RUN rm -rf /opt/nvidia/gxf
 
 ############################################################################################
 # dGPU specific build stage

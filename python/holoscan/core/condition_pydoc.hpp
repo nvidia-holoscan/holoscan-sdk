@@ -45,12 +45,12 @@ Enum class for Condition scheduling status.
 namespace Condition {
 
 PYDOC(Condition, R"doc(
-Class representing a condition.
+Base class representing either a wrapped C++ condition or native Python condition.
 )doc")
 
 //  Constructor
 PYDOC(Condition_args_kwargs, R"doc(
-Class representing a condition.
+Base class representing either a wrapped C++ condition or native Python condition.
 
 Can be initialized with any number of Python positional and keyword arguments.
 

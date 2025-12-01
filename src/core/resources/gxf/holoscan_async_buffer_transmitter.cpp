@@ -18,10 +18,10 @@
 #include <memory>
 #include <utility>
 
-#include "holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp"
 #include "holoscan/core/flow_tracking_annotation.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp"
 
 #include <gxf/std/async_buffer_transmitter.hpp>
 
@@ -57,6 +57,10 @@ gxf_result_t HoloscanAsyncBufferTransmitter::publish_abi(gxf_uid_t uid) {
   }
 
   return code;
+}
+
+void HoloscanAsyncBufferTransmitter::track() {
+  tracking_ = true;
 }
 
 }  // namespace holoscan

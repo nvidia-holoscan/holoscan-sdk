@@ -75,6 +75,7 @@ if(HOLOSCAN_BUILD_TESTS)
   add_test(NAME EXAMPLE_PYTHON_TENSOR_INTEROP_TEST
     COMMAND bash -c
       "${Python3_EXECUTABLE} tensor_interop_test.py --config ${CONFIG_FILE} 2>&1 | \
+      tee /dev/stderr | \
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'Reach end of file or playback count reaches to the limit. Stop ticking.' \
         --pass-pattern 'BasicConsoleLogger\\[ID:replayer.output\\]' \

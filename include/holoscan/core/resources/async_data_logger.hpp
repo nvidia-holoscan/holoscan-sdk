@@ -334,7 +334,7 @@ class AsyncDataLoggerResource : public DataLoggerResource {
     return result;
   }
 
- private:
+ protected:
   // Queue configuration parameters
   Parameter<size_t> max_queue_size_;                     // Default: 50,000
   Parameter<int64_t> worker_sleep_time_;                 // Default: 50000ns (50μs)
@@ -345,6 +345,7 @@ class AsyncDataLoggerResource : public DataLoggerResource {
   Parameter<bool>
       enable_large_data_queue_;  // Default: true (enable separate queue for large data processing)
 
+ private:
   // Lock-free queues
   std::unique_ptr<moodycamel::ConcurrentQueue<DataEntry>> data_queue_;
   std::unique_ptr<moodycamel::ConcurrentQueue<DataEntry>> large_data_queue_;

@@ -108,14 +108,9 @@ class GPUResidentExecutor : public Executor {
    * @param graph The operator graph
    * @return True if the graph topology is supported by the GPU-resident execution, false otherwise
    */
-  virtual bool verify_graph_topology(OperatorGraph& graph);
-
-  /**
-   * @brief This function creates the full GPU-resident CUDA graph. It also
-   * instantiates the CUDA graph to be ready for launched.
-   *
-   */
-  void create_gpu_resident_cuda_graph();
+  virtual bool verify_graph_topology(
+      std::shared_ptr<OperatorGraph> graph,
+      std::vector<std::shared_ptr<Operator>>& topo_ordered_operators);
 
   void timeout_ms(unsigned long long timeout_ms);
 
@@ -152,25 +147,102 @@ class GPUResidentExecutor : public Executor {
 
   std::shared_ptr<cudaStream_t> graph_capture_stream();
 
+  std::shared_ptr<cudaStream_t> data_ready_handler_capture_stream();
+
+  // Get the CUDA graph of the main workload. This function returns a clone of
+  // the main workload graph because the original graph is owned and retained by
+  // the executor. All the limitations of graph cloning apply here. Therefore, main workload
+  // graphs containing memory allocation, memory free and conditional nodes are
+  // not supported.
+  // This is a utility helper function.
+  cudaGraph_t workload_graph_clone() const;
+
+  /**
+   * @brief Get the CUDA device pointer for the data_ready signal.
+   *
+   * @return Pointer to the device memory location for data_ready signal.
+   */
+  void* data_ready_device_address();
+
+  /**
+   * @brief Get the CUDA device pointer for the result_ready signal.
+   *
+   * @return Pointer to the device memory location for result_ready signal.
+   */
+  void* result_ready_device_address();
+
+  /**
+   * @brief Get the CUDA device pointer for the tear_down signal.
+   *
+   * @return Pointer to the device memory location for tear_down signal.
+   */
+  void* tear_down_device_address();
+
+  /**
+   * @brief Register a data ready handler fragment.
+   *
+   * This function stores a reference to the fragment that will handle data ready events.
+   *
+   * @param fragment The fragment to register as the data ready handler.
+   */
+  void data_ready_handler(std::shared_ptr<Fragment> fragment);
+
+  /**
+   * @brief Get the registered data ready handler fragment.
+   *
+   * @return The data ready handler fragment, or nullptr if none is registered.
+   */
+  std::shared_ptr<Fragment> data_ready_handler_fragment();
+
  private:
   void allocate_io_device_buffer(std::shared_ptr<Operator> downstream_op,
                                  std::shared_ptr<Operator> upstream_op,
                                  const std::string& source_port, const std::string& target_port,
                                  size_t memory_block_size);
+  /**
+   * @brief This function creates the full GPU-resident CUDA graph. It also
+   * instantiates the CUDA graph to be ready for launch.
+   *
+   */
+  void create_gpu_resident_cuda_graph();
+
+  void create_cuda_graph_from_operators(
+      std::vector<std::shared_ptr<Operator>>& topo_ordered_operators, cudaGraph_t& graph,
+      cudaStream_t capture_stream);
+
+  /**
+   * @brief This function verifies that the operator names are distinct between the main workload
+   * fragment and the data ready handler fragment.
+   *
+   * Assumes topologically ordered operators are already created before calling this function.
+   *
+   * @return True if the operator names are distinct, false otherwise.
+   */
+  bool verify_distinct_operator_names();
+
   bool fragment_initialized_ = false;
 
   /// @brief Map of input/output port name to the device buffers
   std::unordered_map<std::string, std::shared_ptr<holoscan::utils::cuda::DeviceBuffer>>
       io_device_buffers_;
   /// @brief Vector of topologically ordered operators
-  std::vector<std::shared_ptr<Operator>> topo_ordered_operators_;
+  std::vector<std::shared_ptr<Operator>> topo_ordered_main_operators_;
+
+  /// topologically ordered operators of the data ready handler fragment
+  std::vector<std::shared_ptr<Operator>> topo_ordered_drh_operators_;
+
   std::shared_ptr<ExecutionContext> exec_context_;
   unsigned long long timeout_ms_ = 0;
 
   std::shared_ptr<cudaStream_t> graph_capture_stream_;
+  std::shared_ptr<cudaStream_t> drh_capture_stream_;
+  cudaGraph_t drh_graph_ = nullptr;       ///< The CUDA graph of the data ready handler.
   cudaGraph_t workload_graph_ = nullptr;  ///< The CUDA graph of the main workload.
   cudaGraph_t gpu_resident_graph_ =
       nullptr;  ///< The full GPU-resident CUDA graph including control flow nodes.
+
+  std::shared_ptr<Fragment> data_ready_handler_fragment_;
+
   std::shared_ptr<GPUResidentDeck> gpu_resident_deck_;
 };
 }  // namespace holoscan

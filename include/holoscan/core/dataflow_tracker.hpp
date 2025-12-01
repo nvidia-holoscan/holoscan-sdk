@@ -251,7 +251,7 @@ class DataFlowTracker {
   friend class AnnotatedDoubleBufferReceiver;
 
   friend gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                         const char* receiver_name);
+                                         const char* receiver_name, bool is_old_message);
 
   /**
    * @brief Update the tracker with the current latency for a given path.

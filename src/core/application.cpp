@@ -17,10 +17,12 @@
 
 #include "holoscan/core/application.hpp"
 
+#include <sys/resource.h>  // for getrlimit (stack size check)
 #include <ucs/config/global_opts.h>
 #include <ucs/type/status.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
@@ -28,6 +30,7 @@
 #include <mutex>  // for std::call_once
 #include <set>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -177,6 +180,14 @@ FragmentGraph& Application::fragment_graph() {
 }
 
 void Application::add_fragment(const std::shared_ptr<Fragment>& frag) {
+  // check if any existing fragment in the fragment_graph is GPU-resident
+  if (frag->is_gpu_resident() && is_any_fragment_gpu_resident()) {
+    auto err_msg = fmt::format(
+        "Fragment ({}) is a GPU-resident fragment but the application already has a GPU-resident "
+        "fragment. An application cannot have multiple GPU-resident fragments.",
+        frag->name());
+    throw std::runtime_error(err_msg);
+  }
   fragment_graph().add_node(frag);
 }
 
@@ -187,6 +198,16 @@ void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
   if (port_pairs.empty()) {
     HOLOSCAN_LOG_ERROR("Unable to add fragment flow with empty port_pairs");
     return;
+  }
+
+  // if any of the fragments is GPU-resident, then this function should throw an error
+  if (upstream_frag->is_gpu_resident() || downstream_frag->is_gpu_resident()) {
+    auto err_msg = fmt::format(
+        "Connections between GPU-resident fragments are not allowed. "
+        "Upstream fragment: {}, Downstream fragment: {}",
+        upstream_frag->name(),
+        downstream_frag->name());
+    throw std::runtime_error(err_msg);
   }
 
   auto port_map = std::make_shared<FragmentGraph::EdgeDataElementType>();
@@ -257,6 +278,30 @@ void Application::set_v4l2_env() {
   }
 }
 
+void Application::check_stack_size() {
+  struct rlimit rl;
+  if (getrlimit(RLIMIT_STACK, &rl) == 0) {
+    constexpr rlim_t min_stack_size = 33554432;  // 32 MB in bytes (32 * 1024 * 1024)
+
+    // Check if the current limit is less than the minimum
+    // (RLIM_INFINITY means unlimited, which is fine)
+    if (rl.rlim_cur != RLIM_INFINITY && rl.rlim_cur < min_stack_size) {
+      HOLOSCAN_LOG_WARN(
+          "Current stack size limit ({} bytes / {} KB) is below the recommended minimum "
+          "({} bytes / {} KB). Consider increasing it with 'ulimit -s {}'. "
+          "For Docker, use '--ulimit stack={}'",
+          rl.rlim_cur,
+          rl.rlim_cur / 1024,
+          min_stack_size,
+          min_stack_size / 1024,
+          min_stack_size / 1024,
+          min_stack_size);
+    }
+  } else {
+    HOLOSCAN_LOG_DEBUG("Failed to query stack size limit using getrlimit()");
+  }
+}
+
 void Application::reset_state() {
   if (!is_run_called_) {
     HOLOSCAN_LOG_DEBUG(
@@ -315,6 +360,7 @@ void Application::run() {
 
   set_ucx_env();
   set_v4l2_env();
+  check_stack_size();
 
   // Initialize clean state to ensure proper execution and support multiple consecutive runs
   reset_state();
@@ -333,6 +379,7 @@ std::future<void> Application::run_async() {
 
   set_ucx_env();
   set_v4l2_env();
+  check_stack_size();
 
   // Initialize clean state to ensure proper execution and support multiple consecutive runs
   reset_state();
@@ -672,10 +719,142 @@ void Application::initiate_distributed_app_shutdown(const std::string& fragment_
     HOLOSCAN_LOG_INFO("Application::initiate_distributed_app_shutdown started");
     // Initiate shutdown via RPC
     driver_client->initiate_shutdown(fragment_name);
+  } else if (!fragment_graph().is_empty()) {
+    HOLOSCAN_LOG_DEBUG("Initiating local multi-fragment app shutdown");
+    initiate_local_app_shutdown(fragment_name);
   } else {
-    HOLOSCAN_LOG_ERROR("Cannot initiate shutdown: AppDriverClient is null");
+    HOLOSCAN_LOG_WARN(
+        "Cannot initiate distributed app shutdown: fragment graph is empty indicating that this is "
+        "a single-fragment application, not a distributed one.");
   }
   return;
+}
+
+void Application::initiate_local_app_shutdown(const std::string& fragment_name) {
+  auto& frag_graph = fragment_graph();
+  if (frag_graph.is_empty()) {
+    HOLOSCAN_LOG_DEBUG("Cannot initiate local shutdown: fragment graph is empty");
+    return;
+  }
+
+  HOLOSCAN_LOG_INFO("Initiating orderly shutdown of local multi-fragment application");
+
+  // Get all fragments - we'll remove them from a copy of the graph as we shut them down
+  auto remaining_fragments = frag_graph.get_nodes();
+  std::unordered_set<std::string> terminated_fragments;
+
+  while (!remaining_fragments.empty()) {
+    // Find current root fragments
+    std::vector<FragmentNodeType> current_roots;
+
+    HOLOSCAN_LOG_DEBUG("Remaining fragments to shut down:");
+    for (const auto& fragment : remaining_fragments) {
+      HOLOSCAN_LOG_DEBUG("\t{}", fragment->name());
+    }
+
+    for (const auto& fragment : remaining_fragments) {
+      // Need to find the node in the graph first, since the graph may have been modified
+      auto node = frag_graph.find_node(fragment->name());
+      if (!node) {
+        HOLOSCAN_LOG_WARN("Fragment '{}' not found in graph - treating as root", fragment->name());
+        current_roots.push_back(fragment);
+      } else if (frag_graph.is_root(node)) {
+        HOLOSCAN_LOG_DEBUG("Fragment '{}' is currently a root fragment", fragment->name());
+        current_roots.push_back(fragment);
+      } else {
+        HOLOSCAN_LOG_DEBUG("Fragment '{}' is NOT a root (has {} upstream fragments)",
+                           fragment->name(),
+                           frag_graph.get_previous_nodes(node).size());
+      }
+    }
+
+    // If there were no root fragments, just shutdown any remaining fragments to avoid deadlock
+    if (current_roots.empty()) {
+      HOLOSCAN_LOG_WARN(
+          "No root fragments found in remaining fragments - shutting down all remaining");
+      current_roots = remaining_fragments;
+    }
+
+    // Terminate current root fragments
+    for (const auto& root_fragment : current_roots) {
+      // Skip the fragment that initiated the shutdown to avoid blocking its own thread
+      if (root_fragment->name() == fragment_name) {
+        HOLOSCAN_LOG_DEBUG("Skipping stop_execution() for initiating fragment '{}'",
+                           root_fragment->name());
+        // Still remove it from the graph so we can process downstream fragments
+        frag_graph.remove_node(root_fragment);
+        terminated_fragments.insert(root_fragment->name());
+        continue;
+      }
+
+      HOLOSCAN_LOG_INFO("Terminating fragment '{}' via stop_execution()", root_fragment->name());
+
+      // Get the stop_on_deadlock_timeout from this fragment's scheduler
+      // This is the time the scheduler waits before confirming a deadlock and exiting
+      // when all operators have been stopped via stop_execution()
+      int64_t stop_on_deadlock_timeout = 5000L;  // Default fallback value
+      auto scheduler = root_fragment->scheduler();
+
+      // Try to cast to known scheduler types that have stop_on_deadlock_timeout()
+      try {
+        if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
+          stop_on_deadlock_timeout = ebs->stop_on_deadlock_timeout();
+        } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
+          stop_on_deadlock_timeout = mts->stop_on_deadlock_timeout();
+        } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
+          stop_on_deadlock_timeout = gs->stop_on_deadlock_timeout();
+        }
+      } catch (const std::runtime_error&) {
+        // Parameter not set on scheduler, try environment variable
+        auto env_result = get_stop_on_deadlock_timeout_env();
+        if (env_result.has_value()) {
+          stop_on_deadlock_timeout = env_result.value();
+        }
+        // else: keep default 5000ms
+      }
+
+      // Add extra margin (250ms) to account for any processing overhead
+      int64_t fragment_shutdown_grace_period_ms = stop_on_deadlock_timeout + 250;
+
+      HOLOSCAN_LOG_DEBUG(
+          "Fragment '{}': using shutdown grace period of {} ms (stop_on_deadlock_timeout={} ms)",
+          root_fragment->name(),
+          fragment_shutdown_grace_period_ms,
+          stop_on_deadlock_timeout);
+
+      // Use stop_execution() instead of executor().interrupt() to allow queued UCX messages
+      // to be sent, avoiding connection errors
+      root_fragment->stop_execution();
+
+      // Wait to give the fragment time to properly shut down
+      // This prevents UCX messages that haven't been sent yet from being lost
+      std::this_thread::sleep_for(std::chrono::milliseconds(fragment_shutdown_grace_period_ms));
+
+      // Remove this fragment from the graph so we can find the next layer of roots
+      frag_graph.remove_node(root_fragment);
+      terminated_fragments.insert(root_fragment->name());
+    }
+
+    // Update remaining fragments
+    remaining_fragments.erase(std::remove_if(remaining_fragments.begin(),
+                                             remaining_fragments.end(),
+                                             [&terminated_fragments](const FragmentNodeType& frag) {
+                                               return terminated_fragments.find(frag->name()) !=
+                                                      terminated_fragments.end();
+                                             }),
+                              remaining_fragments.end());
+  }
+
+  HOLOSCAN_LOG_INFO("Local multi-fragment application shutdown complete");
+}
+
+bool Application::is_any_fragment_gpu_resident() {
+  for (const auto& fragment : fragment_graph().get_nodes()) {
+    if (fragment->is_gpu_resident()) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace holoscan

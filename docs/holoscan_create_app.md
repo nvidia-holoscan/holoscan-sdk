@@ -159,7 +159,7 @@ Ingesting these parameters can be done using the two methods below:
 `````{tab-set}
 ````{tab-item} C++
 
-- The {cpp:func}`~holoscan::Fragment::config` method takes the path to the YAML configuration file. If the input path is relative, it will be relative to the current working directory.
+- The {cpp:func}`~holoscan::Fragment::config` method takes the path to the YAML configuration file. If the input path is relative, it will be relative to the current working directory. An exception will be thrown if the file does not exist.
 - The {cpp:func}`~holoscan::Fragment::from_config` method returns an {cpp:class}`~holoscan::ArgList` object for a given key in the YAML file. It holds a list of {cpp:class}`~holoscan::Arg` objects, each of which holds a name (key) and a value.
   - If the `ArgList` object has only one `Arg` (when the key is pointing to a scalar item), it can be converted to the desired type using the {cpp:func}`~holoscan::ArgList::as` method by passing the type as an argument.
   - The key can be a dot-separated string to access nested fields.
@@ -207,7 +207,7 @@ std::cout << "dict_param['key1']: " << dict_nested_param << std::endl;
 
 ````{tab-item} Python
 
-- The {py:func}`~holoscan.core.Fragment.config` method takes the path to the YAML configuration file. If the input path is relative, it will be relative to the current working directory.
+- The {py:func}`~holoscan.core.Fragment.config` method takes the path to the YAML configuration file. If the input path is relative, it will be relative to the current working directory. An exception will be thrown if the file does not exist.
 - The {py:func}`~holoscan.core.Fragment.kwargs` method return a regular Python dict for a given key in the YAML file.
   - **Advanced**: this method wraps the {py:func}`~holoscan.core.Fragment.from_config` method similar to the C++ equivalent, which returns an {py:class}`~holoscan.core.ArgList` object if the key is pointing to a map item, or an {py:class}`~holoscan.core.Arg` object if the key is pointing to a scalar item. An {py:class}`~holoscan.core.Arg` object can be cast to the desired type (e.g., `str(app.from_config("string_param"))`).
 - The {py:func}`~holoscan.core.Fragment.config_keys` method returns a set of the key names accessible via {py:func}`~holoscan.core.Fragment.from_config`.

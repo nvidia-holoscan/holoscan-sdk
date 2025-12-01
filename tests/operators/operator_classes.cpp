@@ -50,9 +50,9 @@
 #include "holoscan/operators/inference/inference.hpp"
 #include "holoscan/operators/inference_processor/inference_processor.hpp"
 #include "holoscan/operators/ping_rx/ping_rx.hpp"
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
 #include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
+#include "holoscan/operators/ping_tx/ping_tx.hpp"
 #include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
 #include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
 #include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
@@ -693,5 +693,51 @@ TEST_F(OperatorClassesWithGXFContext, TestInvalidOperatorName) {
         auto op = F.make_operator<ops::PingRxOp>("rx.1");
       },
       std::invalid_argument);
+
+  EXPECT_THROW(
+      {
+        // "." character is not allowed anywhere in operator names
+        auto op = F.make_operator<ops::PingRxOp>("my.operator.name");
+      },
+      std::invalid_argument);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestInvalidOperatorNameWithOldSuffix) {
+  EXPECT_THROW(
+      {
+        // "_old" substring is not allowed in operator names
+        auto op = F.make_operator<ops::PingRxOp>("rx_old");
+      },
+      std::invalid_argument);
+
+  EXPECT_THROW(
+      {
+        // "_old" substring is not allowed anywhere in operator names
+        auto op = F.make_operator<ops::PingRxOp>("rx_old_backup");
+      },
+      std::invalid_argument);
+}
+
+TEST_F(OperatorClassesWithGXFContext, TestValidOperatorNames) {
+  // These names should be valid
+  EXPECT_NO_THROW({
+    auto op1 = F.make_operator<ops::PingRxOp>("rx");
+    EXPECT_EQ(op1->name(), "rx");
+  });
+
+  EXPECT_NO_THROW({
+    auto op2 = F.make_operator<ops::PingRxOp>("rx_1");
+    EXPECT_EQ(op2->name(), "rx_1");
+  });
+
+  EXPECT_NO_THROW({
+    auto op3 = F.make_operator<ops::PingRxOp>("rx_new");
+    EXPECT_EQ(op3->name(), "rx_new");
+  });
+
+  EXPECT_NO_THROW({
+    auto op4 = F.make_operator<ops::PingRxOp>("_rx");
+    EXPECT_EQ(op4->name(), "_rx");
+  });
 }
 }  // namespace holoscan

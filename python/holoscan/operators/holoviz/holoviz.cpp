@@ -120,6 +120,7 @@ class PyHolovizOp : public HolovizOp {
       CursorPosCallbackFunction cursor_pos_callback = CursorPosCallbackFunction(),
       FramebufferSizeCallbackFunction framebuffer_size_callback = FramebufferSizeCallbackFunction(),
       WindowSizeCallbackFunction window_size_callback = WindowSizeCallbackFunction(),
+      WindowCloseCallbackFunction window_close_callback = WindowCloseCallbackFunction(),
       // NOLINTEND(performance-unnecessary-value-param)
       const std::string& font_path = ""s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -218,6 +219,13 @@ class PyHolovizOp : public HolovizOp {
                           window_size_callback(w, h);
                         })});
     }
+    if (window_close_callback) {
+      this->add_arg(
+          Arg{"window_close_callback", WindowCloseCallbackFunction([window_close_callback]() {
+                py::gil_scoped_acquire guard;
+                window_close_callback();
+              })});
+    }
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);
   }
@@ -269,6 +277,7 @@ PYBIND11_MODULE(_holoviz, m) {
                           ops::HolovizOp::CursorPosCallbackFunction,
                           ops::HolovizOp::FramebufferSizeCallbackFunction,
                           ops::HolovizOp::WindowSizeCallbackFunction,
+                          ops::HolovizOp::WindowCloseCallbackFunction,
                           const std::string&,
                           std::shared_ptr<holoscan::CudaStreamPool>,
                           std::shared_ptr<holoscan::BooleanCondition>,
@@ -305,11 +314,18 @@ PYBIND11_MODULE(_holoviz, m) {
                  "cursor_pos_callback"_a = HolovizOp::CursorPosCallbackFunction(),
                  "framebuffer_size_callback"_a = HolovizOp::FramebufferSizeCallbackFunction(),
                  "window_size_callback"_a = HolovizOp::WindowSizeCallbackFunction(),
+                 "window_close_callback"_a = HolovizOp::WindowCloseCallbackFunction(),
                  "font_path"_a = ""s,
                  "cuda_stream_pool"_a = py::none(),
                  "window_close_condition"_a = py::none(),
                  "name"_a = "holoviz_op"s,
                  doc::HolovizOp::doc_HolovizOp);
+
+  // Expose the default window close callback so Python users can chain it
+  // inside their custom callbacks to preserve default behavior.
+  holoviz_op.def("default_window_close_callback",
+                 &HolovizOp::default_window_close_callback,
+                 doc::HolovizOp::doc_default_window_close_callback);
 
   export_enum<HolovizOp::InputType>(holoviz_op, "InputType");
   export_enum<HolovizOp::ImageFormat>(holoviz_op, "ImageFormat");

@@ -118,7 +118,7 @@ using SchedulingPolicy = nvidia::gxf::SchedulingPolicy;
  *
  * ==Parameters==
  *
- * - **pin_entity** (bool, optional): Whether or not an operator should be pinned to a specific
+ * - **pin_operator** (bool, optional): Whether or not an operator should be pinned to a specific
  * thread (Default: false).
  * - **pin_cores** (std::vector<uint32_t>, optional): CPU core IDs to pin the worker thread to.
  * Empty vector means no core pinning (Default: empty).
@@ -138,7 +138,9 @@ class CPUThread : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CPUThread, gxf::GXFResource)
 
-  explicit CPUThread(bool pin_entity = true) : pin_entity_(pin_entity) { name_ = "cpu_thread"; }
+  explicit CPUThread(bool pin_operator = true) : pin_operator_(pin_operator) {
+    name_ = "cpu_thread";
+  }
 
   /// @brief The underlying GXF component's name.
   const char* gxf_typename() const override { return "nvidia::gxf::CPUThread"; }
@@ -172,7 +174,7 @@ class CPUThread : public gxf::GXFResource {
   bool is_realtime() const;
 
  private:
-  Parameter<bool> pin_entity_{false};  ///< Whether or not to pin an operator to a specific thread
+  Parameter<bool> pin_operator_{false};  ///< Whether or not to pin an operator to a specific thread
   Parameter<std::vector<uint32_t>> pin_cores_;  ///< CPU core IDs to pin the worker thread to
   Parameter<YAML::Node> sched_policy_;          ///< Real-time scheduling policy
   Parameter<uint32_t> sched_priority_;          ///< Thread priority

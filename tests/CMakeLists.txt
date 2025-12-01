@@ -74,6 +74,7 @@ ConfigureTest(
   core/data_exporter.cpp
   core/dataflow_tracker.cpp
   core/entity_group.cpp
+  core/flow_graph.cpp
   core/fragment.cpp
   core/fragment_allocation.cpp
   core/io_spec.cpp
@@ -100,6 +101,7 @@ endif()
 ConfigureTest(GPU_RESIDENT_TEST
   gpu_resident/gpu_resident_fragment.cpp
   gpu_resident/error_conditions.cpp
+  gpu_resident/data_ready_handler.cpp
   system/env_wrapper.cpp
 )
 
@@ -378,6 +380,8 @@ target_link_libraries(HOLOINFER_TEST
 # * Flow Tracking tests ----------------------------------------------------------------------------------
 ConfigureTest(
   FLOW_TRACKING_TEST
+  flow_tracking/async_buffer_tracking.cpp
+  flow_tracking/async_buffer_tracking_cycles.cpp
   flow_tracking/entity_passthrough.cpp
   flow_tracking/flow_tracking_cycle.cpp
   flow_tracking/limited_tracking_tests.cpp

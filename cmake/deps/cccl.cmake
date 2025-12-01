@@ -19,9 +19,9 @@
 # Try to find system CCCL in the build container first.
 # Subsequent RAPIDS CPM components (MatX) can get confused
 # if both a compatible system and cache CCCL are present.
-find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake QUIET)
+find_package(CCCL 3.0.3 PATHS /usr/local/cuda/lib64/cmake QUIET)
 if(NOT CCCL_FOUND)
-    rapids_cpm_find(CCCL 3.0
+    rapids_cpm_find(CCCL 3.0.3
         GLOBAL_TARGETS CCCL CCCL::CCCL CCCL::CUB CCCL::libcudacxx
         BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
 

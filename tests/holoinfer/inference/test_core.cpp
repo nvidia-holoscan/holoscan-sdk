@@ -94,7 +94,7 @@ void HoloInferTests::print_summary() {
             << 100.0 * (float(pass_test_count) / float(total_test_count)) << "%)\n";
   std::cout << "Tests failed     :\t" << fail_test_count << "\n\n";
 
-  for (auto ftest : failed_tests) {
+  for (const auto& ftest : failed_tests) {
     std::cout << ftest << std::endl;
   }
 }

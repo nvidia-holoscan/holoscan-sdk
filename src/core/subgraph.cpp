@@ -142,6 +142,14 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
   fragment_->add_flow(upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
 }
 
+void Subgraph::set_dynamic_flows(
+    const std::shared_ptr<Operator>& op,
+    const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func) {
+  if (fragment_) {
+    fragment_->set_dynamic_flows(op, dynamic_flow_func);
+  }
+}
+
 void Subgraph::add_interface_port(const std::string& external_name,
                                   const std::shared_ptr<Operator>& internal_op,
                                   const std::string& internal_port, bool is_input) {

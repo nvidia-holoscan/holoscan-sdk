@@ -18,7 +18,7 @@ limitations under the License.
 import time
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, IOSpec
+from holoscan.core import Application, IOSpec, Tracker
 from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.schedulers import EventBasedScheduler
 
@@ -77,7 +77,9 @@ def main():
     scheduler = EventBasedScheduler(app, name="event-based-scheduler", worker_thread_number=2)
     app.scheduler(scheduler)
 
-    app.run()
+    with Tracker(app, num_start_messages_to_skip=0, num_last_messages_to_discard=0) as tracker:
+        app.run()
+        tracker.print()
 
 
 if __name__ == "__main__":

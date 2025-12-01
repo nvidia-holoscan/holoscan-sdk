@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ import math
 import cupy as cp
 import numpy as np
 
-from holoscan.conditions import BooleanCondition, CountCondition
+from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import HolovizOp
 
@@ -78,6 +78,10 @@ class HolovizHeadlessApp(Application):
         self.on_host = on_host
         super().__init__(*args, **kwargs)
 
+    def on_window_closed(self):
+        """Application-level callback for Holoviz window close events."""
+        self.stop_execution()
+
     def compose(self):
         source = FrameGeneratorOp(
             self,
@@ -93,7 +97,7 @@ class HolovizHeadlessApp(Application):
             headless=True,
             width=self.width,
             height=self.height,
-            window_close_condition=BooleanCondition(self, name="window_close"),
+            window_close_callback=self.on_window_closed,
             tensors=[
                 # name="" here to match the output of FrameGenerationOp
                 dict(name="frame", type="color", opacity=0.5, priority=0),
@@ -108,7 +112,7 @@ class HolovizHeadlessApp(Application):
 
 
 def test_holovizop_dual_window(capfd):
-    """Test HolovizOp with dual windows and shared window_close_condition."""
+    """Test HolovizOp with dual windows and application-level window_close_callback."""
     count = 3
     width = 800
     height = 640

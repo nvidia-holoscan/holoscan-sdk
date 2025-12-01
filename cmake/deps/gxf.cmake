@@ -18,14 +18,13 @@ set(HOLOSCAN_GXF_COMPONENTS
     app
     core
     cuda
-    gxe
     logger
     multimedia
     rmm
-    sample # dependency of GXF::app
     serialization
     std
     ucx
+    sample # needed for testing SYSTEM_TEST
 )
 
 find_package(GXF 5.1 CONFIG REQUIRED
@@ -81,42 +80,16 @@ foreach(component ${HOLOSCAN_GXF_COMPONENTS})
     endif()
 
     # Copy to build directory
-    if(NOT "${component}" STREQUAL "gxe")
-        file(COPY "${GXF_${component}_LOCATION}"
-            DESTINATION "${HOLOSCAN_GXF_LIB_DIR}"
-            FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+    file(COPY "${GXF_${component}_LOCATION}"
+         DESTINATION "${HOLOSCAN_GXF_LIB_DIR}"
+        FILE_PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
         )
-        get_filename_component(${component}_filename ${GXF_${component}_LOCATION} NAME)
-        set(HOLOSCAN_GXF_${component}_LOCATION "${HOLOSCAN_GXF_LIB_DIR}/${${component}_filename}")
-        set_target_properties(GXF::${component} PROPERTIES
-            IMPORTED_LOCATION_${_build_type} ${HOLOSCAN_GXF_${component}_LOCATION}
-            IMPORTED_LOCATION ${HOLOSCAN_GXF_${component}_LOCATION}
-        )
-    else()
-        file(COPY "${GXF_${component}_LOCATION}"
-            DESTINATION "${HOLOSCAN_GXF_BIN_DIR}"
-            FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-        )
-        set(HOLOSCAN_GXE_LOCATION "${HOLOSCAN_GXF_BIN_DIR}/gxe")
-        set_target_properties(GXF::gxe PROPERTIES
-            IMPORTED_LOCATION_${_build_type} {HOLOSCAN_GXE_LOCATION}
-            IMPORTED_LOCATION ${HOLOSCAN_GXE_LOCATION}
-        )
-
-        # Patch `gxe` executable RUNPATH to find required GXF libraries in the self-contained HSDK installation.
-        # GXF libraries are entirely self-contained and do not require RPATH updates.
-        find_program(PATCHELF_EXECUTABLE patchelf)
-        if(PATCHELF_EXECUTABLE)
-            execute_process(
-                COMMAND "${PATCHELF_EXECUTABLE}"
-                    "--set-rpath"
-                    "\$ORIGIN:\$ORIGIN/../${HOLOSCAN_INSTALL_LIB_DIR}"
-                    "${HOLOSCAN_GXE_LOCATION}"
-            )
-        else()
-            message(WARNING "Failed to patch the GXE executable RUNPATH. Must set LD_LIBRARY_PATH to use the executable.")
-        endif()
-    endif()
+    get_filename_component(${component}_filename ${GXF_${component}_LOCATION} NAME)
+    set(HOLOSCAN_GXF_${component}_LOCATION "${HOLOSCAN_GXF_LIB_DIR}/${${component}_filename}")
+    set_target_properties(GXF::${component} PROPERTIES
+        IMPORTED_LOCATION_${_build_type} ${HOLOSCAN_GXF_${component}_LOCATION}
+        IMPORTED_LOCATION ${HOLOSCAN_GXF_${component}_LOCATION}
+    )
 endforeach()
 
 # Find the GXF Python module path (optional, not in cmake-based build as of yet)
@@ -130,30 +103,9 @@ find_path(GXF_PYTHON_MODULE_PATH
     PATHS ${GXF_ROOT}/python/gxf
 )
 
-# Test that the GXF Python module is in PYTHONPATH
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
-if(HOLOSCAN_REGISTER_GXF_EXTENSIONS)
-    # GXF Python module is required for registering GXF extensions
-    execute_process(
-        COMMAND "${Python3_EXECUTABLE}" -c "import os; import gxf; print(os.pathsep.join(gxf.__path__).strip())"
-        RESULT_VARIABLE GXF_MODULE_FOUND
-        OUTPUT_VARIABLE GXF_MODULE_DIR
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-    if(NOT GXF_MODULE_FOUND EQUAL 0)
-        message(FATAL_ERROR "GXF Python module not found in PYTHONPATH")
-    endif()
-    if(NOT GXF_MODULE_DIR STREQUAL "${GXF_PYTHON_MODULE_PATH}")
-        message(WARNING
-            "Expected GXF Python module at ${GXF_PYTHON_MODULE_PATH} but found at ${GXF_MODULE_DIR}."
-            " Do you need to update your PYTHONPATH?")
-    endif()
-endif()
-
 # Set variables in parent scope for use throughout the Holoscan project
 set(GXF_INCLUDE_DIR ${GXF_INCLUDE_DIR} PARENT_SCOPE)
 set(GXF_PYTHON_MODULE_PATH ${GXF_PYTHON_MODULE_PATH} PARENT_SCOPE)
 set(HOLOSCAN_GXF_LIB_DIR ${HOLOSCAN_GXF_LIB_DIR} PARENT_SCOPE)
 set(HOLOSCAN_GXF_BIN_DIR ${HOLOSCAN_GXF_BIN_DIR} PARENT_SCOPE)
-set(HOLOSCAN_GXE_LOCATION ${HOLOSCAN_GXE_LOCATION} PARENT_SCOPE)
 set(HOLOSCAN_GXF_COMPONENTS ${HOLOSCAN_GXF_COMPONENTS} PARENT_SCOPE)

@@ -105,6 +105,13 @@ class CudaObjectHandler {
    * This is used to refresh the state before each compute call.
    */
   virtual void clear_received_streams() = 0;
+
+  /**
+   * @brief Check if GPU capability is present on the system.
+   *
+   * @return true if GPU(s) are available, false if no GPU is present
+   */
+  virtual bool is_gpu_available() const = 0;
 };
 
 }  // namespace holoscan

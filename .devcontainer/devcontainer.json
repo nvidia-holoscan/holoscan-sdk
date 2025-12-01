@@ -17,6 +17,16 @@
     "runArgs": [
         "--runtime=nvidia",
         "--net=host",
+        // Allow setting process priorities and scheduling policies for real-time scheduling
+        "--cap-add=CAP_SYS_NICE",
+        "--ulimit",
+        "rtprio=10",
+        // Set resource limits for memory locking (unlimited), stack size (64MB), to prevent
+        // out-of-memory issues on systems with high core counts.
+        "--ulimit",
+        "memlock=-1",
+        "--ulimit",
+        "stack=67108864", // 64MB in bytes (64 * 1024 * 1024)
         // Current VSCode DevContainer doesn't support dynamic 'runArgs' for docker
         // (see https://github.com/microsoft/vscode-remote-release/issues/3972).
         // So, we need to comment out the following lines when we don't use video device.

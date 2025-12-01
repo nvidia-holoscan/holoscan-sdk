@@ -82,7 +82,6 @@ cli/run_config
 gxf/gxf_core_concepts.md
 gxf/holoscan_and_gxf.md
 gxf/gxf_by_example.md
-gxf/gxf_wrap_holoscan.md
 gxf/doc/index.md
 ```
 

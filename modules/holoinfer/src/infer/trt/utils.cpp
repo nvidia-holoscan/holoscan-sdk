@@ -87,7 +87,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
       "minutes depending on your model size and GPU!",
       engine_path);
 
-  for (auto opt_profile : network_options.batch_sizes) {
+  for (const auto& opt_profile : network_options.batch_sizes) {
     if (opt_profile.size() % 3 != 0) {
       HOLOSCAN_LOG_ERROR(
           "Size of batches for optimization profile must be a multiple of 3. Size provided: {}",

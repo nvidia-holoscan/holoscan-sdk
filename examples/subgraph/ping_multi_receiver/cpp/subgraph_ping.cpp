@@ -57,7 +57,8 @@ class MultiPingRxOp : public Operator {
     spec.input<std::vector<int>>("receivers", IOSpec::kAnySize);
   }
 
-  void compute(InputContext& op_input, OutputContext&, ExecutionContext&) override {
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
     auto value_vector = op_input.receive<std::vector<int>>("receivers").value();
 
     HOLOSCAN_LOG_INFO("Rx message received (count: {}, size: {})", count_++, value_vector.size());

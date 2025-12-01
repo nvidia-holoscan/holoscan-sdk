@@ -75,6 +75,15 @@ async_device_allocation : bool, optional
 name : str, optional (constructor only)
     The name of the operator. Default value is ``"ping_tensor_tx"``.
 
+Notes
+-----
+When ``async_device_allocation`` is enabled, this operator allocates device memory asynchronously
+on a CUDA stream. The ``compute`` method may return before all GPU work has completed. Downstream
+operators that receive data from this operator should call
+``op_input.receive_cuda_stream(<port_name>)`` to synchronize the CUDA stream with the downstream
+operator's dedicated internal stream. This ensures proper synchronization before accessing the
+data. For more details on CUDA stream handling in Holoscan, see:
+https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
 )doc")
 
 }  // namespace holoscan::doc::PingTensorTxOp

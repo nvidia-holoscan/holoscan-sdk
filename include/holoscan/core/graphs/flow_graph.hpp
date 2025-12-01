@@ -86,9 +86,7 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
   bool is_root(const NodeType& node) const override;
 
-  bool is_user_defined_root(const NodeType& node) const override {
-    return get_nodes().empty() ? false : get_nodes()[0] == node;
-  }
+  bool is_user_defined_root(const NodeType& node) const override;
 
   bool is_leaf(const NodeType& node) const override;
 
@@ -139,6 +137,15 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
    * @return The outdegree of the given node of the given port.
    */
   size_t get_outdegree(const NodeType& node, const std::string& port_name) const override;
+
+  /**
+   * @brief Get the indegree of a given node of a given port.
+   *
+   * @param node The node to get the indegree of.
+   * @param port_name The name of the port in the given node.
+   * @return The indegree of the given node of the given port.
+   */
+  size_t get_indegree(const NodeType& node, const std::string& port_name) const override;
 
   /**
    * @brief Get port connectivity maps for the graph.
@@ -213,6 +220,9 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
   std::list<NodeType> ordered_nodes_;  ///< Nodes in the order they were added to the graph.
   std::unordered_map<std::string, NodeType> name_map_;  ///< Map from node name to node.
+
+  // Cache for expensive cycle detection
+  mutable std::optional<std::vector<NodeType>> cached_cyclic_roots_;
 };
 
 }  // namespace holoscan

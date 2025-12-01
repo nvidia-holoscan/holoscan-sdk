@@ -179,6 +179,154 @@ TEST(HolovizApps, TestLayerCallback) {
   EXPECT_EQ(input_sizes[0], 1);
 }
 
+// Smoke test app for window_close_callback wiring in C++ (headless)
+class HolovizCloseCallbackApp : public holoscan::Application {
+ public:
+  explicit HolovizCloseCallbackApp(std::shared_ptr<std::atomic<int>> cb_calls,
+                                   ArgList source_args = {})
+      : Application(), cb_calls_(std::move(cb_calls)), source_args_(std::move(source_args)) {
+    if (source_args_.size() == 0) {
+      source_args_ = ArgList({Arg("rows", height_), Arg("columns", width_), Arg("channels", 3)});
+    }
+  }
+
+  void compose() override {
+    auto allocator = Arg("allocator", make_resource<holoscan::UnboundedAllocator>("allocator"));
+    auto count = make_condition<CountCondition>(1);
+    auto headless = Arg("headless", true);
+
+    auto source = make_operator<ops::PingTensorTxOp>("ping_source", source_args_);
+
+    // Provide a no-arg callback that increments the atomic count; it should not be called
+    // during a normal run (no window close event is triggered).
+    auto cb = Arg("window_close_callback",
+                  ops::HolovizOp::WindowCloseCallbackFunction(
+                      [calls = cb_calls_]() { calls->fetch_add(1); }));
+
+    auto renderer = make_operator<ops::HolovizOp>("renderer",
+                                                  count,
+                                                  headless,
+                                                  from_config("holoviz_tensor_input"),
+                                                  allocator,
+                                                  Arg("width", uint32_t(width_)),
+                                                  Arg("height", uint32_t(height_)),
+                                                  cb);
+
+    add_flow(source, renderer, {{"out", "receivers"}});
+  }
+
+ private:
+  const int32_t width_ = 32, height_ = 32;
+  std::shared_ptr<std::atomic<int>> cb_calls_;
+  ArgList source_args_{};
+};
+
+TEST(HolovizApps, TestWindowCloseCallbackSmokeCpp) {
+  auto cb_calls = std::make_shared<std::atomic<int>>(0);
+  auto app = make_application<HolovizCloseCallbackApp>(cb_calls);
+
+  const std::string config_file = test_config.get_test_data_file("app_config.yaml");
+  app->config(config_file);
+
+  testing::internal::CaptureStderr();
+  try {
+    app->run();
+  } catch (const std::exception& ex) {
+    GTEST_FATAL_FAILURE_(
+        fmt::format("{}{}", testing::internal::GetCapturedStderr(), ex.what()).c_str());
+  }
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // Ensure the callback was not called during normal run
+  EXPECT_EQ(cb_calls->load(), 0);
+}
+
+// Holoviz operator that explicitly triggers the window close path once.
+class HolovizCloseCallbackTriggerOp : public ops::HolovizOp {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(HolovizCloseCallbackTriggerOp, ops::HolovizOp)
+
+  HolovizCloseCallbackTriggerOp() = default;
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
+    // Run the regular Holoviz compute path first.
+    ops::HolovizOp::compute(op_input, op_output, context);
+    if (!triggered_) {
+      // Simulate a window close event by invoking the same helper Holoviz uses internally.
+      disable_via_window_close();
+      triggered_ = true;
+    }
+  }
+
+ private:
+  bool triggered_ = false;
+};
+
+// App that wires a callback and uses HolovizCloseCallbackTriggerOp to force invocation.
+class HolovizCloseCallbackInvokeApp : public holoscan::Application {
+ public:
+  explicit HolovizCloseCallbackInvokeApp(std::shared_ptr<std::atomic<int>> cb_calls,
+                                         ArgList source_args = {})
+      : Application(), cb_calls_(std::move(cb_calls)), source_args_(std::move(source_args)) {
+    if (source_args_.size() == 0) {
+      source_args_ = ArgList({Arg("rows", height_), Arg("columns", width_), Arg("channels", 3)});
+    }
+  }
+
+  void compose() override {
+    auto allocator = Arg("allocator", make_resource<holoscan::UnboundedAllocator>("allocator"));
+    auto count = make_condition<CountCondition>(1);
+    auto headless = Arg("headless", true);
+
+    auto source = make_operator<ops::PingTensorTxOp>("ping_source", source_args_);
+
+    auto cb = Arg("window_close_callback",
+                  ops::HolovizOp::WindowCloseCallbackFunction(
+                      [calls = cb_calls_]() { calls->fetch_add(1); }));
+
+    auto renderer =
+        make_operator<HolovizCloseCallbackTriggerOp>("renderer",
+                                                     count,
+                                                     headless,
+                                                     from_config("holoviz_tensor_input"),
+                                                     allocator,
+                                                     Arg("width", uint32_t(width_)),
+                                                     Arg("height", uint32_t(height_)),
+                                                     cb);
+
+    add_flow(source, renderer, {{"out", "receivers"}});
+  }
+
+ private:
+  const int32_t width_ = 32, height_ = 32;
+  std::shared_ptr<std::atomic<int>> cb_calls_;
+  ArgList source_args_{};
+};
+
+TEST(HolovizApps, TestWindowCloseCallbackInvokedCpp) {
+  auto cb_calls = std::make_shared<std::atomic<int>>(0);
+  auto app = make_application<HolovizCloseCallbackInvokeApp>(cb_calls);
+
+  const std::string config_file = test_config.get_test_data_file("app_config.yaml");
+  app->config(config_file);
+
+  testing::internal::CaptureStderr();
+  try {
+    app->run();
+  } catch (const std::exception& ex) {
+    GTEST_FATAL_FAILURE_(
+        fmt::format("{}{}", testing::internal::GetCapturedStderr(), ex.what()).c_str());
+  }
+  std::string log_output = testing::internal::GetCapturedStderr();
+  EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
+                                                             << log_output << "\n===========\n";
+  // The trigger op should have called disable_via_window_close(), which in turn invokes the
+  // configured window_close_callback exactly once.
+  EXPECT_EQ(cb_calls->load(), 1);
+}
+
 enum class InputType {
   FAIL_TENSOR_INPUT_TYPE_DETECT,
   FAIL_VIDEO_BUFFER_INPUT_TYPE_DETECT,

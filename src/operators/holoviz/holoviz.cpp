@@ -393,16 +393,18 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "`window_close_condition` instead as `window_close_scheduling_term` will be removed "
              "in a future release.",
              ParameterFlag::kOptional);
-  spec.param(window_close_condition_,
-             "window_close_condition",
-             "window close condition",
-             "BooleanCondition on the operator that will cause it to stop executing if the "
-             "display window is closed. By default, this condition is created automatically "
-             "during HolovizOp::initialize. The user may want to provide it if, for example, "
-             "there are multiple HolovizOp operators and you want to share the same window close "
-             "condition across both. By sharing the same condition, if one of the display "
-             "windows is closed it would also close the other(s).",
-             ParameterFlag::kOptional);
+  spec.param(
+      window_close_condition_,
+      "window_close_condition",
+      "Window Close Condition",
+      "BooleanCondition on another operator that will cause it to stop executing when the "
+      "display window is closed. If not provided, it is created automatically during "
+      "HolovizOp::initialize(). Advanced usage: provide a pre-created condition to integrate "
+      "with custom shutdown logic. Note: sharing a single BooleanCondition instance across "
+      "multiple HolovizOp instances and/or operators is not supported; to coordinate multi-window "
+      "shutdown or custom shutdown logic, use `window_close_callback` to perform application-level "
+      "shutdown (e.g., `Application::stop_execution()`).",
+      ParameterFlag::kOptional);
   spec.param(allocator_,
              "allocator",
              "Allocator",
@@ -457,6 +459,13 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "window_size_callback",
              "Window Size Callback",
              "The callback function is called when the window is resized.");
+  spec.param(window_close_callback_,
+             "window_close_callback",
+             "Window Close Callback",
+             "The callback function is called when the window is closed. If not provided, the "
+             "default window close callback will be used, which initiates distributed app shutdown "
+             "if the application is distributed.",
+             std::function<void()>([this]() { default_window_close_callback(); }));
   spec.param(layer_callback_,
              "layer_callback",
              "Layer Callback",
@@ -747,6 +756,17 @@ HolovizOp::colorSpaceFromString(const std::string& string) {
   }
 
   return "invalid";
+}
+
+void HolovizOp::default_window_close_callback() {
+  auto app = fragment()->application();
+  const auto& fragment_graph = app->fragment_graph();
+  bool is_distributed = !fragment_graph.is_empty();
+  if (is_distributed) {
+    HOLOSCAN_LOG_INFO("Initiating distributed app shutdown from HolovizOp");
+    // Initiate shutdown via RPC
+    app->initiate_distributed_app_shutdown(fragment()->name());
+  }
 }
 
 bool HolovizOp::enable_conditional_port(const std::string& port_name,
@@ -1496,6 +1516,7 @@ void HolovizOp::initialize() {
   register_converter<CursorPosCallbackFunction>();
   register_converter<FramebufferSizeCallbackFunction>();
   register_converter<WindowSizeCallbackFunction>();
+  register_converter<WindowCloseCallbackFunction>();
   register_converter<LayerCallbackFunction>();
   holoscan::gxf::GXFExecutor::register_codec<std::vector<InputSpec>>(
       "std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
@@ -1786,16 +1807,10 @@ bool HolovizOp::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
 }
 
 void HolovizOp::disable_via_window_close() {
-  const auto& fragment_graph = fragment()->application()->fragment_graph();
-
-  bool is_distributed = !fragment_graph.is_empty();
-  if (is_distributed) {
-    HOLOSCAN_LOG_WARN("Initiating distributed app shutdown from HolovizOp");
-    // Initiate shutdown via RPC
-    auto app = fragment()->application();
-    app->initiate_distributed_app_shutdown(fragment()->name());
-  }
   window_close_condition_->disable_tick();
+  if (window_close_callback_.has_value()) {
+    window_close_callback_.get()();
+  }
 }
 
 void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,

@@ -283,7 +283,9 @@ struct BufferInfo;
  * - **framebuffer_size_callback**: The callback function is called when the framebuffer is resized.
  *   - type: `FramebufferSizeCallbackFunction`
  * - **window_size_callback**: The callback function is called when the window is resized.
- *   - type: `:WindowSizeCallbackFunction`
+ *   - type: `WindowSizeCallbackFunction`
+ * - **window_close_callback**: The callback function is called when the window is closed.
+ *   - type: `WindowCloseCallbackFunction`
  * - **layer_callback**: The callback function is called when HolovizOp processed all layers
  *   defined by the input specification. It can be used to add extra layers.
  *   - type: `LayerCallbackFunction`
@@ -393,6 +395,16 @@ struct BufferInfo;
  *
  *    The rendered framebuffer can be output to `render_buffer_output` or `depth_buffer_output` if
  * enabled.
+ *
+ * ==Notes==
+ *
+ * When `render_buffer_output` or `depth_buffer_output` are enabled, this operator may launch CUDA
+ * kernels that execute asynchronously on a CUDA stream. As a result, the `compute` method may
+ * return before all GPU work has completed. Downstream operators that receive data from this
+ * operator should call `op_input.receive_cuda_stream(<port_name>)` to synchronize the CUDA stream
+ * with the downstream operator's dedicated internal stream. This ensures proper synchronization
+ * before accessing the data. For more details on CUDA stream handling in Holoscan, see:
+ * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
  */
 class HolovizOp : public Operator {
  public:
@@ -910,6 +922,13 @@ class HolovizOp : public Operator {
   using WindowSizeCallbackFunction = std::function<void(int width, int height)>;
 
   /**
+   * Function pointer type for window close callbacks.
+   *
+   * The callback function receives no parameter.
+   */
+  using WindowCloseCallbackFunction = std::function<void()>;
+
+  /**
    * Function pointer type for layer callbacks. This function is called when HolovizOp processed
    * all layers defined by the input specification. It can be used to add extra layers.
    *
@@ -1068,6 +1087,22 @@ class HolovizOp : public Operator {
    */
   static std::string colorSpaceToString(holoscan::ops::HolovizOp::ColorSpace color_space);
 
+  /**
+   * Default window-close behavior executed by Holoviz
+   *
+   * This helper performs Holoviz's built-in window-close handling. When the Holoviz window
+   * is requested to close:
+   * - If the application is running in a distributed configuration, this method initiates a
+   *   distributed application shutdown via `Application::initiate_distributed_app_shutdown()`.
+   * - Otherwise, it performs no-op (normal single-fragment shutdown proceeds via the associated
+   *   `window_close_condition`).
+   *
+   * This method is also exposed to Python so user-provided callbacks can easily preserve the
+   * default shutdown semantics by calling `HolovizOp.default_window_close_callback()` inside their
+   * custom `window_close_callback`.
+   */
+  void default_window_close_callback();
+
  protected:
   void disable_via_window_close();
 
@@ -1155,6 +1190,7 @@ class HolovizOp : public Operator {
   holoscan::Parameter<CursorPosCallbackFunction> cursor_pos_callback_;
   holoscan::Parameter<FramebufferSizeCallbackFunction> framebuffer_size_callback_;
   holoscan::Parameter<WindowSizeCallbackFunction> window_size_callback_;
+  holoscan::Parameter<WindowCloseCallbackFunction> window_close_callback_;
   holoscan::Parameter<LayerCallbackFunction> layer_callback_;
 
   // internal state
@@ -1505,6 +1541,7 @@ HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::ScrollCallbackFunction);
 // don't need CursorPosCallbackFunction since it has the same signature as ScrollCallbackFunction
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::FramebufferSizeCallbackFunction);
 // don't need WindowSizeCallbackFunction since it has the same signature as
+HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::WindowCloseCallbackFunction);
 // FramebufferSizeCallbackFunction
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::LayerCallbackFunction);
 

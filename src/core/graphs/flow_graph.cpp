@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -86,6 +87,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
         std::map<NodeType, EdgeDataType, NodeTypeCompare>(NodeTypeCompare(&ordered_nodes_));
     ordered_nodes_.push_back(node);
     name_map_[node->name()] = node;
+
+    // Invalidate cache since graph structure changed
+    cached_cyclic_roots_.reset();
   }
 }
 
@@ -121,6 +125,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
     succ_[node_u][node_v] = datadict;
     pred_[node_v][node_u] = datadict;
   }
+
+  // Invalidate cache since graph structure changed
+  cached_cyclic_roots_.reset();
 }
 
 /// Remove a node and all its edges from the graph
@@ -156,6 +163,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::remove_node(const NodeType& node) {
     ordered_nodes_.erase(it);
   }
   name_map_.erase(node->name());
+
+  // Invalidate cache since graph structure changed
+  cached_cyclic_roots_.reset();
 }
 
 template <typename NodeT, typename EdgeDataElementT>
@@ -211,8 +221,31 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
+bool FlowGraph<NodeT, EdgeDataElementT>::is_user_defined_root(const NodeType& node) const {
+  if (!node) {
+    HOLOSCAN_LOG_WARN("Calling is_user_defined_root() with nullptr");
+    return false;
+  }
+
+  // Check if this is the first node added to the graph
+  if (ordered_nodes_.empty() || ordered_nodes_.front() != node) {
+    return false;
+  }
+
+  // Only return true if there are cycles AND the node is the first node
+  // Note: has_cycle() is cached at the graph level
+  auto cyclic_roots = has_cycle();
+  return !cyclic_roots.empty();
+}
+
+template <typename NodeT, typename EdgeDataElementT>
 std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
 FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
+  // Return cached result if available
+  if (cached_cyclic_roots_.has_value()) {
+    return cached_cyclic_roots_.value();
+  }
+
   std::vector<NodeType> cyclic_roots;
 
   // List of visited nodes across DFS from multiple roots
@@ -260,6 +293,9 @@ FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
       }
     }
   }
+
+  // Cache the result for future calls
+  cached_cyclic_roots_ = cyclic_roots;
   return cyclic_roots;
 }
 
@@ -321,6 +357,7 @@ size_t FlowGraph<NodeT, EdgeDataElementT>::get_outdegree(const NodeType& node,
                                                          const std::string& port_name) const {
   auto it_succ = succ_.find(node);
   if (it_succ == succ_.end()) {
+    HOLOSCAN_LOG_DEBUG("Node was not found in the successor map of the graph");
     return 0;
   }
 
@@ -340,6 +377,31 @@ size_t FlowGraph<NodeT, EdgeDataElementT>::get_outdegree(const NodeType& node,
     }
   }
   return outdegree;
+}
+
+template <typename NodeT, typename EdgeDataElementT>
+size_t FlowGraph<NodeT, EdgeDataElementT>::get_indegree(const NodeType& node,
+                                                        const std::string& port_name) const {
+  auto it_prev = pred_.find(node);
+  if (it_prev == pred_.end()) {
+    HOLOSCAN_LOG_DEBUG("Node was not found in the predecessor map of the graph");
+    return 0;
+  }
+
+  size_t indegree = 0;
+  for (const auto& prev_pair : it_prev->second) {
+    const EdgeDataType& edge_data_sptr = prev_pair.second;
+    if (edge_data_sptr) {
+      const EdgeDataElementType& port_from_connections_map = *edge_data_sptr;
+      // see if port_name is in the set of input ports
+      for (const auto& [output_port, input_ports_set] : port_from_connections_map) {
+        // count returns 1 or zero, as std::set will
+        // either have the port name or not
+        indegree += input_ports_set.count(port_name);
+      }
+    }
+  }
+  return indegree;
 }
 
 template <typename NodeT, typename EdgeDataElementT>

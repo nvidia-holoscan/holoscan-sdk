@@ -77,6 +77,7 @@ class MyPingApp(Application):
         else:
             raise ValueError(f"Invalid scheduling policy: {self.sched_policy}")
 
+        pool1.add(rx, True)
         self.add_flow(tx, rx)
 
 
@@ -98,7 +99,10 @@ def test_my_realtime_ping_app(ping_config_file, sched_policy, capfd):
     count = 10
     app = MyPingApp(count=count, sched_policy=sched_policy)
     app.config(ping_config_file)
-    scheduler = EventBasedScheduler(app, worker_thread_number=3, name="ebs", max_duration_ms=10000)
+    worker_thread_number = 3
+    scheduler = EventBasedScheduler(
+        app, worker_thread_number=worker_thread_number, name="ebs", max_duration_ms=10000
+    )
     app.scheduler(scheduler)
     app.run()
 
@@ -110,3 +114,11 @@ def test_my_realtime_ping_app(ping_config_file, sched_policy, capfd):
     assert f"received message {count}" in captured.out
     assert f"received message {count + 1}" not in captured.out
     assert "error" not in captured.out
+
+    # there is a single real-time worker thread in pool1 (corresponding to operator "tx")
+    assert captured.err.count("started real-time worker thread [pool name: pool1") == 1
+    # there is a single non-real-time worker thread in pool1 (corresponding to operator "rx")
+    assert captured.err.count("started worker thread [pool name: pool1") == 1
+    # there are 3 threads in the default pool (corresponding to worker_thread_number)
+    default_thread_pattern = "Event Based scheduler started worker thread [pool name: default_pool"
+    assert captured.err.count(default_thread_pattern) == worker_thread_number

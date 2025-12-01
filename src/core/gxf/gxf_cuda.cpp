@@ -37,6 +37,31 @@
 
 namespace holoscan::gxf {
 
+namespace {
+// Check GPU presence once and cache the result (thread-safe via C++11 static initialization)
+bool check_gpu_present() {
+  static const bool gpu_present = []() {
+    int gpu_count = 0;
+    cudaError_t cuda_err = HOLOSCAN_CUDA_CALL_WARN_MSG(
+        cudaGetDeviceCount(&gpu_count),
+        "Initializing CudaObjectHandler with support for CPU data only");
+
+    if (cuda_err == cudaSuccess && gpu_count > 0) {
+      HOLOSCAN_LOG_DEBUG("Detected {} GPU(s), CudaObjectHandler will support GPU operations.",
+                         gpu_count);
+      return true;
+    } else {
+      HOLOSCAN_LOG_DEBUG(
+          "No GPU detected or CUDA unavailable, CudaObjectHandler functionality will be "
+          "limited to CPU data.");
+      return false;
+    }
+  }();
+
+  return gpu_present;
+}
+}  // namespace
+
 CudaObjectHandler::~CudaObjectHandler() {
   if (event_created_) {
     const cudaError_t result = cudaEventDestroy(cuda_event_);
@@ -56,6 +81,9 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
         "Cannot initialize CUDA stream handler.");
     return;
   }
+
+  // Check for GPU presence (cached check, only done once globally)
+  gpu_present_ = check_gpu_present();
   auto params = op->spec()->params();
   // If the operator has a parameter named cuda_stream_pool, reuse that
   auto param_iter = params.find("cuda_stream_pool");
@@ -150,45 +178,36 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
   if (!cuda_stream_pool_ptr) {
     HOLOSCAN_LOG_DEBUG("Operator '{}': Creating default CudaStreamPool", op->name());
     // Add a CudaStreamPool with initial capacity 1 on the active device
-    int gpu_count = 0;
-    cudaError_t cuda_status = HOLOSCAN_CUDA_CALL_DEBUG_MSG(
-        cudaGetDeviceCount(&gpu_count),
-        "A default cuda_stream_pool parameter could not be added to operator '{}' because no GPU "
-        "device was found. ",
-        op->name());
-    if (cuda_status == cudaSuccess) {
+    if (gpu_present_) {
       // determine the currently active GPU device
       int device = 0;
-      cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
+      cudaError_t cuda_status = HOLOSCAN_CUDA_CALL_WARN_MSG(
           cudaGetDevice(&device), "Failed to determine the currently active GPU device");
       if (cuda_status == cudaSuccess) {
-        if (gpu_count > 0) {
-          // Note: `op` will have already been initialized, so do not use
-          // `op->add_cuda_stream_pool`. Instead, manually handle creating and initializing
-          // the stream pool here.
-          auto cuda_stream_pool = op->fragment()->make_resource<CudaStreamPool>(
-              fmt::format("{}_stream_pool", op->name()).c_str(),
-              device,
-              0,
-              0,
-              1,
-              0,
-              cuda_green_context_ptr);
-          // assign this new stream pool resource to the same entity as the operator
-          if (op->graph_entity()) {
-            cuda_stream_pool->gxf_eid(op->graph_entity()->eid());
-          }
-          HOLOSCAN_LOG_DEBUG("Operator '{}': Initializing CudaStreamPool in parameters",
-                             op->name());
-          cuda_stream_pool->initialize();
-          op->add_arg(cuda_stream_pool);
-          cuda_stream_pool_ = cuda_stream_pool;
-          HOLOSCAN_LOG_DEBUG(
-              "No cuda_stream_pool parameter or resource found for operator '{}'."
-              "Added a default CUDA stream pool with initial size 1 on device {}.",
-              op->name(),
-              device);
+        // Note: `op` will have already been initialized, so do not use
+        // `op->add_cuda_stream_pool`. Instead, manually handle creating and initializing
+        // the stream pool here.
+        auto cuda_stream_pool = op->fragment()->make_resource<CudaStreamPool>(
+            fmt::format("{}_stream_pool", op->name()).c_str(),
+            device,
+            0,
+            0,
+            1,
+            0,
+            cuda_green_context_ptr);
+        // assign this new stream pool resource to the same entity as the operator
+        if (op->graph_entity()) {
+          cuda_stream_pool->gxf_eid(op->graph_entity()->eid());
         }
+        HOLOSCAN_LOG_DEBUG("Operator '{}': Initializing CudaStreamPool in parameters", op->name());
+        cuda_stream_pool->initialize();
+        op->add_arg(cuda_stream_pool);
+        cuda_stream_pool_ = cuda_stream_pool;
+        HOLOSCAN_LOG_DEBUG(
+            "No cuda_stream_pool parameter or resource found for operator '{}'."
+            "Added a default CUDA stream pool with initial size 1 on device {}.",
+            op->name(),
+            device);
       }
     }
   }
@@ -222,13 +241,13 @@ gxf_result_t CudaObjectHandler::streams_from_message(gxf_context_t context,
       }
     }
   } else {
-    auto& id_vector = received_cuda_stream_ids_[input_name];
+    auto& id_vector = received_cuda_stream_ids_[input_key];
     id_vector.push_back(std::nullopt);
-    auto& handle_vector = received_cuda_stream_handles_[input_name];
+    auto& handle_vector = received_cuda_stream_handles_[input_key];
     handle_vector.push_back(std::nullopt);
     // TODO: could allocate from the internal stream pool here, but to avoid overhead, we can
     // instead delay that to the point at which the user requests it.
-    HOLOSCAN_LOG_TRACE("No CudaStreamId found for input '{}'", input_name);
+    HOLOSCAN_LOG_TRACE("No CudaStreamId found for input '{}' (key='{}')", input_name, input_key);
   }
   return GXF_SUCCESS;
 }
@@ -288,8 +307,11 @@ int CudaObjectHandler::add_stream(const cudaStream_t stream, const std::string& 
 expected<std::vector<std::optional<CudaStreamHandle>>, RuntimeError>
 CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
                                            const std::string& input_port_name) {
+  // truncate possible :0, :1, etc. from end of a multi-receiver (IOSpec::kAny) port name
+  std::string input_key = input_port_name.substr(0, input_port_name.find(':'));
+
   // If there is already a stream handle for this input port, return that
-  auto it = received_cuda_stream_handles_.find(input_port_name);
+  auto it = received_cuda_stream_handles_.find(input_key);
   if (it != received_cuda_stream_handles_.end()) {
     return it->second;
   }
@@ -298,7 +320,7 @@ CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
   auto out = std::vector<std::optional<CudaStreamHandle>>{};
 
   // If the message contained a stream ID, retrieve the corresponding CudaStreamHandle
-  auto id_it = received_cuda_stream_ids_.find(input_port_name);
+  auto id_it = received_cuda_stream_ids_.find(input_key);
   if (id_it != received_cuda_stream_ids_.end()) {
     const auto& stream_id_vec = id_it->second;
     if (stream_id_vec.empty()) {
@@ -324,16 +346,20 @@ CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
     }
     return out;
   }
-  auto err_msg = fmt::format("input_port_name '{}' not found", input_port_name);
+  auto err_msg = fmt::format("input_port_name '{}' (base name: '{}') not found",
+                              input_port_name, input_key);
   return make_unexpected<RuntimeError>(RuntimeError(ErrorCode::kFailure, err_msg));
 }
 
 expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::get_cuda_stream_handle(
     gxf_context_t context, const std::string& input_port_name, bool allocate,
     bool sync_to_default) {
+  // truncate possible :0, :1, etc. from end of a multi-receiver (IOSpec::kAny) port name
+  std::string input_key = input_port_name.substr(0, input_port_name.find(':'));
+
   // TODO (grelee): remove allocate=false code paths from this function?
   // If there is already a stream handle for this input port, return that
-  auto received_iter = received_cuda_stream_handles_.find(input_port_name);
+  auto received_iter = received_cuda_stream_handles_.find(input_key);
 
   CudaStreamHandle output_stream;
   if (allocate) {

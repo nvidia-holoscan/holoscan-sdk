@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/operator.hpp"
@@ -96,10 +97,26 @@ void Condition::set_parameters() {
   // Set default values for unspecified arguments if the condition is native
   if (condition_type_ == ConditionComponentType::kNative) {
     // Set only default parameter values
+    std::vector<std::string> errors;
     for (auto& [key, param_wrap] : spec_->params()) {
       // If no value is specified, the default value will be used by setting an empty argument.
       Arg empty_arg("");
-      ArgumentSetter::set_param(param_wrap, empty_arg);
+      try {
+        ArgumentSetter::set_param(param_wrap, empty_arg);
+      } catch (const std::exception& e) {
+        std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
+        HOLOSCAN_LOG_ERROR(
+            "Condition '{}': failed to set default parameter - {}", name_, error_msg);
+        errors.push_back(error_msg);
+      }
+    }
+
+    if (!errors.empty()) {
+      throw std::runtime_error(
+          fmt::format("Condition '{}': failed to set {} default parameter(s):\n  - {}",
+                      name_,
+                      errors.size(),
+                      fmt::join(errors, "\n  - ")));
     }
   }
 }

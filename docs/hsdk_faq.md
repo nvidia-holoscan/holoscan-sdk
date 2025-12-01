@@ -1093,19 +1093,23 @@ A15:To address your concerns about graceful application termination with multipl
 
 1. ESC Key Behavior:
    * Holoviz monitors for window closure requests via the ESC key.
-   * When pressed, it deactivates the associated HolovizOp by setting a boolean scheduling term to false.
+   * When pressed, it deactivates the associated HolovizOp using an internal or user-provided Boolean condition (setting the condition to false)
 1. Termination Scenarios:
    * Single HolovizOp: ESC key press closes the entire application.
    * Multiple HolovizOps: ESC only terminates the specific Holoviz instance, leaving others running.
 
 Proposed Solution:
 
-To achieve synchronized termination across all Holoviz instances:
+To achieve synchronized termination across all Holoviz instances, use the `window_close_callback` parameter (introduced in Holoscan SDK v3.9):
 
-1. Create a shared boolean scheduling condition.
-1. For each HolovizOp in your application:
-   * Set this condition as a general execution condition.
-   * Importantly, also set it as the `window_close_condition` parameter (Note: this parameter was named `window_close_scheduling_term` in releases prior to v2.7).
+1. Define an application-level callback that performs graceful shutdown when any window is closed.
+   * For single-fragment apps, call `Application::stop_execution()`.
+   * For multi-fragment or distributed apps, call `Application::initiate_distributed_app_shutdown()`
+     so the shutdown is coordinated across all fragments. When using Holoviz, you can also call
+     `HolovizOp.default_window_close_callback()` from inside your custom `window_close_callback`
+     to delegate to Holoviz's built-in distributed shutdown behavior.
+1. Pass this callback as the `window_close_callback` parameter to every HolovizOp in your app.
+1. Do not attempt to share a single `BooleanCondition` across multiple HolovizOps; this is not supported and can prevent coordinated shutdown.
 
 **Q16:I'm trying to use the `render_buffer_output` from Holoviz Python operator, but I get the following error :**
 
@@ -1274,12 +1278,7 @@ HoloInfer currently does not support using any DLA cores for engine creation (ev
 
 **Q2: How can I generate HSDK applications from Graph Composer?**
 
-A2:In Graph Composer, graph nodes (entities) are based on GXF Codelets/Components (from GXF extensions) that are registered in the Graph Composer registry. Currently, none of the Holoscan operators are registered in this registry. However, we have a method to convert Holoscan Operators into GXF extensions. Please find example code below :
-
-* [https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extensio](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/wrap_operator_as_gxf_extension)
-* [https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/gxf_extensions/gxf_holoscan_wrapper](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/gxf_extensions/gxf_holoscan_wrapper)
-
-To generate or run an application graph (pipeline) described in Graph Composer, we need a method to import GXF Codelets/Components as Holoscan Operators/Resources. Currently, users need to manually wrap GXF Codelets/Resources to convert them into Holoscan Operators/Resources.
+A2: Export of Holoscan operators to GXF codelets and composition from Graph Composer is no longer supported as of Holoscan v3.9.
 
 **Q3: How can I support external events like React?**
 

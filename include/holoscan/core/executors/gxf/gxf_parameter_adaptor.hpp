@@ -66,7 +66,8 @@ class GXFParameterAdaptor {
     const auto index = std::type_index(param_wrap.type());
     const AdaptFunc& func = instance.get_param_handler(index);
     if (&func == &none_param_handler) {
-      HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", key);
+      HOLOSCAN_LOG_ERROR(
+          "Unable to handle parameter '{}' of type '{}'", key, param_wrap.type().name());
       return GXF_FAILURE;
     }
 
@@ -79,7 +80,8 @@ class GXFParameterAdaptor {
     const auto index = std::type_index(any_value.type());
     const AdaptFunc& func = instance.get_arg_param_handler(index);
     if (&func == &none_param_handler) {
-      HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", key);
+      HOLOSCAN_LOG_ERROR(
+          "Unable to handle parameter '{}' of type '{}'", key, any_value.type().name());
       return GXF_FAILURE;
     }
 

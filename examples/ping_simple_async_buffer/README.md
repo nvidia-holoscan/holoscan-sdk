@@ -14,6 +14,11 @@ threads. As the transmitter and receiver are connected with the
 threads. Roughly, the receiver is set to receive 2 messages for every message
 being emitted by the transmitter because of their respective sleep durations.
 
+## Data Flow Tracking
+
+The application is also configured to enable data flow tracking and prints out the data flow tracking results at the end of the application run.
+The application shows two paths: `tx->rx` and `tx_old->rx`, where `tx_old` represents that `rx` received an old message from `tx`. However, `tx_old` and `tx` represent the same operator in the application. Please refer to the documentation for Data Flow Tracking for more details.
+
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:

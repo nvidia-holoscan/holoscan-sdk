@@ -18,12 +18,17 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
-#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
-#include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
+#include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
+#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
 
 class VideoReplayerApp : public holoscan::Application {
  public:
+  void on_window_closed() {
+    // Stop the entire application when the Holoviz window is closed
+    stop_execution();
+  }
+
   void compose() override {
     using namespace holoscan;
 
@@ -43,7 +48,10 @@ class VideoReplayerApp : public holoscan::Application {
     // Define the replayer and holoviz operators and configure using yaml configuration
     auto replayer =
         make_operator<ops::VideoStreamReplayerOp>("replayer", from_config("replayer"), args);
-    auto visualizer = make_operator<ops::HolovizOp>("holoviz", from_config("holoviz"));
+    auto visualizer = make_operator<ops::HolovizOp>(
+        "holoviz", from_config("holoviz"), Arg("window_close_callback", [this]() {
+          on_window_closed();
+        }));
 
     // Define the workflow: replayer -> holoviz
     add_flow(replayer, visualizer, {{"output", "receivers"}});
@@ -51,7 +59,10 @@ class VideoReplayerApp : public holoscan::Application {
     // Check if the YAML dual_window parameter is set and add a second visualizer in that case
     auto dual_window = from_config("dual_window").as<bool>();
     if (dual_window) {
-      auto visualizer2 = make_operator<ops::HolovizOp>("holoviz2", from_config("holoviz"));
+      auto visualizer2 = make_operator<ops::HolovizOp>(
+          "holoviz2", from_config("holoviz"), Arg("window_close_callback", [this]() {
+            on_window_closed();
+          }));
       add_flow(replayer, visualizer2, {{"output", "receivers"}});
     }
   }

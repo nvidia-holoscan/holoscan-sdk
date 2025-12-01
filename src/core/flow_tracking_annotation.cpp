@@ -18,9 +18,9 @@
 #include "holoscan/core/flow_tracking_annotation.hpp"
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
-#include <mutex>
 #include <utility>
 
 #include "holoscan/core/fragment.hpp"
@@ -58,33 +58,7 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
 
     std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
 
-    // Thread-safe cache for cycle detection results since graph structure doesn't change at runtime
-    static std::unordered_map<std::string, bool> fragment_has_cycles_cache;
-    static std::mutex cache_mutex;
-    const std::string& fragment_name = op->fragment()->name();
-
-    bool has_cycles;
-    {
-      std::lock_guard<std::mutex> lock(cache_mutex);
-      auto cache_it = fragment_has_cycles_cache.find(fragment_name);
-      if (cache_it != fragment_has_cycles_cache.end()) {
-        has_cycles = cache_it->second;
-      } else {
-        auto cyclic_roots = op->fragment()->graph().has_cycle();
-        has_cycles = !cyclic_roots.empty();
-        fragment_has_cycles_cache[fragment_name] = has_cycles;
-
-        // Clear cache if it grows too large (unlikely but prevents unbounded growth)
-        constexpr size_t MAX_CACHE_SIZE = 1000;
-        if (fragment_has_cycles_cache.size() > MAX_CACHE_SIZE) {
-          HOLOSCAN_LOG_DEBUG("Clearing fragment cycle cache due to size limit");
-          fragment_has_cycles_cache.clear();
-          fragment_has_cycles_cache[fragment_name] = has_cycles;
-        }
-      }
-    }
-
-    bool is_current_op_root = op->is_root() || (op->is_user_defined_root() && has_cycles) ||
+    bool is_current_op_root = op->is_root() || op->is_user_defined_root() ||
                               holoscan::Operator::is_all_operator_predecessor_virtual(
                                   std::move(op_shared_ptr), op->fragment()->graph());
 
@@ -119,27 +93,28 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
 
     static gxf_tid_t message_label_tid = GxfTidNull();
     if (message_label_tid == GxfTidNull()) {
-      auto gxf_result = GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid);
-      if (gxf_result != GXF_SUCCESS) {
-        HOLOSCAN_LOG_ERROR("Failed to get the component type id for MessageLabel: {}",
-                           GxfResultStr(gxf_result));
-        return gxf_result;
-      }
+      HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid));
     }
 
     // Check if a message_label component already exists in the entity
     // If a message_label component already exists in the entity, just update the value of the
     // MessageLabel
     if (gxf::has_component(context, uid, message_label_tid, "message_label")) {
-      HOLOSCAN_LOG_DEBUG(
-          "Found a message label already inside the entity. Replacing the original with a new "
-          "one with timestamp.");
       auto maybe_buffer = gxf_entity.value().get<MessageLabel>("message_label");
       if (!maybe_buffer) {
         // Fail early if we cannot add the MessageLabel
         HOLOSCAN_LOG_ERROR(GxfResultStr(maybe_buffer.error()));
         return maybe_buffer.error();
       }
+      // This should not happen but we are not able to remove the message label
+      // component from the entity in deannotate_message. So we try to replace the message label
+      // with a new one. However, this solution does not work when same gxf::Entity is used for
+      // receiving and sending messages, especially in multiple operators. Therefore, the same
+      // message entity should not be used in cycles or complex workflows.
+      HOLOSCAN_LOG_DEBUG(fmt::format(
+          "Found a message label already inside the entity. Replacing the original with a new "
+          "one with timestamp. Old message label: {}",
+          maybe_buffer.value()->to_string()));
       *maybe_buffer.value() = m;
     } else {  // if no message_label component exists in the entity, add a new one
       auto maybe_buffer = gxf_entity.value().add<MessageLabel>("message_label");
@@ -154,8 +129,14 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
   return GXF_SUCCESS;
 }
 
+void append_old_to_last_op_name(MessageLabel& m) {
+  for (auto& path : m.paths()) {
+    path.back().operator_name.append("_old", 4);
+  }
+}
+
 gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
-                                const char* receiver_name) {
+                                const char* receiver_name, bool is_old_message) {
   HOLOSCAN_LOG_DEBUG("deannotate_message");
   if (!op) {
     HOLOSCAN_LOG_ERROR("Operator is nullptr. Receiver: {}", receiver_name);
@@ -164,15 +145,35 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
     HOLOSCAN_LOG_DEBUG("Virtual Operators are not timestamped.");
     return GXF_SUCCESS;
   }
+
   static gxf_tid_t message_label_tid = GxfTidNull();
   if (message_label_tid == GxfTidNull()) {
     HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid));
   }
 
   if (gxf::has_component(context, *uid, message_label_tid, "message_label")) {
+    // Get the GXF entity after confirming that the message label component exists in the entity.
     auto gxf_entity = nvidia::gxf::Entity::Shared(context, *uid);
+    if (!gxf_entity) {
+      HOLOSCAN_LOG_WARN("Failed to get GXF Entity with uid: {}, error: {}",
+                        *uid,
+                        GxfResultStr(gxf_entity.error()));
+      return GXF_SUCCESS;
+    }
+
     auto buffer = gxf_entity.value().get<MessageLabel>("message_label");
+    if (!buffer) {
+      throw std::runtime_error(
+          fmt::format("Failed to get message_label component: {}", GxfResultStr(buffer.error())));
+    }
     MessageLabel m = *(buffer.value());
+
+    // we have to remove the message label component from here, but it does not work because the
+    // gxf::Runtime's extension loader is not available here. if we received an old message in
+    // asynchronous receiver, append "_old" to the last operator name
+    if (is_old_message) {
+      append_old_to_last_op_name(m);
+    }
 
     // Create a new operator timestamp with only receive timestamp
     OperatorTimestampLabel cur_op_timestamp(op->qualified_name());
@@ -200,6 +201,8 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
       cur_op_timestamp.pub_timestamp = cur_op_timestamp.rec_timestamp;
       m.add_new_op_timestamp(cur_op_timestamp);
       MessageLabel label_wo_cycles;
+      HOLOSCAN_LOG_DEBUG("deannotate_message: Found cycle in data flow tracking. Message Label: {}",
+                         m.to_string());
 
       // Preserve frame numbers from the original message label (only when profiling is enabled)
       if (holoscan::profiler::trace_enabled()) {
@@ -230,14 +233,16 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
           label_wo_cycles.add_new_path(m.get_path(i));
         }
       }
-      if (!label_wo_cycles.num_paths()) {
-        // Since there are no paths in label_wo_cycles, add the current operator in a new path
-        label_wo_cycles.add_new_op_timestamp(cur_op_timestamp);
+      if (label_wo_cycles.num_paths()) {
+        op->update_input_message_label(receiver_name, label_wo_cycles);
+      } else {
+        // when there are no paths in label_wo_cycles, delete the input message label for the
+        // operator
+        op->delete_input_message_label(receiver_name);
       }
-      op->update_input_message_label(receiver_name, label_wo_cycles);
     }
   } else {
-    HOLOSCAN_LOG_DEBUG("{} - {} - No message label found", op->qualified_name(), receiver_name);
+    HOLOSCAN_LOG_DEBUG("{}.{} - No input message label found", op->qualified_name(), receiver_name);
     op->delete_input_message_label(receiver_name);
     return GXF_FAILURE;
   }

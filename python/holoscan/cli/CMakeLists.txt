@@ -23,7 +23,8 @@ file(
 )
 
 # We install a stub to notify users that core support is deprecated.
-configure_file(holoscan ${CMAKE_BINARY_DIR}/bin @ONLY)
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
+configure_file(holoscan ${CMAKE_BINARY_DIR}/bin/holoscan @ONLY)
 install(
   FILES ${CMAKE_BINARY_DIR}/bin/holoscan
   DESTINATION bin

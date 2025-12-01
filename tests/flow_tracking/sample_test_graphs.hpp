@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,17 +37,17 @@ class OneInOp : public Operator {
 
   OneInOp() = default;
 
-  void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
+  void setup(OperatorSpec& spec) override { spec.input<int>("in"); }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message = op_input.receive<gxf::Entity>("in");
+    auto in_message = op_input.receive<int>("in");
 
-    HOLOSCAN_LOG_INFO("OneInOp count {}", count_++);
+    // For invalid input values, use 0
+    int in_value = in_message ? in_message.value() : 0;
+
+    HOLOSCAN_LOG_INFO("OneInOp count {}", in_value);
   }
-
- private:
-  int count_ = 1;
 };
 
 class OneOutOp : public Operator {
@@ -56,12 +56,11 @@ class OneOutOp : public Operator {
 
   OneOutOp() = default;
 
-  void setup(OperatorSpec& spec) override { spec.output<gxf::Entity>("out"); }
+  void setup(OperatorSpec& spec) override { spec.output<int>("out"); }
 
   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message);
+    op_output.emit(count_, "out");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -77,18 +76,22 @@ class TwoInOneOutOp : public Operator {
   TwoInOneOutOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in0").condition(ConditionType::kNone);
-    spec.input<gxf::Entity>("in1").condition(ConditionType::kNone);
-    spec.output<gxf::Entity>("out");
+    spec.input<int>("in0").condition(ConditionType::kNone);
+    spec.input<int>("in1").condition(ConditionType::kNone);
+    spec.output<int>("out");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message1 = op_input.receive<gxf::Entity>("in0");
-    auto in_message2 = op_input.receive<gxf::Entity>("in1");
+    auto in_message1 = op_input.receive<int>("in0");
+    auto in_message2 = op_input.receive<int>("in1");
 
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message);
+    // For invalid input values, use 0
+    int val1 = in_message1 ? in_message1.value() : 0;
+    int val2 = in_message2 ? in_message2.value() : 0;
+    int out_value = val1 + val2;
+
+    op_output.emit(out_value, "out");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -104,20 +107,25 @@ class ThreeInOneOutOp : public Operator {
   ThreeInOneOutOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in0");
-    spec.input<gxf::Entity>("in1");
-    spec.input<gxf::Entity>("in2").condition(ConditionType::kNone);  // cycle in-port
-    spec.output<gxf::Entity>("out");
+    spec.input<int>("in0");
+    spec.input<int>("in1");
+    spec.input<int>("in2").condition(ConditionType::kNone);  // cycle in-port
+    spec.output<int>("out");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message1 = op_input.receive<gxf::Entity>("in0");
-    auto in_message2 = op_input.receive<gxf::Entity>("in1");
-    auto in_message3 = op_input.receive<gxf::Entity>("in2");
+    auto in_message1 = op_input.receive<int>("in0");
+    auto in_message2 = op_input.receive<int>("in1");
+    auto in_message3 = op_input.receive<int>("in2");
 
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message);
+    // For invalid input values, use 0
+    int val1 = in_message1 ? in_message1.value() : 0;
+    int val2 = in_message2 ? in_message2.value() : 0;
+    int val3 = in_message3 ? in_message3.value() : 0;
+    int out_value = val1 + val2 + val3;
+
+    op_output.emit(out_value, "out");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -133,20 +141,24 @@ class TwoInTwoOutOp : public Operator {
   TwoInTwoOutOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in0").condition(ConditionType::kNone);
-    spec.input<gxf::Entity>("in1").condition(ConditionType::kNone);
-    spec.output<gxf::Entity>("out0");
-    spec.output<gxf::Entity>("out1");
+    spec.input<int>("in0").condition(ConditionType::kNone);
+    spec.input<int>("in1").condition(ConditionType::kNone);
+    spec.output<int>("out0");
+    spec.output<int>("out1");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message1 = op_input.receive<gxf::Entity>("in0");
-    auto in_message2 = op_input.receive<gxf::Entity>("in1");
+    auto in_message1 = op_input.receive<int>("in0");
+    auto in_message2 = op_input.receive<int>("in1");
 
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message, "out0");
-    op_output.emit(out_message, "out1");
+    // For invalid input values, use 0
+    int val1 = in_message1 ? in_message1.value() : 0;
+    int val2 = in_message2 ? in_message2.value() : 0;
+    int out_value = val1 + val2;
+
+    op_output.emit(out_value, "out0");
+    op_output.emit(out_value, "out1");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -162,16 +174,17 @@ class OneInOneOutOp : public Operator {
   OneInOneOutOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in");
-    spec.output<gxf::Entity>("out");
+    spec.input<int>("in");
+    spec.output<int>("out");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message = op_input.receive<gxf::Entity>("in");
+    auto in_message = op_input.receive<int>("in");
 
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message);
+    // For invalid input values, send 0 to output
+    int out_value = in_message ? in_message.value() : 0;
+    op_output.emit(out_value, "out");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -187,16 +200,20 @@ class OneOptionalInOneOutOp : public Operator {
   OneOptionalInOneOutOp() = default;
 
   void setup(OperatorSpec& spec) override {
-    spec.input<gxf::Entity>("in").condition(ConditionType::kNone);
-    spec.output<gxf::Entity>("out");
+    spec.input<int>("in").condition(ConditionType::kNone);
+    spec.output<int>("out");
   }
 
   void compute(InputContext& op_input, OutputContext& op_output,
                ExecutionContext& context) override {
-    auto in_message = op_input.receive<gxf::Entity>("in");
+    auto in_message = op_input.receive<int>("in");
 
-    auto out_message = gxf::Entity::New(&context);
-    op_output.emit(out_message);
+    // For invalid input values, send 0 to output
+    int out_value = 0;
+    if (in_message) {
+      out_value = in_message.value();
+    }
+    op_output.emit(out_value, "out");
 
     HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
   }
@@ -376,17 +393,15 @@ class TwoCyclesVariant2 : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
 
-    auto start = make_operator<OneOptionalInOneOutOp>("start", make_condition<CountCondition>(5));
+    auto start = make_operator<OneOptionalInOneOutOp>("start", make_condition<CountCondition>(10));
 
     auto middle = make_operator<TwoInTwoOutOp>("middle");
 
     auto end = make_operator<OneOptionalInOneOutOp>("end");
 
-    // First cycle
     add_flow(start, middle, {{"out", "in0"}});
     add_flow(middle, end, {{"out0", "in"}});
 
-    // Second cycle
     add_flow(middle, start, {{"out1", "in"}});
     add_flow(end, middle, {{"out", "in1"}});
   }

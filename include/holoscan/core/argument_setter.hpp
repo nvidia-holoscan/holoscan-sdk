@@ -57,14 +57,16 @@ class ArgumentSetter {
  public:
   /**
    * @brief Function type for setting an argument to the parameter.
+   * @return true if the parameter was set successfully, false otherwise.
    */
-  using SetterFunc = std::function<void(ParameterWrapper&, Arg&)>;
+  using SetterFunc = std::function<bool(ParameterWrapper&, Arg&)>;
 
   /**
    * @brief Default @ref SetterFunc for Arg.
    */
   inline static SetterFunc none_argument_setter = [](ParameterWrapper& /*param_wrap*/, Arg& arg) {
     HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", arg.name());
+    return false;
   };
 
   /**
@@ -79,12 +81,21 @@ class ArgumentSetter {
    *
    * @param param_wrap The ParameterWrapper object.
    * @param arg The Arg object to set.
+   * @throws std::runtime_error if the parameter could not be set.
    */
   static void set_param(ParameterWrapper& param_wrap, Arg& arg) {
     auto& instance = get_instance();
     const std::type_index index = std::type_index(param_wrap.type());
     const SetterFunc& func = instance.get_argument_setter(index);
-    func(param_wrap, arg);
+    bool success = func(param_wrap, arg);
+    if (!success) {
+      throw std::runtime_error(
+          fmt::format("Failed to set parameter '{}' of type '{}' "
+                      "(arg_type: {})",
+                      arg.name(),
+                      param_wrap.type().name(),
+                      arg.arg_type().to_string()));
+    }
   }
 
   /**

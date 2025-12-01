@@ -75,7 +75,6 @@ void SegmentationPostprocessorOp::setup(OperatorSpec& spec) {
 void SegmentationPostprocessorOp::compute(InputContext& op_input, OutputContext& op_output,
                                           ExecutionContext& context) {
   constexpr size_t kMaxChannelCount = std::numeric_limits<output_type_t>::max();
-
   // Process input message
   // The type of `in_message` is 'holoscan::gxf::Entity'.
   auto maybe_tensormap = op_input.receive<TensorMap>("in_tensor");

@@ -111,6 +111,13 @@ class CudaObjectHandler : public holoscan::CudaObjectHandler {
   void init_from_operator(Operator* op) override;
 
   /**
+   * @brief Check if GPU capability is present on the system.
+   *
+   * @return true if GPU(s) are available, false if no GPU is present
+   */
+  bool is_gpu_available() const override { return gpu_present_; }
+
+  /**
    * Add stream to output port (must be called before any emit call using that port)
    *
    * @param stream_handle The stream to add
@@ -335,6 +342,9 @@ class CudaObjectHandler : public holoscan::CudaObjectHandler {
   // If we want to allow emitting via a cudaStream_t, we need a way to get the handle it
   // corresponds to.
   std::unordered_map<cudaStream_t, CudaStreamHandle> stream_to_stream_handle_{};
+
+  /// Flag to indicate if GPU is present on the system
+  bool gpu_present_ = false;
 };
 
 }  // namespace holoscan::gxf

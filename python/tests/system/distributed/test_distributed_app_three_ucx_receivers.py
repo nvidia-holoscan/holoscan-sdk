@@ -253,7 +253,11 @@ def test_distributed_app_three_ucx_receivers(use_new_receivers, data_flow_tracki
         # assert that the data flow tracking messages were printed
         assert captured.out.count("Data Flow Tracking Results:") == 2
         # three paths: rectangle, replayer and triangle all connect to HolovizOp
-        assert captured.out.count("Total paths: 3") == 2
+        assert captured.out.count("Total paths: 3") >= 1
+        # the above is observed one time, as we no longer print a path if the data is both sent and
+        # received by operators. previously, we used to track a path even when the data is not
+        # received by an operator. this does not mean that data flow is not tracked. data flow is
+        # tracked as long as the data is received by an operator.
         assert "Fragment: fragment1" in captured.out
         assert "Fragment: fragment2" in captured.out
 

@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
+#include <stdio.h>
 #include <cuda_runtime.h>
-#include <cstdio>
 
 // Simple CUDA kernel that adds 5 to each element in the input array
 __global__ void add_five_kernel(int* input, int* output, int size) {

@@ -44,6 +44,11 @@ config_file : str
     The path to the configuration file (in YAML format).
 prefix : str, optional
     TODO
+
+Raises
+------
+RuntimeError
+    If the config_file is non-empty and the file doesn't exist.
 )doc")
 
 PYDOC(config_file, R"doc(
@@ -93,6 +98,11 @@ config : str or holoscan.core.Config
 prefix : str, optional
     Prefix path for the` config` file. Only available in the overloaded variant
     that takes a string for `config`.
+
+Raises
+------
+RuntimeError
+    If the config is a string path that is non-empty and the file doesn't exist.
 )doc")
 
 //  Constructor

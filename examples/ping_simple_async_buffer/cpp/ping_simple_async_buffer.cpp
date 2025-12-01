@@ -39,7 +39,11 @@ int main() {
       holoscan::Arg("worker_thread_number", 2L) /*Specify 2 worker threads*/);
   app->scheduler(scheduler);
 
+  auto& tracker = app->track(0, 0, 0);
+
   app->run();
+
+  tracker.print();
 
   return 0;
 }

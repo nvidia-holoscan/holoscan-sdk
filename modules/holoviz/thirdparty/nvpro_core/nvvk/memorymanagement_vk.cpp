@@ -116,11 +116,13 @@ MemHandle DeviceMemoryAllocator::allocMemory(const MemAllocateInfo& allocInfo, u
 
   VkResult result;
   bool isDedicatedAllocation = allocInfo.getDedicatedBuffer() || allocInfo.getDedicatedImage();
+  bool isExportable = allocInfo.getExportable();
 
   auto dmaHandle = allocInternal(allocInfo.getMemoryRequirements()[plane],
                                  allocInfo.getMemoryProperties(),
                                  !allocInfo.getTilingOptimal() /*isLinear*/,
                                  isDedicatedAllocation ? &bakedInfo.dedicatedInfo : nullptr,
+                                 isExportable ? &bakedInfo.exportInfo : nullptr,
                                  result,
                                  true,
                                  state);
@@ -351,10 +353,12 @@ void DeviceMemoryAllocator::nvprintReport() const {
   VkDeviceSize allocated[VK_MAX_MEMORY_HEAPS] = {0};
   uint32_t active[VK_MAX_MEMORY_HEAPS] = {0};
   uint32_t dedicated[VK_MAX_MEMORY_HEAPS] = {0};
+  uint32_t exportable[VK_MAX_MEMORY_HEAPS] = {0};
   uint32_t linear[VK_MAX_MEMORY_HEAPS] = {0};
 
   uint32_t dedicatedSum = 0;
   uint32_t linearSum = 0;
+  uint32_t exportableSum = 0;
   for (const auto& block : m_blocks) {
     if (block.mem) {
       uint32_t heapIndex = m_memoryProperties.memoryTypes[block.memoryTypeIndex].heapIndex;
@@ -364,25 +368,28 @@ void DeviceMemoryAllocator::nvprintReport() const {
       active[heapIndex]++;
       linear[heapIndex] += block.isLinear ? 1 : 0;
       dedicated[heapIndex] += block.isDedicated ? 1 : 0;
+      exportable[heapIndex] += block.isExportable ? 1 : 0;
 
       linearSum += block.isLinear ? 1 : 0;
       dedicatedSum += block.isDedicated ? 1 : 0;
+      exportableSum += block.isExportable ? 1 : 0;
     }
   }
 
   LOGI("nvvk::DeviceMemoryAllocator %p\n", this);
   { LOGI("  count : dedicated, linear,  all (device-local)\n"); }
   for (uint32_t i = 0; i < m_memoryProperties.memoryHeapCount; i++) {
-    LOGI("  heap%d : %9d, %6d, %4d (%d)\n",
+    LOGI("  heap%d : %9d, %6d, %6d, %4d (%d)\n",
          i,
          dedicated[i],
+         exportable[i],
          linear[i],
          active[i],
          (m_memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) ? 1 : 0);
   }
 
   {
-    LOGI("  total : %9d, %6d, %4d\n", dedicatedSum, linearSum, m_activeBlockCount);
+    LOGI("  total : %9d, %6d, %6d, %4d\n", dedicatedSum, exportableSum, linearSum, m_activeBlockCount);
     LOGI("  size  :      used / allocated / available KB (device-local)\n");
   }
   for (uint32_t i = 0; i < m_memoryProperties.memoryHeapCount; i++) {
@@ -436,6 +443,7 @@ const VkPhysicalDeviceMemoryProperties& DeviceMemoryAllocator::getMemoryProperti
 AllocationID DeviceMemoryAllocator::allocInternal(const VkMemoryRequirements& memReqs,
                                                   VkMemoryPropertyFlags memProps, bool isLinear,
                                                   const VkMemoryDedicatedAllocateInfo* dedicated,
+                                                  const VkExportMemoryAllocateInfo* exportInfo,
                                                   VkResult& result, bool preferDevice,
                                                   const State& state) {
   VkMemoryAllocateInfo memInfo;
@@ -462,7 +470,8 @@ AllocationID DeviceMemoryAllocator::allocInternal(const VkMemoryRequirements& me
       if (!block.mem || block.memoryTypeIndex != memInfo.memoryTypeIndex ||
           isLinear != block.isLinear || block.priority != priority ||
           block.allocateFlags != state.allocateFlags ||
-          block.allocateDeviceMask != state.allocateDeviceMask) {
+          block.allocateDeviceMask != state.allocateDeviceMask ||
+          block.isExportable != (exportInfo != nullptr)) {
         continue;
       }
 
@@ -538,6 +547,13 @@ AllocationID DeviceMemoryAllocator::allocInternal(const VkMemoryRequirements& me
     memInfo.pNext = &memFlags;
   }
 
+  VkExportMemoryAllocateInfo exportInfoLocal;
+  if (exportInfo) {
+    exportInfoLocal = *exportInfo;
+    exportInfoLocal.pNext = memInfo.pNext;
+    memInfo.pNext = &exportInfoLocal;
+  }
+
   block.allocationSize = block.range.alignedSize((uint32_t)block.allocationSize);
   block.priority = priority;
   block.memoryTypeIndex = memInfo.memoryTypeIndex;
@@ -545,6 +561,7 @@ AllocationID DeviceMemoryAllocator::allocInternal(const VkMemoryRequirements& me
   block.isLinear = isLinear;
   block.isFirst = isFirst;
   block.isDedicated = dedicated != nullptr;
+  block.isExportable = exportInfo != nullptr;
   block.allocateFlags = state.allocateFlags;
   block.allocateDeviceMask = state.allocateDeviceMask;
 
@@ -589,7 +606,7 @@ AllocationID DeviceMemoryAllocator::allocInternal(const VkMemoryRequirements& me
         ((memProps == VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) || (memProps == 0 && preferDevice))) {
       // downgrade memory property to zero and/or not preferDevice
       LOGW("downgrade memory\n");
-      return allocInternal(memReqs, 0, isLinear, dedicated, result, !preferDevice, state);
+      return allocInternal(memReqs, 0, isLinear, dedicated, exportInfo, result, !preferDevice, state);
     } else {
       LOGE("could not allocate memory: VkResult %d\n", result);
       return AllocationID();

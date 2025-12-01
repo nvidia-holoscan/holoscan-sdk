@@ -72,10 +72,11 @@ endif()
 if(HOLOSCAN_INSTALL_EXAMPLE_SOURCE)
 
     # Get relative folder path for the app
-    file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+    get_filename_component(parent_dir "${CMAKE_CURRENT_SOURCE_DIR}" DIRECTORY)
+    file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${parent_dir})
 
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera_passthrough_op.hpp"
-        DESTINATION "${app_relative_dest_path}/.."
+        DESTINATION "${app_relative_dest_path}"
         COMPONENT holoscan-examples
     )
 endif()

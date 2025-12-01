@@ -459,7 +459,6 @@ class Application : public Fragment {
   std::shared_ptr<AppDriver> app_driver_;  ///< The application driver.
   std::shared_ptr<AppWorker> app_worker_;  ///< The application worker.
 
- protected:
   /**
    * @brief Reset internal application state to allow for multiple run calls
    *
@@ -482,10 +481,34 @@ class Application : public Fragment {
 
  private:
   /**
+   * @brief Initiate shutdown of a local multi-fragment application.
+   *
+   * This method initiates an orderly shutdown of fragments running in local mode
+   * (multiple fragments in one process). Fragments are terminated in topological order
+   * (root/upstream fragments first) to avoid connection errors.
+   *
+   * @param fragment_name The name of the fragment initiating the shutdown (currently unused
+   *                      but kept for API consistency).
+   */
+  void initiate_local_app_shutdown(const std::string& fragment_name);
+
+  /**
+   * @brief Check if any fragment in the application's fragment graph is GPU-resident.
+   *
+   * @return true if any fragment in the application's fragment graph is GPU-resident, false
+   * otherwise.
+   */
+  bool is_any_fragment_gpu_resident();
+
+  /**
    * @brief Configure UCX environment variables
    */
   void set_ucx_env();
   void set_v4l2_env();
+  /**
+   * @brief Check stack size and warn if below recommended minimum
+   */
+  void check_stack_size();
   MetadataPolicy metadata_policy_ = kDefaultMetadataPolicy;
   bool is_metadata_enabled_ = kDefaultMetadataEnabled;
 };

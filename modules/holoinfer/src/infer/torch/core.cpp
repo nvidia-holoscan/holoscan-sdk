@@ -643,10 +643,10 @@ InferStatus TorchInferImpl::get_io_schema(const YAML::Node& yaml_node, std::stri
         HOLOSCAN_LOG_ERROR("Torch core: Error getting input type stream");
         return status;
       }
-      child_type_streams.push_back(child_type_stream);
+      child_type_streams.push_back(std::move(child_type_stream));
     }
     if (!child_type_streams.empty()) {
-      std::string first_type = child_type_streams[0];
+      const std::string& first_type = child_type_streams[0];
       for (size_t i = 1; i < child_type_streams.size(); ++i) {
         if (child_type_streams[i] != first_type) {
           HOLOSCAN_LOG_ERROR("Torch core: Inconsistent types in schema - found {} and {}",
@@ -670,10 +670,10 @@ InferStatus TorchInferImpl::get_io_schema(const YAML::Node& yaml_node, std::stri
       if (status.get_code() != holoinfer_code::H_SUCCESS) {
         return status;
       }
-      child_type_streams.push_back(child_type_stream);
+      child_type_streams.push_back(std::move(child_type_stream));
     }
     if (!child_type_streams.empty()) {
-      std::string first_type = child_type_streams[0];
+      const std::string& first_type = child_type_streams[0];
       for (size_t i = 1; i < child_type_streams.size(); ++i) {
         if (child_type_streams[i] != first_type) {
           HOLOSCAN_LOG_ERROR("Torch core: Inconsistent types in schema - found {} and {}",
@@ -755,7 +755,7 @@ InferStatus TorchInferImpl::populate_model_details() {
         HOLOSCAN_LOG_ERROR("Torch core: Error getting input type stream");
         return status;
       }
-      input_type_structs.push_back(input_type_stream);
+      input_type_structs.push_back(std::move(input_type_stream));
     }
 
     status = set_input_processors(input_type_structs, input_format.as<std::vector<YAML::Node>>());
@@ -794,15 +794,19 @@ InferStatus TorchInferImpl::populate_model_details() {
 extern "C" TorchInfer* NewTorchInfer(
     const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in, bool cuda_buf_out,
     int device_id, std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream) {
-  return new TorchInfer(
-      model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out, device_id, allocate_cuda_stream);
+  return new TorchInfer(model_file_path,
+                        cuda_flag,
+                        cuda_buf_in,
+                        cuda_buf_out,
+                        device_id,
+                        std::move(allocate_cuda_stream));
 }
 
 TorchInfer::TorchInfer(const std::string& model_file_path, bool cuda_flag, bool cuda_buf_in,
                        bool cuda_buf_out, int device_id,
                        std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : impl_(new TorchInferImpl(model_file_path, cuda_flag, cuda_buf_in, cuda_buf_out, device_id,
-                               allocate_cuda_stream)) {}
+                               std::move(allocate_cuda_stream))) {}
 
 TorchInfer::~TorchInfer() {
   if (impl_) {
@@ -816,10 +820,10 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
                                std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
     : model_path_(model_file_path),
       device_id_(device_id),
-      allocate_cuda_stream_(allocate_cuda_stream) {
+      allocate_cuda_stream_(std::move(allocate_cuda_stream)) {
   try {
     if (allocate_cuda_stream_) {
-      cuda_stream_ = allocate_cuda_stream(device_id_);
+      cuda_stream_ = allocate_cuda_stream_(device_id_);
       if (cuda_stream_ == nullptr) {
         throw std::runtime_error("Torch core: Failed to allocate CUDA stream");
       }

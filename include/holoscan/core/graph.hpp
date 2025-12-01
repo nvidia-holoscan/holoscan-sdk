@@ -171,6 +171,15 @@ class Graph {
   virtual size_t get_outdegree(const NodeType& node, const std::string& port_name) const = 0;
 
   /**
+   * @brief Get the indegree of a given node of a given port.
+   *
+   * @param node A node in the graph.
+   * @param port_name The name of the port in the given node.
+   * @return The indegree of the given node of the given port.
+   */
+  virtual size_t get_indegree(const NodeType& node, const std::string& port_name) const = 0;
+
+  /**
    * @brief Find a node in the graph that satisfies the given predicate.
    * @param pred A predicate.
    * @return The node if found, otherwise nullptr.

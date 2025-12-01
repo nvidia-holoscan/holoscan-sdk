@@ -33,6 +33,7 @@ create a custom application.
     holoscan.core.Component
     holoscan.core.ComponentSpec
     holoscan.core.Condition
+    holoscan.core.ConditionBase
     holoscan.core.ConditionType
     holoscan.core.Config
     holoscan.core.DataFlowMetric
@@ -57,6 +58,7 @@ create a custom application.
     holoscan.core.MultiMessageConditionInfo
     holoscan.core.NetworkContext
     holoscan.core.Operator
+    holoscan.core.OperatorBase
     holoscan.core.OperatorSpec
     holoscan.core.OperatorStatus
     holoscan.core.OutputContext
@@ -64,6 +66,7 @@ create a custom application.
     holoscan.core.arg_to_py_object
     holoscan.core.arglist_to_kwargs
     holoscan.core.Resource
+    holoscan.core.ResourceBase
     holoscan.core.SchedulingStatusType
     holoscan.core.ServiceDriverEndpoint
     holoscan.core.ServiceWorkerEndpoint
@@ -82,9 +85,37 @@ import sys
 # Otherwise you will get an assert tlock.locked() error on exit.
 # (CLARAHOLOS-765)
 import threading as _threading  # noqa: F401, I001
+import warnings
+from collections.abc import Callable
 
 # Add ThreadPoolExecutor to imports if not already there
 from concurrent.futures import ThreadPoolExecutor
+
+# Check stack size and warn if insufficient
+try:
+    import resource
+
+    # Get current stack size limit
+    soft_limit, hard_limit = resource.getrlimit(resource.RLIMIT_STACK)
+
+    # Recommended minimum stack size (32 MB)
+    RECOMMENDED_STACK_SIZE = 32 * 1024 * 1024
+
+    # Check if soft limit is set and is below recommended size
+    if soft_limit != resource.RLIM_INFINITY and soft_limit < RECOMMENDED_STACK_SIZE:
+        warnings.warn(
+            f"Current stack size ({soft_limit / (1024 * 1024):.1f} MB) is below the "
+            f"recommended minimum ({RECOMMENDED_STACK_SIZE / (1024 * 1024):.1f} MB). "
+            f"This may cause segmentation faults or crashes. "
+            f"Consider increasing the stack size with 'ulimit -s {RECOMMENDED_STACK_SIZE // 1024}'"
+            f", or if using Docker, launch the container with "
+            f"'--ulimit stack={RECOMMENDED_STACK_SIZE}'.",
+            RuntimeWarning,
+            stacklevel=1,
+        )
+except (ImportError, OSError, ValueError):
+    # resource module not available (e.g., on Windows) or error getting limits
+    pass
 
 # Import statements for the C++ API classes
 from ..graphs._graphs import FragmentGraph, OperatorGraph
@@ -101,6 +132,7 @@ from ._core import (
     Clock,
     ClockInterface,
     Component,
+    ConditionBase,
     ConditionType,
     Config,
     DataFlowMetric,
@@ -119,8 +151,10 @@ from ._core import (
     MetadataPolicy,
     MultiMessageConditionInfo,
     NetworkContext,
+    OperatorBase,
     OperatorStatus,
     ParameterFlag,
+    ResourceBase,
     Scheduler,
     SchedulingStatusType,
     ServiceDriverEndpoint,
@@ -130,10 +164,8 @@ from ._core import (
     kwargs_to_arglist,
     py_object_to_arg,
 )
-from ._core import Condition as _Condition
 from ._core import DefaultFragmentService as _DefaultFragmentService
 from ._core import Fragment as _Fragment
-from ._core import Operator as _Operator
 from ._core import PyComponentSpec as ComponentSpec
 from ._core import PyExecutionContext as ExecutionContext
 from ._core import PyInputContext as InputContext
@@ -141,7 +173,6 @@ from ._core import PyOperatorSpec as OperatorSpec
 from ._core import PyOutputContext as OutputContext
 from ._core import PyRegistryContext as _RegistryContext
 from ._core import PyTensor as Tensor
-from ._core import Resource as _Resource
 from ._core import Subgraph as _Subgraph
 from ._core import register_types as _register_types
 
@@ -166,6 +197,7 @@ __all__ = [
     "ComponentSpec",
     "ConditionType",
     "Condition",
+    "ConditionBase",
     "Config",
     "DataFlowMetric",
     "DataFlowTracker",
@@ -190,12 +222,14 @@ __all__ = [
     "MultiMessageConditionInfo",
     "NetworkContext",
     "Operator",
+    "OperatorBase",
     "OperatorSpec",
     "OperatorStatus",
     "OperatorGraph",
     "OutputContext",
     "ParameterFlag",
     "Resource",
+    "ResourceBase",
     "Scheduler",
     "SchedulingStatusType",
     "ServiceDriverEndpoint",
@@ -210,6 +244,11 @@ __all__ = [
     "kwargs_to_arglist",
     "py_object_to_arg",
 ]
+
+# define aliases for backwards compatibility
+_Condition = ConditionBase
+_Operator = OperatorBase
+_Resource = ResourceBase
 
 
 # Define custom __repr__ method for MetadataDictionary
@@ -481,7 +520,7 @@ Fragment.__init__.__doc__ = _Fragment.__init__.__doc__
 
 
 class Subgraph(_Subgraph):
-    def __init__(self, fragment, instance_name):
+    def __init__(self, fragment: _Fragment | _Subgraph, instance_name: str):
         if not isinstance(fragment, (_Fragment, _Subgraph)):
             raise ValueError(
                 "The first argument to a Subgraph's constructor must be the Fragment "
@@ -507,7 +546,13 @@ class Subgraph(_Subgraph):
     def compose(self):
         pass
 
-    def add_flow(self, upstream, downstream, port_pairs=None, connector_type=None):
+    def add_flow(
+        self,
+        upstream: OperatorBase,
+        downstream: OperatorBase,
+        port_pairs: set[tuple[str, str]] | None = None,
+        connector_type: IOSpec.ConnectorType | None = None,
+    ):
         """
         Add a flow between components within this Subgraph.
 
@@ -535,9 +580,9 @@ class Subgraph(_Subgraph):
         # first argument to the constructor or if the Python bindings of a C++ operator did not use
         # the `get_fragment_ptr_name_pair` utility function to handle the prefixing automatically
         # during operator construction.
-        if isinstance(upstream, _Operator):
+        if isinstance(upstream, OperatorBase):
             self.add_operator(upstream)
-        if isinstance(downstream, _Operator):
+        if isinstance(downstream, OperatorBase):
             self.add_operator(downstream)
 
         # Call the PyFragment::add_flow method to handle the connections. This ensures that the
@@ -553,13 +598,30 @@ class Subgraph(_Subgraph):
             else:
                 self.fragment.add_flow(upstream, downstream)
 
+    def set_dynamic_flows(self, op: OperatorBase, func: Callable):
+        """Set a callback function to define dynamic flows for an operator at runtime.
+
+        This method allows operators to modify their connections with other operators during execution.
+        The callback function is called after the operator executes and can add dynamic flows using
+        the operator's `add_dynamic_flow` methods.
+
+        Parameters
+        ----------
+        op : holoscan.core.Operator
+            The operator for which to set dynamic flows.
+        dynamic_flow_func : callable
+            The callback function that defines the dynamic flows. Takes an operator as input and returns
+            ``None``.
+        """
+        self.fragment.set_dynamic_flows(op, func)
+
 
 # copy docstrings defined in core_pydoc.hpp
 Subgraph.__doc__ = _Subgraph.__doc__
 Subgraph.__init__.__doc__ = _Subgraph.__init__.__doc__
 
 
-class Operator(_Operator):
+class Operator(OperatorBase):
     _readonly_attributes = [
         "fragment",
         "conditions",
@@ -581,7 +643,7 @@ class Operator(_Operator):
             )
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
-        _Operator.__init__(self, self, fragment, *args, **kwargs)
+        OperatorBase.__init__(self, self, fragment, *args, **kwargs)
         # Create a PyOperatorSpec object and pass it to the C++ API
         spec = OperatorSpec(fragment=self.fragment, op=self)
         self.spec = spec
@@ -610,11 +672,19 @@ class Operator(_Operator):
 
 
 # copy docstrings defined in core_pydoc.hpp
-Operator.__doc__ = _Operator.__doc__
-Operator.__init__.__doc__ = _Operator.__init__.__doc__
+Operator.__doc__ = OperatorBase.__doc__
+Operator.__doc__.replace(
+    "Base class representing either a wrapped C++ operator or native Python operator.",
+    "Native Python operator class.",
+)
+Operator.__init__.__doc__ = OperatorBase.__init__.__doc__
+Operator.__init__.__doc__.replace(
+    "Base class representing either a wrapped C++ operator or native Python operator.",
+    "Native Python operator class.",
+)
 
 
-class Condition(_Condition):
+class Condition(ConditionBase):
     _readonly_attributes = [
         "fragment",
         "condition_type",
@@ -638,7 +708,7 @@ class Condition(_Condition):
 
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
-        _Condition.__init__(self, self, fragment, *args, **kwargs)
+        ConditionBase.__init__(self, self, fragment, *args, **kwargs)
 
         # Create a PyComponentSpec object and pass it to the C++ API
         spec = ComponentSpec(fragment=self.fragment, component=self)
@@ -730,11 +800,19 @@ class Condition(_Condition):
 
 
 # copy docstrings defined in core_pydoc.hpp
-Condition.__doc__ = _Condition.__doc__
-Condition.__init__.__doc__ = _Condition.__init__.__doc__
+Condition.__doc__ = ConditionBase.__doc__
+Condition.__doc__.replace(
+    "Base class representing either a wrapped C++ condition or native Python condition.",
+    "Native Python condition class.",
+)
+Condition.__init__.__doc__ = ConditionBase.__init__.__doc__
+Condition.__init__.__doc__.replace(
+    "Base class representing either a wrapped C++ condition or native Python condition.",
+    "Native Python condition class.",
+)
 
 
-class Resource(_Resource):
+class Resource(ResourceBase):
     _readonly_attributes = [
         "fragment",
         "resource_type",
@@ -755,7 +833,7 @@ class Resource(_Resource):
 
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
-        _Resource.__init__(self, self, fragment, *args, **kwargs)
+        ResourceBase.__init__(self, self, fragment, *args, **kwargs)
         # Create a PyComponentSpec object and pass it to the C++ API
         spec = ComponentSpec(fragment=self.fragment, component=self)
         self.spec = spec
@@ -768,8 +846,16 @@ class Resource(_Resource):
 
 
 # copy docstrings defined in core_pydoc.hpp
-Resource.__doc__ = _Resource.__doc__
-Resource.__init__.__doc__ = _Resource.__init__.__doc__
+Resource.__doc__ = ResourceBase.__doc__
+Resource.__doc__.replace(
+    "Base class representing either a wrapped C++ resource or native Python resource.",
+    "Native Python resource class.",
+)
+Resource.__init__.__doc__ = ResourceBase.__init__.__doc__
+Resource.__init__.__doc__.replace(
+    "Base class representing either a wrapped C++ resource or native Python resource.",
+    "Native Python resource class.",
+)
 
 
 class DefaultFragmentService(_DefaultFragmentService):

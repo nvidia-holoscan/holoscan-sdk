@@ -77,6 +77,8 @@ TEST_F(GPUResidentErrorConditionsTest, TestNormalOperatorPlusGPUResidentAddFlow)
 
 // This test a single operator fragment with no CUDA code
 TEST_F(GPUResidentErrorConditionsTest, TestSingleOperatorFragment) {
+  // Set log level to WARN to ensure warning messages are captured
+  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "WARN");
   Fragment fragment;
   auto source = fragment.make_operator<TestSourceGpuOp>("source");
   fragment.add_operator(source);
@@ -87,9 +89,6 @@ TEST_F(GPUResidentErrorConditionsTest, TestSingleOperatorFragment) {
   // Get the automatically created executor
   auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
   ASSERT_NE(executor, nullptr);
-
-  // Set log level to WARN to ensure warning messages are captured
-  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "WARN");
 
   // Capture stderr to check for warning message
   testing::internal::CaptureStderr();
@@ -110,8 +109,7 @@ TEST_F(GPUResidentErrorConditionsTest, TestSingleOperatorFragment) {
   std::string log_output = testing::internal::GetCapturedStderr();
 
   // Verify that the warning about empty workload graph is present
-  EXPECT_TRUE(log_output.find("Workload graph of GPU-resident execution is empty.") !=
-              std::string::npos)
+  EXPECT_TRUE(log_output.find("Graph of GPU-resident execution is empty.") != std::string::npos)
       << "Expected warning not found in log output:\n"
       << log_output;
 
@@ -132,7 +130,7 @@ TEST_F(GPUResidentErrorConditionsTest, TestDisconnectedOperators) {
   ASSERT_NE(executor, nullptr);
 
   // Multiple disconnected operators should fail (multiple root nodes)
-  EXPECT_FALSE(executor->verify_graph_topology(fragment.graph()));
+  EXPECT_THROW(executor->initialize_fragment(), std::runtime_error);
 }
 
 TEST_F(GPUResidentErrorConditionsTest, TestTwoSourceOneSink) {
@@ -141,16 +139,9 @@ TEST_F(GPUResidentErrorConditionsTest, TestTwoSourceOneSink) {
   auto source2 = fragment.make_operator<TestSourceGpuOp>("source2");
   auto sink = fragment.make_operator<TestSinkGpuOp>("sink");
   fragment.add_flow(source1, sink);
-  fragment.add_flow(source2, sink);
 
-  // Get the automatically created executor
-  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
-  ASSERT_NE(executor, nullptr);
-
-  auto& graph = fragment.graph();
-
-  // Y-shaped merge should fail (multiple root nodes)
-  EXPECT_FALSE(executor->verify_graph_topology(fragment.graph()));
+  // The following call should throw runtime error (Y-shaped merge not allowed)
+  EXPECT_THROW(fragment.add_flow(source2, sink), holoscan::RuntimeError);
 }
 
 TEST_F(GPUResidentErrorConditionsTest, TestOneSourceTwoSink) {

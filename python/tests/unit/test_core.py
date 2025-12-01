@@ -32,6 +32,7 @@ from holoscan.core import (
     Condition,
     ConditionType,
     Config,
+    ExecutionContext,
     Executor,
     Fragment,
     FragmentGraph,
@@ -57,6 +58,7 @@ from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
 from holoscan.graphs import FlowGraph, OperatorFlowGraph
+from holoscan.operators.holoviz import Pose3D  # noqa: F401
 from holoscan.resources import (
     DoubleBufferReceiver,
     DoubleBufferTransmitter,
@@ -630,6 +632,13 @@ class TestOperatorSpecBase:
         spec.param("optional_param", 5, flag=ParameterFlag.OPTIONAL)
 
 
+class TestExecutionContext:
+    def test_init_not_allowed(self):
+        # abstract base class can't be initialized
+        with pytest.raises(TypeError):
+            ExecutionContext()
+
+
 class TestInputContext:
     def test_init_not_allowed(self):
         # abstract base class can't be initialized
@@ -661,13 +670,10 @@ def test_condition_type():
 
 
 class TestConfig:
-    def test_init_nonexistent(self, capfd):
-        # The following will log a warning to the console
-        conf = Config(config_file="nonexistent-file", prefix="")
-        captured = capfd.readouterr()
-        assert isinstance(conf, Config)
-        assert "warning" in captured.err
-        assert "Config file 'nonexistent-file' doesn't exist" in captured.err
+    def test_init_nonexistent(self):
+        # The following should raise a RuntimeError when the config file doesn't exist
+        with pytest.raises(RuntimeError, match=r".*Config file 'nonexistent-file' doesn't exist.*"):
+            Config(config_file="nonexistent-file", prefix="")
 
     def test_init_from_config_file(self, operators_config_file):
         conf = Config(operators_config_file)

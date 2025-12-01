@@ -18,7 +18,9 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <set>
 #include <string>
+#include <utility>  // for std::pair
 
 #include <holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp>
 #include <holoscan/core/gpu_resident_operator.hpp>
@@ -337,6 +339,58 @@ TEST_F(GPUResidentFragmentTest, TestLongChain) {
 }
 
 // ================================================================================================
+// Device Pointer Access Tests
+// ================================================================================================
+
+// Test that device pointers can be retrieved
+TEST_F(GPUResidentFragmentTest, TestDevicePointerAccess) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Get the automatically created executor
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment->executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  void* data_ready_ptr = fragment->gpu_resident().data_ready_device_address();
+  void* result_ready_ptr = fragment->gpu_resident().result_ready_device_address();
+  void* tear_down_ptr = fragment->gpu_resident().tear_down_device_address();
+
+  // All pointers should be non-null
+  EXPECT_NE(data_ready_ptr, nullptr);
+  EXPECT_NE(result_ready_ptr, nullptr);
+  EXPECT_NE(tear_down_ptr, nullptr);
+
+  // All pointers should be unique
+  EXPECT_NE(data_ready_ptr, result_ready_ptr);
+  EXPECT_NE(data_ready_ptr, tear_down_ptr);
+  EXPECT_NE(result_ready_ptr, tear_down_ptr);
+}
+
+// Test that executor device pointers match fragment accessor device pointers
+TEST_F(GPUResidentFragmentTest, TestExecutorDevicePointerAccess) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Get the automatically created executor
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment->executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  // Get device pointers from both fragment accessor and executor
+  void* fragment_data_ready = fragment->gpu_resident().data_ready_device_address();
+  void* fragment_result_ready = fragment->gpu_resident().result_ready_device_address();
+  void* fragment_tear_down = fragment->gpu_resident().tear_down_device_address();
+
+  void* executor_data_ready = executor->data_ready_device_address();
+  void* executor_result_ready = executor->result_ready_device_address();
+  void* executor_tear_down = executor->tear_down_device_address();
+
+  // Fragment accessor and executor should return the same pointers
+  EXPECT_EQ(fragment_data_ready, executor_data_ready);
+  EXPECT_EQ(fragment_result_ready, executor_result_ready);
+  EXPECT_EQ(fragment_tear_down, executor_tear_down);
+}
+
+// ================================================================================================
 // GPU-resident Status Check Tests with an empty workload graph
 // ================================================================================================
 
@@ -374,8 +428,6 @@ TEST_F(GPUResidentFragmentTest, TestTimeoutInRunningGraph) {
   auto source = fragment.make_operator<TestSourceGpuOp>("source");
   fragment.add_operator(source);
 
-  // Set log level to ERROR to ensure error messages are captured
-  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "ERROR");
   EXPECT_NO_THROW(fragment.gpu_resident().timeout_ms(1000));
 
   // capture the output and look for HOLOSCAN_LOG_ERROR messages
@@ -405,4 +457,40 @@ TEST_F(GPUResidentFragmentTest, TestTimeoutInRunningGraph) {
   EXPECT_FALSE(fragment.gpu_resident().is_launched());
   future.get();
 }
+}  // namespace holoscan
+
+// ================================================================================================
+// GPU-resident indegree constraint tests
+// ================================================================================================
+namespace holoscan {
+
+// Prior indegree > 0 across two add_flow calls should be rejected in GPU-resident mode
+TEST_F(GPUResidentFragmentTest, DownstreamIndegreeNonZeroAcrossCalls) {
+  Fragment fragment;
+
+  auto tx1 = fragment.make_operator<TestSourceGpuOp>("tx1");
+  auto tx2 = fragment.make_operator<TestSourceGpuOp>("tx2");
+  auto rx = fragment.make_operator<TestSinkGpuOp>("rx");
+
+  // First connection establishes indegree(rx.in) = 1
+  fragment.add_flow(tx1, rx, {{"out", "in"}});
+
+  // Second connection to the same downstream input must throw in GPU-resident path
+  EXPECT_THROW(fragment.add_flow(tx2, rx, {{"out", "in"}}), holoscan::RuntimeError);
+}
+
+// Two outputs to one input in a single call should be rejected in GPU-resident mode
+TEST_F(GPUResidentFragmentTest, TestTwoOutputsToOneInput_InSingleCall) {
+  Fragment fragment;
+
+  auto tx = fragment.make_operator<TestTwoOutGpuOp>("tx");
+  auto rx = fragment.make_operator<TestSinkGpuOp>("rx");
+
+  const std::pair<std::string, std::string> p1{"out0", "in"};
+  const std::pair<std::string, std::string> p2{"out1", "in"};
+  std::set<std::pair<std::string, std::string>> port_pairs{p1, p2};
+
+  EXPECT_THROW(fragment.add_flow(tx, rx, port_pairs), holoscan::RuntimeError);
+}
+
 }  // namespace holoscan

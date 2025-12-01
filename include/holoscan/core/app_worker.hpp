@@ -19,13 +19,13 @@
 #define HOLOSCAN_CORE_APP_WORKER_HPP
 
 #include <any>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
-#include <atomic>
 
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/graph.hpp"
@@ -88,6 +88,16 @@ class AppWorker {
 
   std::shared_ptr<distributed::AppDriverClient> app_driver_client() const;
 
+  /**
+   * @brief Get the calculated worker shutdown timeout in milliseconds.
+   *
+   * This timeout is dynamically calculated based on the number of fragments
+   * and their scheduler's stop_on_deadlock_timeout values.
+   *
+   * @return The shutdown timeout in milliseconds.
+   */
+  int64_t worker_shutdown_timeout_ms() const { return worker_shutdown_timeout_ms_; }
+
   /// Start the fragment services
   void handle_worker_connect(const std::string_view& driver_ip) noexcept;
 
@@ -113,6 +123,10 @@ class AppWorker {
   std::vector<FragmentNodeType> scheduled_fragments_;
   bool need_notify_execution_finished_ = false;
   AppWorkerTerminationCode termination_code_ = AppWorkerTerminationCode::kSuccess;
+  int64_t worker_shutdown_timeout_ms_ = 10000;  ///< Calculated shutdown watchdog timeout (ms)
+
+  /// Map of fragment names to their execution futures (for checking individual completion)
+  std::unordered_map<std::string, std::shared_future<void>> fragment_futures_;
 
   std::mutex message_mutex_;                 ///< Mutex for the message queue.
   std::queue<WorkerMessage> message_queue_;  ///< Queue of messages to be processed.

@@ -45,11 +45,8 @@ rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps/rapids-cmake-pa
 superbuild_depend(cccl)
 # fmt must be populated before rmm and spdlog to ensure fmt headers are installed in the package
 superbuild_depend(fmt_rapids)
-# rmm is fetched by spdlog but need to call this first because a patch needs to be applied to rmm
-superbuild_depend(rmm)
 
 # Other dependencies
-
 superbuild_depend(cli11_rapids)
 superbuild_depend(cudatoolkit_rapids)
 superbuild_depend(concurrent_queue)
@@ -59,14 +56,14 @@ superbuild_depend(glfw_rapids)
 superbuild_depend(grpc)
 superbuild_depend(hwloc)
 superbuild_depend(magic_enum)
-superbuild_depend(spdlog_rapids)
+superbuild_depend(nvtx3)
+superbuild_depend(rmm)
 superbuild_depend(tensorrt)
 superbuild_depend(threads)
 superbuild_depend(ucx)
 superbuild_depend(v4l2)
 superbuild_depend(yaml-cpp_rapids)
 superbuild_depend(gxf)
-superbuild_depend(nvtx3)
 superbuild_depend(eigen3_urm)
 superbuild_depend(ucxx_rapids)
 superbuild_depend(matx)

@@ -30,7 +30,7 @@ namespace holoscan {
 template <typename typeT>
 void ArgumentSetter::add_argument_setter() {
   function_map_.try_emplace(
-      std::type_index(typeid(typeT)), [](ParameterWrapper& param_wrap, Arg& arg) {
+      std::type_index(typeid(typeT)), [](ParameterWrapper& param_wrap, Arg& arg) -> bool {
         std::any& any_param = param_wrap.value();
         // Note that the type of any_param is Parameter<typeT>*, not Parameter<typeT>.
         auto& param = *std::any_cast<Parameter<typeT>*>(any_param);
@@ -39,7 +39,7 @@ void ArgumentSetter::add_argument_setter() {
         // the native operator if it is not specified.
         if (arg.name().empty() && !arg.has_value()) {
           param.set_default_value();
-          return;
+          return true;
         }
 
         std::any& any_arg = arg.value();
@@ -75,6 +75,7 @@ void ArgumentSetter::add_argument_setter() {
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());
+                    return false;
                   }
                   break;
                 }
@@ -101,6 +102,7 @@ void ArgumentSetter::add_argument_setter() {
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());
+                    return false;
                   }
                   break;
                 }
@@ -141,6 +143,7 @@ void ArgumentSetter::add_argument_setter() {
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());
+                    return false;
                   }
                   break;
                 }
@@ -188,6 +191,7 @@ void ArgumentSetter::add_argument_setter() {
                         "YAML conversion for key '{}' is not supported for type '{}'",
                         arg.name(),
                         typeid(typeT).name());
+                    return false;
                   } else {
                     auto node = std::any_cast<YAML::Node>(any_arg);
                     typeT value = YAMLNodeParser<typeT>::parse(node);
@@ -198,11 +202,18 @@ void ArgumentSetter::add_argument_setter() {
                 case ArgElementType::kHandle:
                   break;
                 case ArgElementType::kCustom: {
-                  HOLOSCAN_LOG_ERROR(
-                      "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
-                      any_arg.type().name(),
-                      typeid(typeT).name(),
-                      arg.name());
+                  // Attempt to directly bind if the Arg already holds the exact parameter type
+                  try {
+                    auto& casted = std::any_cast<typeT&>(any_arg);
+                    param = casted;
+                  } catch (const std::bad_any_cast&) {
+                    HOLOSCAN_LOG_ERROR(
+                        "Unable to convert argument type '{}' to parameter type '{}' for '{}'",
+                        any_arg.type().name(),
+                        typeid(typeT).name(),
+                        arg.name());
+                    return false;
+                  }
                   break;
                 }
               }
@@ -264,6 +275,7 @@ void ArgumentSetter::add_argument_setter() {
                         any_arg.type().name(),
                         typeid(typeT).name(),
                         arg.name());
+                    return false;
                   }
                   break;
                 }
@@ -328,7 +340,7 @@ void ArgumentSetter::add_argument_setter() {
                       any_arg.type().name(),
                       typeid(typeT).name(),
                       arg.name());
-                  break;
+                  return false;
                 }
               }
               break;
@@ -336,12 +348,23 @@ void ArgumentSetter::add_argument_setter() {
             case ArgContainerType::kArray: {
               HOLOSCAN_LOG_ERROR("Unable to handle ArgContainerType::kArray type for '{}'",
                                  arg.name());
-              break;
+              return false;
             }
           }
+          return true;
         } catch (std::bad_any_cast const& e) {
-          HOLOSCAN_LOG_ERROR(
-              "Bad any cast exception caught for argument '{}': {}", arg.name(), e.what());
+          // Capture type information for detailed error reporting
+          const char* expected = typeid(typeT).name();
+          const std::type_info& actual_type = any_arg.type();
+          const char* actual = actual_type == typeid(void) ? "<empty>" : actual_type.name();
+          std::string error_message =
+              fmt::format("Bad any cast while setting argument '{}': expected '{}', got '{}'. {}",
+                          arg.name(),
+                          expected,
+                          actual,
+                          e.what());
+          HOLOSCAN_LOG_ERROR(error_message);
+          return false;
         }
       });
 }

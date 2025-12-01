@@ -16,8 +16,7 @@ limitations under the License.
 """  # noqa: E501
 
 from holoscan.conditions import CountCondition
-from holoscan.core import ClockInterface, ComponentSpec, Resource
-from holoscan.core import _Resource as ResourceBase
+from holoscan.core import ClockInterface, ComponentSpec, Resource, ResourceBase
 from holoscan.gxf import GXFResource, GXFSystemResourceBase
 from holoscan.operators import PingRxOp, PingTxOp
 from holoscan.resources import (

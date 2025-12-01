@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -104,10 +104,12 @@ def main(on_gpu=False, count=10, shape=(64, 32), dtype=np.uint8, data_flow_track
     if data_flow_tracking_enabled:
         with Tracker(
             app,
-            filename="logger.log",
-            num_start_messages_to_skip=2,
-            num_last_messages_to_discard=3,
+            num_start_messages_to_skip=0,
+            num_last_messages_to_discard=0,
         ) as trackers:
+            # set separate log files for each fragment
+            for fragment_name, tracker in trackers.items():
+                tracker.enable_logging(fragment_name + "_logger.log")
             app.run()
             print(f"{type(trackers)=}, {trackers=}")
             for fragment_name, tracker in trackers.items():

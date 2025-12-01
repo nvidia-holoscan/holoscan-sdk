@@ -144,15 +144,11 @@ class GXFExecutor : public holoscan::Executor {
    * dependency on this class.
    *
    * @param fragment The fragment that this operator belongs to.
-   * @param gxf_context The GXF context.
-   * @param eid The GXF entity ID. (Deprecated: now ignored. The eid is obtained from op instead)
    * @param io_spec The input port specification.
-   * @param bind_port If true, bind the port to the existing GXF Receiver component. Otherwise,
    * @param op The operator to which this port is being added.
    * create a new GXF Receiver component.
    */
-  static void create_input_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
-                                IOSpec* io_spec, bool bind_port = false, Operator* op = nullptr);
+  static void create_input_port(Fragment* fragment, IOSpec* io_spec, Operator* op = nullptr);
 
   /**
    * @brief Create and setup GXF components for output port.
@@ -169,15 +165,11 @@ class GXFExecutor : public holoscan::Executor {
    * dependency on on this class.
    *
    * @param fragment The fragment that this operator belongs to.
-   * @param gxf_context The GXF context.
-   * @param eid The GXF entity ID. (Deprecated: now ignored. The eid is obtained from op instead)
    * @param io_spec The output port specification.
-   * @param bind_port If true, bind the port to the existing GXF Transmitter component. Otherwise,
    * @param op The operator to which this port is being added.
    * create a new GXF Transmitter component.
    */
-  static void create_output_port(Fragment* fragment, gxf_context_t gxf_context, gxf_uid_t eid,
-                                 IOSpec* io_spec, bool bind_port = false, Operator* op = nullptr);
+  static void create_output_port(Fragment* fragment, IOSpec* io_spec, Operator* op = nullptr);
 
   /**
    * @brief Set the GXF entity ID of the operator initialized by this executor.
@@ -418,9 +410,6 @@ class GXFExecutor : public holoscan::Executor {
                                         holoscan::OperatorGraph::NodeType prev_op,
                                         holoscan::OperatorGraph::EdgeDataType port_map_val);
 
-  /// Indicate whether this executor was created by a Holoscan Application.
-  bool is_holoscan() const;
-
   /// Helper function that adds a GXF Condition to the specified graph entity
   bool add_condition_to_graph_entity(std::shared_ptr<Condition> condition,
                                      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
@@ -494,6 +483,7 @@ class GXFExecutor : public holoscan::Executor {
   // Static flags for signal handling
   static std::atomic<bool> interrupt_requested_;
   static std::atomic<bool> force_exit_countdown_started_;
+  static std::atomic<int64_t> first_interrupt_time_ms_;  // Timestamp of first interrupt signal
 };
 
 }  // namespace holoscan::gxf

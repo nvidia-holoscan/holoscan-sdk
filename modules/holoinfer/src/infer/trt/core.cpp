@@ -47,12 +47,12 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
       is_engine_path_(is_engine_path),
       cuda_buf_in_(cuda_buf_in),
       cuda_buf_out_(cuda_buf_out),
-      allocate_cuda_stream_(allocate_cuda_stream) {
+      allocate_cuda_stream_(std::move(allocate_cuda_stream)) {
   auto num_of_opt_profiles = trt_opt_profile.size();
 
   if (num_of_opt_profiles > 0) {
     network_options_.batch_sizes.clear();
-    for (auto opt_profile_str : trt_opt_profile) {
+    for (const auto& opt_profile_str : trt_opt_profile) {
       // parse opt_profile here
       std::vector<std::string> tokens;
       std::vector<int32_t> opt_profile = {};
@@ -76,8 +76,7 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
             "dynamism in multiple dimensions, ingest the correct optimization profile.");
         network_options_.batch_sizes.push_back({1, 1, 1});
       } else {
-        std::vector<int32_t> current_opt_profile(opt_profile);
-        network_options_.batch_sizes.push_back(current_opt_profile);
+        network_options_.batch_sizes.push_back(std::move(opt_profile));
       }
     }
   } else {
@@ -318,7 +317,7 @@ bool TrtInfer::initialize_parameters() {
           outdim.push_back(dims.d[in]);
         }
 
-        output_dims_.push_back(outdim);
+        output_dims_.push_back(std::move(outdim));
         out_data_types_.push_back(holoinfer_type);
       } break;
       default: {

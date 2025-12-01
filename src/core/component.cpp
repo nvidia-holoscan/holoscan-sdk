@@ -51,6 +51,8 @@ void ComponentBase::update_params_from_args(
     std::unordered_map<std::string, ParameterWrapper>& params) {
   HOLOSCAN_LOG_TRACE("ComponentBase::update_params_from_args() for '{}':", name_);
   // Set arguments
+  std::vector<std::string> errors;
+  std::vector<std::string> unknown_args;
   for (auto& arg : args_) {
     // Find if arg.name() is in spec_->params()
     if (params.find(arg.name()) == params.end()) {
@@ -69,6 +71,7 @@ void ComponentBase::update_params_from_args(
           arg.name(),
           msg_buf.data(),
           msg_buf.size());
+      unknown_args.push_back(arg.name());
       continue;
     }
 
@@ -78,7 +81,26 @@ void ComponentBase::update_params_from_args(
     HOLOSCAN_LOG_TRACE("\tComponent '{}':: setting argument '{}'", name_, arg.name());
 
     HOLOSCAN_LOG_TRACE("\tArgumentSetter::set_param() for argument  '{}':", arg.name());
-    ArgumentSetter::set_param(param_wrap, arg);
+    try {
+      ArgumentSetter::set_param(param_wrap, arg);
+    } catch (const std::exception& e) {
+      std::string error_msg = fmt::format("Argument '{}': {}", arg.name(), e.what());
+      HOLOSCAN_LOG_ERROR("Component '{}': failed to set argument - {}", name_, error_msg);
+      errors.push_back(error_msg);
+    }
+  }
+
+  if (!errors.empty()) {
+    // Append unknown args to the aggregated error for completeness
+    if (!unknown_args.empty()) {
+      for (const auto& u : unknown_args) {
+        errors.push_back(fmt::format("Unknown argument '{}': not found in component spec", u));
+      }
+    }
+    throw std::runtime_error(fmt::format("Component '{}': failed to set {} argument(s):\n  - {}",
+                                         name_,
+                                         errors.size(),
+                                         fmt::join(errors, "\n  - ")));
   }
 }
 

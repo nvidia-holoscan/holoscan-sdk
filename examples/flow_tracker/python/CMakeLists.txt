@@ -39,6 +39,7 @@ install(FILES CMakeLists.min.txt
 
 # Testing
 if(HOLOSCAN_BUILD_TESTS)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_FLOW_TRACKER_TEST
     COMMAND bash -c
       "${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/flow_tracker.py 2>&1 | \

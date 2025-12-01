@@ -34,7 +34,7 @@ COMMON_DOCKER_FLAGS="--rm -i --init --net=host
 --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all
 --cap-add CAP_SYS_PTRACE --ipc=host --ulimit memlock=-1 --ulimit stack=67108864
 "
-HOLOSCAN_VERSION=3.8.0
+HOLOSCAN_VERSION=3.9.0
 HOLOSCAN_IMG="nvcr.io/nvidia/clara-holoscan/holoscan:v$HOLOSCAN_VERSION"
 HOLOSCAN_DGPU_IMG="$HOLOSCAN_IMG-dgpu"
 HOLOSCAN_IGPU_IMG="$HOLOSCAN_IMG-igpu"

@@ -214,7 +214,7 @@ if __name__ == "__main__":
 
 1. Optionally use `start_op()` ({cpp:func}`C++ <holoscan::Fragment::start_op>`/{py:func}`Python <holoscan.core.Fragment.start_op>`) to get the initial operator in your flow
 2. Connect operators with `add_flow()`
-3. Use `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) to define runtime routing logic
+3. Use `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) to define runtime routing logic. An identically named method is also available on `Subgraph` ({cpp:func}`C++ <holoscan::Subgraph::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Subgraph.set_dynamic_flows>`) for applications making use of subgraphs containing dynamic flows.
 4. Implement flow control logic in the callback function passed to `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`)
   - The callback function takes an operator as input and returns void
   - The callback function can add dynamic flows using the operator's `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods

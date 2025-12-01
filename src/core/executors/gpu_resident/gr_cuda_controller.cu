@@ -21,22 +21,17 @@
 
 #include <cstdio>
 
-#include "controlcommand.hpp"
 #include "gr_cuda_controller.cuh"
+#include "holoscan/core/executors/gpu_resident/controlcommand.hpp"
+#include "holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh"
 
 extern "C" {
 
 __global__ void while_end_marker(unsigned int* data_ready_device,
                                  unsigned int* result_ready_device) {
-  // Use cuda::std::atomic_ref for CPU-GPU visibility
-  cuda::std::atomic_ref<unsigned int> result_ready_atomic(*result_ready_device);
-  cuda::std::atomic_ref<unsigned int> data_ready_atomic(*data_ready_device);
-
-  // Atomic store with release ordering ensures visibility
-  result_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::RESULT_READY),
-                            cuda::std::memory_order_release);
-  data_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::DATA_NOT_READY),
-                          cuda::std::memory_order_release);
+  // Mark result as ready and data as not ready using device functions
+  gpu_resident_mark_result_ready_dev(result_ready_device);
+  gpu_resident_mark_data_not_ready_dev(data_ready_device);
 }
 
 __global__ void while_controller(unsigned int* data_ready_device, unsigned int* result_ready_device,

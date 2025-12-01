@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "holoscan/core/dataflow_tracker.hpp"
+#include "holoscan/core/resources/data_logger.hpp"  // for console_output_mutex
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
@@ -52,11 +53,19 @@ void DataFlowTracker::end_logging() {
 }
 
 void DataFlowTracker::print() const {
+  // Use shared console output mutex to prevent interleaved output with other console writers
+  std::lock_guard<std::mutex> lock(console_output_mutex);
+
   std::cout << "Data Flow Tracking Results:\n";
   std::cout << "Total paths: " << all_path_metrics_.size() << "\n\n";
   int i = 0;
   for (const auto& it : all_path_metrics_) {
     std::cout << "Path " << ++i << ": " << it.first << "\n";
+    // if there are no messages in the path, then don't print the metrics
+    if (it.second->metrics[DataFlowMetric::kNumDstMessages] == 0) {
+      std::cout << "No messages tracked for this path.\n";
+      continue;
+    }
     for (const auto& it2 : it.second->metrics) {
       std::cout << metricToString.at(it2.first) << ": " << it2.second << "\n";
     }

@@ -40,12 +40,16 @@ if(HOLOSCAN_BUILD_TESTS)
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
+  set_tests_properties(python-api-unit-tests PROPERTIES
+                       ENVIRONMENT "PYTHONUNBUFFERED=1")
 
   add_test(NAME python-api-system-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system -v --durations=0 -k "not distributed"
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system -v --durations=0 -k "not distributed" --run-realtime
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
+  set_tests_properties(python-api-system-tests PROPERTIES
+                       ENVIRONMENT "PYTHONUNBUFFERED=1")
 
   add_test(NAME python-api-system-distributed-tests
     COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0
@@ -93,10 +97,10 @@ HOLOSCAN_MAX_DURATION_MS=3000\
 endif()
 
   set_tests_properties(python-api-system-distributed-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread"
+    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread PYTHONUNBUFFERED=1"
   )
   set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based"
+    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based PYTHONUNBUFFERED=1"
   )
 
   # tracing tests
@@ -107,7 +111,8 @@ endif()
   )
   set_tests_properties(python-api-tracing-profile PROPERTIES
                        FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12")
+                       SKIP_RETURN_CODE "12"
+                       ENVIRONMENT "PYTHONUNBUFFERED=1")
 
   add_test(NAME python-api-tracing-trace
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py trace
@@ -116,7 +121,8 @@ endif()
   )
   set_tests_properties(python-api-tracing-trace PROPERTIES
                        FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12")
+                       SKIP_RETURN_CODE "12"
+                       ENVIRONMENT "PYTHONUNBUFFERED=1")
 
   add_test(NAME python-api-tracing-coverage
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py coverage
@@ -125,5 +131,6 @@ endif()
   )
   set_tests_properties(python-api-tracing-coverage PROPERTIES
                        FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12")
+                       SKIP_RETURN_CODE "12"
+                       ENVIRONMENT "PYTHONUNBUFFERED=1")
 endif()

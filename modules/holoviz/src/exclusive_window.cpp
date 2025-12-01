@@ -20,6 +20,8 @@
 #include <imgui.h>
 
 #include <array>
+#include <cstdint>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -82,20 +84,17 @@ uint32_t ExclusiveWindow::select_device(vk::Instance instance,
                                         const std::vector<vk::PhysicalDevice>& physical_devices) {
   std::string first_display;
   bool found_display = false;
-  uint32_t display_index;
+  uint32_t display_device_index;
   uint32_t first_device_index = 0;
 
-  HOLOSCAN_LOG_INFO("____________________");
-  HOLOSCAN_LOG_INFO("Available displays :");
   for (uint32_t index = 0; (index < physical_devices.size()) && (!found_display); ++index) {
     const std::vector<vk::DisplayPropertiesKHR> display_properties =
         physical_devices[index].getDisplayPropertiesKHR();
     for (auto&& displayProperty : display_properties) {
-      HOLOSCAN_LOG_INFO("{}", displayProperty.displayName);
       if (std::string(displayProperty.displayName).find(impl_->display_name_) !=
           std::string::npos) {
         impl_->display_ = displayProperty.display;
-        display_index = index;
+        display_device_index = index;
         found_display = true;
         break;
       }
@@ -113,14 +112,22 @@ uint32_t ExclusiveWindow::select_device(vk::Instance instance,
     }
 
     HOLOSCAN_LOG_WARN("Display \"{}\" not found, using the first available display \"{}\" instead",
-                      impl_->display_name_.c_str(),
-                      first_display.c_str());
+                      impl_->display_name_,
+                      first_display);
+    HOLOSCAN_LOG_INFO("____________________");
+    HOLOSCAN_LOG_INFO("Available displays :");
+    for (uint32_t index = 0; index < physical_devices.size(); ++index) {
+      const std::vector<vk::DisplayPropertiesKHR> display_properties =
+          physical_devices[index].getDisplayPropertiesKHR();
+      for (auto&& displayProperty : display_properties) {
+        HOLOSCAN_LOG_INFO(" {}", displayProperty.displayName);
+      }
+    }
     return first_device_index;
   }
 
-  HOLOSCAN_LOG_INFO("");
   HOLOSCAN_LOG_INFO("Using display \"{}\"", impl_->display_name_);
-  return display_index;
+  return display_device_index;
 }
 
 void ExclusiveWindow::get_framebuffer_size(uint32_t* width, uint32_t* height) {
@@ -134,32 +141,65 @@ void ExclusiveWindow::get_window_size(uint32_t* width, uint32_t* height) {
 
 vk::SurfaceKHR ExclusiveWindow::create_surface(vk::PhysicalDevice physical_device,
                                                vk::Instance instance) {
-  // pick highest available resolution
+  // find the best mode that meets all requirements
   const std::vector<vk::DisplayModePropertiesKHR> modes =
       physical_device.getDisplayModePropertiesKHR(impl_->display_);
+
+  uint32_t least_width_diff = std::numeric_limits<uint32_t>::max();
+  uint32_t least_height_diff = std::numeric_limits<uint32_t>::max();
+  uint32_t least_rate_diff = std::numeric_limits<uint32_t>::max();
   vk::DisplayModePropertiesKHR mode_properties = modes[0];
-  // find the mode
+
   for (const auto& m : modes) {
-    if (((impl_->desired_width_ > 0) &&
-         (m.parameters.visibleRegion.width >= impl_->desired_width_)) &&
-        ((impl_->desired_height_ > 0) &&
-         (m.parameters.visibleRegion.height >= impl_->desired_height_)) &&
-        ((impl_->desired_refresh_rate_ > 0) &&
-         (m.parameters.refreshRate >= impl_->desired_refresh_rate_))) {
+    uint32_t width_diff;
+    if (impl_->desired_width_ > 0) {
+      width_diff = std::abs(static_cast<int32_t>(m.parameters.visibleRegion.width) -
+                            static_cast<int32_t>(impl_->desired_width_));
+    } else {
+      width_diff = std::numeric_limits<uint32_t>::max() - m.parameters.visibleRegion.width;
+    }
+    uint32_t height_diff;
+    if (impl_->desired_height_ > 0) {
+      height_diff = std::abs(static_cast<int32_t>(m.parameters.visibleRegion.height) -
+                             static_cast<int32_t>(impl_->desired_height_));
+    } else {
+      height_diff = std::numeric_limits<uint32_t>::max() - m.parameters.visibleRegion.height;
+    }
+    uint32_t rate_diff;
+    if (impl_->desired_refresh_rate_ > 0) {
+      rate_diff = std::abs(static_cast<int32_t>(m.parameters.refreshRate) -
+                           static_cast<int32_t>(impl_->desired_refresh_rate_));
+    } else {
+      rate_diff = std::numeric_limits<uint32_t>::max() - m.parameters.refreshRate;
+    }
+
+    if ((width_diff < least_width_diff) ||
+        ((width_diff == least_width_diff) && (height_diff < least_height_diff)) ||
+        ((width_diff == least_width_diff) && (height_diff == least_height_diff) &&
+         (rate_diff < least_rate_diff))) {
       mode_properties = m;
+      least_width_diff = width_diff;
+      least_height_diff = height_diff;
+      least_rate_diff = rate_diff;
     }
   }
 
-  if (((impl_->desired_width_ > 0) &&
-       (mode_properties.parameters.visibleRegion.width != impl_->desired_width_)) ||
-      ((impl_->desired_height_ > 0) &&
-       (mode_properties.parameters.visibleRegion.height != impl_->desired_height_)) ||
-      ((impl_->desired_refresh_rate_ > 0) &&
-       (mode_properties.parameters.refreshRate != impl_->desired_refresh_rate_))) {
-    HOLOSCAN_LOG_WARN("Did not find a display mode with the desired properties {}x{} {:.3f} Hz",
-                      impl_->desired_width_,
-                      impl_->desired_height_,
-                      static_cast<float>(impl_->desired_refresh_rate_) / 1000.F);
+  if (((impl_->desired_width_ > 0) && (least_width_diff != 0)) ||
+      ((impl_->desired_height_ > 0) && (least_height_diff != 0)) ||
+      ((impl_->desired_refresh_rate_ > 0) && (least_rate_diff != 0))) {
+    HOLOSCAN_LOG_WARN(
+        "Did not find a display mode with the desired properties {}x{} {:.3f} Hz, using closest "
+        "match",
+        impl_->desired_width_,
+        impl_->desired_height_,
+        static_cast<float>(impl_->desired_refresh_rate_) / 1000.F);
+    HOLOSCAN_LOG_INFO("Available display modes:");
+    for (const auto& m : modes) {
+      HOLOSCAN_LOG_INFO(" {}x{} {:.3f} Hz",
+                        m.parameters.visibleRegion.width,
+                        m.parameters.visibleRegion.height,
+                        static_cast<float>(m.parameters.refreshRate) / 1000.F);
+    }
   }
   HOLOSCAN_LOG_INFO("Using display mode {}x{} {:.3f} Hz",
                     mode_properties.parameters.visibleRegion.width,

@@ -86,6 +86,9 @@ class GXFExecutionContext : public holoscan::ExecutionContext {
   // @brief determine the CUDA device corresponding to the given stream
   expected<int, RuntimeError> device_from_stream(cudaStream_t stream) override;
 
+  // @brief check if GPU capability is present on the system
+  bool is_gpu_available() const override;
+
   std::shared_ptr<Operator> find_operator(const std::string& op_name /* = "" */) override;
 
   expected<holoscan::OperatorStatus, RuntimeError> get_operator_status(

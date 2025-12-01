@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+#include <string>
+#include <vector>
+
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 
 #include "holoscan/core/component_spec.hpp"
@@ -27,8 +30,25 @@ void GXFNetworkContext::set_parameters() {
   update_params_from_args();
 
   // Set Handler parameters
+  std::vector<std::string> errors;
   for (auto& [key, param_wrap] : spec_->params()) {
-    set_gxf_parameter(name_, key, param_wrap);
+    HOLOSCAN_LOG_TRACE("GXFNetworkContext '{}':: setting GXF parameter '{}'", name_, key);
+    try {
+      set_gxf_parameter(name_, key, param_wrap);
+    } catch (const std::exception& e) {
+      std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
+      HOLOSCAN_LOG_ERROR(
+          "GXFNetworkContext '{}': failed to set GXF parameter - {}", name_, error_msg);
+      errors.push_back(error_msg);
+    }
+  }
+  if (!errors.empty()) {
+    throw std::runtime_error(fmt::format(
+        "GXFNetworkContext '{}' (type '{}'): failed to set {} GXF parameter(s):\n  - {}",
+        name_,
+        gxf_typename(),
+        errors.size(),
+        fmt::join(errors, "\n  - ")));
   }
 }
 

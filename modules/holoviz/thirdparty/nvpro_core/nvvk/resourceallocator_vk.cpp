@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -177,6 +177,7 @@ Image ResourceAllocator::createImage(const VkImageCreateInfo& info_,
   // Allocate and bind memory
   resultImage.memHandles.resize(planes);
   std::vector<VkBindImageMemoryInfo> bindImageMemoryInfos(planes);
+  std::vector<VkBindImagePlaneMemoryInfo> bindImagePlaneMemoryInfos(planes);
   for (uint32_t plane = 0; plane < planes; ++plane) {
     resultImage.memHandles[plane] = AllocateMemory(allocInfo, plane);
     if (resultImage.memHandles[plane]) {
@@ -185,6 +186,13 @@ Image ResourceAllocator::createImage(const VkImageCreateInfo& info_,
       bindImageMemoryInfos[plane].image = resultImage.image;
       bindImageMemoryInfos[plane].memory = memInfo.memory;
       bindImageMemoryInfos[plane].memoryOffset = memInfo.offset;
+      if (info_.flags & VK_IMAGE_CREATE_DISJOINT_BIT) {
+        bindImagePlaneMemoryInfos[plane] =
+          VkBindImagePlaneMemoryInfo{VK_STRUCTURE_TYPE_BIND_IMAGE_PLANE_MEMORY_INFO};
+        bindImagePlaneMemoryInfos[plane].planeAspect =
+          VkImageAspectFlagBits(int(VkImageAspectFlagBits::VK_IMAGE_ASPECT_PLANE_0_BIT) << plane);
+        bindImageMemoryInfos[plane].pNext = &bindImagePlaneMemoryInfos[plane];
+      }
     } else {
       destroy(resultImage);
       return resultImage;
