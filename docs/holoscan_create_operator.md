@@ -678,6 +678,27 @@ If you want to receive multiple objects on a port and process them in batches, y
 
 Setting `min_size` to `N` will ensure that the operator receives `N` objects before the `compute()` method is called.
 
+::::{warning}
+For input ports, the queue `size`/`queue_size` configured via `OperatorSpec::input(..., IOSpec::IOSize(N))`
+(or `IOSpec::kPrecedingCount`) affects both the receiver queue capacity (`capacity`) and, unless you
+override it, the default `MessageAvailableCondition` `min_size`. Therefore, `queue_size > 1`
+implicitly enables batched execution: `compute()` will not be called until at least `N` messages are
+available on that port.
+
+Holoscan emits a warning when `queue_size > 1` and the default `MessageAvailableCondition` is used.
+To make your application robust against planned API evolution, set `min_size` explicitly whenever
+`queue_size > 1` (either to `1` for non-batched processing or to your intended batch size).
+
+Holoscan plans to introduce an explicit `batch_size` configuration and change `queue_size`/`size`
+to control queue capacity only. Setting `min_size` explicitly now will make future migration
+straightforward.
+
+For `IOSpec::kPrecedingCount` / `IOSpec.PRECEDING_COUNT`, the resolved queue size is computed from
+the application graph at run time. Today, the default condition uses this resolved value as
+`min_size`. The planned `batch_size` configuration is intended to make this behavior explicitly
+configurable.
+::::
+
 ```cpp
   void setup(holoscan::OperatorSpec& spec) override {
     spec.input<std::shared_ptr<ValueData>>("receivers")
@@ -731,7 +752,7 @@ Then, the `receive()` method can be called with the `receivers` port name to rec
 
 In the above example, the operator receives input on a port called "receivers" with a batch size of 2. The `receive()` method is called with the `receivers` port name to receive the input data in batches of 2. The input data is stored in a vector, and the size of the vector is logged after all the input data has been received.
 
-If you want to use a specific batch size, you can use `holoscan::IOSpec::IOSize(int64_t)` instead of `holoscan::IOSpec::kPrecedingCount` to specify the batch size. Using IOSize in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
+If you want to use a specific batch size, you can use `holoscan::IOSpec::IOSize(int64_t)` instead of `holoscan::IOSpec::kPrecedingCount` to specify the batch size. With the default receiver and default `MessageAvailableCondition`, this `queue_size` value is used for both the receiver queue capacity (`capacity`) and the condition `min_size` unless you override it. Using `IOSize` in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
 
 The main reason to use `condition()` or `connector()` methods instead of the shorter `IOSize` is if additional parameter changes, such as the queue policy, need to be made. See more details on the use of the `condition()` and `connector()` methods in the advanced topics section below ({ref}`further-customizing-inputs-and-outputs`).
 
@@ -741,7 +762,16 @@ The main reason to use `condition()` or `connector()` methods instead of the sho
   }
 ```
 
-If you want to receive the input data one by one, you can call the `receive()` method without using the `std::vector<T>` template argument.
+If you want to receive the input data one by one (single-message processing), you can call the `receive()` method without using the `std::vector<T>` template argument. If you also want a larger queue capacity (i.e., `queue_size > 1`), explicitly set `min_size` to `1`; otherwise, the default `MessageAvailableCondition` will wait for a batch of `queue_size` messages before calling `compute()`.
+
+```cpp
+  void setup(holoscan::OperatorSpec& spec) override {
+    // queue_size=2 (buffering) but min_size=1 (no batching)
+    spec.input<std::shared_ptr<ValueData>>("receivers", holoscan::IOSpec::IOSize(2))
+        .condition(holoscan::ConditionType::kMessageAvailable,
+                   holoscan::Arg("min_size", static_cast<uint64_t>(1)));
+  }
+```
 
 ```cpp
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
@@ -1823,6 +1853,24 @@ If you want to receive multiple objects on a port and process them in batches, y
 
 Setting `min_size` to `N` will ensure that the operator receives `N` objects before the `compute()` method is called.
 
+::::{warning}
+For input ports, the `size` configured via `spec.input(..., size=N)` (or `size=IOSpec.PRECEDING_COUNT`)
+affects both the receiver queue capacity and, unless you override it, the default
+`MessageAvailableCondition` `min_size`. Therefore, `size > 1` implicitly enables batched execution:
+`compute()` will not be called until at least `N` messages are available on that port.
+
+Holoscan emits a warning when `size > 1` and the default `MessageAvailableCondition` is used. To
+make your application robust against planned API evolution, set `min_size` explicitly whenever
+`size > 1` (either to `1` for non-batched processing or to your intended batch size).
+
+Holoscan plans to introduce an explicit `batch_size` configuration and change `size` to control
+queue capacity only. Setting `min_size` explicitly now will make future migration straightforward.
+
+For `IOSpec.PRECEDING_COUNT`, the resolved queue size is computed from the application graph at run
+time. Today, the default condition uses this resolved value as `min_size`. The planned `batch_size`
+configuration is intended to make this behavior explicitly configurable.
+::::
+
 ```python
     def setup(self, spec: OperatorSpec):
         spec.input("receivers").connector(IOSpec.ConnectorType.DOUBLE_BUFFER, capacity=2).condition(
@@ -1867,16 +1915,23 @@ Then, the `receive()` method can be called with the `receivers` port name to rec
 
 In the above example, the operator receives input on a port called "receivers" with a batch size of 2. The `receive()` method is called with the `receivers` port name to receive the input data in batches of 2. The input data is stored in a tuple, and the size of the tuple is logged after all the input data has been received.
 
-If you want to use a specific batch size, you can use `holoscan.IOSpec.IOSize(size : int)` instead of `holoscan.IOSpec.PRECEDING_COUNT` to specify the batch size. Using `IOSize` in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
+If you want to use a specific batch size, you can pass an integer size (e.g., `size=2`) instead of `size=IOSpec.PRECEDING_COUNT`. Passing `size=2` is equivalent to passing `size=IOSpec.IOSize(2)`. Using a fixed size in this way is equivalent to the more verbose `condition()` and `connector()` calls to update the `capacity` and `min_size` arguments shown near the start of this section.
 
 The main reason to use `condition()` or `connector()` methods instead of the shorter `IOSize` is if additional parameter changes, such as the queue policy, need to be made. See more details on the use of the `condition()` and `connector()` methods in the advanced topics section below ({ref}`further-customizing-inputs-and-outputs`).
 
 ```python
     def setup(self, spec: OperatorSpec):
-        spec.input("receivers", size=IOSpec.IOSize(2))
+        # `size` can be an int or IOSpec.IOSize
+        spec.input("receivers", size=2)
 ```
 
-If you want to receive the input data one by one, you can call the `receive()` method with the `kind="single"` argument.
+If you want to receive the input data one by one (single-message processing), you can call the `receive()` method with the `kind="single"` argument. If you also want a larger queue capacity (i.e., `size > 1`), explicitly set `min_size=1`; otherwise, the default `MessageAvailableCondition` will wait for a batch of `size` messages before calling `compute()`.
+
+```python
+    def setup(self, spec: OperatorSpec):
+        # size=2 (buffering) but min_size=1 (no batching)
+        spec.input("receivers", size=2).condition(ConditionType.MESSAGE_AVAILABLE, min_size=1)
+```
 
 ```python
     def compute(self, op_input, op_output, context):
@@ -1910,7 +1965,7 @@ To avoid the error message (such as `The operator does not have an input port wi
 :::
 
 :::{attention}
-Using `IOSpec.PRECEDING_COUNT` or `IOSpec.IOSize(2)` appears to show the same behavior as `IOSpec.ANY_SIZE` in the above example. However, the difference is that since `IOSpec.PRECEDING_COUNT` or `IOSpec.IOSize(2)` doesn't use separate `MessageAvailableCondition` conditions for each (internal) input port, it is not guaranteed that the operator will receive the input data in order.
+Using `IOSpec.PRECEDING_COUNT` or `2` (equivalently, `IOSpec.IOSize(2)`) appears to show the same behavior as `IOSpec.ANY_SIZE` in the above example. However, the difference is that since `IOSpec.PRECEDING_COUNT` or `2` doesn't use separate `MessageAvailableCondition` conditions for each (internal) input port, it is not guaranteed that the operator will receive the input data in order.
 
 This means the operator may receive the input data in a different order than the order in which the connections are made in the `compose()` method. Additionally, with the multithread scheduler, it is not guaranteed that the operator will receive the input data from each of the connections uniformly. The operator may receive more input data from one connection than from another.
 
@@ -1995,9 +2050,9 @@ Examples of use of multi-port conditions are given in the [examples/conditions/m
 ```python
     def setup(self, spec):
         # Using size argument to explicitly set the receiver message queue size for each input.
-        spec.input("in1", size=IOSpec.IOSize(20))
-        spec.input("in2", size=IOSpec.IOSize(20))
-        spec.input("in3", size=IOSpec.IOSize(20))
+        spec.input("in1", size=20)
+        spec.input("in2", size=20)
+        spec.input("in3", size=20)
 
         # Use kMultiMessageAvailableTimeout to consider all three ports together. In this
         # "SumOfAll" mode, it only matters that `min_sum` messages have arrived across all the
@@ -2200,6 +2255,8 @@ This section complements the information above on basic input and output port co
 
 By default, both the input and output ports of an Operator will use a double-buffered queue that has a capacity of one message and a policy that is set to error if a message arrives while the queue is already full. A single `MessageAvailableCondition` ({cpp:class}`C++ <holoscan::gxf::MessageAvailableCondition>`/{py:class}`Python <holoscan.conditions.MessageAvailableCondition>`)) condition is automatically placed on the operator for each input port so that the `compute` method will not be called until a single message is available at each port. Similarly each output port has a `DownstreamMessageAffordableCondition` ({cpp:class}`C++ <holoscan::gxf::DownstreamMessageAffordableCondition>`/{py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) condition that does not let the operator call `compute` until any operators connected downstream have space in their receiver queue for a single message. These default conditions ensure that messages never arrive at a queue when it is already full and that a message has already been received whenever the `compute` method is called. These default conditions make it relatively easy to connect a pipeline where each operator calls compute in turn, but may not be suitable for all applications. This section covers how the default behavior can be overridden on request.
 
+For input ports, if you set `queue_size`/`size` to a value greater than 1 (e.g., `IOSpec::IOSize(2)` in C++ or `size=2` in Python) and do not override the port condition, the default `MessageAvailableCondition` will also set `min_size` to the same value, enabling batched execution. Holoscan emits a warning in this case. If you only want buffering without batching, explicitly set `min_size=1`. Holoscan plans to introduce an explicit `batch_size` configuration and change `queue_size`/`size` to control queue capacity only. For `IOSpec::kPrecedingCount` / `IOSpec.PRECEDING_COUNT`, the resolved queue size is computed from the application graph at run time; the planned `batch_size` configuration is intended to make this behavior explicitly configurable.
+
 It is possible to modify the global default queue policy via the `HOLOSCAN_QUEUE_POLICY` environment variable. Valid options (case insensitive) are:
   - "pop": a new item that arrives when the queue is full replaces the oldest item
   - "reject": a new item that arrives when the queue is discarded
@@ -2258,7 +2315,7 @@ spec.output("out1")
 spec.output("out2").condition(ConditionType.NONE)
 
 # specify a specific non-default capacity (2) and policy (reject) for the Receiver queue
-spec.input("in", capacity=2, policy=IOSpec.QueuePolicy.REJECT).condition(
+spec.input("in", size=2, policy=IOSpec.QueuePolicy.REJECT).condition(
     ConditionType.MESSAGE_AVAILABLE, min_size=2, front_stage_max_size=2
 )
 # Could specify a specific connector type with capacity and policy arguments as in the commented
@@ -2274,7 +2331,7 @@ spec.input("in", capacity=2, policy=IOSpec.QueuePolicy.REJECT).condition(
 This would define
 - an output port named "out1" with the default properties
 - an output port named "out2" that still has the default connector (a {py:class}`holoscan.resources.DoubleBufferTransmitter`), but the default condition of `ConditionType.DOWNSTREAM_MESSAGE_AFFORDABLE` is removed by setting `ConditionType.NONE`. This indicates that the operator will not check if any port downstream of "out2" has space available in its receiver queue before calling `compute`.
-- an input port named "in1" where both the connector and condition have parameters different from the default. For example, the queue size is increased to 2, and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue. The actual default Receiver class type (e.g. `DoubleBufferReceiver` for local connections or `UcxReceiver` for distributed connections) will still be automatically determined by the SDK.
+- an input port named "in" where both the connector and condition have parameters different from the default. For example, the queue size is increased to 2, and `policy=1` is "reject", indicating that if a message arrives when the queue is already full, that message will be rejected in favor of the message already in the queue. The actual default Receiver class type (e.g. `DoubleBufferReceiver` for local connections or `UcxReceiver` for distributed connections) will still be automatically determined by the SDK.
 
 Note that if the `connector` method was **not** used to set a specific `Receiver` or `Transmitter` class, then it is also possible to change a port's queue policy after an operator has been constructed via the {py:func}`Operator.queue_policy <holoscan.core.Operator.queue_policy>`
 

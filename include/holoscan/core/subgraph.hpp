@@ -67,8 +67,8 @@ struct InterfacePort {
  * ```cpp
  * class CameraSubgraph : public Subgraph {
  *  public:
- *   CameraSubgraph(Fragment* fragment, const std::string& instance_name)
- *       : Subgraph(fragment, instance_name) {}
+ *   CameraSubgraph(Fragment* fragment, const std::string& name)
+ *       : Subgraph(fragment, name) {}
  *
  *   void compose() override {
  *     auto source = make_operator<V4L2VideoOp>("source", from_kwargs("v4l2"));
@@ -101,9 +101,9 @@ class Subgraph {
   /**
    * @brief Construct Subgraph with target Fragment
    * @param fragment Target Fragment to populate with operators
-   * @param instance_name Unique instance name for operator qualification
+   * @param name Unique instance name for operator qualification
    */
-  Subgraph(Fragment* fragment, const std::string& instance_name);
+  Subgraph(Fragment* fragment, const std::string& name);
 
   virtual ~Subgraph() = default;
 
@@ -116,9 +116,23 @@ class Subgraph {
   virtual void compose() = 0;
 
   /**
-   * @brief Get the instance name for this subgraph
+   * @brief Get the name for this subgraph
    */
-  const std::string& instance_name() const { return instance_name_; }
+  const std::string& name() const { return name_; }
+
+  /**
+   * @brief Get the instance name for this subgraph
+   * @deprecated Use name() instead. This method will be removed in a future release.
+   */
+  const std::string& instance_name() const {
+    static bool warned = false;
+    if (!warned) {
+      HOLOSCAN_LOG_WARN(
+          "Subgraph::instance_name() is deprecated. Please use Subgraph::name() instead.");
+      warned = true;
+    }
+    return name_;
+  }
 
   /**
    * @brief Get the Fragment that this subgraph belongs to
@@ -135,39 +149,39 @@ class Subgraph {
   const Fragment* fragment() const { return fragment_; }
 
   /**
-   * @brief Create qualified operator name: instance_name + "_" + operator_name
+   * @brief Create qualified operator name: subgraph_name + "_" + operator_name
    */
   std::string get_qualified_name(const std::string& object_name,
                                  const std::string& type_name = "operator") const {
-    if (instance_name_.empty()) {
+    if (name_.empty()) {
       return object_name;
     }
 
-    if (instance_name_ == object_name) {
+    if (name_ == object_name) {
       auto err_msg = fmt::format(
           "Subgraph: child {} name '{}' is the same as the parent subgraph name '{}'. "
           "This is not allowed.",
           type_name,
           object_name,
-          instance_name_);
+          name_);
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
 
     // Check if the operator name is already qualified with this instance name
-    std::string expected_prefix = instance_name_ + "_";
+    std::string expected_prefix = name_ + "_";
     if (object_name.size() >= expected_prefix.size() &&
         object_name.substr(0, expected_prefix.size()) == expected_prefix) {
       HOLOSCAN_LOG_TRACE(
-          "Subgraph: {} name '{}' is already qualified with instance name '{}', returning "
+          "Subgraph: {} name '{}' is already qualified with subgraph name '{}', returning "
           "as-is",
           type_name,
           object_name,
-          instance_name_);
+          name_);
       return object_name;  // Already qualified, return as-is
     }
 
-    return fmt::format("{}_{}", instance_name_, object_name);
+    return fmt::format("{}_{}", name_, object_name);
   }
 
   // Fragment API compatibility - template method implementations in fragment.hpp
@@ -197,29 +211,27 @@ class Subgraph {
    *
    * This enables hierarchical Subgraph composition. The nested Subgraph will use
    * the same Fragment* and will have its operators added directly to the Fragment's
-   * main graph with hierarchical qualified names (parent_instance_child_instance_operator).
+   * main graph with hierarchical qualified names (parent_name_child_name_operator).
    *
    * @tparam SubgraphT The nested subgraph class type
-   * @param child_instance_name Name for the nested instance
+   * @param child_name Name for the nested subgraph
    * @param args Additional arguments for the nested subgraph constructor
    * @return Shared pointer to the nested subgraph
    */
   template <typename SubgraphT, typename... ArgsT>
-  std::shared_ptr<SubgraphT> make_subgraph(const std::string& child_instance_name,
-                                           ArgsT&&... args) {
-    // Check for duplicate nested subgraph instance names
-    if (nested_subgraph_instance_names_.find(child_instance_name) !=
-        nested_subgraph_instance_names_.end()) {
-      throw std::runtime_error(fmt::format(
-          "Subgraph::make_subgraph: Duplicate nested subgraph instance name '{}' in subgraph "
-          "'{}'. Each nested subgraph instance must have a unique name within the same parent "
-          "subgraph.",
-          child_instance_name,
-          instance_name_));
+  std::shared_ptr<SubgraphT> make_subgraph(const std::string& child_name, ArgsT&&... args) {
+    // Check for duplicate nested subgraph names
+    if (nested_subgraph_names_.find(child_name) != nested_subgraph_names_.end()) {
+      throw std::runtime_error(
+          fmt::format("Subgraph::make_subgraph: Duplicate nested subgraph name '{}' in subgraph "
+                      "'{}'. Each nested subgraph must have a unique name within the same parent "
+                      "subgraph.",
+                      child_name,
+                      name_));
     }
 
-    // Create hierarchical instance name: parent_instance + "_" + child_instance
-    std::string hierarchical_name = get_qualified_name(child_instance_name, "subgraph");
+    // Create hierarchical name: parent_name + "_" + child_name
+    std::string hierarchical_name = get_qualified_name(child_name, "subgraph");
 
     // Create nested subgraph with same Fragment* and hierarchical name
     auto nested_subgraph =
@@ -234,8 +246,8 @@ class Subgraph {
     // Store for interface port resolution
     nested_subgraphs_.push_back(nested_subgraph);
 
-    // Register the child instance name
-    nested_subgraph_instance_names_.insert(child_instance_name);
+    // Register the child name
+    nested_subgraph_names_.insert(child_name);
 
     return nested_subgraph;
   }
@@ -565,10 +577,10 @@ class Subgraph {
   std::vector<std::shared_ptr<Subgraph>>
       nested_subgraphs_;  ///< Nested Subgraphs for hierarchical composition
   std::unordered_set<std::string>
-      nested_subgraph_instance_names_;  ///< Track nested child instance names to detect duplicates
+      nested_subgraph_names_;  ///< Track nested child names to detect duplicates
   bool is_composed_ = false;
-  Fragment* fragment_;               ///< Target fragment for direct operator/flow addition
-  const std::string instance_name_;  ///< Instance name for this subgraph
+  Fragment* fragment_;      ///< Target fragment for direct operator/flow addition
+  const std::string name_;  ///< Name for this subgraph
 
   /**
    * @brief Efficiently format a port list for error messages

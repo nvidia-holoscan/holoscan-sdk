@@ -33,13 +33,12 @@
 
 namespace holoscan {
 
-Subgraph::Subgraph(Fragment* fragment, const std::string& instance_name)
-    : fragment_(fragment), instance_name_(instance_name) {
+Subgraph::Subgraph(Fragment* fragment, const std::string& name) : fragment_(fragment), name_(name) {
   if (fragment == nullptr) {
     throw std::runtime_error("Subgraph: fragment cannot be nullptr");
   }
-  if (instance_name.empty()) {
-    throw std::runtime_error("Subgraph: instance_name cannot be empty");
+  if (name.empty()) {
+    throw std::runtime_error("Subgraph: name cannot be empty");
   }
 }
 
@@ -167,8 +166,8 @@ void Subgraph::add_interface_port(const std::string& external_name,
   }
 
   if (interface_ports_.find(external_name) != interface_ports_.end()) {
-    auto err_msg = fmt::format(
-        "Interface port '{}' already exists in Subgraph '{}'", external_name, instance_name_);
+    auto err_msg =
+        fmt::format("Interface port '{}' already exists in Subgraph '{}'", external_name, name_);
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
@@ -186,7 +185,7 @@ void Subgraph::add_interface_port(const std::string& external_name,
                      internal_op->name(),
                      internal_port,
                      is_input,
-                     instance_name_);
+                     name_);
 }
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
@@ -212,8 +211,8 @@ void Subgraph::add_interface_port(const std::string& external_name,
   }
 
   if (interface_ports_.find(external_name) != interface_ports_.end()) {
-    auto err_msg = fmt::format(
-        "Interface port '{}' already exists in Subgraph '{}'", external_name, instance_name_);
+    auto err_msg =
+        fmt::format("Interface port '{}' already exists in Subgraph '{}'", external_name, name_);
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
@@ -232,7 +231,7 @@ void Subgraph::add_interface_port(const std::string& external_name,
           "named '{}', but a data interface port is required. Use add_{}_interface_port() for "
           "data ports or add_{}_exec_interface_port() for execution ports.",
           external_name,
-          internal_subgraph->instance_name(),
+          internal_subgraph->name(),
           internal_interface_port,
           is_input ? "input" : "output",
           is_input ? "input" : "output");
@@ -242,7 +241,7 @@ void Subgraph::add_interface_port(const std::string& external_name,
       auto err_msg = fmt::format(
           "Cannot add interface port '{}': nested subgraph '{}' does not have interface port '{}'",
           external_name,
-          internal_subgraph->instance_name(),
+          internal_subgraph->name(),
           internal_interface_port);
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
@@ -255,7 +254,7 @@ void Subgraph::add_interface_port(const std::string& external_name,
         "Cannot add interface port '{}': nested subgraph '{}' interface port '{}' resolves to "
         "operator '{}' port '{}' which has incorrect type (expected {})",
         external_name,
-        internal_subgraph->instance_name(),
+        internal_subgraph->name(),
         internal_interface_port,
         resolved_op->name(),
         resolved_port,
@@ -271,12 +270,12 @@ void Subgraph::add_interface_port(const std::string& external_name,
       "Added interface port '{}' -> nested subgraph '{}' interface port '{}' (resolves to "
       "'{}:{}', input: {}) to Subgraph '{}'",
       external_name,
-      internal_subgraph->instance_name(),
+      internal_subgraph->name(),
       internal_interface_port,
       resolved_op->name(),
       resolved_port,
       is_input,
-      instance_name_);
+      name_);
 }
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
@@ -441,16 +440,14 @@ bool Subgraph::validate_operator_exec_port(std::shared_ptr<Operator> op) {
 bool Subgraph::check_exec_port_name_available(const std::string& external_name) {
   // Check for duplicate interface port names across both data and exec ports
   if (interface_ports_.find(external_name) != interface_ports_.end()) {
-    auto err_msg = fmt::format("Interface port '{}' already exists as a data port in subgraph '{}'",
-                               external_name,
-                               instance_name_);
+    auto err_msg = fmt::format(
+        "Interface port '{}' already exists as a data port in subgraph '{}'", external_name, name_);
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
   if (exec_interface_ports_.find(external_name) != exec_interface_ports_.end()) {
-    auto err_msg = fmt::format("Execution interface port '{}' already exists in subgraph '{}'",
-                               external_name,
-                               instance_name_);
+    auto err_msg = fmt::format(
+        "Execution interface port '{}' already exists in subgraph '{}'", external_name, name_);
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
@@ -471,7 +468,7 @@ void Subgraph::register_exec_interface_port(const std::string& external_name,
                      is_input ? "input" : "output",
                      external_name,
                      internal_op->name(),
-                     instance_name_);
+                     name_);
 }
 
 std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_port(
@@ -491,14 +488,14 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_
           "Nested subgraph '{}' has a data interface port named '{}', but an execution interface "
           "port is required. Use add_{}_interface_port() for data ports or "
           "add_{}_exec_interface_port() for execution ports.",
-          internal_subgraph->instance_name(),
+          internal_subgraph->name(),
           internal_interface_port,
           expect_input ? "input" : "output",
           expect_input ? "input" : "output");
     } else {
       err_msg =
           fmt::format("Nested subgraph '{}' does not have an execution interface port named '{}'",
-                      internal_subgraph->instance_name(),
+                      internal_subgraph->name(),
                       internal_interface_port);
     }
     HOLOSCAN_LOG_ERROR(err_msg);
@@ -510,7 +507,7 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_
     auto err_msg = fmt::format(
         "Execution interface port '{}' in nested subgraph '{}' is an {} port, expected {}",
         internal_interface_port,
-        internal_subgraph->instance_name(),
+        internal_subgraph->name(),
         nested_port.is_input ? "input" : "output",
         expect_input ? "input" : "output");
     HOLOSCAN_LOG_ERROR(err_msg);
@@ -522,7 +519,7 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_
       "'{}'",
       expect_input ? "input" : "output",
       external_name,
-      internal_subgraph->instance_name(),
+      internal_subgraph->name(),
       internal_interface_port,
       nested_port.internal_operator->name());
 

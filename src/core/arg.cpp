@@ -39,18 +39,59 @@ std::string ArgType::to_string() const {
 }
 
 template <typename T>
-inline static YAML::Node scalar_as_node(const std::any& val) {
-  // Cast uint8_t and int8_t values to uint16_t and int16_t respectively to ensure they do not
-  // appear as non-UTF-8 characters in python due to
-  // https://pybind11.readthedocs.io/en/stable/advanced/cast/strings.html#returning-c-strings-to-python
-  //   e.g. We want 255 as uint8_t to appear as 255 and not <unicode character> in Arg::description
-  if constexpr (std::is_same_v<std::decay_t<T>, uint8_t>) {
-    return YAML::Node(static_cast<uint16_t>(std::any_cast<T>(val)));
-  } else if constexpr (std::is_same_v<std::decay_t<T>, int8_t>) {
-    return YAML::Node(static_cast<int16_t>(std::any_cast<T>(val)));
-  } else {
-    return YAML::Node(std::any_cast<T>(val));
+inline static bool try_any_cast(const std::any& a, YAML::Node& out) {
+  if (a.type() == typeid(T)) {
+    // Cast uint8_t and int8_t values to uint16_t and int16_t respectively to ensure they do not
+    // appear as non-UTF-8 characters in python due to
+    // https://pybind11.readthedocs.io/en/stable/advanced/cast/strings.html#returning-c-strings-to-python
+    //   e.g. We want 255 as uint8_t to appear as 255 and not <unicode character> in
+    //   Arg::description
+    if constexpr (std::is_same_v<T, uint8_t>) {
+      out = YAML::Node(static_cast<uint16_t>(std::any_cast<T>(a)));
+    } else if constexpr (std::is_same_v<T, int8_t>) {
+      out = YAML::Node(static_cast<int16_t>(std::any_cast<T>(a)));
+    } else {
+      out = YAML::Node(std::any_cast<T>(a));
+    }
+    return true;
   }
+  return false;
+}
+
+template <typename... Ts>
+inline static YAML::Node cast_any_node(const std::any& a) {
+  YAML::Node result;
+  bool matched = (try_any_cast<Ts>(a, result) || ...);
+  if (!matched) {
+    throw std::runtime_error(fmt::format("Unsupported type (in cast_any_node): {} -> {}",
+                                         a.type().name(),
+                                         typeid(YAML::Node).name()));
+  }
+  return result;
+}
+
+template <typename T>
+inline static YAML::Node scalar_as_node(const std::any& val) {
+  // Regaredless of the type, we want to cast it to a YAML::Node
+  return cast_any_node<bool,
+                       int8_t,
+                       uint8_t,
+                       int16_t,
+                       uint16_t,
+                       int32_t,
+                       uint32_t,
+                       int64_t,
+                       uint64_t,
+                       long,
+                       unsigned long,
+                       long long,
+                       unsigned long long,
+                       float,
+                       double,
+                       std::complex<float>,
+                       std::complex<double>,
+                       std::string,
+                       YAML::Node>(val);
 }
 
 template <typename T>

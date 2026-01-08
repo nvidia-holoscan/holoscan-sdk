@@ -19,6 +19,7 @@ import pytest
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec, Subgraph, Tracker
+from holoscan.decorator import create_op
 from holoscan.operators import PingRxOp, PingTxOp
 
 
@@ -68,8 +69,8 @@ class MultiPingRxOp(Operator):
 class PingTxSubgraph(Subgraph):
     """Subgraph containing a single PingTxOp transmitter."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a PingTxOp with a count condition
@@ -94,8 +95,8 @@ class PingTxSubgraph(Subgraph):
 class MultiPingRxSubgraph(Subgraph):
     """Subgraph containing a multi-receiver MultiPingRxOp."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a multi-receiver MultiPingRxOp
@@ -111,8 +112,8 @@ class MultiPingRxSubgraph(Subgraph):
 class PingRxSubgraph(Subgraph):
     """Subgraph containing a single-receiver PingRxOp."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a single-receiver PingRxOp
@@ -128,8 +129,8 @@ class PingRxSubgraph(Subgraph):
 class NestedTxSubgraph(Subgraph):
     """Nested Subgraph that contains PingTxSubgraph connected to ForwardingOp."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a nested PingTxSubgraph (auto-composes via Python __init__)
@@ -149,8 +150,8 @@ class NestedTxSubgraph(Subgraph):
 class NestedRxSubgraph(Subgraph):
     """Nested Subgraph that contains ForwardingOp connected to PingRxSubgraph."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a ForwardingOp
@@ -177,8 +178,8 @@ class DoubleNestedRxSubgraph(Subgraph):
     interface port using the add_input_interface_port overload that accepts Subgraph.
     """
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a nested NestedRxSubgraph (auto-composes via Python __init__)
@@ -587,8 +588,8 @@ class SimpleExecOp(Operator):
 class SequentialExecSubgraph(Subgraph):
     """Subgraph with sequential control flow and exposed execution interface ports."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         node2 = SimpleExecOp(self, name="node2")
@@ -605,8 +606,8 @@ class SequentialExecSubgraph(Subgraph):
 class InputExecSubgraph(Subgraph):
     """Subgraph with only input execution interface port."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         node = SimpleExecOp(self, name="node")
@@ -616,8 +617,8 @@ class InputExecSubgraph(Subgraph):
 class OutputExecSubgraph(Subgraph):
     """Subgraph with both input and output execution interface ports (passthrough)."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         node = SimpleExecOp(self, name="node")
@@ -630,8 +631,8 @@ class OutputExecSubgraph(Subgraph):
 class NestedExecSubgraph(Subgraph):
     """Nested Subgraph with execution interface ports."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a nested sequential subgraph
@@ -809,8 +810,8 @@ class DataPortOp(Operator):
 class MultiExecInputSubgraph(Subgraph):
     """Subgraph with multiple input exec interface ports (should cause auto-connect error)."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         node1 = SimpleExecOp(self, name="node1")
@@ -824,8 +825,8 @@ class MultiExecInputSubgraph(Subgraph):
 class MultiExecOutputSubgraph(Subgraph):
     """Subgraph with multiple output exec interface ports (should cause auto-connect error)."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         node1 = SimpleExecOp(self, name="node1")
@@ -890,8 +891,8 @@ def test_exec_port_name_conflict_error(capfd):
     def compose():
         # Create a subgraph with duplicate port name
         class DuplicatePortSubgraph(Subgraph):
-            def __init__(self, fragment, instance_name):
-                super().__init__(fragment, instance_name)
+            def __init__(self, fragment, name):
+                super().__init__(fragment, name)
 
             def compose(self):
                 node1 = SimpleExecOp(self, name="node1")
@@ -920,8 +921,8 @@ def test_data_exec_port_name_conflict_error(capfd):
     def compose():
         # Create a subgraph where exec port name conflicts with data port
         class ConflictingPortSubgraph(Subgraph):
-            def __init__(self, fragment, instance_name):
-                super().__init__(fragment, instance_name)
+            def __init__(self, fragment, name):
+                super().__init__(fragment, name)
 
             def compose(self):
                 data_op = DataPortOp(self, name="data_op")
@@ -951,14 +952,14 @@ def test_nested_exec_port_wrong_type_error(capfd):
     def compose():
         # Create a parent subgraph trying to expose nested subgraph's data port as exec port
         class WrongTypeSubgraph(Subgraph):
-            def __init__(self, fragment, instance_name):
-                super().__init__(fragment, instance_name)
+            def __init__(self, fragment, name):
+                super().__init__(fragment, name)
 
             def compose(self):
                 # Create nested subgraph with data port
                 class NestedDataSubgraph(Subgraph):
-                    def __init__(self, fragment, instance_name):
-                        super().__init__(fragment, instance_name)
+                    def __init__(self, fragment, name):
+                        super().__init__(fragment, name)
 
                     def compose(self):
                         data_op = DataPortOp(self, name="data_op")
@@ -1009,8 +1010,8 @@ def test_auto_connect_no_ports_error(capfd):
     def compose():
         # Create empty subgraph with no interface ports
         class EmptySubgraph(Subgraph):
-            def __init__(self, fragment, instance_name):
-                super().__init__(fragment, instance_name)
+            def __init__(self, fragment, name):
+                super().__init__(fragment, name)
 
             def compose(self):
                 # Create operator but don't expose any ports
@@ -1031,3 +1032,59 @@ def test_auto_connect_no_ports_error(capfd):
     captured = capfd.readouterr()
     # Should also see error in stderr
     assert "no data or execution interface ports" in captured.err.lower()
+
+
+@create_op(outputs=["out_ping"])
+def ping_decorator_op() -> str:
+    return "ping"
+
+
+class SubgraphWithDecoratorOp(Subgraph):
+    # Subgraph where one of the operators is created via the decorator API
+
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
+
+    def compose(self):
+        # Create a PingTxOp with a count condition
+        tx_op = ping_decorator_op(self, CountCondition(self, count=8), name="tx")
+        # rx = PingRxOp(self, name="rx")
+        # self.add_flow(tx_op, rx)
+
+        # Expose the "out_ping" port so external operators can connect to it
+        self.add_output_interface_port("data_out", tx_op, "out_ping")
+
+
+class SubgraphWithDecoratorOpApplication(Application):
+    """
+    Application demonstrating Subgraph with decorator API operator.
+
+    This application creates:
+    - SubgraphWithDecoratorOp containing a decorator API operator that transmits a string
+    - PingRxSubgraph that receives the string
+    """
+
+    def compose(self):
+        # Create 3 transmitter subgraphs and one transmitter operator
+        tx_subgraph = SubgraphWithDecoratorOp(self, name="tx_sub")
+        rx_subgraph = PingRxSubgraph(self, name="rx_sub")
+        self.add_flow(tx_subgraph, rx_subgraph)
+
+
+def test_subgraph_with_decorator_api(capfd):
+    """Test that decorator API operators work correctly within a subgraph."""
+    app = SubgraphWithDecoratorOpApplication()
+    app.run()
+
+    captured = capfd.readouterr()
+
+    # Check that nodes are present
+    node_names = {node.name for node in app.graph.get_nodes()}
+    expected_names = {"tx_sub_tx", "rx_sub_receiver"}
+
+    assert node_names == expected_names, (
+        f"Node names don't match expected names.\n"
+        f"Actual nodes: {node_names}\n"
+        f"Expected nodes: {expected_names}\n"
+    )
+    assert captured.out.count("Rx message value: ping") == 8

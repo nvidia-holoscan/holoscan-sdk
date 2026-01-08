@@ -62,8 +62,8 @@ class MultiPingRxOp(Operator):
 class PingTxSubgraph(Subgraph):
     """Subgraph containing a single PingTxOp transmitter."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a PingTxOp with a count condition (send 8 messages total)
@@ -85,8 +85,8 @@ class PingTxSubgraph(Subgraph):
 class MultiPingRxSubgraph(Subgraph):
     """Subgraph containing a multi-receiver MultiPingRxOp."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a multi-receiver MultiPingRxOp
@@ -102,8 +102,8 @@ class MultiPingRxSubgraph(Subgraph):
 class PingRxSubgraph(Subgraph):
     """Subgraph containing a single-receiver PingRxOp."""
 
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a single-receiver PingRxOp

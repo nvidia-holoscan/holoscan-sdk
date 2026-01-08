@@ -49,8 +49,18 @@ else()
 endif()
 message(STATUS "TORCH_CUDA_ARCH_LIST: ${TORCH_CUDA_ARCH_LIST}")
 
-# Find dependencies
-find_package(Torch REQUIRED)
+# Find Torch
+find_package(Python3 COMPONENTS Interpreter QUIET)
+set(PYTHON_MAJOR_MINOR "${Python3_VERSION_MAJOR}.${Python3_VERSION_MINOR}")
+set(TORCH_SEARCH_DIRS
+  "/usr/local/lib/python${PYTHON_MAJOR_MINOR}/dist-packages"
+  "/usr/lib/python${PYTHON_MAJOR_MINOR}/dist-packages"
+  "/usr/local/lib/python${PYTHON_MAJOR_MINOR}/site-packages"
+  "/usr/lib/python${PYTHON_MAJOR_MINOR}/site-packages"
+  "$ENV{HOME}/.local/lib/python${PYTHON_MAJOR_MINOR}/site-packages"
+  "/opt/nvidia/torch"
+)
+find_package(Torch 2.8 REQUIRED CONFIG PATHS ${TORCH_SEARCH_DIRS})
 
 # Create the holoinfer torch backend library
 add_library(holoinfer_torch SHARED core.cpp)

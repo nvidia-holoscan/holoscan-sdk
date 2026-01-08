@@ -93,6 +93,10 @@ large_data_queue_policy : AsyncQueuePolicy, optional
 enable_large_data_queue : bool, optional
     Whether to enable the large data queue and worker thread for processing full
     tensor content. Default is True.
+shutdown_wait_period_ms : int, optional
+    Time in milliseconds to wait for queues to drain during shutdown. Use -1 to wait
+    indefinitely (default), 0 to not wait, or a positive value for a specific
+    timeout in milliseconds. Default is -1.
 name : str, optional (constructor only)
     The name of the data logger. Default value is ``"basic_console_logger"``.
 }  // namespace AsyncConsoleLogger

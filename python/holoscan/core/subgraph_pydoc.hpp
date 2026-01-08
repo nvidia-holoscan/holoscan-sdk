@@ -39,7 +39,7 @@ subgraph : object
     The Python subgraph object (self)
 fragment : Fragment
     Target Fragment to populate with operators
-instance_name : str
+name : str
     Unique instance name for operator qualification
 
 Examples
@@ -47,8 +47,8 @@ Examples
 .. code-block:: python
 
     class CameraSubgraph(Subgraph):
-        def __init__(self, fragment, instance_name):
-            super().__init__(fragment, instance_name)
+        def __init__(self, fragment, name):
+            super().__init__(fragment, name)
 
         def compose(self):
             source = PingTxOp(self, name="source")
@@ -67,14 +67,14 @@ Examples
 )doc")
 
 // Properties
-PYDOC(instance_name, R"doc(
-Get the instance name for this subgraph.
+PYDOC(name, R"doc(
+    Get the name for this subgraph.
 
-Returns
--------
-str
-    The instance name used for operator qualification
-)doc")
+    Returns
+    -------
+    str
+        The name used for operator qualification
+    )doc")
 
 PYDOC(fragment, R"doc(
 Get the Fragment that this subgraph belongs to.

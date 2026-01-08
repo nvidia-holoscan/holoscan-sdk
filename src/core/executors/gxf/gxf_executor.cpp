@@ -192,6 +192,9 @@ static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
 // Timeout in seconds before forcing application exit on SIGINT/SIGTERM
 static constexpr int kForceExitTimeoutSeconds = 3;
 
+// Define the static mutex for protecting active_countdown_flag_ access
+std::mutex GXFExecutor::countdown_flag_mutex_;
+
 static void setup_gxf_logging() {
   LogLevel holoscan_log_level = holoscan::log_level();
   nvidia::Severity gxf_log_level = nvidia::Severity::INFO;
@@ -671,6 +674,17 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
         non_default_input_ports.end();
     // Only add a MessageAvailable condition if it is not already associated with a condition
     if (!port_has_multi_port_condition && !port_has_user_supplied_condition) {
+      if (queue_size > 1) {
+        HOLOSCAN_LOG_WARN(
+            "Input port '{}' of operator '{}' is configured with queue_size={} (> 1). When using "
+            "the default MessageAvailableCondition, Holoscan sets min_size to the same value "
+            "(batch execution). If you intended a larger queue without batching, explicitly set "
+            "min_size=1 on the MessageAvailableCondition. To future-proof your application against "
+            "planned API changes, set min_size explicitly whenever queue_size > 1.",
+            rx_name,
+            op->name(),
+            queue_size);
+      }
       ArgList args;
       args.add(Arg("min_size") = static_cast<uint64_t>(queue_size));
       io_spec->condition(
@@ -2420,6 +2434,7 @@ void GXFExecutor::activate_gxf_graph() {
 std::atomic<bool> GXFExecutor::interrupt_requested_(false);
 std::atomic<bool> GXFExecutor::force_exit_countdown_started_(false);
 std::atomic<int64_t> GXFExecutor::first_interrupt_time_ms_(0);
+std::shared_ptr<std::atomic<bool>> GXFExecutor::active_countdown_flag_(nullptr);
 
 // Update setup_signal_handlers to use class members
 std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fragment) {
@@ -2432,14 +2447,33 @@ std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fra
   try {
     if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
       stop_on_deadlock_timeout = ebs->stop_on_deadlock_timeout();
+      HOLOSCAN_LOG_DEBUG(
+          "Fragment '{}': EventBasedScheduler::stop_on_deadlock_timeout() returned {} ms",
+          fragment->name(),
+          stop_on_deadlock_timeout);
+
     } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
       stop_on_deadlock_timeout = mts->stop_on_deadlock_timeout();
+      HOLOSCAN_LOG_DEBUG(
+          "Fragment '{}': MultiThreadScheduler::stop_on_deadlock_timeout() returned {} ms",
+          fragment->name(),
+          stop_on_deadlock_timeout);
     } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
       stop_on_deadlock_timeout = gs->stop_on_deadlock_timeout();
+      HOLOSCAN_LOG_DEBUG(
+          "Fragment '{}': GreedyScheduler::stop_on_deadlock_timeout() returned {} ms",
+          fragment->name(),
+          stop_on_deadlock_timeout);
     }
-  } catch (const std::runtime_error&) {
+  } catch (const std::runtime_error& e) {
     // Parameter not set on scheduler (e.g., when graph is empty due to invalid flows)
     // Use default 5000ms
+    HOLOSCAN_LOG_WARN(
+        "Fragment '{}': Exception when reading stop_on_deadlock_timeout from scheduler: {}. Using "
+        "default {} ms",
+        fragment->name(),
+        e.what(),
+        stop_on_deadlock_timeout);
   }
 
   // Add kForceExitTimeoutSeconds (3000ms) to the stop_on_deadlock_timeout as some other
@@ -2477,30 +2511,58 @@ std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fra
         // Check if we need to do orderly multi-fragment shutdown
         auto app = fragment->application();
         const auto& fragment_graph = app->fragment_graph();
-        if (!fragment_graph.is_empty()) {
+        bool is_distributed = !fragment_graph.is_empty();
+
+        if (is_distributed) {
           HOLOSCAN_LOG_INFO("Initiating distributed app shutdown from signal handler");
-          // Initiate shutdown via RPC
+          // Initiate shutdown via RPC - the AppWorker has its own watchdog, so we don't
+          // need to start a force exit countdown here. The distributed shutdown mechanism
+          // and AppWorker signal handler will handle the termination.
           app->initiate_distributed_app_shutdown(fragment->name());
+          // Note: Don't start force exit countdown for distributed apps - the AppWorker's
+          // signal handler has its own watchdog that is better coordinated with the
+          // distributed shutdown process.
         } else {
           // Single fragment - just stop execution directly
           fragment->stop_execution();
-        }
 
-        // Start a force exit countdown if graceful shutdown takes too long
-        if (!force_exit_countdown_started_.load()) {
-          force_exit_countdown_started_.store(true);
+          // Shutdown data loggers BEFORE starting force exit countdown to ensure
+          // async loggers have time to drain their queues
+          if (!fragment->data_loggers().empty()) {
+            HOLOSCAN_LOG_INFO("Shutting down {} data logger(s) before force exit countdown...",
+                              fragment->data_loggers().size());
+            fragment->shutdown_data_loggers();
+            HOLOSCAN_LOG_INFO("Data logger shutdown complete.");
+          }
 
-          // Launch another thread for the force exit countdown
-          std::thread([force_exit_timeout_ms]() {
-            // Sleep for the calculated timeout, then force exit if we're still alive
-            std::this_thread::sleep_for(std::chrono::milliseconds(force_exit_timeout_ms));
-            if (interrupt_requested_.load()) {
-              HOLOSCAN_LOG_ERROR(
-                  "Application did not shut down within {} ms of interrupt. Forcing exit...",
-                  force_exit_timeout_ms);
-              std::quick_exit(1);  // Force immediate termination
+          // Start a force exit countdown if graceful shutdown takes too long
+          // Use mutex to protect access to active_countdown_flag_ and prevent race conditions
+          {
+            std::lock_guard<std::mutex> lock(countdown_flag_mutex_);
+            if (!force_exit_countdown_started_.load()) {
+              force_exit_countdown_started_.store(true);
+
+              // Launch another thread for the force exit countdown
+              // Use a shared flag to allow cancellation of this specific countdown
+              auto countdown_active = std::make_shared<std::atomic<bool>>(true);
+              std::thread([force_exit_timeout_ms, countdown_active]() {
+                // Sleep for the calculated timeout, then force exit if we're still alive
+                std::this_thread::sleep_for(std::chrono::milliseconds(force_exit_timeout_ms));
+                // Check both that interrupt is still requested AND this specific countdown is still
+                // active (countdown_active can be set to false if interrupt flags are reset between
+                // tests)
+                if (interrupt_requested_.load() && countdown_active->load()) {
+                  HOLOSCAN_LOG_ERROR(
+                      "Application did not shut down within {} ms of interrupt. Forcing exit...",
+                      force_exit_timeout_ms);
+                  std::quick_exit(1);  // Force immediate termination
+                }
+              }).detach();
+
+              // Store the countdown_active flag so it can be cancelled during reset
+              active_countdown_flag_ = countdown_active;
             }
-          }).detach();
+          }
         }
       }).detach();
     } else {
@@ -2915,8 +2977,24 @@ void GXFExecutor::add_component_args_to_graph_entity(
 }
 
 void GXFExecutor::reset_interrupt_flags() {
+  // This method is primarily for unit testing of interrupt handling.
+  // It ensures clean state between test cases by canceling any lingering countdown threads
+  // from previous tests and resetting all static interrupt-related flags.
+
+  // Cancel any active force exit countdown thread by setting its flag to false.
+  // This prevents old threads from force-exiting when they wake up after a new test has started.
+  // Use mutex to protect access to active_countdown_flag_ and prevent race conditions.
+  {
+    std::lock_guard<std::mutex> lock(countdown_flag_mutex_);
+    if (active_countdown_flag_) {
+      active_countdown_flag_->store(false);
+      active_countdown_flag_.reset();
+    }
+  }
+
   interrupt_requested_.store(false);
   force_exit_countdown_started_.store(false);
+  first_interrupt_time_ms_.store(0);
 }
 
 }  // namespace holoscan::gxf

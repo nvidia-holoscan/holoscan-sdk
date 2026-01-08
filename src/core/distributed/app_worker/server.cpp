@@ -99,10 +99,21 @@ void AppWorkerServer::stop() {
   should_stop_ = true;
   cv_.notify_all();
 
-  // Note: Do NOT need to wait for fragment_executors_future_ here:
-  // 1. When fragments finish naturally, they're already done before stop() is called
-  // 2. When forcing shutdown, the wait happens in terminate_scheduled_fragments()
-  // The server thread will exit cleanly once should_stop_ is set and cv_ is notified
+  // Wait for the fragment executors async task to complete before destroying resources.
+  // This is critical because the async task (created in execute_fragments()) captures 'this'
+  // pointer to the AppWorker and references to its members. If we don't wait here, the async
+  // task may try to call submit_message() after AppWorker destruction has begun, causing
+  // "terminate called without an active exception" or other undefined behavior.
+  if (fragment_executors_future_.valid()) {
+    // Use the worker's calculated shutdown timeout. The async task should complete quickly
+    // since fragments are already stopped, but we need a reasonable timeout to avoid hangs.
+    auto timeout_ms = app_worker_->worker_shutdown_timeout_ms();
+    auto status = fragment_executors_future_.wait_for(std::chrono::milliseconds(timeout_ms));
+    if (status == std::future_status::timeout) {
+      HOLOSCAN_LOG_WARN("Timeout ({} ms) waiting for fragment executors async task to complete",
+                        timeout_ms);
+    }
+  }
 
   // Disconnect worker endpoints for distributed fragment services
   app_worker_->handle_worker_disconnect();

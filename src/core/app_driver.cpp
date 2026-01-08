@@ -173,7 +173,22 @@ AppDriver::AppDriver(Application* app) : app_(app) {
   }
 }
 
-AppDriver::~AppDriver() = default;
+AppDriver::~AppDriver() {
+  // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
+  if (shutdown_complete_) {
+    shutdown_complete_->store(true);
+  }
+
+  // Unregister signal handlers to prevent dangling 'this' pointer issues
+  // if signals are raised after this AppDriver is destroyed
+  if (app_) {
+    void* context = app_->executor().context();
+    if (context) {
+      SignalHandler::unregister_signal_handler(context, SIGINT);
+      SignalHandler::unregister_signal_handler(context, SIGTERM);
+    }
+  }
+}
 
 void AppDriver::run() {
   // Compose graph and setup configuration
@@ -1274,9 +1289,14 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
 
 void AppDriver::update_root_fragments(const FragmentGraph& graph,
                                       const std::unordered_set<std::string>& terminated_fragments) {
-  // Remove terminated fragments from tracking
-  for (const auto& terminated : terminated_fragments) {
-    current_root_workers_.erase(terminated);
+  // Remove workers whose fragments have been terminated from root tracking.
+  // Note: terminated_fragments contains fragment names, but current_root_workers_ contains
+  // worker addresses, so we need to look up the worker address from schedule_.
+  for (const auto& terminated_frag : terminated_fragments) {
+    auto it = schedule_.find(terminated_frag);
+    if (it != schedule_.end()) {
+      current_root_workers_.erase(it->second);  // Erase by worker address
+    }
   }
 
   // Update root fragment workers based on current graph state
@@ -1674,9 +1694,17 @@ void AppDriver::setup_signal_handlers() {
       }
 
       // Create a watchdog thread to ensure we exit even if clean shutdown hangs
-      std::thread([signum]() {
+      // Capture shutdown_complete_ by value (shared_ptr) so it remains valid after AppDriver
+      // destruction
+      auto shutdown_flag = shutdown_complete_;
+      std::thread([shutdown_flag, signum]() {
         // Wait for a reasonable time for clean shutdown
         std::this_thread::sleep_for(std::chrono::seconds(kDriverShutdownTimeoutSeconds));
+
+        // Check if shutdown completed successfully before forcing exit
+        if (shutdown_flag && shutdown_flag->load()) {
+          return;  // Clean shutdown completed, don't force exit
+        }
 
         HOLOSCAN_LOG_ERROR("Clean shutdown timed out after {} seconds. Forcing exit...",
                            kDriverShutdownTimeoutSeconds);
@@ -1686,6 +1714,9 @@ void AppDriver::setup_signal_handlers() {
       }).detach();
     }).detach();
   };
+
+  // Initialize shutdown flag for watchdog cancellation
+  shutdown_complete_ = std::make_shared<std::atomic<bool>>(false);
 
   SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
   SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);

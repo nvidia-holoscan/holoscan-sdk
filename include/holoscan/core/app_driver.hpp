@@ -326,6 +326,8 @@ class AppDriver {
   std::mutex message_mutex_;                 ///< Mutex for the message queue.
   std::queue<DriverMessage> message_queue_;  ///< Queue of messages to be processed.
 
+  std::shared_ptr<std::atomic<bool>> shutdown_complete_;  ///< Flag to cancel watchdog on clean exit
+
   /// Data structure for collecting fragment port information from all workers of a distributed
   /// application. Unused when running an application locally.
   std::unique_ptr<MultipleFragmentsPortMap> all_fragment_port_map_ =

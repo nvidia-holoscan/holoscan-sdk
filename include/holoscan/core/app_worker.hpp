@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_APP_WORKER_HPP
 
 #include <any>
+#include <atomic>
 #include <future>
 #include <memory>
 #include <mutex>
@@ -121,9 +122,10 @@ class AppWorker {
   std::vector<FragmentNodeType> target_fragments_;
 
   std::vector<FragmentNodeType> scheduled_fragments_;
-  bool need_notify_execution_finished_ = false;
+  std::atomic<bool> need_notify_execution_finished_{false};  ///< Atomic flag for thread-safe access
   AppWorkerTerminationCode termination_code_ = AppWorkerTerminationCode::kSuccess;
   int64_t worker_shutdown_timeout_ms_ = 10000;  ///< Calculated shutdown watchdog timeout (ms)
+  std::shared_ptr<std::atomic<bool>> shutdown_complete_;  ///< Flag to cancel watchdog on clean exit
 
   /// Map of fragment names to their execution futures (for checking individual completion)
   std::unordered_map<std::string, std::shared_future<void>> fragment_futures_;

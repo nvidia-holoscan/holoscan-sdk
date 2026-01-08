@@ -1223,10 +1223,10 @@ class TestIOTypeRegistry:
 class TestSubgraph:
     def test_init_without_fragment(self):
         with pytest.raises(TypeError, match=r".*required positional argument.*fragment.*"):
-            Subgraph(instance_name="my_subgraph")
+            Subgraph(name="my_subgraph")
 
-    def test_init_without_instance_name(self):
-        with pytest.raises(TypeError, match=r".*required positional argument.*instance_name.*"):
+    def test_init_without_name(self):
+        with pytest.raises(ValueError, match=r".*'name' argument must be provided.*"):
             Subgraph(Fragment())
 
     def test_init_invalid_fragment(self):
@@ -1236,21 +1236,21 @@ class TestSubgraph:
             Subgraph(None, "camera1")
 
     def test_init_positional(self):
-        instance_name = "camera1"
-        sg = Subgraph(Fragment(), instance_name)
+        name = "camera1"
+        sg = Subgraph(Fragment(), name)
         assert isinstance(sg, Subgraph)
-        assert sg.instance_name == instance_name
+        assert sg.name == name
 
     def test_init_kwargs(self):
-        instance_name = "camera1"
-        sg = Subgraph(fragment=Fragment(), instance_name=instance_name)
+        name = "camera1"
+        sg = Subgraph(fragment=Fragment(), name=name)
         assert isinstance(sg, Subgraph)
-        assert sg.instance_name == instance_name
+        assert sg.name == name
 
     def test_add_flow(self):
-        instance_name = "camera1"
+        name = "camera1"
         frag = Fragment()
-        sg = Subgraph(frag, instance_name)
+        sg = Subgraph(frag, name)
 
         # can call add_flow to add operators
         op_tx, op_rx = get_tx_and_rx_ops(frag)
@@ -1264,8 +1264,8 @@ class TestSubgraph:
 
         # Check qualified names
         node_names = [node.name for node in nodes]
-        assert f"{instance_name}_{original_tx_name}" in node_names
-        assert f"{instance_name}_{original_rx_name}" in node_names
+        assert f"{name}_{original_tx_name}" in node_names
+        assert f"{name}_{original_rx_name}" in node_names
 
         # adding to the subgraph populates the operators in the underlying Fragment
         port_map = frag.graph.port_map_description()
@@ -1280,9 +1280,9 @@ output_to_input:
         )
 
     def test_add_operator(self):
-        instance_name = "camera1"
+        name = "camera1"
         frag = Fragment()
-        sg = Subgraph(frag, instance_name)
+        sg = Subgraph(frag, name)
 
         # can call add_flow to add operators
         op_tx, op_rx = get_tx_and_rx_ops(frag)
@@ -1297,8 +1297,8 @@ output_to_input:
 
         # Check qualified names
         node_names = [node.name for node in nodes]
-        assert f"{instance_name}_{original_tx_name}" in node_names
-        assert f"{instance_name}_{original_rx_name}" in node_names
+        assert f"{name}_{original_tx_name}" in node_names
+        assert f"{name}_{original_rx_name}" in node_names
 
         # no connections when add_flow wasn't called
         port_map = frag.graph.port_map_description()
@@ -1307,3 +1307,24 @@ output_to_input:
 output_to_input: ~"""
             in port_map
         )
+
+    def test_instance_name_kwarg_deprecation_warning(self):
+        """Test that using instance_name keyword argument emits a deprecation warning."""
+        with pytest.warns(DeprecationWarning, match=r".*instance_name.*"):
+            sg = Subgraph(Fragment(), instance_name="camera1")
+        # Verify the subgraph was created correctly
+        assert sg.name == "camera1"
+
+    def test_instance_name_and_name_both_specified_error(self):
+        """Test that specifying both name and instance_name raises an error."""
+        with pytest.raises(ValueError, match=r".*Cannot specify both.*"):
+            Subgraph(Fragment(), name="camera1", instance_name="camera2")
+
+    def test_instance_name_property_deprecation_warning(self):
+        """Test that accessing instance_name property emits a deprecation warning."""
+        sg = Subgraph(Fragment(), name="camera1")
+
+        with pytest.warns(DeprecationWarning, match=r".*instance_name.*"):
+            instance_name = sg.instance_name
+        # Verify the value is correct
+        assert instance_name == "camera1"

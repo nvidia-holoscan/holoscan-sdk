@@ -212,6 +212,7 @@ class TestAsyncConsoleLogger:
             large_data_worker_sleep_time=200000,
             large_data_queue_policy=AsyncQueuePolicy.REJECT,
             enable_large_data_queue=True,
+            shutdown_wait_period_ms=5000,
             serializer=SimpleTextSerializer(app, name="text-serializer"),
         )
         self.check_data_logger(data_logger, name)

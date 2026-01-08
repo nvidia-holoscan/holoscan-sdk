@@ -1077,7 +1077,7 @@ Arguments:
 launch() {
     # Prerequisite steps
     if [ "$DO_STANDALONE" != "true" ]; then
-        build_image --target build
+        build_image
     fi
 
     local container_mount="/workspace/holoscan-sdk"

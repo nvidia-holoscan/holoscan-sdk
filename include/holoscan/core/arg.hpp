@@ -176,6 +176,13 @@ class ArgType {
       to_element_type_pair<uint32_t>(ArgElementType::kUnsigned32),
       to_element_type_pair<int64_t>(ArgElementType::kInt64),
       to_element_type_pair<uint64_t>(ArgElementType::kUnsigned64),
+      // Add long/long long types that may differ from int64_t/uint64_t across platforms
+      // On Linux: int64_t==long, uint64_t==unsigned long, size_t==unsigned long
+      // On Windows: int64_t==long long, uint64_t==unsigned long long, size_t==unsigned long long
+      to_element_type_pair<long>(ArgElementType::kInt64),
+      to_element_type_pair<unsigned long>(ArgElementType::kUnsigned64),
+      to_element_type_pair<long long>(ArgElementType::kInt64),
+      to_element_type_pair<unsigned long long>(ArgElementType::kUnsigned64),
       to_element_type_pair<float>(ArgElementType::kFloat32),
       to_element_type_pair<double>(ArgElementType::kFloat64),
       to_element_type_pair<std::complex<float>>(ArgElementType::kComplex64),

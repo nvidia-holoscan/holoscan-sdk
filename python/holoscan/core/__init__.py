@@ -520,16 +520,38 @@ Fragment.__init__.__doc__ = _Fragment.__init__.__doc__
 
 
 class Subgraph(_Subgraph):
-    def __init__(self, fragment: _Fragment | _Subgraph, instance_name: str):
+    def __init__(
+        self,
+        fragment: _Fragment | _Subgraph,
+        name: str | None = None,
+        *,
+        instance_name: str | None = None,
+    ):
         if not isinstance(fragment, (_Fragment, _Subgraph)):
             raise ValueError(
                 "The first argument to a Subgraph's constructor must be the Fragment "
                 "(Application) or Subgraph to which it belongs."
             )
 
+        # Handle name/instance_name arguments with backwards compatibility
+        if name is not None and instance_name is not None:
+            raise ValueError(
+                "Cannot specify both 'name' and 'instance_name'. "
+                "Use 'name' ('instance_name' is deprecated)."
+            )
+        if name is None and instance_name is None:
+            raise ValueError("A 'name' argument must be provided to the Subgraph constructor.")
+        if instance_name is not None:
+            warnings.warn(
+                "The 'instance_name' argument is deprecated. Please use 'name' instead.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            name = instance_name
+
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
-        _Subgraph.__init__(self, self, fragment, instance_name)
+        _Subgraph.__init__(self, self, fragment, name)
 
         # store Fragment as an attribute so it is accessible from Operator constructor, etc.
         if isinstance(fragment, _Subgraph):
@@ -542,6 +564,20 @@ class Subgraph(_Subgraph):
         if not self.is_composed():
             self.compose()
             self.set_composed(True)
+
+    @property
+    def instance_name(self) -> str:
+        """Get the instance name for this subgraph.
+
+        .. deprecated::
+            Use ``name`` instead. This property will be removed in a future release.
+        """
+        warnings.warn(
+            "The 'instance_name' property is deprecated. Please use 'name' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.name
 
     def compose(self):
         pass

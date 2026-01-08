@@ -55,7 +55,8 @@ TEST_F(DataLoggerResourceClassesWithGXFContext, TestAsyncConsoleLogger) {
                   Arg{"large_data_max_queue_size", static_cast<int64_t>(50)},
                   Arg{"large_data_worker_sleep_time", static_cast<int64_t>(50000)},
                   Arg{"large_data_queue_policy", AsyncQueuePolicy::kReject},
-                  Arg{"enable_large_data_queue", true}};
+                  Arg{"enable_large_data_queue", true},
+                  Arg{"shutdown_wait_period_ms", static_cast<int64_t>(5000)}};
   auto resource = F.make_resource<data_loggers::AsyncConsoleLogger>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<data_loggers::AsyncConsoleLogger>(arglist)));

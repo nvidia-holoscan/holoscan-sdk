@@ -86,7 +86,11 @@ namespace data_loggers {
  *     you can use string values "reject" or "raise" (case-insensitive).
  * - **enable_large_data_queue**: bool (optional, default: true);
  *   - Whether to enable the large data queue and worker thread for processing full
- *     tensor content. Default is True.*
+ *     tensor content. Default is True.
+ * - **shutdown_wait_period_ms**: int64_t (optional, default: -1)
+ *   - Time in milliseconds to wait for queues to drain during shutdown. Use -1 to wait
+ *     indefinitely (default), 0 to not wait, or a positive value for a specific
+ *     timeout in milliseconds.
  */
 class AsyncConsoleLogger : public AsyncDataLoggerResource {
  public:

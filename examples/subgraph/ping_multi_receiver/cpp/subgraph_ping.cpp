@@ -79,8 +79,8 @@ class MultiPingRxOp : public Operator {
  */
 class PingTxSubgraph : public holoscan::Subgraph {
  public:
-  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -102,8 +102,8 @@ class PingTxSubgraph : public holoscan::Subgraph {
  */
 class MultiPingRxSubgraph : public holoscan::Subgraph {
  public:
-  MultiPingRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  MultiPingRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -124,8 +124,8 @@ class MultiPingRxSubgraph : public holoscan::Subgraph {
  */
 class PingRxSubgraph : public holoscan::Subgraph {
  public:
-  PingRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  PingRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;

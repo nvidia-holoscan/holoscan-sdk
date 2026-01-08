@@ -307,12 +307,17 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
       const std::string unique_id = io_spec->unique_id();
 
-      // Check if any CUDA streams were received
-      auto stream_for_logging = get_stream_for_logging(input_name.c_str());
+      // Lazily retrieve CUDA stream only if needed for logging
+      bool stream_checked = false;
+      std::optional<cudaStream_t> stream_for_logging = std::nullopt;
 
       for (auto& data_logger : data_loggers) {
         HOLOSCAN_LOG_TRACE("\t log_backend_specific code path");
         if (data_logger->should_log_input()) {
+          if (!stream_checked) {
+            stream_for_logging = get_stream_for_logging(input_name.c_str());
+            stream_checked = true;
+          }
           // Create a shared entity to ensure proper lifetime management for async logging
           auto shared_entity_expected = entity.clone();
           if (shared_entity_expected) {
@@ -346,11 +351,16 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
       auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
       const std::string unique_id = io_spec->unique_id();
 
-      // Check if any CUDA streams were received
-      auto stream_for_logging = get_stream_for_logging(input_name.c_str());
+      // Lazily retrieve CUDA stream only if needed for logging
+      bool stream_checked = false;
+      std::optional<cudaStream_t> stream_for_logging = std::nullopt;
 
       for (auto& data_logger : data_loggers) {
         if (data_logger->should_log_input()) {
+          if (!stream_checked) {
+            stream_for_logging = get_stream_for_logging(input_name.c_str());
+            stream_checked = true;
+          }
           // Create a shared entity to ensure proper lifetime management for async logging
           auto shared_entity_expected = entity.clone();
           if (shared_entity_expected) {

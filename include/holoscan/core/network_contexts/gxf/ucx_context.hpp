@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_NETWORK_CONTEXT_GXF_UCX_CONTEXT_HPP
-#define HOLOSCAN_CORE_NETWORK_CONTEXT_GXF_UCX_CONTEXT_HPP
+#ifndef HOLOSCAN_CORE_NETWORK_CONTEXTS_GXF_UCX_CONTEXT_HPP
+#define HOLOSCAN_CORE_NETWORK_CONTEXTS_GXF_UCX_CONTEXT_HPP
 
 #include <cstdint>
 #include <memory>
@@ -49,6 +49,9 @@ namespace holoscan {
  * to set the value that Holoscan will use for this parameter when creating its internal
  * `UcxNetworkContext`. This parameter is deprecated in Holoscan v3.7 and will be removed in v4.0.
  * The new behavior will be equivalent to a value of `false` here.
+ * - **shutdown_timeout_ms** (uint64_t, optional): Timeout in milliseconds for shutdown operations
+ * such as thread joins and pending request cancellation (default: 2000). The
+ * `HOLOSCAN_UCX_SHUTDOWN_TIMEOUT_MS` environment variable can be used to override this value.
  */
 class UcxContext : public gxf::GXFNetworkContext {
  public:
@@ -71,16 +74,39 @@ class UcxContext : public gxf::GXFNetworkContext {
 
   nvidia::gxf::UcxContext* get() const;
 
+  /**
+   * @brief Initiates graceful shutdown of UCX connections.
+   *
+   * Sets the shutting_down_ flag and signals TX/RX threads to exit.
+   * This allows pending operations to complete within the shutdown timeout
+   * rather than blocking indefinitely.
+   *
+   * Call this early in the shutdown sequence (before stop_execution()) to
+   * ensure UCX threads exit cleanly and connection errors during shutdown
+   * are treated as expected rather than fatal.
+   */
+  void initiate_shutdown();
+
+  /**
+   * @brief Check if shutdown has been initiated.
+   * @return true if shutdown is in progress
+   */
+  bool is_shutting_down() const;
+
  private:
   Parameter<std::shared_ptr<UcxEntitySerializer>> entity_serializer_;
   Parameter<bool> reconnect_;      ///< Try to reconnect if a connection is closed during run
   Parameter<bool> cpu_data_only_;  ///< Support CPU memory only for UCX communication
   Parameter<bool> enable_async_;   ///< Control whether UCX transmit/receive uses asynchronous mode
+  Parameter<uint64_t>
+      shutdown_timeout_ms_;  ///< Timeout for shutdown operations (thread joins, etc.)
 
   // TODO(unknown): support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
+
+  bool shutting_down_ = false;  ///< Flag to track if shutdown has been initiated
 };
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_NETWORK_CONTEXT_GXF_UCX_CONTEXT_HPP */
+#endif /* HOLOSCAN_CORE_NETWORK_CONTEXTS_GXF_UCX_CONTEXT_HPP */

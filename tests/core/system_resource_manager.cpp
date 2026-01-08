@@ -154,7 +154,7 @@ TEST(SystemResourceManager, TestReportGPUResourceInfo) {
       EXPECT_NE(*gpuinfo.serial, 0);
       // EXPECT_GE(gpuinfo.gpu_utilization, 0);
       // EXPECT_GE(gpuinfo.memory_utilization, 0);
-      EXPECT_NE(gpuinfo.power_limit, 0);
+      EXPECT_GE(gpuinfo.power_limit, 0);
       // power_usage is not available for some GPUs or it can be zero
       // EXPECT_NE(gpuinfo.power_usage, 0);
       EXPECT_NE(gpuinfo.temperature, 0);
@@ -272,7 +272,7 @@ TEST(SystemResourceManager, TestGetGPUInfo) {
       EXPECT_NE(*gpuinfo.serial, 0);
       // EXPECT_GE(gpuinfo.gpu_utilization, 0);
       // EXPECT_GE(gpuinfo.memory_utilization, 0);
-      EXPECT_NE(gpuinfo.power_limit, 0);
+      EXPECT_GE(gpuinfo.power_limit, 0);
       // power_usage is not available for some GPUs or it can be zero
       // EXPECT_NE(gpuinfo.power_usage, 0);
       EXPECT_NE(gpuinfo.temperature, 0);

@@ -206,16 +206,18 @@ class TorchInferImpl {
 torch::Tensor create_tensor_core(const std::shared_ptr<DataBuffer>& input_buffer,
                                  const std::vector<int64_t>& dims, torch::ScalarType data_type,
                                  torch::DeviceType infer_device, torch::DeviceType input_device,
-                                 cudaStream_t cstream) {
+                                 cudaStream_t cstream, InferStatus& status) {
   size_t input_tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
   if (input_device == torch::kCPU) {
     if (input_buffer->host_buffer_->size() != input_tensor_size) {
       HOLOSCAN_LOG_ERROR("Torch: Input host buffer size mismatch.");
+      status = InferStatus(holoinfer_code::H_ERROR, "Torch core: Input host buffer size mismatch");
       return torch::empty({0});
     }
   } else if (input_buffer->device_buffer_->size() != input_tensor_size) {
     HOLOSCAN_LOG_ERROR("Torch: Input device buffer size mismatch.");
+    status = InferStatus(holoinfer_code::H_ERROR, "Torch core: Input device buffer size mismatch");
     return torch::empty({0});
   }
 
@@ -283,7 +285,8 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
                               kTorchTypeMap.at(data_type_str),
                               infer_device_,
                               input_device_,
-                              cuda_stream_);
+                              cuda_stream_,
+                              status);
   } catch (const std::out_of_range& e) {
     std::vector<std::string> supported_types;
     for (const auto& [key, value] : kTorchTypeMap) {

@@ -166,10 +166,9 @@ class OrCombinerCountConditionsApp : public holoscan::Application {
       terms.push_back(count_condition);
       terms.push_back(count_condition2);
     } else {
-      auto count_condition =
-          make_condition<CountCondition>("tx_count", Arg("count", static_cast<int64_t>(10)));
-      auto count_condition2 =
-          make_condition<CountCondition>("tx_count2", Arg("count", static_cast<int64_t>(20)));
+      // test passing count as a plain integer
+      auto count_condition = make_condition<CountCondition>("tx_count", Arg("count", 10));
+      auto count_condition2 = make_condition<CountCondition>("tx_count2", Arg("count", 20));
       terms.push_back(count_condition);
       terms.push_back(count_condition2);
     }
@@ -177,8 +176,9 @@ class OrCombinerCountConditionsApp : public holoscan::Application {
     // create the resource needed to switch those two to OR combination
     auto or_combiner = make_resource<OrConditionCombiner>("or_combiner", Arg{"terms", terms});
 
+    // test passing recess_period as a plain integer
     auto periodic_condition = make_condition<VerbosePeriodicCondition>(
-        "periodic-condition", Arg("recess_period", static_cast<int64_t>(100'000'000)));
+        "periodic-condition", Arg("recess_period", 100'000'000));
 
     auto tx = make_operator<ops::PingTxOp>("tx", or_combiner, periodic_condition);
     auto rx = make_operator<ops::PingRxOp>("rx");

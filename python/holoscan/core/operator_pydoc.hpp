@@ -67,7 +67,10 @@ size : int | holoscan.core.IOSpec.IOSize
     By default, `IOSpec.SIZE_ONE` (== `IOSpec.IOSize(1)`) is used.
     If `IOSpec.ANY_SIZE` is used, it defines multiple receivers internally for the input port.
     Otherwise, the size of the input queue is set to the specified value, and the message available
-    condition for the input port is set with `min_size` equal to the same value.
+    condition for the input port is set with `min_size` equal to the same value (implicit batching).
+    Holoscan emits a warning when `size > 1` and the default `MessageAvailableCondition` is used.
+    To make applications robust against planned API evolution, set `min_size` explicitly whenever
+    `size > 1`.
 
     The following size constants are supported:
     - ``IOSpec.ANY_SIZE``: Any size.
@@ -92,6 +95,17 @@ the connector/condition settings will be ignored.
 If the queue size is set to other values, the default connector (DoubleBufferReceiver/UcxReceiver)
 and condition (MessageAvailableCondition) will use the queue size for initialization
 ('capacity' for the connector and 'min_size' for the condition) if they are not set.
+
+When `size > 1` and you do not override the port condition, `min_size` will also be set to `size`,
+which enables batched execution. Holoscan emits a warning in this case. If you only want buffering
+without batching, explicitly set `min_size=1` on the `MessageAvailableCondition`.
+
+Planned API change: Holoscan intends to decouple queue capacity from batching by making `size`
+control capacity only and introducing an explicit batching configuration (e.g., a planned
+`batch_size` argument). To prepare, set `min_size` explicitly whenever `size > 1`.
+For the `IOSpec.PRECEDING_COUNT` case, the resolved size is computed from the graph at run time;
+a planned `batch_size` configuration is intended to provide an explicit equivalent to today's
+"batch by preceding-count" behavior.
 )doc")
 
 PYDOC(inputs, R"doc(

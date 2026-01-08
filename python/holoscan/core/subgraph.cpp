@@ -42,8 +42,8 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-PySubgraph::PySubgraph(py::object subgraph, Fragment* fragment, const std::string& instance_name)
-    : Subgraph(fragment, instance_name), py_subgraph_(std::move(subgraph)) {
+PySubgraph::PySubgraph(py::object subgraph, Fragment* fragment, const std::string& name)
+    : Subgraph(fragment, name), py_subgraph_(std::move(subgraph)) {
   using std::string_literals::operator""s;
 
   py::gil_scoped_acquire scope_guard;
@@ -82,18 +82,17 @@ void init_subgraph(py::module_& m) {
       .def(py::init<py::object, Fragment*, const std::string&>(),
            "subgraph"_a,
            "fragment"_a,
-           "instance_name"_a,
+           "name"_a,
            doc::Subgraph::doc_Subgraph)
       .def(py::init([](py::object subgraph,
                        std::shared_ptr<Subgraph>
                            parent_subgraph,
-                       const std::string& instance_name) {
+                       const std::string& name) {
              // Extract the fragment from the parent subgraph
              Fragment* fragment = parent_subgraph->fragment();
 
              // Apply qualified naming using the parent subgraph's instance name
-             std::string qualified_name =
-                 parent_subgraph->get_qualified_name(instance_name, "subgraph");
+             std::string qualified_name = parent_subgraph->get_qualified_name(name, "subgraph");
 
              // Create the PySubgraph in the parent Subgraph's fragment
              auto py_subgraph = std::make_shared<PySubgraph>(subgraph, fragment, qualified_name);
@@ -101,9 +100,8 @@ void init_subgraph(py::module_& m) {
            }),
            "subgraph"_a,
            "parent_subgraph"_a,
-           "instance_name"_a)
-      .def_property_readonly(
-          "instance_name", &Subgraph::instance_name, doc::Subgraph::doc_instance_name)
+           "name"_a)
+      .def_property_readonly("name", &Subgraph::name, doc::Subgraph::doc_name)
       // Note: `set_dynamic_flows` is not added here, but as a Python method to dispatch to
       // `Fragment.set_dynamic_flows` which will handle the operator lifetime.
       .def("add_operator", &Subgraph::add_operator, "op"_a, doc::Subgraph::doc_add_operator)
@@ -209,8 +207,7 @@ void init_subgraph(py::module_& m) {
             try {
               // cast either succeeds and returns a valid non-null pointer or throws py::cast_error
               auto subgraph = obj.cast<std::shared_ptr<Subgraph>>();
-              return fmt::format("<holoscan.Subgraph: instance_name:{}>",
-                                 subgraph->instance_name());
+              return fmt::format("<holoscan.Subgraph: name:{}>", subgraph->name());
             } catch (const py::cast_error&) {
               return std::string("<Subgraph: None>");
             }

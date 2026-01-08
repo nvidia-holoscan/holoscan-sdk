@@ -38,7 +38,7 @@ class AsyncRxApp : public holoscan::Application {
   void compose() override {
     using namespace holoscan;
     auto tx = make_operator<ops::PingTxOp>("tx", make_condition<CountCondition>(5));
-    auto rx = make_operator<ops::AsyncPingRxOp>("rx", Arg("delay", 10L));
+    auto rx = make_operator<ops::AsyncPingRxOp>("rx", Arg("delay", 10));
 
     add_flow(tx, rx);
   }
@@ -48,7 +48,7 @@ class AsyncTxApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::AsyncPingTxOp>("tx", Arg("delay", 10L), Arg("count", 5UL));
+    auto tx = make_operator<ops::AsyncPingTxOp>("tx", Arg("delay", 10), Arg("count", 5));
     auto rx = make_operator<ops::PingRxOp>("rx");
 
     add_flow(tx, rx);
@@ -59,8 +59,8 @@ class AsyncTxRxApp : public holoscan::Application {
  public:
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::AsyncPingTxOp>("tx", Arg("delay", 10L), Arg("count", 5UL));
-    auto rx = make_operator<ops::AsyncPingRxOp>("rx", Arg("delay", 10L));
+    auto tx = make_operator<ops::AsyncPingTxOp>("tx", Arg("delay", 10), Arg("count", 5));
+    auto rx = make_operator<ops::AsyncPingRxOp>("rx", Arg("delay", 10));
 
     add_flow(tx, rx);
   }
@@ -79,7 +79,7 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncRxApp) {
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>(
         "multithread-scheduler",
         holoscan::Arg("stop_on_deadlock", false),
-        holoscan::Arg("max_duration_ms", 1000L)));
+        holoscan::Arg("max_duration_ms", 1000)));
   }
 
   // capture output so that we can check that the expected value is present
@@ -130,7 +130,6 @@ TEST_P(ParameterizedAsyncPingTestFixture, TestAsyncTxApp) {
   EXPECT_TRUE(log_output.find("Rx message value: 5") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
-
   EXPECT_TRUE(log_output.find("Async ping rx thread entering") == std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";

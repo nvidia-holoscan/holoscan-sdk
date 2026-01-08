@@ -1086,6 +1086,15 @@ void Fragment::stop_execution(const std::string& op_name) {
 }
 
 void Fragment::shutdown_data_loggers() {
+  // Use mutex to serialize shutdown calls - if another thread is shutting down,
+  // this will block until that shutdown completes (important for GXF context safety)
+  std::lock_guard<std::mutex> lock(data_loggers_shutdown_mutex_);
+
+  if (data_loggers_shutdown_complete_) {
+    HOLOSCAN_LOG_DEBUG("Fragment '{}': Data logger shutdown already completed, skipping", name());
+    return;
+  }
+
   HOLOSCAN_LOG_DEBUG("Fragment '{}': Starting data logger shutdown", name());
   // Explicitly stop background threads and shutdown resources before clearing the vector
   // This ensures proper cleanup even if external shared_ptr references exist
@@ -1100,6 +1109,7 @@ void Fragment::shutdown_data_loggers() {
     }
   }
   data_loggers_.clear();
+  data_loggers_shutdown_complete_ = true;
 }
 
 void Fragment::reset_backend_objects() {
@@ -1139,7 +1149,7 @@ void Fragment::reset_state() {
 
   // Reset the graph to recreate it on the next run
   graph_.reset();
-  subgraph_instance_names_.clear();
+  subgraph_names_.clear();
 
   // Skip resetting the scheduler since it is shared between run() method calls.
   // scheduler_.reset();  // DO NOT RESET THIS.
@@ -1160,6 +1170,12 @@ void Fragment::reset_state() {
     fragment_resource_services_by_name_.clear();
     fragment_resource_to_service_key_map_.clear();
     HOLOSCAN_LOG_DEBUG("Cleared service registry/resources for fragment '{}'", name_);
+  }
+
+  // Reset data logger shutdown flag to allow loggers to be used again on next run
+  {
+    std::lock_guard<std::mutex> lock(data_loggers_shutdown_mutex_);
+    data_loggers_shutdown_complete_ = false;
   }
 
   // Reset the is_composed_ flag to ensure graphs are recomposed
@@ -1521,7 +1537,7 @@ void Fragment::resolve_and_create_op_to_subgraph_flows(
     if (!downstream_op) {
       auto err_msg = fmt::format("Interface port '{}' not found in Subgraph '{}'",
                                  interface_port,
-                                 downstream_subgraph->instance_name());
+                                 downstream_subgraph->name());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
@@ -1561,7 +1577,7 @@ void Fragment::resolve_and_create_subgraph_to_op_flows(
     if (!upstream_op) {
       auto err_msg = fmt::format("Interface port '{}' not found in Subgraph '{}'",
                                  interface_port,
-                                 upstream_subgraph->instance_name());
+                                 upstream_subgraph->name());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
@@ -1611,7 +1627,7 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
     if (!upstream_op) {
       auto err_msg = fmt::format("Interface port '{}' not found in upstream Subgraph '{}'",
                                  upstream_interface_port,
-                                 upstream_subgraph->instance_name());
+                                 upstream_subgraph->name());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
@@ -1619,7 +1635,7 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
     if (!downstream_op) {
       auto err_msg = fmt::format("Interface port '{}' not found in downstream Subgraph '{}'",
                                  downstream_interface_port,
-                                 downstream_subgraph->instance_name());
+                                 downstream_subgraph->name());
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
@@ -1654,7 +1670,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
       try_auto_resolve_ports(upstream_ports,
                              downstream_ports,
                              fmt::format("Operator '{}'", upstream_op->name()),
-                             fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                             fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                              port_pairs);
     } else {
       // Check if this could be a control flow connection
@@ -1680,7 +1696,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
               "Cannot auto-connect '{}' to '{}': subgraph has more than one "
               "execution input port ({}), so port mapping must be specified explicitly",
               upstream_op->name(),
-              downstream_subgraph->instance_name(),
+              downstream_subgraph->name(),
               fmt::join(exec_input_ports, ", "));
           HOLOSCAN_LOG_ERROR(err_msg);
           throw std::runtime_error(err_msg);
@@ -1692,7 +1708,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
         auto err_msg = fmt::format(
             "Cannot auto-connect '{}' to '{}': no data or execution interface ports found",
             upstream_op->name(),
-            downstream_subgraph->instance_name());
+            downstream_subgraph->name());
         HOLOSCAN_LOG_ERROR(err_msg);
         throw std::runtime_error(err_msg);
       }
@@ -1716,7 +1732,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
     if (!upstream_ports.empty() && !downstream_ports.empty()) {
       try_auto_resolve_ports(upstream_ports,
                              downstream_ports,
-                             fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
+                             fmt::format("Subgraph '{}'", upstream_subgraph->name()),
                              fmt::format("Operator '{}'", downstream_op->name()),
                              port_pairs);
     } else {
@@ -1743,7 +1759,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
           auto err_msg = fmt::format(
               "Cannot auto-connect '{}' to '{}': subgraph has more than one "
               "execution output port ({}), so port mapping must be specified explicitly",
-              upstream_subgraph->instance_name(),
+              upstream_subgraph->name(),
               downstream_op->name(),
               fmt::join(exec_output_ports, ", "));
           HOLOSCAN_LOG_ERROR(err_msg);
@@ -1754,7 +1770,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
         port_pairs.emplace(exec_output_ports[0], Operator::kInputExecPortName);
       } else {
         HOLOSCAN_LOG_ERROR("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
-                           upstream_subgraph->instance_name(),
+                           upstream_subgraph->name(),
                            downstream_op->name());
         return;
       }
@@ -1778,8 +1794,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
     if (!upstream_ports.empty() && !downstream_ports.empty()) {
       try_auto_resolve_ports(upstream_ports,
                              downstream_ports,
-                             fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
-                             fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                             fmt::format("Subgraph '{}'", upstream_subgraph->name()),
+                             fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                              port_pairs);
     } else {
       // Check if this could be a control flow connection
@@ -1806,8 +1822,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
           HOLOSCAN_LOG_ERROR(
               "Cannot auto-connect '{}' to '{}': multiple execution ports found, "
               "so port mapping must be specified explicitly",
-              upstream_subgraph->instance_name(),
-              downstream_subgraph->instance_name());
+              upstream_subgraph->name(),
+              downstream_subgraph->name());
           return;
         }
 
@@ -1815,8 +1831,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
         port_pairs.emplace(exec_output_ports[0], exec_input_ports[0]);
       } else {
         HOLOSCAN_LOG_ERROR("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
-                           upstream_subgraph->instance_name(),
-                           downstream_subgraph->instance_name());
+                           upstream_subgraph->name(),
+                           downstream_subgraph->name());
         return;
       }
     }
@@ -1838,7 +1854,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
   try_auto_resolve_ports(upstream_ports,
                          downstream_ports,
                          fmt::format("Operator '{}'", upstream_op->name()),
-                         fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                         fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                          port_pairs);
 
   add_flow(upstream_op, downstream_subgraph, port_pairs, connector_type);
@@ -1856,7 +1872,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     try_auto_resolve_ports(upstream_ports,
                            downstream_ports,
                            fmt::format("Operator '{}'", upstream_op->name()),
-                           fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                           fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                            port_pairs);
   }
 
@@ -1874,7 +1890,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 
   try_auto_resolve_ports(upstream_ports,
                          downstream_ports,
-                         fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
+                         fmt::format("Subgraph '{}'", upstream_subgraph->name()),
                          fmt::format("Operator '{}'", downstream_op->name()),
                          port_pairs);
 
@@ -1892,7 +1908,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 
     try_auto_resolve_ports(upstream_ports,
                            downstream_ports,
-                           fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
+                           fmt::format("Subgraph '{}'", upstream_subgraph->name()),
                            fmt::format("Operator '{}'", downstream_op->name()),
                            port_pairs);
   }
@@ -1911,8 +1927,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 
   try_auto_resolve_ports(upstream_ports,
                          downstream_ports,
-                         fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
-                         fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                         fmt::format("Subgraph '{}'", upstream_subgraph->name()),
+                         fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                          port_pairs);
 
   add_flow(upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
@@ -1929,8 +1945,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 
     try_auto_resolve_ports(upstream_ports,
                            downstream_ports,
-                           fmt::format("Subgraph '{}'", upstream_subgraph->instance_name()),
-                           fmt::format("Subgraph '{}'", downstream_subgraph->instance_name()),
+                           fmt::format("Subgraph '{}'", upstream_subgraph->name()),
+                           fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                            port_pairs);
   }
 

@@ -17,6 +17,8 @@
 
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 
+#include <cstdlib>
+
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_network_context.hpp"
@@ -49,6 +51,12 @@ void UcxContext::setup(ComponentSpec& spec) {
              "v3.7 and will be removed in v4.0. The new behavior will be equivalent to a "
              "value of `false` here.",
              false);
+  spec.param(shutdown_timeout_ms_,
+             "shutdown_timeout_ms",
+             "Shutdown Timeout (ms)",
+             "Timeout in milliseconds for shutdown operations such as thread joins and pending "
+             "request cancellation (default = 2000).",
+             static_cast<uint64_t>(2000));
   // spec.resource(gpu_device_, "Optional GPU device resource");
 }
 
@@ -94,7 +102,36 @@ void UcxContext::initialize() {
 
     add_arg(Arg("serializer") = entity_serializer);
   }
+
+  // Allow environment variable override for shutdown_timeout_ms.
+  // Note: add_arg appends to args_, and the last arg with a given name takes precedence
+  // during parameter initialization, so this will override any user-provided value.
+  const char* env_timeout = std::getenv("HOLOSCAN_UCX_SHUTDOWN_TIMEOUT_MS");
+  if (env_timeout != nullptr && env_timeout[0] != '\0') {
+    try {
+      uint64_t timeout_ms = std::stoull(env_timeout);
+      add_arg(Arg("shutdown_timeout_ms") = timeout_ms);
+      HOLOSCAN_LOG_DEBUG("UcxContext: shutdown_timeout_ms set to {} from environment variable",
+                         timeout_ms);
+    } catch (const std::exception& e) {
+      HOLOSCAN_LOG_WARN(
+          "UcxContext: Invalid HOLOSCAN_UCX_SHUTDOWN_TIMEOUT_MS value '{}', using default",
+          env_timeout);
+    }
+  }
+
   GXFNetworkContext::initialize();
+}
+
+void UcxContext::initiate_shutdown() {
+  shutting_down_ = true;
+  if (auto* gxf_ucx_context = get()) {
+    gxf_ucx_context->initiate_shutdown();
+  }
+}
+
+bool UcxContext::is_shutting_down() const {
+  return shutting_down_;
 }
 
 }  // namespace holoscan

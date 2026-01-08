@@ -41,7 +41,8 @@ RUN apt-get update \
 
 # Install up to date doxygen for better C++ parsing with a few cases like
 # forward declaration of enums.
-RUN cd /tmp/ \
+RUN if [ $(uname -m) != "x86_64" ]; then echo "Doxygen requires x86_64 architecture"; exit 1; fi \
+    && cd /tmp/ \
     && curl -L -o doxygen-1.9.5.linux.bin.tar.gz 'https://sourceforge.net/projects/doxygen/files/rel-1.9.5/doxygen-1.9.5.linux.bin.tar.gz/download#' \
     && tar xvf doxygen-1.9.5.linux.bin.tar.gz \
     && cd doxygen-1.9.5 \

@@ -44,6 +44,7 @@ from holoscan.core import (
     ResourceBase,
 )
 from holoscan.core._core import Fragment as FragmentBase
+from holoscan.core._core import Subgraph as SubgraphBase
 from holoscan.core._core import Tensor as TensorBase
 
 __all__ = ["Input", "Output", "create_op"]
@@ -331,9 +332,9 @@ def create_op(
 
         def make_class(*args, **kwargs):
             if "fragment" in kwargs:
-                fragment = kwargs.pop("fragment")
-            elif args and isinstance(args[0], FragmentBase):
-                fragment, args = args[0], args[1:]
+                fragment_or_subgraph = kwargs.pop("fragment")
+            elif args and isinstance(args[0], (FragmentBase, SubgraphBase)):
+                fragment_or_subgraph, args = args[0], args[1:]
             else:
                 raise ValueError(
                     "fragment must be provided via kwarg or as the first positional argument"
@@ -346,7 +347,7 @@ def create_op(
             class DynamicOp(Operator):
                 def __init__(
                     self,
-                    fragment: FragmentBase,
+                    fragment: FragmentBase | SubgraphBase,
                     *args,
                     inputs,
                     outputs,
@@ -614,7 +615,12 @@ def create_op(
                             op_output.emit(out_tensors, port_name)
 
             op = DynamicOp(
-                fragment, *args, inputs=inputs, outputs=outputs, op_param=op_param, **kwargs
+                fragment_or_subgraph,
+                *args,
+                inputs=inputs,
+                outputs=outputs,
+                op_param=op_param,
+                **kwargs,
             )
 
             def _to_camel_case(name):

@@ -49,7 +49,7 @@ class PySubgraph : public Subgraph {
   /* Inherit the constructors */
   using Subgraph::Subgraph;
 
-  PySubgraph(py::object subgraph, Fragment* fragment, const std::string& instance_name);
+  PySubgraph(py::object subgraph, Fragment* fragment, const std::string& name);
   ~PySubgraph() override;
 
   /* Trampolines (need one for each virtual function) */

@@ -16,13 +16,13 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_cpm_find.html
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(ucxx 0.44.0
+rapids_cpm_find(ucxx 0.46.0
     GLOBAL_TARGETS ucxx
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
     CPM_ARGS
 
     GITHUB_REPOSITORY rapidsai/ucxx
-    GIT_TAG v0.44.00
+    GIT_TAG v0.46.00
     GIT_SHALLOW TRUE
     SOURCE_SUBDIR cpp
     DOWNLOAD_ONLY TRUE

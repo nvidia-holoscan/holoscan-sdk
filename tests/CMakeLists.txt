@@ -187,6 +187,7 @@ target_link_libraries(DATA_LOGGER_CLASSES_TEST
 # * system tests ----------------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_TEST
+  system/async_data_logger_shutdown_test.cpp
   system/condition_combiner.cpp
   system/cuda_allocators.cpp
   system/cuda_green_context.cpp
@@ -214,6 +215,7 @@ ConfigureTest(
   system/ping_rx_op.cpp
   system/ping_tx_op.cpp
   system/realtime_ping_app.cpp
+  system/queue_size_warning.cpp
   system/receive_as_entity_test.cpp
   system/subgraph_apps.cpp
   system/tensor_compare_op.cpp
@@ -253,6 +255,7 @@ ConfigureTest(
 # * system distributed tests ------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_DISTRIBUTED_TEST
+  system/distributed/async_data_logger_distributed_shutdown_test.cpp
   system/distributed/distributed_app.cpp
   system/distributed/distributed_demosaic_op_app.cpp
   system/distributed/distributed_gxf_operator_app.cpp
@@ -269,6 +272,8 @@ target_link_libraries(SYSTEM_DISTRIBUTED_TEST
   holoscan::ops::bayer_demosaic
   holoscan::ops::gxf_codelet
   holoscan::ops::holoviz
+  holoscan::ops::ping_rx
+  holoscan::ops::ping_tx
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx
 )

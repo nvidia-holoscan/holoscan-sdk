@@ -222,8 +222,14 @@ class GXFExecutor : public holoscan::Executor {
   /// Set up signal handlers for graceful shutdown
   std::function<void(void*, int)> setup_signal_handlers(Fragment* fragment);
 
-  /// Reset the interrupt flags
-  void reset_interrupt_flags();
+  /**
+   * @brief Reset the static interrupt flags and cancel any active force-exit countdown threads.
+   *
+   * This method is needed for unit testing of interrupt handling to ensure clean state between
+   * test cases. It cancels any lingering countdown threads from previous tests and resets all
+   * static interrupt-related flags.
+   */
+  static void reset_interrupt_flags();
 
   /**
    * @brief Register the codec for serialization/deserialization of a custom type.
@@ -484,6 +490,9 @@ class GXFExecutor : public holoscan::Executor {
   static std::atomic<bool> interrupt_requested_;
   static std::atomic<bool> force_exit_countdown_started_;
   static std::atomic<int64_t> first_interrupt_time_ms_;  // Timestamp of first interrupt signal
+  static std::shared_ptr<std::atomic<bool>>
+      active_countdown_flag_;               // Flag to cancel countdown thread
+  static std::mutex countdown_flag_mutex_;  // Protects active_countdown_flag_ access
 };
 
 }  // namespace holoscan::gxf

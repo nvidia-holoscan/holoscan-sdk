@@ -155,7 +155,7 @@
     "cmake.configureArgs": [
         "--log-context",
         "-DFETCHCONTENT_QUIET=Off",
-        "-DHOLOSCAN_USE_CCACHE=On",
+        "-DHOLOSCAN_USE_SCCACHE=On",
         "-DHOLOSCAN_BUILD_LIBTORCH=1",
         "-DHOLOSCAN_BUILD_ORT=1"
         // "--trace",

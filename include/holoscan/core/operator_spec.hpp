@@ -116,6 +116,14 @@ class OperatorSpec : public ComponentSpec {
    *       (DoubleBufferReceiver/UcxReceiver) and condition (MessageAvailableCondition) will use
    *       the queue size for initialization ('capacity' for the connector and 'min_size' for
    *       the condition) if they are not set.
+   *
+   *       Note: For input ports, a queue size greater than 1 will also set the default
+   *       MessageAvailableCondition `min_size` to the same value unless you override the port
+   *       condition. This enables batched execution. Holoscan emits a warning in the
+   *       default-condition case. If you only want buffering without batching, explicitly set
+   *       `min_size=1`. Holoscan plans to introduce an explicit `batch_size` configuration and
+   *       change `size` to control queue capacity only; setting `min_size` explicitly now will
+   *       make future migration straightforward.
    *       Please refer to the [Holoscan SDK User
    * Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#receiving-any-number-of-inputs-c)
    *       to see how to receive any number of inputs in C++.

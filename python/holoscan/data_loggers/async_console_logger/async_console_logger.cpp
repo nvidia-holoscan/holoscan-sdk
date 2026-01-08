@@ -68,7 +68,8 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
       size_t large_data_max_queue_size = 1000, int64_t large_data_worker_sleep_time = 200000,
       std::variant<AsyncQueuePolicy, std::string> large_data_queue_policy =
           AsyncQueuePolicy::kReject,
-      bool enable_large_data_queue = true, const std::string& name = "async_console_logger")
+      bool enable_large_data_queue = true, int64_t shutdown_wait_period_ms = -1,
+      const std::string& name = "async_console_logger")
       : AsyncConsoleLogger(
             ArgList{Arg{"log_inputs", log_inputs},
                     Arg{"log_outputs", log_outputs},
@@ -81,7 +82,8 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
                     Arg{"worker_sleep_time", worker_sleep_time},
                     Arg{"large_data_max_queue_size", large_data_max_queue_size},
                     Arg{"large_data_worker_sleep_time", large_data_worker_sleep_time},
-                    Arg{"enable_large_data_queue", enable_large_data_queue}}) {
+                    Arg{"enable_large_data_queue", enable_large_data_queue},
+                    Arg{"shutdown_wait_period_ms", shutdown_wait_period_ms}}) {
     if (serializer) {
       this->add_arg(Arg{"serializer", serializer});
     }
@@ -137,6 +139,7 @@ PYBIND11_MODULE(_async_console_logger, m) {
                     int64_t,
                     std::variant<AsyncQueuePolicy, std::string>,
                     bool,
+                    int64_t,
                     const std::string&>(),
            "fragment"_a,
            "serializer"_a = py::none(),
@@ -155,6 +158,7 @@ PYBIND11_MODULE(_async_console_logger, m) {
            "large_data_worker_sleep_time"_a = 50000,
            "large_data_queue_policy"_a = AsyncQueuePolicy::kReject,
            "enable_large_data_queue"_a = true,
+           "shutdown_wait_period_ms"_a = -1,
            "name"_a = "async_console_logger"s,
            doc::AsyncConsoleLogger::doc_AsyncConsoleLogger);
 }  // PYBIND11_MODULE NOLINT

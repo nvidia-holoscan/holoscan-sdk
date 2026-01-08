@@ -516,11 +516,16 @@ class InputContext {
     const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
 
-    // Check if any CUDA streams were received on this input port
-    auto stream_for_logging = get_first_stream_for_logging(port_name);
+    // Lazily retrieve CUDA stream only if needed for logging
+    bool stream_checked = false;
+    std::optional<cudaStream_t> stream_for_logging = std::nullopt;
 
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
+        if (!stream_checked) {
+          stream_for_logging = get_first_stream_for_logging(port_name);
+          stream_checked = true;
+        }
         PROF_SCOPED_EVENT(op_->id(), event_log_tensor);
         data_logger->log_tensor_data(
             tensor, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput, stream_for_logging);
@@ -534,11 +539,16 @@ class InputContext {
     const std::string unique_id{get_unique_id(op_, port_name)};
     auto metadata_ptr = op_->is_metadata_enabled() ? op_->metadata() : nullptr;
 
-    // Check if any CUDA streams were received on this input port
-    auto stream_for_logging = get_first_stream_for_logging(port_name);
+    // Lazily retrieve CUDA stream only if needed for logging
+    bool stream_checked = false;
+    std::optional<cudaStream_t> stream_for_logging = std::nullopt;
 
     for (auto& data_logger : op_->fragment()->data_loggers()) {
       if (data_logger->should_log_input()) {
+        if (!stream_checked) {
+          stream_for_logging = get_first_stream_for_logging(port_name);
+          stream_checked = true;
+        }
         PROF_SCOPED_EVENT(op_->id(), event_log_tensormap);
         data_logger->log_tensormap_data(
             tensor_map, unique_id, -1, metadata_ptr, IOSpec::IOType::kInput, stream_for_logging);

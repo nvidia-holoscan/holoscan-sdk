@@ -50,6 +50,10 @@ fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
 Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
 
+GDRCopy (https://developer.nvidia.com/gdrcopy)
+Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
+Licensed under MIT (https://github.com/NVIDIA/gdrcopy/blob/master/LICENSE)
+
 GLFW (https://www.glfw.org/)
 Copyright (c) 2002-2006 Marcus Geelnard
 Copyright (c) 2006-2019 Camilla Löwy
@@ -311,7 +315,7 @@ Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.17.0/LICENSE
 
 UCXX (https://github.com/rapidsai/ucxx)
 Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/rapidsai/ucxx/blob/v0.44.00/LICENSE)
+Licensed under BSD-3-clause (https://github.com/rapidsai/ucxx/blob/v0.46.00/LICENSE)
 
 v4l-utils (https://packages.ubuntu.com/jammy/v4l-utils)
 2006-2010 Mauro Carvalho Chehab <mchehab@redhat.com>

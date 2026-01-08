@@ -86,6 +86,14 @@ class ArgumentSetter {
   static void set_param(ParameterWrapper& param_wrap, Arg& arg) {
     auto& instance = get_instance();
     const std::type_index index = std::type_index(param_wrap.type());
+    HOLOSCAN_LOG_TRACE(
+        "set_param: arg_name='{}', param_type='{}' (type_index={}), arg_type='{}', "
+        "arg_value_type='{}'",
+        arg.name(),
+        param_wrap.type().name(),
+        index.name(),
+        arg.arg_type().to_string(),
+        arg.value().type().name());
     const SetterFunc& func = instance.get_argument_setter(index);
     bool success = func(param_wrap, arg);
     if (!success) {
@@ -165,6 +173,13 @@ class ArgumentSetter {
     add_argument_setter<uint16_t>();
     add_argument_setter<uint32_t>();
     add_argument_setter<uint64_t>();
+    // Add long/long long types that may differ from int64_t/uint64_t across platforms
+    // On Linux: int64_t==long, uint64_t==unsigned long, size_t==unsigned long
+    // On Windows: int64_t==long long, uint64_t==unsigned long long, size_t==unsigned long long
+    add_argument_setter<long>();
+    add_argument_setter<unsigned long>();
+    add_argument_setter<long long>();
+    add_argument_setter<unsigned long long>();
     add_argument_setter<float>();
     add_argument_setter<double>();
     add_argument_setter<std::complex<float>>();

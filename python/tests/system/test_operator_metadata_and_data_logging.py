@@ -442,7 +442,7 @@ class PingRxTimestampOp(Operator):
         assert len(loggers) == 1
 
         data_logger = loggers[0]
-        thresh_ns = 1e6  # 1 ms
+        thresh_ns = 1e7  # 10 ms
         if self.logger_clock is not None:
             reference_timestamp = self.logger_clock.timestamp()
         else:

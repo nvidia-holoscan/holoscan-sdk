@@ -9,7 +9,7 @@
         "dockerfile": "Dockerfile",
         "args": {
             "BUILDKIT_INLINE_CACHE": "1", // Enable Docker BuildKit cache
-            "HOLOSCAN_BUILD_IMAGE": "${localEnv:HOLOSCAN_BUILD_IMAGE}", // Base image name
+            "HOLOSCAN_BUILD_IMAGE": "${localEnv:HOLOSCAN_BUILD_IMAGE}" // Base image name
         }
         // buildcontainer.json doesn't support build.secrets field
         // (https://github.com/microsoft/vscode-remote-release/issues/4841)
@@ -35,7 +35,7 @@
         // "--group-add=video",
         // "--device=/dev/video0:/dev/video0",
         "--cap-add=SYS_PTRACE",
-        "--security-opt=seccomp=unconfined",
+        "--security-opt=seccomp=unconfined"
     ],
     "containerEnv": {
         // X11 support
@@ -51,12 +51,14 @@
         // This is necessary to prevent memory overuse during the SDK build process.
         // The `CMAKE_BUILD_PARALLEL_LEVEL` environment variable is set by the `run vscode` command.
         "CMAKE_BUILD_PARALLEL_LEVEL": "${localEnv:CMAKE_BUILD_PARALLEL_LEVEL}",
+        // Make sure the SCCache directory is the same as the host machine, so it is persistent across container restarts.
+        "SCCACHE_DIR": "${localEnv:SCCACHE_DIR:/workspace/holoscan-sdk/public/.cache/sccache/}"
     },
     "mounts": [
         // X11 support
         "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
         // Wayland support
-        "source=${localEnv:XDG_RUNTIME_DIR},target=${localEnv:XDG_RUNTIME_DIR},type=bind,consistency=cached",
+        "source=${localEnv:XDG_RUNTIME_DIR},target=${localEnv:XDG_RUNTIME_DIR},type=bind,consistency=cached"
     ],
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace/holoscan-sdk,type=bind,consistency=cached",
     "workspaceFolder": "/workspace/holoscan-sdk",
@@ -80,7 +82,7 @@
                 "shd101wyy.markdown-preview-enhanced",
                 "cschlosser.doxdocgen",
                 "mine.cpplint",
-                "benjamin-simmonds.pythoncpp-debug", // Python/C++ debugging
+                "benjamin-simmonds.pythoncpp-debug" // Python/C++ debugging
             ]
         }
     },

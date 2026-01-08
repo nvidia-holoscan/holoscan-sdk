@@ -201,6 +201,12 @@ class AsyncDataLoggerBackend {
  * Both queues should handle logging the `MetadataDictionary` when Holoscan's metadata feature is
  * enabled.
  *
+ * The `shutdown_wait_period_ms` parameter controls how long the logger waits for remaining messages
+ * in the queue(s) to be processed during shutdown. A negative value (default) means wait
+ * indefinitely, 0 means don't wait at all, and a positive value specifies the timeout in
+ * milliseconds. The `HOLOSCAN_ASYNC_LOGGER_SHUTDOWN_WAIT_MS` environment variable can be used to
+ * override this value.
+ *
  * Inherited parameters from DataLoggerResource:
  * - **log_inputs**: bool (optional, default: true)
  * - **log_outputs**: bool (optional, default: true)
@@ -344,6 +350,7 @@ class AsyncDataLoggerResource : public DataLoggerResource {
   Parameter<AsyncQueuePolicy> large_data_queue_policy_;  // Default: kReject
   Parameter<bool>
       enable_large_data_queue_;  // Default: true (enable separate queue for large data processing)
+  Parameter<int64_t> shutdown_wait_period_ms_;  // Default: -1 (wait indefinitely)
 
  private:
   // Lock-free queues
@@ -358,6 +365,9 @@ class AsyncDataLoggerResource : public DataLoggerResource {
 
   // Track backend shutdown to prevent multiple shutdown calls
   std::atomic<bool> backend_shutdown_called_{false};
+
+  // Track when shutdown drain timeout has expired
+  std::atomic<bool> shutdown_drain_timeout_expired_{false};
 
   // Statistics (separate for each queue)
   std::atomic<size_t> data_dropped_{0};

@@ -37,9 +37,6 @@ Required parameters and related features available with the Holoscan Inference M
             - CUDA and CPU based inference supported both on x86_64 and aarch64.
             - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
             - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
-            - Libtorch is included in the Holoscan NGC container, extracted from the [PyTorch wheel](https://pytorch.org/get-started/locally/) (from [Jetson AI Lab PyPI](https://pypi.jetson-ai-lab.dev/jp6) for JP6 and IGX OS 1.x iGPU). To use the Holoscan SDK torch backend outside of these containers, we can either
-                - install the `torch` wheel in your environment (refer to Dockerfile for versions) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=$(python -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).parent / "lib")'):$LD_LIBRARY_PATH`).
-                - extract the `libtorch` installation from the Holoscan NGC container on your system (e.g. `docker cp $(docker create --rm nvcr.io/nvidia/clara-holoscan/holoscan:v3.8.0-dgpu):/opt/libtorch ~/libtorch`) and append the path to its libraries to `LD_LIBRARY_PATH` (e.g. `export LD_LIBRARY_PATH=~/libtorch/<VERSION>/lib:$LD_LIBRARY_PATH`).
             - Torch backend expects input models to be in `torchscript` format.
                 - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
                 - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
@@ -133,7 +130,7 @@ Required parameters and related features available with the Holoscan Inference M
             ```
         - This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
     - `dynamic_input_dims`: This parameter is optional and if activated, allows the Inference Operator to ingest dynamic inputs. The parameter is supported for all the backends. It must be set to `true` in the inference parameter set.
-        - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested. 
+        - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested.
         - For `onnx` and `torch` backend, maximum allowed buffer size in bytes for each input is 2GB.
         - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `"1,1,1"` will be used.
         - Maximum allowed batch size for `tensorRT` backend is 256
@@ -182,6 +179,28 @@ inference:
     transmit_on_cuda: true
     is_engine_path: false
 ```
+
+## Libtorch Installation
+
+The `torch` backend ingests `torchscript` models using the C++ API in PyTorch (libtorch).
+
+Libtorch is included in the [Holoscan build container][dockerfile] and the [NGC dev container][container], within the
+[PyTorch wheel](https://pytorch.org/get-started/locally/) (sourced [here for JP6/IGX OS 1.x iGPU](https://pypi.jetson-ai-lab.io/jp6/cu126)).
+
+To use the Holoscan SDK torch backend outside of these containers, install the `torch` wheel in your environment (refer to our [source Dockerfile][dockerfile] for compatible versions) and append the path to its libraries to `LD_LIBRARY_PATH`:
+
+```bash
+TORCH_LIB_DIR=$(python3 -c 'import pathlib, torch; print(pathlib.Path(torch.__file__).parent / "lib")')
+export LD_LIBRARY_PATH="$TORCH_LIB_DIR:$LD_LIBRARY_PATH"
+```
+
+:::{warning}
+PyTorch wheels pull their own dependencies for CUDA and other libraries which might conflict with system libraries versions you prefer to use.
+Inspect the Holoscan SDK [source Dockerfile][dockerfile] if you run into issues setting up your environment to use both the Holoscan SDK and PyTorch.
+:::
+
+[dockerfile]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/Dockerfile
+[container]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan
 
 ## Torch Backend Model Configuration
 

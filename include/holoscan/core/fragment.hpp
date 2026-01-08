@@ -1067,25 +1067,25 @@ class Fragment : public FragmentServiceProvider {
    * qualified names to the Fragment's main graph.
    *
    * @tparam SubgraphT The subgraph class type (must inherit from Subgraph)
-   * @param instance_name Unique name for this instance (used for operator qualification)
+   * @param name Unique name for this instance (used for operator qualification)
    * @param args Additional arguments to pass to the subgraph constructor
    * @return Shared pointer to the composed Subgraph
    */
   template <typename SubgraphT, typename... ArgsT>
-  std::shared_ptr<SubgraphT> make_subgraph(const std::string& instance_name, ArgsT&&... args) {
-    // Check for duplicate subgraph instance names
-    if (subgraph_instance_names_.find(instance_name) != subgraph_instance_names_.end()) {
+  std::shared_ptr<SubgraphT> make_subgraph(const std::string& name, ArgsT&&... args) {
+    // Check for duplicate subgraph names
+    if (subgraph_names_.find(name) != subgraph_names_.end()) {
       throw std::runtime_error(
-          fmt::format("Fragment::make_subgraph: Duplicate subgraph instance name '{}'. "
-                      "Each subgraph instance must have a unique name within the same fragment.",
-                      instance_name));
+          fmt::format("Fragment::make_subgraph: Duplicate subgraph name '{}'. "
+                      "Each subgraph must have a unique name within the same fragment.",
+                      name));
     }
 
-    // Register the instance name
-    subgraph_instance_names_.insert(instance_name);
+    // Register the name
+    subgraph_names_.insert(name);
 
-    // Create Subgraph with Fragment* and instance_name, plus any additional args
-    auto subgraph = std::make_shared<SubgraphT>(this, instance_name, std::forward<ArgsT>(args)...);
+    // Create Subgraph with Fragment* and name, plus any additional args
+    auto subgraph = std::make_shared<SubgraphT>(this, name, std::forward<ArgsT>(args)...);
 
     // Compose immediately - operators added directly to Fragment's main graph
     if (!subgraph->is_composed()) {
@@ -1387,6 +1387,7 @@ class Fragment : public FragmentServiceProvider {
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
+  friend class AppWorker;  // to access shutdown_data_loggers() from signal handler
   friend class gxf::GXFExecutor;
   friend class holoscan::ComponentBase;  // Allow ComponentBase to access internal setup
   friend class GPUResidentAccessor;      // Allow GPUResidentAccessor to access
@@ -1414,7 +1415,13 @@ class Fragment : public FragmentServiceProvider {
   /// Cleanup helper that will be called by the executor prior to destroying any backend context
   void reset_backend_objects();
 
-  /// Shutdown data loggers to ensure async loggers complete before GXF context destruction.
+  /**
+   * @brief Shutdown data loggers to ensure async loggers complete before GXF context destruction.
+   *
+   * This method is thread-safe and idempotent - multiple calls will block until the first
+   * completes, then return immediately. This ensures proper synchronization between
+   * signal handlers and normal shutdown paths.
+   */
   void shutdown_data_loggers();
 
   /**
@@ -1562,6 +1569,8 @@ class Fragment : public FragmentServiceProvider {
   std::optional<MetadataPolicy> metadata_policy_ = std::nullopt;
   std::shared_ptr<Operator> start_op_;  ///< The start operator of the fragment (optional).
   std::vector<std::shared_ptr<DataLogger>> data_loggers_;  ///< Data loggers (optional)
+  std::mutex data_loggers_shutdown_mutex_;  ///< Mutex to serialize shutdown_data_loggers() calls
+  bool data_loggers_shutdown_complete_{false};  ///< Flag to track if shutdown has completed
 
   // Service registry members
   mutable std::shared_mutex
@@ -1576,8 +1585,8 @@ class Fragment : public FragmentServiceProvider {
   // The default green context pool in the fragment.
   std::vector<std::shared_ptr<CudaGreenContextPool>> green_context_pools_;
 
-  // Track subgraph instance names to detect duplicates
-  std::unordered_set<std::string> subgraph_instance_names_;
+  // Track subgraph names to detect duplicates
+  std::unordered_set<std::string> subgraph_names_;
 
  private:
   bool verify_gpu_resident_connections(const std::shared_ptr<Operator>& upstream_op,

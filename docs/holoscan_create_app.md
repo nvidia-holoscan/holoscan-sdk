@@ -686,6 +686,8 @@ app->scheduler(scheduler);
 app->run();
 ```
 
+Note that an explicit static cast to the `int64_t` type of the underlying `Parameter<int64_t> worker_thread_number_` is shown here for "worker_thread_number". As of Holoscan v3.9, this explicit static cast is no longer required and any integer type would be automatically cast to the required parameter type (as long as the value is within the representable range).
+
 ````
 
 ````{tab-item} Python
@@ -1151,8 +1153,8 @@ The APIs used to add operators, conditions and resources to a subgraph look the 
 
 class PingTxSubgraph : public holoscan::Subgraph {
  public:
-  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     // Create operators within the subgraph
@@ -1170,8 +1172,8 @@ class PingTxSubgraph : public holoscan::Subgraph {
 ```
 
 **Key points:**
-- The constructor takes a `Fragment*` and `instance_name` which are passed to the base class
-- Operators created with `make_operator` are automatically qualified with the instance name. Specifically, the operator added to the fragment via a subgraph will have a name that is the subgraph `instance_name` followed by an underscore and then the operator name provided within `Subgraph::compose`.
+- The constructor takes a `Fragment*` and `name` which are passed to the base class
+- Operators created with `make_operator` are automatically qualified with the subgraph name. Specifically, the operator added to the fragment via a subgraph will have a name that is the subgraph `name` followed by an underscore and then the operator name provided within `Subgraph::compose`.
 - `add_flow` defines internal connections between operators (and/or nested subgraphs)
 - `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
 
@@ -1184,8 +1186,8 @@ class PingTxSubgraph : public holoscan::Subgraph {
 :name: holoscan-create-subgraph-python
 
 class PingTxSubgraph(Subgraph):
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create operators within the subgraph
@@ -1201,8 +1203,8 @@ class PingTxSubgraph(Subgraph):
 ```
 
 **Key points:**
-- The `__init__` method receives `fragment` and `instance_name` and passes them to the base class
-- Operators are created with the subgraph (`self`) as their fragment. An operator added to the fragment via a subgraph will have a name that is the subgraph `instance_name` followed by an underscore and then the operator name provided within `Subgraph.compose`.
+- The `__init__` method receives `fragment` and `name` and passes them to the base class
+- Operators are created with the subgraph (`self`) as their fragment. An operator added to the fragment via a subgraph will have a name that is the subgraph `name` followed by an underscore and then the operator name provided within `Subgraph.compose`.
 - `add_flow` defines internal connections between operators (and/or nested subgraphs)
 - `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
 
@@ -1360,8 +1362,8 @@ Subgraphs can contain other subgraphs, enabling hierarchical composition. Nested
 
 class NestedSubgraph : public holoscan::Subgraph {
  public:
-  NestedSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  NestedSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     // Create a nested subgraph
@@ -1389,8 +1391,8 @@ class NestedSubgraph : public holoscan::Subgraph {
 :name: holoscan-nested-subgraph-python
 
 class NestedSubgraph(Subgraph):
-    def __init__(self, fragment, instance_name):
-        super().__init__(fragment, instance_name)
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
 
     def compose(self):
         # Create a nested subgraph

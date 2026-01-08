@@ -103,8 +103,8 @@ class MultiPingRxOp : public Operator {
  */
 class PingTxSubgraph : public holoscan::Subgraph {
  public:
-  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  PingTxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -131,8 +131,8 @@ class PingTxSubgraph : public holoscan::Subgraph {
  */
 class MultiPingRxSubgraph : public holoscan::Subgraph {
  public:
-  MultiPingRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  MultiPingRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -153,8 +153,8 @@ class MultiPingRxSubgraph : public holoscan::Subgraph {
  */
 class PingRxSubgraph : public holoscan::Subgraph {
  public:
-  PingRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  PingRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -175,8 +175,8 @@ class PingRxSubgraph : public holoscan::Subgraph {
  */
 class NestedTxSubgraph : public holoscan::Subgraph {
  public:
-  NestedTxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  NestedTxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -203,8 +203,8 @@ class NestedTxSubgraph : public holoscan::Subgraph {
  */
 class NestedRxSubgraph : public holoscan::Subgraph {
  public:
-  NestedRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  NestedRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;
@@ -231,8 +231,8 @@ class NestedRxSubgraph : public holoscan::Subgraph {
  */
 class DoubleNestedRxSubgraph : public holoscan::Subgraph {
  public:
-  DoubleNestedRxSubgraph(holoscan::Fragment* fragment, const std::string& instance_name)
-      : holoscan::Subgraph(fragment, instance_name) {}
+  DoubleNestedRxSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
 
   void compose() override {
     using namespace holoscan;

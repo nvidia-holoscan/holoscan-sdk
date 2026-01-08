@@ -171,24 +171,19 @@ TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithUnrecogni
 
   // test that an warning is logged if an unknown argument is provided
   testing::internal::CaptureStderr();
-  EXPECT_THROW(condition->initialize(), std::runtime_error);
+  condition->initialize();
 
-  /**
-  Example messages:
-    [error] [gxf_component.cpp:130] Initializing with null GXF Entity ID for component
-  'noname_condition' (type: 'nvidia::gxf::CountSchedulingTerm') [error]
-  [argument_setter-inl.hpp:359] Bad any cast while setting argument 'count': expected 'l', got 'i'.
-  bad any_cast [error] [component.cpp:88] Component 'noname_condition': failed to set argument -
-  Argument 'count': Failed to set parameter 'count' of type 'l' (arg_type: int32_t) [warning]
-  [component.cpp:67] component 'noname_condition': Arg 'undefined_arg' not found in spec_.params().
-  The defined parameters are (count).
-  **/
+  // Example messages:
+  //   [error] [gxf_component.cpp:130] Initializing with null GXF Entity ID for component
+  //     'noname_condition' (type: 'nvidia::gxf::CountSchedulingTerm')
+  //   [warning] [component.cpp:67] component 'noname_condition': Arg 'undefined_arg' not found in
+  //     spec_.params(). The defined parameters are (count).
+  //   [warning] [gxf_component.cpp:175] Skipping setting GXF parameter 'count' for component
+  //     'noname_condition' (type 'nvidia::gxf::CountSchedulingTerm') because the component is not
+  //     yet attached to a GraphEntity
 
   std::string error_msg = testing::internal::GetCapturedStderr();
 
-  EXPECT_TRUE(error_msg.find("Failed to set parameter 'count'") != std::string::npos)
-      << "=== LOG ===\n"
-      << error_msg << "\n===========\n";
   EXPECT_TRUE(error_msg.find("Arg 'undefined_arg' not found in spec_.params().") !=
               std::string::npos)
       << "=== LOG ===\n"

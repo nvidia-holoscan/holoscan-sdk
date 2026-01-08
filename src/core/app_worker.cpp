@@ -60,7 +60,22 @@ AppWorker::AppWorker(Application* app) : app_(app) {
   }
 }
 
-AppWorker::~AppWorker() = default;
+AppWorker::~AppWorker() {
+  // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
+  if (shutdown_complete_) {
+    shutdown_complete_->store(true);
+  }
+
+  // Unregister signal handlers to prevent dangling 'this' pointer issues
+  // if signals are raised after this AppWorker is destroyed
+  if (app_) {
+    void* context = app_->executor().context();
+    if (context) {
+      SignalHandler::unregister_signal_handler(context, SIGINT);
+      SignalHandler::unregister_signal_handler(context, SIGTERM);
+    }
+  }
+}
 
 CLIOptions* AppWorker::options() {
   if (app_ == nullptr) {
@@ -189,7 +204,7 @@ bool AppWorker::execute_fragments(
   }
 
   // Launch fragments
-  need_notify_execution_finished_ = true;  // Set the flag to true
+  need_notify_execution_finished_.store(true);  // Set the flag to true (atomic)
   std::vector<std::shared_future<void>> futures;
   futures.reserve(scheduled_fragments.size());
 
@@ -208,14 +223,21 @@ bool AppWorker::execute_fragments(
     futures.push_back(shared_future);
   }
 
-  auto future = std::async(
-      std::launch::async,
-      [this, futures = std::move(futures), &notify_flag = need_notify_execution_finished_]() {
+  // Capture notify_flag by pointer (not reference) so we can safely check it even if there's
+  // a race with the main thread setting it to false. We use an atomic load to read it safely.
+  // Note: We capture the address rather than a reference to make the capture semantics clearer
+  // and to allow for potential future use of atomic operations.
+  auto* notify_flag_ptr = &need_notify_execution_finished_;
+  auto future =
+      std::async(std::launch::async, [this, futures = std::move(futures), notify_flag_ptr]() {
         for (auto& future_obj : futures) {
           future_obj.wait();
         }
 
-        if (notify_flag) {
+        // Check the flag atomically - if it's still true, notify the server that execution
+        // finished. The main thread may set this to false during forced termination to prevent
+        // duplicate notifications.
+        if (notify_flag_ptr->load()) {
           submit_message(
               WorkerMessage{AppWorker::WorkerMessageCode::kNotifyWorkerExecutionFinished, {}});
         }
@@ -288,8 +310,8 @@ void AppWorker::process_message_queue() {
         }
         terminate_scheduled_fragments();
         // Set the flag to false because the app driver already knows the worker has been
-        // terminated.
-        need_notify_execution_finished_ = false;
+        // terminated. Use atomic store to synchronize with the async executor task.
+        need_notify_execution_finished_.store(false);
         if (worker_server_) {
           worker_server_->stop();
           // Do not call 'worker_server_->wait()' as current thread is the worker server thread
@@ -320,13 +342,36 @@ bool AppWorker::terminate_scheduled_fragments() {
     try {
       if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
         timeout = ebs->stop_on_deadlock_timeout();
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': EventBasedScheduler::stop_on_deadlock_timeout() returned {} ms for "
+            "watchdog calculation",
+            fragment->name(),
+            timeout);
       } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
         timeout = mts->stop_on_deadlock_timeout();
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': MultiThreadScheduler::stop_on_deadlock_timeout() returned {} ms for "
+            "watchdog calculation",
+            fragment->name(),
+            timeout);
       } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
         timeout = gs->stop_on_deadlock_timeout();
+        HOLOSCAN_LOG_DEBUG(
+            "Fragment '{}': GreedyScheduler::stop_on_deadlock_timeout() returned {} ms for "
+            "watchdog "
+            "calculation",
+            fragment->name(),
+            timeout);
       }
-    } catch (const std::runtime_error&) {
+    } catch (const std::runtime_error& e) {
       // Parameter not set on scheduler, try environment variable
+      HOLOSCAN_LOG_WARN(
+          "Fragment '{}': Exception when reading stop_on_deadlock_timeout for watchdog "
+          "calculation: "
+          "{}. Trying environment variable or using default {} ms",
+          fragment->name(),
+          e.what(),
+          timeout);
       if (app_) {
         auto env_result = app_->get_stop_on_deadlock_timeout_env();
         if (env_result.has_value()) {
@@ -352,6 +397,18 @@ bool AppWorker::terminate_scheduled_fragments() {
       worker_shutdown_timeout_ms_,
       scheduled_fragments_.size(),
       max_stop_on_deadlock_timeout);
+
+  // Initiate UCX shutdown on all scheduled fragments before stopping execution.
+  // This signals the UCX threads to exit gracefully and causes connection errors
+  // during shutdown to be treated as expected (not fatal errors).
+  for (auto& fragment : scheduled_fragments_) {
+    auto network_context = fragment->network_context();
+    if (network_context) {
+      if (auto* ucx_context = dynamic_cast<UcxContext*>(network_context.get())) {
+        ucx_context->initiate_shutdown();
+      }
+    }
+  }
 
   while (!scheduled_fragments_.empty()) {
     // Find current root fragments scheduled on this worker
@@ -421,13 +478,31 @@ bool AppWorker::terminate_scheduled_fragments() {
         try {
           if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
             stop_on_deadlock_timeout = ebs->stop_on_deadlock_timeout();
+            HOLOSCAN_LOG_DEBUG(
+                "Fragment '{}': EventBasedScheduler::stop_on_deadlock_timeout() returned {} ms",
+                root_fragment->name(),
+                stop_on_deadlock_timeout);
           } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
             stop_on_deadlock_timeout = mts->stop_on_deadlock_timeout();
+            HOLOSCAN_LOG_DEBUG(
+                "Fragment '{}': MultiThreadScheduler::stop_on_deadlock_timeout() returned {} ms",
+                root_fragment->name(),
+                stop_on_deadlock_timeout);
           } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
             stop_on_deadlock_timeout = gs->stop_on_deadlock_timeout();
+            HOLOSCAN_LOG_DEBUG(
+                "Fragment '{}': GreedyScheduler::stop_on_deadlock_timeout() returned {} ms",
+                root_fragment->name(),
+                stop_on_deadlock_timeout);
           }
-        } catch (const std::runtime_error&) {
+        } catch (const std::runtime_error& e) {
           // Parameter not set on scheduler, try environment variable
+          HOLOSCAN_LOG_WARN(
+              "Fragment '{}': Exception when reading stop_on_deadlock_timeout from scheduler: {}. "
+              "Trying environment variable or using default {} ms",
+              root_fragment->name(),
+              e.what(),
+              stop_on_deadlock_timeout);
           if (app_) {
             auto env_result = app_->get_stop_on_deadlock_timeout_env();
             if (env_result.has_value()) {
@@ -639,8 +714,9 @@ void AppWorker::setup_signal_handlers() {
         // Terminate fragments
         terminate_scheduled_fragments();
 
-        // Set the flag to false to avoid notification race
-        need_notify_execution_finished_ = false;
+        // Set the flag to false to avoid notification race.
+        // Use atomic store to synchronize with the async executor task.
+        need_notify_execution_finished_.store(false);
 
         // Notify the driver that the worker is cancelled
         worker_server_->notify_worker_execution_finished(AppWorkerTerminationCode::kCancelled);
@@ -648,18 +724,43 @@ void AppWorker::setup_signal_handlers() {
         worker_server_->stop();
       }
 
+      // Shutdown data loggers on all scheduled fragments BEFORE starting watchdog countdown
+      // to ensure async loggers have time to drain their queues
+      for (const auto& fragment : scheduled_fragments_) {
+        if (fragment && !fragment->data_loggers().empty()) {
+          HOLOSCAN_LOG_INFO(
+              "Fragment '{}': Shutting down {} data logger(s) before watchdog countdown...",
+              fragment->name(),
+              fragment->data_loggers().size());
+          fragment->shutdown_data_loggers();
+          HOLOSCAN_LOG_INFO("Fragment '{}': Data logger shutdown complete.", fragment->name());
+        }
+      }
+
       // Create a watchdog thread to ensure we exit even if clean shutdown hangs
-      std::thread([this, signum]() {
+      // Capture shutdown_complete_ by value (shared_ptr) so it remains valid after AppWorker
+      // destruction
+      auto shutdown_flag = shutdown_complete_;
+      auto timeout_ms = worker_shutdown_timeout_ms_;
+      std::thread([shutdown_flag, timeout_ms, signum]() {
         // Wait for a reasonable time for clean shutdown
-        std::this_thread::sleep_for(std::chrono::milliseconds(worker_shutdown_timeout_ms_));
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
+
+        // Check if shutdown completed successfully before forcing exit
+        if (shutdown_flag && shutdown_flag->load()) {
+          return;  // Clean shutdown completed, don't force exit
+        }
 
         HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after {} ms. Forcing exit...",
-                           worker_shutdown_timeout_ms_);
+                           timeout_ms);
         std::signal(signum, SIG_DFL);
         std::raise(signum);
       }).detach();
     }).detach();
   };
+
+  // Initialize shutdown flag for watchdog cancellation
+  shutdown_complete_ = std::make_shared<std::atomic<bool>>(false);
 
   SignalHandler::register_signal_handler(app_->executor().context(), SIGINT, sig_handler);
   SignalHandler::register_signal_handler(app_->executor().context(), SIGTERM, sig_handler);
