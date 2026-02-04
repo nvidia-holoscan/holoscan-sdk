@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,7 +95,7 @@ std::vector<std::string>& CLIParser::parse(std::vector<std::string>& argv) {
         HOLOSCAN_LOG_WARN(
             "Unable to extract filename from app_name: {}. Exception: {}", app_name, e.what());
       }
-      app_.name(app_name);
+      app_.name(std::move(app_name));
     }
 
     // CLI::App::parse() accepts the arguments in the reverse order

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include <cuda/cuda_service.hpp>
@@ -325,8 +326,8 @@ TEST_P(PrimitiveTopology, Primitive) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareColorResultCRC32(color_crc);
-  CompareDepthResultCRC32(depth_crc);
+  CompareColorResultCRC32(std::move(color_crc));
+  CompareDepthResultCRC32(std::move(depth_crc));
 }
 
 INSTANTIATE_TEST_SUITE_P(
@@ -498,7 +499,7 @@ TEST_P(DepthMapRenderMode, DepthMap) {
 
   EXPECT_NO_THROW(viz::End());
 
-  CompareColorResultCRC32(crc);
+  CompareColorResultCRC32(std::move(crc));
 }
 
 INSTANTIATE_TEST_SUITE_P(GeometryLayer, DepthMapRenderMode,

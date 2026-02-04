@@ -55,6 +55,11 @@ The overall readiness of an operator to execute will be determined by AND combin
 When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific {cpp:class}`~holoscan::Scheduler` being used by the application. For example, the {py:class}`~holoscan.schedulers.GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the {py:class}`~holoscan.schedulers.EventBasedScheduler` and {py:class}`~holoscan.schedulers.MultiThreadScheduler` can have multiple worker threads that allow operators to execute in parallel.
 ````
 `````
+
+:::{note}
+When using `kWaitEvent` / `WAIT_EVENT`, your condition must call `notify_scheduler()` ({cpp:func}`C++ <holoscan::Condition::notify_scheduler>`/{py:func}`Python <holoscan.core.Condition.notify_scheduler>`) when the asynchronous event completes to wake the scheduler. This is the mechanism used by `CudaStreamCondition` and `AsynchronousCondition`. See the {ref}`event-based-conditions` section below for details on implementing event-based conditions.
+:::
+
 #### Creating a custom condition (C++)
 
 When creating a native `Condition` ({cpp:class}`C++ <holoscan::Condition>`/{py:class}`Python <holoscan.core.Condition>`), one will typically need to override the following base component class methods
@@ -294,7 +299,7 @@ The `setup` method of `NativePeriodicCondition` defines a single parameter named
 
 In defining the `initialize` method, note that we start by calling `initialize` ({cpp:func}`C++ <holoscan::Condition::initialize>`/{py:func}`Python <holoscan.core.Condition.initialize>`) so that we can get the value for the built in "recess_period" parameter. This initialize method then sets the initial state of the private member variables for this operator.
 
-The `check` method is implemented to set `type` to `SchedulingStatusType::kReady` (C++) / `SchedulingStatusType.READY` (Python) if the specified period has elapsed. Otherwise, it sets the `target_timestamp` and sets `type` to `SchedulingStatusType::kWaitTime` (C++) / `SchedulingStatusType.WAIT_TIME` (Python). In this case `kWaitTime` is used because we know specifically what the target timestamp is. Note that for other types of conditions, we may not know the specific time at which the condition will be satisfied. In such a case where a target timestamp isn't known, one should instead set the status to `kWait` (C++) / `WAIT` (Python) and would not need to set `target_timestamp`. There is also a `kWaitEvent` (C++) / `WAIT_EVENT` (Python) state which can be used, but this is less common. Currently only the built-in `AsynchronousCondition` uses this status type. Finally, if we wanted to indicate that an operator would never execute again, we would return `kNever` (C++) / `NEVER` (Python) (a concrete example that uses never is the `CountCondition` ({cpp:class}`C++ <holoscan::CountCondition>`/{py:class}`Python <holoscan.core.CountCondition>`) which sets that state once the specified count has been reached).
+The `check` method is implemented to set `type` to `SchedulingStatusType::kReady` (C++) / `SchedulingStatusType.READY` (Python) if the specified period has elapsed. Otherwise, it sets the `target_timestamp` and sets `type` to `SchedulingStatusType::kWaitTime` (C++) / `SchedulingStatusType.WAIT_TIME` (Python). In this case `kWaitTime` is used because we know specifically what the target timestamp is. Note that for other types of conditions, we may not know the specific time at which the condition will be satisfied. In such a case where a target timestamp isn't known, one should instead set the status to `kWait` (C++) / `WAIT` (Python) and would not need to set `target_timestamp`. There is also a `kWaitEvent` (C++) / `WAIT_EVENT` (Python) state which can be used for event-based conditions where the target timestamp isn't known in advance. Built-in conditions such as `AsynchronousCondition` and `CudaStreamCondition` use this status type. Finally, if we wanted to indicate that an operator would never execute again, we would return `kNever` (C++) / `NEVER` (Python) (a concrete example that uses never is the `CountCondition` ({cpp:class}`C++ <holoscan::CountCondition>`/{py:class}`Python <holoscan.core.CountCondition>`) which sets that state once the specified count has been reached).
 
 The `on_execute` method sets the internal `next_target_` timestamp to the timestamp passed in. Because the underlying GXF framework calls this method immediately after `Operator::compute`, this is setting the period waited by this condition to be from the time when the prior call to `compute` completed.
 
@@ -318,7 +323,9 @@ The primary additional consideration in designing such a message-based condition
 
 `````{tab-set}
 ````{tab-item} C++
-In the case of a native C++ condition, a parameter of type `Parameter<std::shared_ptr<holoscan::Receiver>> receiver_` should be defined as shown on lines 114 and 67-71. Methods to query the queue size can then be used as demonstrated for the `check_min_size` method on lines 109-112.
+In the case of a native C++ condition, a parameter of type `Parameter<std::shared_ptr<holoscan::Receiver>> receiver_` should be defined as shown on lines 85-86 and 37-43.  Methods to query the queue size can then be used as demonstrated for the `check_min_size` method on lines 80-83.
+
+Alternatively, you can use the `receiver()` method inherited from `Condition` to retrieve a `Receiver` by port name in `initialize()`, similar to the Python example below.
 
 **Code Snippet:** [**examples/conditions/native/cpp/message_available_native.cpp**](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/native/cpp/message_available_native.cpp)
 
@@ -326,8 +333,8 @@ In the case of a native C++ condition, a parameter of type `Parameter<std::share
 ```{code-block} cpp
 :caption: examples/conditions/native/cpp/message_available_native.cpp
 :linenos: true
-:lineno-start: 55
-:emphasize-lines: 13-17, 55-58, 60
+:lineno-start: 26
+:emphasize-lines: 12-18, 55-58, 60-61
 :name: message-available-native-cpp
 
 class NativeMessageAvailableCondition : public Condition {
@@ -476,6 +483,75 @@ class NativeMessageAvailableCondition(Condition):
 ```
 ````
 `````
+
+(event-based-conditions)=
+#### Creating event-based conditions (kWaitEvent)
+
+For conditions that wait on asynchronous events (such as CUDA stream completion or external callbacks), use the `kWaitEvent` / `WAIT_EVENT` status. This tells the scheduler that the condition will be satisfied at some unknown future time when an external event occurs.
+
+Key requirements for event-based conditions:
+
+1. **Return `kWaitEvent` from `check()`**: When waiting for an async event to complete
+2. **Call `notify_scheduler()`**: When the event completes, to wake the scheduler
+3. **Use atomic state variables**: For thread-safe updates from async callbacks
+4. **Reset state in `on_execute()`**: Prepare for the next scheduling cycle
+
+The typical state machine pattern is:
+
+```text
+IDLE --[update_state: work available]--> WAITING --[callback fires]--> READY --[on_execute]--> IDLE
+         register async callback            notify_scheduler()           operator runs
+```
+
+For a complete, production-quality example of an event-based condition, see the `CudaStreamCondition` implementation in the SDK source code:
+
+- **Header**: `include/holoscan/core/conditions/gxf/cuda_stream.hpp`
+- **Implementation**: `src/core/conditions/gxf/cuda_stream.cpp`
+
+This condition demonstrates:
+- Using `cudaLaunchHostFunc()` to register callbacks on CUDA streams
+- Atomic state management with `std::atomic<State>`
+- Proper use of `notify_scheduler()` from the callback
+- Handling multiple streams and messages
+
+```cpp
+// Key pattern from CudaStreamCondition:
+
+// 1. check() returns status based on current state
+void check(int64_t timestamp, SchedulingStatusType* type, int64_t* target_timestamp) const override {
+    switch (state_.load()) {
+        case State::DATA_AVAILABLE:
+            *type = SchedulingStatusType::kReady;
+            break;
+        case State::CALLBACKS_REGISTERED:
+            *type = SchedulingStatusType::kWaitEvent;  // Waiting for GPU work
+            break;
+        default:
+            *type = SchedulingStatusType::kWait;
+            break;
+    }
+    *target_timestamp = last_state_change_;
+}
+
+// 2. CUDA host callback fires when GPU work completes
+static void CUDART_CB cuda_host_callback(void* user_data) {
+    auto* self = reinterpret_cast<CallbackData*>(user_data)->condition;
+    if (self->pending_callbacks_.fetch_sub(1) - 1 == 0) {
+        self->state_.store(State::DATA_AVAILABLE);
+        self->notify_scheduler();  // Wake the scheduler
+    }
+}
+
+// 3. on_execute() resets state after operator runs
+void on_execute(int64_t timestamp) override {
+    state_.store(State::UNSET);
+    pending_callbacks_.store(0);
+}
+```
+
+For Python, the same pattern applies using `threading.Lock` for thread safety instead of atomics. See the C++ implementation as a reference for the overall structure.
+
+The built-in {cpp:class}`~holoscan::CudaStreamCondition` uses this pattern with `cudaLaunchHostFunc()` to register a CUDA host callback that fires when GPU work on a stream completes. See the [CUDA stream handling documentation](holoscan_cuda_stream_handling.md#pre-scheduling-synchronization-with-cudastreamcondition) for more details.
 
 #### Override behavior for default Operator port conditions
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +54,14 @@ void nvprint_callback(int level, const char* fmt) {
       HOLOSCAN_LOG_INFO(str.c_str());
       break;
     case LOGLEVEL_WARNING:
+#ifndef VK_EXT_present_mode_fifo_latest_ready
+      // ignore the warning about the present mode fifo latest ready extension not being supported
+      // by the validation layer which is not aware of the extension
+      if (str.find("VK_EXT_present_mode_fifo_latest_ready is not supported by this layer") !=
+          std::string::npos) {
+        break;
+      }
+#endif
       HOLOSCAN_LOG_WARN(str.c_str());
       break;
     case LOGLEVEL_ERROR:
@@ -197,6 +205,8 @@ class Context::Impl {
    *  begin in to 'true' when the first ImGUI layer had been created.
    */
   bool imgui_new_frame_ = false;
+
+  RenderFlags render_flags_ = RenderFlags::NONE;  ///< render flags set by the last call to begin
 
   std::unique_ptr<Layer> active_layer_;  ///< currently active layer
 
@@ -407,12 +417,13 @@ void Context::set_font(const char* path, float size_in_pixels) {
   impl_->font_size_in_pixels_ = size_in_pixels;
 }
 
-void Context::begin() {
+void Context::begin(RenderFlags render_flags) {
   if (!impl_->window_) {
     throw std::runtime_error("There is no window, please call viz::Init() first.");
   }
 
   impl_->imgui_new_frame_ = false;
+  impl_->render_flags_ = render_flags;
   impl_->window_->begin();
 
   // start the transfer pass, layers transfer their data on EndLayer(), layers are drawn on End()
@@ -430,7 +441,7 @@ void Context::end() {
   impl_->vulkan_->end_transfer_pass();
 
   // draw the layers
-  impl_->vulkan_->begin_render_pass();
+  impl_->vulkan_->begin_render_pass(impl_->render_flags_);
 
   // sort layers (inverse because highest priority is drawn last)
   std::list<Layer*> sorted_layers;

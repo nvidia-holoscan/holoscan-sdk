@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,8 @@
  *     EnvVarWrapper wrapper({
  *         {"HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "10"},
  *         {"HOLOSCAN_MAX_DURATION_MS", "10000"},
- *         {"HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "5000"}
+ *         {"HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT", "10000"},
+ *         {"HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "500"}
  *     });
  *     // You can use make_pair if argument deduction is not available:
  *     //   EnvVarWrapper wrapper({std::make_pair("HOLOSCAN_LOG_LEVEL", "DEBUG")});

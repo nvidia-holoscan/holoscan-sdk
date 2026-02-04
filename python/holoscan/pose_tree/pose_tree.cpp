@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,22 +20,69 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cstdint>
 #include <limits>
 #include <memory>
+#include <string>
 #include <utility>
+#include <variant>
 #include <vector>
 
+#include "../core/component_util.hpp"
+#include "./pose_tree_pydoc.hpp"
+#include "holoscan/core/arg.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/pose_tree/math/pose2.hpp"
 #include "holoscan/pose_tree/math/pose3.hpp"
 #include "holoscan/pose_tree/math/so2.hpp"
 #include "holoscan/pose_tree/math/so3.hpp"
 #include "holoscan/pose_tree/pose_tree.hpp"
+#include "holoscan/pose_tree/pose_tree_manager.hpp"
 #include "holoscan/pose_tree/pose_tree_ucx_client.hpp"
 #include "holoscan/pose_tree/pose_tree_ucx_server.hpp"
 
 namespace py = pybind11;
 
 namespace holoscan {
+
+namespace {
+
+std::shared_ptr<PoseTreeManager> make_pose_tree_manager(
+    const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int32_t port = 13337,
+    int32_t number_frames = 1024, int32_t number_edges = 16384, int32_t history_length = 1048576,
+    int32_t default_number_edges = 16, int32_t default_history_length = 1024,
+    int32_t edges_chunk_size = 4, int32_t history_chunk_size = 64,
+    int64_t request_timeout_ms = 5000, int64_t request_poll_sleep_us = 10,
+    int64_t worker_progress_sleep_us = 100, int64_t server_shutdown_timeout_ms = 1000,
+    int64_t server_shutdown_poll_sleep_ms = 10, int64_t maximum_clients = 1024,
+    const std::string& name = resource_default_name_v<PoseTreeManager>) {
+  auto [frag_ptr, qualified_name] =
+      get_fragment_ptr_name_pair(fragment_or_subgraph, name, "resource");
+  auto manager = frag_ptr->make_resource<PoseTreeManager>(
+      qualified_name,
+      ArgList{
+          Arg{"port", port},
+          Arg{"number_frames", number_frames},
+          Arg{"number_edges", number_edges},
+          Arg{"history_length", history_length},
+          Arg{"default_number_edges", default_number_edges},
+          Arg{"default_history_length", default_history_length},
+          Arg{"edges_chunk_size", edges_chunk_size},
+          Arg{"history_chunk_size", history_chunk_size},
+          Arg{"request_timeout_ms", request_timeout_ms},
+          Arg{"request_poll_sleep_us", request_poll_sleep_us},
+          Arg{"worker_progress_sleep_us", worker_progress_sleep_us},
+          Arg{"server_shutdown_timeout_ms", server_shutdown_timeout_ms},
+          Arg{"server_shutdown_poll_sleep_ms", server_shutdown_poll_sleep_ms},
+          Arg{"maximum_clients", maximum_clients},
+      });
+
+  // Ensure the FragmentService interface reports a resource for registration.
+  manager->resource(manager);
+  return manager;
+}
+
+}  // namespace
 
 void init_pose_tree_geometry(py::module_& m) {
   py::class_<SO2d>(m, "SO2")
@@ -733,6 +780,32 @@ void init_pose_tree_ucx(py::module_& m) {
       .def_static("error_to_str", &PoseTreeUCXClient::error_to_str);
 }
 
+void init_pose_tree_manager(py::module_& m) {
+  py::class_<PoseTreeManager, Resource, DistributedAppService, std::shared_ptr<PoseTreeManager>>(
+      m, "PoseTreeManager", py::multiple_inheritance())
+      .def(py::init(&make_pose_tree_manager),
+           py::arg("fragment"),
+           py::arg("port") = 13337,
+           py::arg("number_frames") = 1024,
+           py::arg("number_edges") = 16384,
+           py::arg("history_length") = 1048576,
+           py::arg("default_number_edges") = 16,
+           py::arg("default_history_length") = 1024,
+           py::arg("edges_chunk_size") = 4,
+           py::arg("history_chunk_size") = 64,
+           py::arg("request_timeout_ms") = 5000,
+           py::arg("request_poll_sleep_us") = 10,
+           py::arg("worker_progress_sleep_us") = 100,
+           py::arg("server_shutdown_timeout_ms") = 1000,
+           py::arg("server_shutdown_poll_sleep_ms") = 10,
+           py::arg("maximum_clients") = 1024,
+           py::arg("name") = std::string(resource_default_name_v<PoseTreeManager>),
+           doc::PoseTreeManager::doc_PoseTreeManager_args_kwargs)
+      .def_property_readonly("tree",
+                             py::overload_cast<>(&PoseTreeManager::tree, py::const_),
+                             doc::PoseTreeManager::doc_tree);
+}
+
 PYBIND11_MODULE(_pose_tree, m) {
   m.doc() = R"pbdoc(
         Holoscan SDK PoseTree Python Bindings
@@ -743,6 +816,7 @@ PYBIND11_MODULE(_pose_tree, m) {
   init_pose_tree_geometry(m);
   init_pose_tree(m);
   init_pose_tree_ucx(m);
+  init_pose_tree_manager(m);
 }
 
 }  // namespace holoscan

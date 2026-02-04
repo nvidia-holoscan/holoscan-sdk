@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/core/metadata.hpp"
 
+#include <algorithm>
 #include <memory>
 #include <mutex>
 #include <shared_mutex>
@@ -135,6 +136,17 @@ void MetadataDictionary::clear() {
 void MetadataDictionary::swap(MetadataDictionary& other) {
   using std::swap;
   swap(dictionary_, other.dictionary_);
+}
+
+MetadataDictionary MetadataDictionary::deep_copy() const {
+  MetadataDictionary copy(policy_);
+  // Create a new map and deep copy each MetadataObject
+  for (const auto& [key, metadata_obj] : *dictionary_) {
+    // Create a new MetadataObject with a copy of the value
+    auto new_metadata_obj = std::make_shared<MetadataObject>(metadata_obj->value());
+    (*copy.dictionary_)[key] = std::move(new_metadata_obj);
+  }
+  return copy;
 }
 
 void MetadataDictionary::merge(MetadataDictionary& other) {

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +38,16 @@ class OrbitSetterOp(Operator):
     def __init__(self, fragment, *args, **kwargs):
         super().__init__(fragment, *args, **kwargs)
         self.sim_time = 0.0  # seconds since t0
-        self.pose_tree = self.service(PoseTreeManager, "pose_tree_manager").tree
+        self.pose_tree = None
+
+    def initialize(self):
+        super().initialize()
+        pose_tree_manager = self.service(PoseTreeManager, "pose_tree_manager")
+        if not pose_tree_manager:
+            raise RuntimeError("PoseTreeManager not found")
+        self.pose_tree = pose_tree_manager.tree
+        if self.pose_tree is None:
+            raise RuntimeError("PoseTree is not initialized")
 
         # Create frames & edges once.
         self.pose_tree.create_frame("sun")
@@ -83,7 +92,16 @@ class TransformPrinterOp(Operator):
     def __init__(self, fragment, *args, **kwargs):
         super().__init__(fragment, *args, **kwargs)
         self.sim_time = 0.0
-        self.pose_tree = self.service(PoseTreeManager, "pose_tree_manager").tree
+        self.pose_tree = None
+
+    def initialize(self):
+        super().initialize()
+        pose_tree_manager = self.service(PoseTreeManager, "pose_tree_manager")
+        if not pose_tree_manager:
+            raise RuntimeError("PoseTreeManager not found")
+        self.pose_tree = pose_tree_manager.tree
+        if self.pose_tree is None:
+            raise RuntimeError("PoseTree is not initialized")
 
     def compute(self, _op_input, _op_output, _context):
         pose_tree = self.pose_tree

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -223,6 +223,31 @@ Returns
 -------
 device : Tuple[enum.Enum, int]
     A tuple of (device type, device id) in DLPack format.
+)doc")
+
+PYDOC(set_deallocation_stream, R"doc(
+Set the CUDA stream for stream-aware memory deallocation.
+
+For sink operators that don't emit data, this method should be called with the operator's
+working CUDA stream to ensure allocators (like ``BlockMemoryPool``) defer memory reuse until
+GPU operations on the stream complete. This prevents race conditions where memory is
+returned to the pool while GPU kernels are still reading from it.
+
+This method only works for tensors whose memory is managed by a Holoscan/GXF allocator
+(i.e., tensors received from upstream operators in the pipeline). For tensors created
+from external sources via the DLPack interface (e.g., from CuPy or PyTorch), this method
+returns ``False`` and has no effect.
+
+Parameters
+----------
+stream : int
+    The memory address of the CUDA stream that last accessed this tensor's data.
+
+Returns
+-------
+bool
+    ``True`` if the stream was set successfully, ``False`` if the tensor's memory is not
+    managed by a Holoscan/GXF allocator.
 )doc")
 
 }  // namespace Tensor

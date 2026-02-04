@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "component_traits.hpp"
 #include "config.hpp"
 #include "data_logger.hpp"
 #include "dataflow_tracker.hpp"
@@ -494,7 +495,8 @@ class Fragment : public FragmentServiceProvider {
   template <typename OperatorT, typename... ArgsT>
   std::shared_ptr<OperatorT> make_operator(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating operator");
-    auto op = make_operator<OperatorT>("noname_operator", std::forward<ArgsT>(args)...);
+    auto op =
+        make_operator<OperatorT>(operator_default_name_v<OperatorT>, std::forward<ArgsT>(args)...);
     return op;
   }
 
@@ -533,7 +535,8 @@ class Fragment : public FragmentServiceProvider {
   template <typename ResourceT, typename... ArgsT>
   std::shared_ptr<ResourceT> make_resource(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating resource");
-    auto resource = make_resource<ResourceT>("noname_resource", std::forward<ArgsT>(args)...);
+    auto resource =
+        make_resource<ResourceT>(resource_default_name_v<ResourceT>, std::forward<ArgsT>(args)...);
     return resource;
   }
 
@@ -573,7 +576,8 @@ class Fragment : public FragmentServiceProvider {
   template <typename ConditionT, typename... ArgsT>
   std::shared_ptr<ConditionT> make_condition(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating condition");
-    auto condition = make_condition<ConditionT>("noname_condition", std::forward<ArgsT>(args)...);
+    auto condition = make_condition<ConditionT>(condition_default_name_v<ConditionT>,
+                                                std::forward<ArgsT>(args)...);
     return condition;
   }
 
@@ -611,7 +615,8 @@ class Fragment : public FragmentServiceProvider {
   template <typename SchedulerT, typename... ArgsT>
   std::shared_ptr<SchedulerT> make_scheduler(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating scheduler");
-    auto scheduler = make_scheduler<SchedulerT>("", std::forward<ArgsT>(args)...);
+    auto scheduler = make_scheduler<SchedulerT>(scheduler_default_name_v<SchedulerT>,
+                                                std::forward<ArgsT>(args)...);
     return scheduler;
   }
 
@@ -649,7 +654,8 @@ class Fragment : public FragmentServiceProvider {
   template <typename NetworkContextT, typename... ArgsT>
   std::shared_ptr<NetworkContextT> make_network_context(ArgsT&&... args) {
     HOLOSCAN_LOG_DEBUG("Creating network_context");
-    auto network_context = make_network_context<NetworkContextT>("", std::forward<ArgsT>(args)...);
+    auto network_context = make_network_context<NetworkContextT>(
+        network_context_default_name_v<NetworkContextT>, std::forward<ArgsT>(args)...);
     return network_context;
   }
 
@@ -695,6 +701,14 @@ class Fragment : public FragmentServiceProvider {
    */
   std::shared_ptr<FragmentService> get_service_erased(const std::type_info& service_type,
                                                       std::string_view id) const override;
+
+  /**
+   * @brief Retrieve a resource registered as a fragment service by name.
+   *
+   * @param id The service id (name) used during service registration.
+   * @return The shared pointer to the service resource, or nullptr if not found.
+   */
+  std::shared_ptr<Resource> get_service_resource_by_name(std::string_view id) const override;
 
   /**
    * @brief Register an existing fragment service instance.
@@ -769,8 +783,12 @@ class Fragment : public FragmentServiceProvider {
 
     std::unique_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
 
-    ServiceKey key{is_service ? typeid(*svc_to_register) : typeid(DefaultFragmentService),
-                   std::string(id)};
+    std::type_index service_type = typeid(DefaultFragmentService);
+    if (is_service) {
+      auto* svc_ptr = svc_to_register.get();
+      service_type = typeid(*svc_ptr);
+    }
+    ServiceKey key{service_type, std::string(id)};
 
     if (resource) {
       fragment_resource_services_by_name_[std::string(id)] = resource;
@@ -779,7 +797,8 @@ class Fragment : public FragmentServiceProvider {
       fragment_resource_to_service_key_map_.insert_or_assign(resource, key);
 
       // Also register the service with its resource type
-      ServiceKey resource_key{typeid(*resource), std::string(id)};
+      auto* resource_ptr = resource.get();
+      ServiceKey resource_key{typeid(*resource_ptr), std::string(id)};
       fragment_services_by_key_[resource_key] = svc_to_register;
     }
 
@@ -816,6 +835,24 @@ class Fragment : public FragmentServiceProvider {
     // Get the base service from the service registry
     auto base_service = get_service_erased(typeid(ServiceT), id);
     if (!base_service) {
+      // Keep this fallback lookup logic in sync with ComponentBase::service().
+      if constexpr (std::is_base_of_v<Resource, ServiceT>) {
+        if (!id.empty()) {
+          auto service_resource_by_name = get_service_resource_by_name(id);
+          if (service_resource_by_name) {
+            auto typed_resource = std::dynamic_pointer_cast<ServiceT>(service_resource_by_name);
+            if (typed_resource) {
+              return typed_resource;
+            }
+            HOLOSCAN_LOG_DEBUG(
+                "Fragment '{}': Service resource with id '{}' is not type-castable to type '{}'.",
+                name(),
+                std::string(id),
+                typeid(ServiceT).name());
+          }
+        }
+      }
+
       HOLOSCAN_LOG_DEBUG("Fragment '{}': Service of type {} with id '{}' not found.",
                          name(),
                          typeid(ServiceT).name(),
@@ -908,6 +945,19 @@ class Fragment : public FragmentServiceProvider {
    * @param op The operator to be added.
    */
   virtual void add_operator(const std::shared_ptr<Operator>& op);
+
+  /**
+   * @brief Add a subgraph to the fragment.
+   *
+   * This method ensures the subgraph is composed and its operators are added to the fragment.
+   * Use this method when a subgraph has no interface ports and doesn't need to be connected
+   * to other operators or subgraphs via add_flow.
+   *
+   * If the subgraph is already composed, this method does nothing.
+   *
+   * @param subgraph The subgraph to be added.
+   */
+  virtual void add_subgraph(const std::shared_ptr<Subgraph>& subgraph);
 
   /**
    * @brief Add a flow between two operators.
@@ -1384,6 +1434,17 @@ class Fragment : public FragmentServiceProvider {
    */
   GPUResidentAccessor gpu_resident();
 
+  /**
+   * @brief Set up internal state for a component.
+   *
+   * Configures the component's internal references to this fragment and its service provider.
+   * This method is called internally when creating operators, resources, conditions, and other
+   * components to ensure they have proper access to fragment services.
+   *
+   * @param component Pointer to the ComponentBase instance to configure. Must not be nullptr.
+   */
+  void setup_component_internals(ComponentBase* component);
+
  protected:
   friend class Application;  // to access 'scheduler_' in Application
   friend class AppDriver;
@@ -1436,17 +1497,6 @@ class Fragment : public FragmentServiceProvider {
   void load_extensions_from_config();
 
   std::vector<std::shared_ptr<ThreadPool>>& thread_pools() { return thread_pools_; }
-
-  /**
-   * @brief Set up internal state for a component.
-   *
-   * Configures the component's internal references to this fragment and its service provider.
-   * This method is called internally when creating operators, resources, conditions, and other
-   * components to ensure they have proper access to fragment services.
-   *
-   * @param component Pointer to the ComponentBase instance to configure. Must not be nullptr.
-   */
-  void setup_component_internals(ComponentBase* component);
 
   /**
    * @brief Resolve Subgraph interface port to actual operator and port
@@ -1616,13 +1666,14 @@ std::shared_ptr<OperatorT> Subgraph::make_operator(StringT name, ArgsT&&... args
         "Subgraph must be created via Fragment::make_subgraph to set the target fragment.");
   }
   auto qualified_name = get_qualified_name(std::string(name), "operator");
-  return fragment_->make_operator<OperatorT>(qualified_name, std::forward<ArgsT>(args)...);
+  return fragment_->make_operator<OperatorT>(std::move(qualified_name),
+                                             std::forward<ArgsT>(args)...);
 }
 
 template <typename OperatorT, typename... ArgsT>
 std::shared_ptr<OperatorT> Subgraph::make_operator(ArgsT&&... args) {
-  auto qualified_name = get_qualified_name("noname_operator", "operator");
-  return make_operator<OperatorT>("noname_operator", std::forward<ArgsT>(args)...);
+  auto qualified_name = get_qualified_name(operator_default_name_v<OperatorT>, "operator");
+  return make_operator<OperatorT>(qualified_name, std::forward<ArgsT>(args)...);
 }
 
 template <typename ConditionT, typename StringT, typename... ArgsT, typename>
@@ -1635,12 +1686,14 @@ std::shared_ptr<ConditionT> Subgraph::make_condition(StringT name, ArgsT&&... ar
 
   // Use qualified name to avoid conflicts between Subgraph instances
   auto qualified_name = get_qualified_name(std::string(name), "condition");
-  return fragment_->make_condition<ConditionT>(qualified_name, std::forward<ArgsT>(args)...);
+  return fragment_->make_condition<ConditionT>(std::move(qualified_name),
+                                               std::forward<ArgsT>(args)...);
 }
 
 template <typename ConditionT, typename... ArgsT>
 std::shared_ptr<ConditionT> Subgraph::make_condition(ArgsT&&... args) {
-  return make_condition<ConditionT>("noname_condition", std::forward<ArgsT>(args)...);
+  return make_condition<ConditionT>(condition_default_name_v<ConditionT>,
+                                    std::forward<ArgsT>(args)...);
 }
 
 template <typename ResourceT, typename StringT, typename... ArgsT, typename>
@@ -1658,7 +1711,17 @@ std::shared_ptr<ResourceT> Subgraph::make_resource(StringT name, ArgsT&&... args
 
 template <typename ResourceT, typename... ArgsT>
 std::shared_ptr<ResourceT> Subgraph::make_resource(ArgsT&&... args) {
-  return make_resource<ResourceT>("noname_resource", std::forward<ArgsT>(args)...);
+  return make_resource<ResourceT>(resource_default_name_v<ResourceT>, std::forward<ArgsT>(args)...);
+}
+
+template <typename ServiceT>
+bool Subgraph::register_service(const std::shared_ptr<ServiceT>& svc, std::string_view id) {
+  if (!fragment_) {
+    throw std::runtime_error(
+        "Subgraph::register_service called but fragment_ is nullptr. "
+        "Subgraph must be created via Fragment::make_subgraph to set the target fragment.");
+  }
+  return fragment_->register_service(svc, id);
 }
 
 }  // namespace holoscan

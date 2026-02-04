@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   auto device_map = inference_specs->get_device_map();
   auto dla_core_map = inference_specs->get_dla_core_map();
   auto temporal_map = inference_specs->get_temporal_map();
-  auto backend_type = inference_specs->backend_type_;
+  const auto& backend_type = inference_specs->backend_type_;
   auto backend_map = inference_specs->get_backend_map();
   auto trt_opt_profile = inference_specs->trt_opt_profile_;
   cuda_buffer_in_ = inference_specs->cuda_buffer_in_;
@@ -244,7 +244,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           status.set_message("ERROR: Backend not found for model " + model_name);
           return status;
         }
-        auto backend_ = backend_map.at(model_name);
+        const auto& backend_ = backend_map.at(model_name);
         current_backend = supported_backend_.at(backend_);
       }
 
@@ -1003,8 +1003,9 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       return status;
     }
 
-    g_managers.insert({unique_id_name, std::move(g_managers.at("current_manager"))});
-    g_managers.erase("current_manager");
+    auto node = g_managers.extract("current_manager");
+    node.key() = unique_id_name;
+    g_managers.insert(std::move(node));
 
     g_manager = g_managers.at(unique_id_);
     status = g_manager->set_inference_params(inference_specs);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,15 +32,28 @@ nvidia::gxf::Receiver* Receiver::get() const {
 }
 
 size_t Receiver::capacity() const {
-  return get()->capacity();
+  auto* receiver = get();
+  return receiver ? receiver->capacity() : 0;
 }
 
 size_t Receiver::size() const {
-  return get()->size();
+  auto* receiver = get();
+  return receiver ? receiver->size() : 0;
 }
 
 size_t Receiver::back_size() const {
-  return get()->back_size();
+  auto* receiver = get();
+  return receiver ? receiver->back_size() : 0;
+}
+
+nvidia::gxf::Expected<nvidia::gxf::Entity> Receiver::peek(int32_t index) const {
+  auto* receiver = get();
+  return receiver ? receiver->peek(index) : nvidia::gxf::Unexpected{GXF_NULL_POINTER};
+}
+
+nvidia::gxf::Expected<void> Receiver::sync() {
+  auto* receiver = get();
+  return receiver ? receiver->sync() : nvidia::gxf::Unexpected{GXF_NULL_POINTER};
 }
 
 }  // namespace holoscan

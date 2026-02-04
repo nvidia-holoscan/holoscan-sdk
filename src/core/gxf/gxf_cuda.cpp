@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,7 +129,7 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
     if (pool_resource &&
         std::string(pool_resource->name()) != "fragment_default_green_context_pool") {
       HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContextPool in resources", op->name());
-      cuda_green_context_pool_ptr = pool_resource;
+      cuda_green_context_pool_ptr = std::move(pool_resource);
       break;
     }
   }
@@ -154,7 +154,7 @@ void CudaObjectHandler::init_from_operator(Operator* op) {
     auto context_resource = std::dynamic_pointer_cast<CudaGreenContext>(resource.second);
     if (context_resource) {
       HOLOSCAN_LOG_DEBUG("Operator '{}': Found CudaGreenContext in resources", op->name());
-      cuda_green_context_ptr = context_resource;
+      cuda_green_context_ptr = std::move(context_resource);
       break;
     }
   }
@@ -288,17 +288,21 @@ expected<gxf_uid_t, ErrorCode> CudaObjectHandler::get_output_stream_cid(
 
 gxf_result_t CudaObjectHandler::add_stream(const CudaStreamHandle& stream_handle,
                                            const std::string& output_port_name) {
-  HOLOSCAN_LOG_TRACE("Adding stream to output port '{}'", output_port_name);
-  emitted_cuda_stream_cids_.emplace(output_port_name, stream_handle.cid());
+  HOLOSCAN_LOG_TRACE("Setting stream for output port '{}'", output_port_name);
+  // Use insert_or_assign to replace any existing stream for this port.
+  // This allows set_cuda_stream to be called multiple times, with the last call taking effect.
+  emitted_cuda_stream_cids_.insert_or_assign(output_port_name, stream_handle.cid());
   return GXF_SUCCESS;
 }
 
 int CudaObjectHandler::add_stream(const cudaStream_t stream, const std::string& output_port_name) {
-  HOLOSCAN_LOG_TRACE("Adding stream to output port '{}'", output_port_name);
+  HOLOSCAN_LOG_TRACE("Setting stream for output port '{}'", output_port_name);
   auto it = stream_to_stream_handle_.find(stream);
   if (it != stream_to_stream_handle_.end()) {
     const auto& stream_handle = it->second;
-    emitted_cuda_stream_cids_.emplace(output_port_name, stream_handle.cid());
+    // Use insert_or_assign to replace any existing stream for this port.
+    // This allows set_cuda_stream to be called multiple times, with the last call taking effect.
+    emitted_cuda_stream_cids_.insert_or_assign(output_port_name, stream_handle.cid());
     return static_cast<int>(GXF_SUCCESS);
   }
   return static_cast<int>(GXF_FAILURE);
@@ -346,8 +350,8 @@ CudaObjectHandler::get_cuda_stream_handles(gxf_context_t context,
     }
     return out;
   }
-  auto err_msg = fmt::format("input_port_name '{}' (base name: '{}') not found",
-                              input_port_name, input_key);
+  auto err_msg =
+      fmt::format("input_port_name '{}' (base name: '{}') not found", input_port_name, input_key);
   return make_unexpected<RuntimeError>(RuntimeError(ErrorCode::kFailure, err_msg));
 }
 
@@ -611,7 +615,8 @@ gxf_result_t CudaObjectHandler::synchronize_streams(
       cuda_streams.push_back(stream_from_stream_handle(maybe_stream_handle.value()));
     }
   }
-  auto gxf_result = synchronize_streams(cuda_streams, target_cuda_stream, sync_to_default_stream);
+  auto gxf_result =
+      synchronize_streams(std::move(cuda_streams), target_cuda_stream, sync_to_default_stream);
   return static_cast<gxf_result_t>(gxf_result);
 }
 

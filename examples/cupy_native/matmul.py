@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,10 @@ class SinkOp(Operator):
 
 
 class MatMulApp(Application):
+    """Demonstrates using CuPy tensors with Holoscan Python operators, performing matrix
+    multiplication on GPU, and printing output tensors to the console. This example shows how
+    CuPy native tensors can be emitted and received directly in a Holoscan workflow."""
+
     def compose(self):
         src = SourceOp(self, CountCondition(self, 1000), name="src_op")
         matmul = MatMulOp(self, name="matmul_op")

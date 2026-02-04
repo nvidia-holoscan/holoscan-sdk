@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -315,9 +315,19 @@ the nearest integer).
 namespace StreamOrderedAllocator {
 
 PYDOC(StreamOrderedAllocator, R"doc(
-Device and Host allocator using RAPIDS memory manager (StreamOrdered).
+CUDA device memory allocator using stream-ordered allocation.
 
-Provides memory pools for asynchronously allocated CUDA device memory and pinned host memory.
+Uses CUDA's stream-ordered memory allocator (``cudaMallocAsync``/``cudaFreeAsync``) to dynamically
+allocate device memory. Stream-ordered allocation enables memory operations to be tied to specific
+CUDA streams, allowing allocation and deallocation without blocking the host or other streams.
+
+This allocator **only supports CUDA device memory**. If host memory is also needed, use
+``RMMAllocator`` instead, which provides both device and pinned host memory pools.
+
+For details on the underlying CUDA feature, see the `Stream-Ordered Memory Allocator`_ section
+of the CUDA Programming Guide.
+
+.. _Stream-Ordered Memory Allocator: https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/stream-ordered-memory-allocation.html#stream-ordered-memory-allocator
 
 Parameters
 ----------
@@ -325,20 +335,22 @@ fragment : holoscan.core.Fragment
     The fragment to assign the resource to.
 device_memory_initial_size : str, optional
     The initial size of the device memory pool. See the Notes section for the format accepted.
+    Defaults to "8MB" on aarch64 and "16MB" on x86_64.
 device_memory_max_size : str, optional
     The maximum size of the device memory pool. See the Notes section for the format accepted.
+    Defaults to twice the value of ``device_memory_initial_size``.
 release_threshold : str, optional
-    The amount of reserved memory to hold onto before trying to release memory back to the OS.  See
-    the Notes section for the format accepted.
+    The amount of reserved memory to hold onto before trying to release memory back to the OS.
+    See the Notes section for the format accepted. Defaults to "4MB".
 dev_id : int, optional
-    GPU device ID. Specifies the device on which to create the memory pool.
+    GPU device ID. Specifies the device on which to create the memory pool. Defaults to 0.
 name : str, optional
     The name of the memory pool.
 
 Notes
 -----
-The values for the memory parameters, such as `device_memory_initial_size` must be specified in the
-form of a string containing a non-negative integer value followed by a suffix representing the
+The values for the memory parameters, such as ``device_memory_initial_size`` must be specified in
+the form of a string containing a non-negative integer value followed by a suffix representing the
 units. Supported units are B, KB, MB, GB and TB where the values are powers of 1024 bytes
 (e.g. MB = 1024 * 1024 bytes). Examples of valid units are "512MB", "256 KB", "1 GB". If a floating
 point number is specified that decimal portion will be truncated (i.e. the value is rounded down to

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,61 +38,21 @@ void PingMessageTxOp::initialize() {
 }
 
 void PingMessageTxOp::setup(OperatorSpec& spec) {
-  switch (type_) {
-    case MessageType::BOOL:
-      spec.output<bool>("out");
-      break;
-    case MessageType::FLOAT:
-      spec.output<float>("out");
-      break;
-    case MessageType::INT32:
-      spec.output<int32_t>("out");
-      break;
-    case MessageType::UINT32:
-      spec.output<uint32_t>("out");
-      break;
-    case MessageType::STRING:
-      spec.output<std::string>("out");
-      break;
-    case MessageType::VEC_BOOL:
-      spec.output<std::vector<bool>>("out");
-      break;
-    case MessageType::VEC_FLOAT:
-      spec.output<std::vector<float>>("out");
-      break;
-    case MessageType::VEC_STRING:
-      spec.output<std::vector<std::string>>("out");
-      break;
-    case MessageType::SHARED_VEC_STRING:
-      spec.output<std::shared_ptr<std::vector<std::string>>>("out");
-      break;
-    case MessageType::VEC_VEC_BOOL:
-      spec.output<std::vector<std::vector<bool>>>("out");
-      break;
-    case MessageType::VEC_VEC_FLOAT:
-      spec.output<std::vector<std::vector<float>>>("out");
-      break;
-    case MessageType::VEC_VEC_STRING:
-      spec.output<std::vector<std::vector<std::string>>>("out");
-      break;
-    case MessageType::VEC_INPUTSPEC:
-      spec.output<std::vector<HolovizOp::InputSpec>>("out");
-      break;
-    case MessageType::VEC_DOUBLE_LARGE:
-      spec.output<std::vector<double>>("out");
-      break;
-    case MessageType::CAMERA_POSE:
-      spec.output<std::shared_ptr<std::array<float, 16>>>("out");
-      break;
-    default:
-      throw std::runtime_error("unsupported type");
-  }
+  // Use generic output that works with UCX serialization for all types
+  // The actual type is handled at runtime by the serialization layer
+  spec.output<nvidia::gxf::Entity>("out");
 }
 
 void PingMessageTxOp::compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                               [[maybe_unused]] ExecutionContext& context) {
   // NOTE: Values in PingMessageTxOp::compute and PingMessageRxOp::compute must remain consistent.
   //       If any value is changed here, please make the corresponding change in PingMessageRxOp.
+
+  // Get current type and cycle to next
+  MessageType current_type = types_[current_index_];
+  current_index_ = (current_index_ + 1) % types_.size();
+
+  HOLOSCAN_LOG_INFO("Transmitting test case: {}", message_type_name_map.at(current_type));
 
   // store metadata with a few types
   // (value serialization uses the same codecs as for holoscan::Message, so just test a few here)
@@ -101,7 +61,7 @@ void PingMessageTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCon
   meta->set("string", std::string("defg"));
   meta->set("vec", std::vector<float>{1.0, 1.0, 3.0});
 
-  switch (type_) {
+  switch (current_type) {
     case MessageType::BOOL: {
       bool value = true;
       op_output.emit(value, "out");

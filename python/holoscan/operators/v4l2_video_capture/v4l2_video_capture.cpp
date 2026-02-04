@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,7 +63,7 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, float frame_rate = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto", bool pass_through = false,
-                       const std::string& name = "v4l2_video_capture",
+                       const std::string& name = operator_default_name_v<ops::V4L2VideoCaptureOp>,
                        std::optional<uint32_t> exposure_time = std::nullopt,
                        std::optional<uint32_t> gain = std::nullopt)
       : V4L2VideoCaptureOp(ArgList{Arg{"allocator", allocator},
@@ -119,7 +119,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
            "num_buffers"_a = 4,
            "pixel_format"_a = "auto"s,
            "pass_through"_a = false,
-           "name"_a = "v4l2_video_capture"s,
+           "name"_a = std::string(operator_default_name_v<ops::V4L2VideoCaptureOp>),
            "exposure_time"_a = py::none(),
            "gain"_a = py::none(),
            doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp);

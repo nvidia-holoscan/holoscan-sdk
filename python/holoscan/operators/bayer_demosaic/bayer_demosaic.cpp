@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,7 +62,8 @@ class PyBayerDemosaicOp : public BayerDemosaicOp {
                     std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                     const std::string& in_tensor_name = "", const std::string& out_tensor_name = "",
                     int interpolation_mode = 0, int bayer_grid_pos = 2, bool generate_alpha = false,
-                    int alpha_value = 255, const std::string& name = "bayer_demosaic")
+                    int alpha_value = 255,
+                    const std::string& name = operator_default_name_v<ops::BayerDemosaicOp>)
       : BayerDemosaicOp(ArgList{Arg{"pool", pool},
                                 Arg{"in_tensor_name", in_tensor_name},
                                 Arg{"out_tensor_name", out_tensor_name},
@@ -110,7 +111,7 @@ PYBIND11_MODULE(_bayer_demosaic, m) {
            "bayer_grid_pos"_a = 2,
            "generate_alpha"_a = false,
            "alpha_value"_a = 255,
-           "name"_a = "bayer_demosaic"s,
+           "name"_a = std::string(operator_default_name_v<ops::BayerDemosaicOp>),
            doc::BayerDemosaicOp::doc_BayerDemosaicOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

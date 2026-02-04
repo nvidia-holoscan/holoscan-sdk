@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -201,6 +201,7 @@ void init_condition(py::module_& m) {
            "port_name"_a,
            doc::Condition::doc_transmitter,
            py::return_value_policy::reference_internal)
+      .def("notify_scheduler", &Condition::notify_scheduler, doc::Condition::doc_notify_scheduler)
       .def(
           "__repr__",
           [](const py::object& obj) {

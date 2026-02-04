@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,6 +62,8 @@ from holoscan.resources import (
     MemoryStorageType,
     UnboundedAllocator,
 )
+
+from ..utils import requires_torch_cuda
 
 try:
     import numpy as np
@@ -432,6 +434,36 @@ class TestTensor:
         arr_out2 = xp.from_dlpack(tensor)
         xp.testing.assert_array_equal(arr_in, arr_out1)
         xp.testing.assert_array_equal(arr_in, arr_out2)
+
+    def test_torch_as_tensor_cpu(self):
+        torch = pytest.importorskip("torch")
+
+        a = torch.arange(24, dtype=torch.float32, device="cpu").reshape(2, 3, 4)
+        t = Tensor.as_tensor(a)
+        assert isinstance(t, Tensor)
+        self._check_dlpack_attributes(t, expected_device_type=DLDeviceType.DLCPU)
+
+        # Round-trip back to torch via DLPack.
+        from_dlpack = getattr(torch, "from_dlpack", None) or torch.utils.dlpack.from_dlpack
+
+        b = from_dlpack(t)
+        assert b.device.type == "cpu"
+        assert torch.allclose(a, b)
+
+    @requires_torch_cuda
+    def test_torch_as_tensor_cuda(self):
+        import torch  # noqa: PLC0415
+
+        a = torch.arange(24, dtype=torch.float32, device="cuda").reshape(2, 3, 4)
+        t = Tensor.as_tensor(a)
+        assert isinstance(t, Tensor)
+        self._check_dlpack_attributes(t, expected_device_type=DLDeviceType.DLCUDA)
+
+        from_dlpack = getattr(torch, "from_dlpack", None) or torch.utils.dlpack.from_dlpack
+
+        b = from_dlpack(t)
+        assert b.is_cuda
+        assert torch.allclose(a, b)
 
 
 class TestFormatConverterOp:

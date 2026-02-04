@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@
 #include "../core/component_util.hpp"
 #include "./multi_message_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/multi_message_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -63,7 +64,7 @@ class PyMultiMessageAvailableCondition : public MultiMessageAvailableCondition {
           MultiMessageAvailableCondition::SamplingMode::kSumOfAll,
       std::optional<size_t> min_sum = std::nullopt,
       std::optional<std::vector<size_t>> min_sizes = std::nullopt,
-      const std::string& name = "multi_message_condition") {
+      const std::string& name = condition_default_name_v<MultiMessageAvailableCondition>) {
     if (min_sum.has_value()) {
       this->add_arg(Arg("min_sum", min_sum.value()));
     }
@@ -114,7 +115,7 @@ void init_multi_message_available(py::module_& m) {
            "sampling_mode"_a = MultiMessageAvailableCondition::SamplingMode::kSumOfAll,
            "min_sum"_a = py::none(),
            "min_sizes"_a = py::none(),
-           "name"_a = "multi_message_condition"s,
+           "name"_a = std::string(condition_default_name_v<MultiMessageAvailableCondition>),
            doc::MultiMessageAvailableCondition::doc_MultiMessageAvailableCondition)
       .def_property("receivers",
                     py::overload_cast<>(&MultiMessageAvailableCondition::receivers),

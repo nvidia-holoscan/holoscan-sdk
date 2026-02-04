@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,10 @@ function(ConfigureTest CMAKE_TEST_NAME)
 
   set_target_properties(
     ${CMAKE_TEST_NAME}
-    PROPERTIES RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${BIN_DIR}/gtests>"
+    PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${BIN_DIR}/gtests>"
+      # Disable clang-tidy for test code
+      CXX_CLANG_TIDY ""
   )
 
   target_include_directories(${CMAKE_TEST_NAME}
@@ -81,6 +84,7 @@ ConfigureTest(
   core/logger.cpp
   core/message.cpp
   core/metadata.cpp
+  core/network_context_classes.cpp
   core/operator_spec.cpp
   core/parameter.cpp
   core/resource.cpp
@@ -88,6 +92,21 @@ ConfigureTest(
   core/scheduler_classes.cpp
   core/system_resource_manager.cpp
 )
+
+# ##################################################################################################
+# * MatX interoperability tests ---------------------------------------------------------------------
+#
+# Keep this as a separate test binary so we don't force CUDA compilation for the full CORE_TEST.
+if(CMAKE_CUDA_COMPILER)
+  ConfigureTest(
+    MATX_INTEROP_TEST
+    core/matx_tensor_interop.cu
+  )
+  target_link_libraries(MATX_INTEROP_TEST
+    PRIVATE
+      holoscan::matx
+  )
+endif()
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
   # Set test properties for CORE_TEST
@@ -129,7 +148,6 @@ ConfigureTest(CODECS_TEST
 # * operator classes tests ----------------------------------------------------------------------------------
 ConfigureTest(OPERATORS_CLASSES_TEST
   operators/operator_classes.cpp
-  operators/inference/test_inference_operator.cpp
 )
 target_link_libraries(OPERATORS_CLASSES_TEST
   PRIVATE
@@ -151,6 +169,18 @@ target_link_libraries(OPERATORS_CLASSES_TEST
 )
 
 add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
+
+# ##################################################################################################
+# * inference operator tests -----------------------------------------------------------------------
+ConfigureTest(INFERENCE_OPERATOR_TEST
+  operators/inference/test_inference_operator.cpp
+)
+target_link_libraries(INFERENCE_OPERATOR_TEST
+  PRIVATE
+  holoscan::ops::inference
+  holoscan::holoinfer_utils
+  $<TARGET_NAME_IF_EXISTS:holoscan::infer::torch>
+)
 
 # ##################################################################################################
 # * ping_rx tests ----------------------------------------------------------------------------------
@@ -192,6 +222,7 @@ ConfigureTest(
   system/cuda_allocators.cpp
   system/cuda_green_context.cpp
   system/cuda_stream.cpp
+  system/cuda_stream_condition.cpp
   system/cycle.cpp
   system/emit_receive_port_name_test.cpp
   system/env_wrapper.cpp
@@ -253,22 +284,34 @@ ConfigureTest(
 
 # ##################################################################################################
 # * system distributed tests ------------------------------------------------------------------------
+# *
+# * SYSTEM_DISTRIBUTED_EBS_TEST: run comprehensive tests with the EventBasedScheduler
+# * SYSTEM_DISTRIBUTED_MTS_TEST: repeat a key subset of tests with the legacy MultiThreadScheduler
+# *
+# * The full set of files under the distributed folder should be included under
+# * SYSTEM_DISTRIBUTED_EBS_TEST, which uses the event-based scheduler.
+# *
+# * For time efficiency, a more minimal set of tests (distributed_app.cpp) is used to test
+# * various distributed applications with the Multi-Thread scheduler.
 ConfigureTest(
-  SYSTEM_DISTRIBUTED_TEST
+  SYSTEM_DISTRIBUTED_EBS_TEST
   system/distributed/async_data_logger_distributed_shutdown_test.cpp
   system/distributed/distributed_app.cpp
+  system/distributed/distributed_app_scheduler_test.cpp
   system/distributed/distributed_demosaic_op_app.cpp
   system/distributed/distributed_gxf_operator_app.cpp
   system/distributed/holoscan_ucx_ports_env.cpp
   system/distributed/ping_message_rx_op.cpp
   system/distributed/ping_message_tx_op.cpp
+  system/distributed/pose_tree_ucx_snapshot_delta_ordering_test.cpp
   system/distributed/single_tensor_transmit.cpp
   system/distributed/standalone_fragments.cpp
   system/distributed/ucx_message_serialization_ping_app.cpp
   system/env_wrapper.cpp
 )
-target_link_libraries(SYSTEM_DISTRIBUTED_TEST
+target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   PRIVATE
+  holoscan::pose_tree
   holoscan::ops::bayer_demosaic
   holoscan::ops::gxf_codelet
   holoscan::ops::holoviz
@@ -278,21 +321,59 @@ target_link_libraries(SYSTEM_DISTRIBUTED_TEST
   holoscan::ops::ping_tensor_tx
 )
 
+if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+"\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
+HOLOSCAN_MAX_DURATION_MS=6000;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+"
+  )
+else()
+  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+"\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
+HOLOSCAN_MAX_DURATION_MS=3000;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+"
+  )
+endif()
+
+set_tests_properties(
+  SYSTEM_DISTRIBUTED_EBS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}")
+
+# Repeat distributed tests, but setting environment variables to use the multi-thread scheduler
+# for a key subset of the distributed tests.
+ConfigureTest(
+  SYSTEM_DISTRIBUTED_MTS_TEST
+  system/distributed/distributed_app.cpp
+  system/env_wrapper.cpp
+)
+target_link_libraries(SYSTEM_DISTRIBUTED_MTS_TEST
+  PRIVATE
+  holoscan::ops::ping_tensor_rx
+  holoscan::ops::ping_tensor_tx
+)
+
 # set environment variables used by distributed applications in the tests
 # - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000    : Set deadlock timeout for distributed app
 # - HOLOSCAN_MAX_DURATION_MS=3000             : Set max duration for distributed app
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-  set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
+  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=6000;\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=6000;\
 HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
   )
 else()
-  set(CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
+  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000;\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=3000;\
 HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
@@ -301,46 +382,14 @@ endif()
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
   # Append additional flags to exclude tests that are known to fail with ASAN
-  string(APPEND CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS
+  string(APPEND CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
     ";GTEST_FILTER=-DistributedApp.TestTwoMultiInputsOutputsFragmentsApp"
   )
 endif()
 
 set_tests_properties(
-  SYSTEM_DISTRIBUTED_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_TEST_FLAGS}"
+  SYSTEM_DISTRIBUTED_MTS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS}"
 )
-
-# Repeat distributed tests, but setting environment variables to use the event-based scheduler
-# (omitting UcxMessageSerialization tests in this case to reduce overall test time)
-ConfigureTest(
-  SYSTEM_DISTRIBUTED_EBS_TEST
-  system/distributed/distributed_app.cpp
-  system/distributed/distributed_demosaic_op_app.cpp
-  system/distributed/distributed_gxf_operator_app.cpp
-  system/distributed/holoscan_ucx_ports_env.cpp
-  system/distributed/single_tensor_transmit.cpp
-  system/distributed/standalone_fragments.cpp
-  system/env_wrapper.cpp
-)
-target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
-  PRIVATE
-  holoscan::ops::bayer_demosaic
-  holoscan::ops::gxf_codelet
-  holoscan::ops::holoviz
-  holoscan::ops::ping_tensor_rx
-  holoscan::ops::ping_tensor_tx
-)
-
-  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
-"\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=5000;\
-HOLOSCAN_MAX_DURATION_MS=5000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based;\
-"
-  )
-set_tests_properties(
-  SYSTEM_DISTRIBUTED_EBS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}")
-
 
 # ##################################################################################################
 # * stress tests ----------------------------------------------------------------------------------
@@ -379,6 +428,7 @@ target_link_libraries(HOLOINFER_TEST
   PRIVATE
     holoinfer
     holoscan::holoinfer_utils
+    $<TARGET_NAME_IF_EXISTS:holoscan::infer::torch>
 )
 
 # ##################################################################################################

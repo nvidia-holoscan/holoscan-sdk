@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "../core/component_util.hpp"
 #include "./cuda_event_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/cuda_event.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -56,10 +57,10 @@ class PyCudaEventCondition : public CudaEventCondition {
   using CudaEventCondition::CudaEventCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyCudaEventCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                const std::string& event_name = "",
-                                std::optional<const std::string> receiver = std::nullopt,
-                                const std::string& name = "noname_cuda_event_condition")
+  explicit PyCudaEventCondition(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      const std::string& event_name = "", std::optional<const std::string> receiver = std::nullopt,
+      const std::string& name = condition_default_name_v<CudaEventCondition>)
       : CudaEventCondition(Arg("event_name", event_name)) {
     if (receiver.has_value()) {
       this->add_arg(Arg("receiver", receiver.value()));
@@ -81,7 +82,7 @@ void init_cuda_event(py::module_& m) {
            "fragment"_a,
            "event_name"_a = ""s,
            "receiver"_a = py::none(),
-           "name"_a = "noname_cuda_event_condition"s,
+           "name"_a = std::string(condition_default_name_v<CudaEventCondition>),
            doc::CudaEventCondition::doc_CudaEventCondition)
       .def_property("receiver",
                     py::overload_cast<>(&CudaEventCondition::receiver),

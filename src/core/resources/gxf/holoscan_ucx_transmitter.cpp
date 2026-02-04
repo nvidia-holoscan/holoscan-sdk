@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,7 @@ gxf_result_t HoloscanUcxTransmitter::publish_abi(gxf_uid_t uid) {
 
   if (tracking_) {
     if (is_op_root == -1) {
+      // coverity[USE_AFTER_FREE:FALSE_POSITIVE] - no-op deleter, non-owning shared_ptr
       std::shared_ptr<holoscan::Operator> op_shared_ptr(op(), [](Operator*) {});
       is_op_root = op()->is_root() || op()->is_user_defined_root() ||
                    Operator::is_all_operator_predecessor_virtual(std::move(op_shared_ptr),

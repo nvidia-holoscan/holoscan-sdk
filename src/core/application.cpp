@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,8 @@
 #include <utility>
 #include <vector>
 
+#include <magic_enum.hpp>
+
 #include "./distributed/app_driver/client.hpp"
 #include "holoscan/core/app_driver.hpp"
 #include "holoscan/core/app_worker.hpp"
@@ -46,6 +48,9 @@
 #include "holoscan/core/graphs/flow_graph.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
+#include "holoscan/core/resources/gxf/manual_clock.hpp"
+#include "holoscan/core/resources/gxf/realtime_clock.hpp"
+#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
 #include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
@@ -117,6 +122,260 @@ inline int argc() {
 }  // namespace CLI
 
 namespace holoscan {
+
+namespace {
+// Default values for scheduler configuration
+constexpr bool kDefaultStopOnDeadlock = true;
+constexpr int64_t kDefaultStopOnDeadlockTimeout = 1000L;
+constexpr int64_t kDefaultUcxNetworkConnectionTimeout = 5000L;
+constexpr double kDefaultCheckRecessionPeriodMs = 0.0;
+
+// ============================================================================
+// Helper types and functions for set_scheduler_for_fragments
+// ============================================================================
+
+/// @brief Holds environment variable overrides for scheduler arguments.
+struct SchedulerEnvOverrides {
+  expected<bool, ErrorCode> stop_on_deadlock;
+  expected<int64_t, ErrorCode> stop_on_deadlock_timeout;
+  expected<int64_t, ErrorCode> ucx_network_connection_timeout;
+  expected<int64_t, ErrorCode> max_duration_ms;
+  expected<double, ErrorCode> check_recession_period_ms;
+};
+
+/**
+ * @brief Detect the scheduler type from a scheduler pointer.
+ * @param scheduler The scheduler to detect the type of.
+ * @param fragment_name The name of the fragment (for logging).
+ * @return The detected SchedulerType, or kDefault if not recognized. A warning is logged
+ *         when an unrecognized scheduler type is encountered.
+ */
+SchedulerType detect_scheduler_type(const std::shared_ptr<Scheduler>& scheduler,
+                                    const std::string& fragment_name) {
+  if (!scheduler) {
+    return SchedulerType::kDefault;
+  }
+
+  if (std::dynamic_pointer_cast<holoscan::EventBasedScheduler>(scheduler)) {
+    return SchedulerType::kEventBased;
+  } else if (std::dynamic_pointer_cast<holoscan::MultiThreadScheduler>(scheduler)) {
+    return SchedulerType::kMultiThread;
+  } else if (std::dynamic_pointer_cast<holoscan::GreedyScheduler>(scheduler)) {
+    return SchedulerType::kGreedy;
+  } else {
+    // Scheduler type not recognized (custom scheduler or unknown type)
+    HOLOSCAN_LOG_WARN(
+        "Fragment '{}': Unrecognized scheduler type '{}'. The user-defined scheduler will be "
+        "kept, but default arguments will not be applied.",
+        fragment_name,
+        scheduler->name());
+    return SchedulerType::kDefault;
+  }
+}
+
+/**
+ * @brief Resolve which scheduler type to use for a fragment.
+ * @param user_set_scheduler Whether the user explicitly set a scheduler on the fragment.
+ * @param use_app_scheduler_type Whether to use the app scheduler's type.
+ * @param user_scheduler_type The detected user scheduler type.
+ * @param env_scheduler_type The scheduler type from environment variable (kDefault if not set).
+ * @return The resolved SchedulerType to use.
+ */
+SchedulerType resolve_scheduler_type(bool user_set_scheduler, bool use_app_scheduler_type,
+                                     SchedulerType user_scheduler_type,
+                                     SchedulerType env_scheduler_type) {
+  // If environment variable specifies a scheduler type, use it
+  if (env_scheduler_type != SchedulerType::kDefault) {
+    return env_scheduler_type;
+  }
+
+  // If user explicitly set a recognized scheduler type, use it
+  if ((user_set_scheduler || use_app_scheduler_type) &&
+      user_scheduler_type != SchedulerType::kDefault) {
+    return user_scheduler_type;
+  }
+
+  // No recognized scheduler type detected. If we need to create a new scheduler,
+  // we'll use EventBasedScheduler as it works better with UCX connections for
+  // distributed apps. However, if the user explicitly set an unrecognized scheduler
+  // on the fragment, we'll respect their choice and keep it (see create_scheduler_for_fragment).
+  return SchedulerType::kEventBased;
+}
+
+/**
+ * @brief Create a scheduler for a fragment if needed, or return the existing one.
+ *
+ * Creates a new scheduler if:
+ * - Using app scheduler type (can't share instances between fragments)
+ * - User didn't set a scheduler on the fragment
+ * - Environment variable forces a different scheduler type
+ *
+ * @param fragment The fragment to create the scheduler for.
+ * @param existing_scheduler The current scheduler (may be nullptr).
+ * @param resolved_scheduler_type The resolved target scheduler type.
+ * @param user_set_scheduler Whether the user explicitly set a scheduler on the fragment.
+ * @param use_app_scheduler_type Whether to use the app scheduler's type.
+ * @param user_scheduler_type The detected user scheduler type.
+ * @param env_scheduler_type The scheduler type from environment variable (kDefault if not set).
+ * @return The new scheduler if created, or the existing scheduler if kept.
+ */
+std::shared_ptr<Scheduler> create_scheduler_for_fragment(
+    const std::shared_ptr<Fragment>& fragment, const std::shared_ptr<Scheduler>& existing_scheduler,
+    SchedulerType resolved_scheduler_type, bool user_set_scheduler, bool use_app_scheduler_type,
+    SchedulerType user_scheduler_type, SchedulerType env_scheduler_type) {
+  // Determine if we need to create a new scheduler:
+  // 1. If using app scheduler type, we always create a new scheduler instance
+  //    (can't share scheduler instances between fragments due to GXF entity naming)
+  // 2. User didn't set one on the fragment, OR
+  // 3. Environment variable forces a different scheduler type than what user set
+  bool should_create = use_app_scheduler_type || !user_set_scheduler ||
+                       (env_scheduler_type != SchedulerType::kDefault &&
+                        user_scheduler_type != resolved_scheduler_type);
+
+  if (!should_create) {
+    return existing_scheduler;
+  }
+
+  const auto& frag_name = fragment->name();
+
+  switch (resolved_scheduler_type) {
+    case SchedulerType::kDefault:
+      // This case shouldn't occur given the resolve logic, but handle gracefully
+      // by creating an EventBasedScheduler
+      [[fallthrough]];
+    case SchedulerType::kEventBased:
+      return fragment->make_scheduler<holoscan::EventBasedScheduler>(
+          fmt::format("{}-event-based-scheduler", frag_name));
+    case SchedulerType::kGreedy:
+      return fragment->make_scheduler<holoscan::GreedyScheduler>(
+          fmt::format("{}-greedy-scheduler", frag_name));
+    case SchedulerType::kMultiThread:
+      return fragment->make_scheduler<holoscan::MultiThreadScheduler>(
+          fmt::format("{}-multithread-scheduler", frag_name));
+  }
+
+  // Should never reach here, but satisfy compiler
+  return fragment->make_scheduler<holoscan::EventBasedScheduler>(
+      fmt::format("{}-event-based-scheduler", frag_name));
+}
+
+/**
+ * @brief Add default arguments to a scheduler based on its type.
+ * @param scheduler The scheduler to add arguments to.
+ * @param scheduler_type The type of the scheduler.
+ * @param fragment The fragment (used to determine worker_thread_number).
+ */
+void add_default_scheduler_args(const std::shared_ptr<Scheduler>& scheduler,
+                                SchedulerType scheduler_type,
+                                const std::shared_ptr<Fragment>& fragment) {
+  // Common args for all scheduler types
+  scheduler->add_arg(holoscan::Arg("stop_on_deadlock", kDefaultStopOnDeadlock));
+  scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", kDefaultStopOnDeadlockTimeout));
+  scheduler->add_arg(
+      holoscan::Arg("network_connection_timeout", kDefaultUcxNetworkConnectionTimeout));
+
+  // Scheduler-type-specific args
+  switch (scheduler_type) {
+    case SchedulerType::kEventBased: {
+      // hardware_concurrency() can return 0 if not computable; default to 1 in that case
+      unsigned int num_processors = std::max(1u, std::thread::hardware_concurrency());
+      int64_t worker_thread_number =
+          std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
+      scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
+    } break;
+    case SchedulerType::kGreedy:
+      scheduler->add_arg(
+          holoscan::Arg("check_recession_period_ms", kDefaultCheckRecessionPeriodMs));
+      break;
+    case SchedulerType::kMultiThread: {
+      // hardware_concurrency() can return 0 if not computable; default to 1 in that case
+      unsigned int num_processors = std::max(1u, std::thread::hardware_concurrency());
+      int64_t worker_thread_number =
+          std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
+      scheduler->add_arg(
+          holoscan::Arg("check_recession_period_ms", kDefaultCheckRecessionPeriodMs));
+      scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
+    } break;
+    default:
+      break;
+  }
+}
+
+/**
+ * @brief Apply environment variable overrides to a scheduler.
+ * @param scheduler The scheduler to apply overrides to.
+ * @param env_overrides The environment variable overrides to apply.
+ */
+void apply_scheduler_env_overrides(const std::shared_ptr<Scheduler>& scheduler,
+                                   const SchedulerEnvOverrides& env_overrides) {
+  // Override arguments using environment variables (always apply if env vars are set).
+  // This works because calling `add_arg()` more than once for the same argument will overwrite
+  // the previous value.
+  if (env_overrides.stop_on_deadlock) {
+    scheduler->add_arg(holoscan::Arg("stop_on_deadlock", env_overrides.stop_on_deadlock.value()));
+  }
+  if (env_overrides.stop_on_deadlock_timeout) {
+    scheduler->add_arg(
+        holoscan::Arg("stop_on_deadlock_timeout", env_overrides.stop_on_deadlock_timeout.value()));
+  }
+  if (env_overrides.ucx_network_connection_timeout) {
+    scheduler->add_arg(holoscan::Arg("network_connection_timeout",
+                                     env_overrides.ucx_network_connection_timeout.value()));
+  }
+  if (env_overrides.max_duration_ms) {
+    scheduler->add_arg(holoscan::Arg("max_duration_ms", env_overrides.max_duration_ms.value()));
+  }
+  if (env_overrides.check_recession_period_ms) {
+    scheduler->add_arg(holoscan::Arg("check_recession_period_ms",
+                                     env_overrides.check_recession_period_ms.value()));
+  }
+}
+
+/**
+ * @brief Clone a scheduler clock resource for a fragment.
+ *
+ * Creates a new clock resource of the same concrete type, copies its arguments,
+ * and binds it to the target fragment. Returns nullptr if the clock is unsupported
+ * or cannot be cloned.
+ */
+std::shared_ptr<Resource> clone_scheduler_clock_for_fragment(
+    const std::shared_ptr<Fragment>& fragment, const std::shared_ptr<Resource>& clock_resource,
+    const std::string& scheduler_name) {
+  if (!fragment || !clock_resource) {
+    return nullptr;
+  }
+
+  auto gxf_clock = std::dynamic_pointer_cast<holoscan::gxf::Clock>(clock_resource);
+  if (!gxf_clock) {
+    return nullptr;
+  }
+
+  const std::string cloned_name = fmt::format("{}__{}", scheduler_name, clock_resource->name());
+  std::shared_ptr<Resource> cloned_clock;
+
+  if (std::dynamic_pointer_cast<RealtimeClock>(clock_resource)) {
+    cloned_clock = fragment->make_resource<RealtimeClock>(cloned_name);
+  } else if (std::dynamic_pointer_cast<ManualClock>(clock_resource)) {
+    cloned_clock = fragment->make_resource<ManualClock>(cloned_name);
+  } else if (std::dynamic_pointer_cast<SyntheticClock>(clock_resource)) {
+    cloned_clock = fragment->make_resource<SyntheticClock>(cloned_name);
+  } else {
+    HOLOSCAN_LOG_WARN(
+        "Fragment '{}': Unsupported clock type '{}' for scheduler '{}'; using default clock",
+        fragment->name(),
+        gxf_clock->gxf_typename(),
+        scheduler_name);
+    return nullptr;
+  }
+
+  for (const auto& arg : clock_resource->args()) {
+    cloned_clock->add_arg(arg);
+  }
+
+  return cloned_clock;
+}
+
+}  // namespace
 
 Application::Application(const std::vector<std::string>& argv) : Fragment(), argv_(argv) {
   // Set the log level from the environment variable if it exists.
@@ -523,6 +782,25 @@ expected<int64_t, ErrorCode> Application::get_stop_on_deadlock_timeout_env() {
   }
 }
 
+expected<int64_t, ErrorCode> Application::get_ucx_network_connection_timeout_env() {
+  const char* env_value = std::getenv("HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT");
+  if (env_value != nullptr && env_value[0] != '\0') {
+    try {
+      return std::stoll(env_value);
+    } catch (const std::invalid_argument& e) {
+      HOLOSCAN_LOG_ERROR("Invalid value for HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT: {}",
+                         env_value);
+      return make_unexpected(ErrorCode::kInvalidArgument);
+    } catch (const std::out_of_range& e) {
+      HOLOSCAN_LOG_ERROR("Value for HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT is out of range: {}",
+                         env_value);
+      return make_unexpected(ErrorCode::kInvalidArgument);
+    }
+  } else {
+    return make_unexpected(ErrorCode::kNotFound);
+  }
+}
+
 expected<int64_t, ErrorCode> Application::get_max_duration_ms_env() {
   const char* env_value = std::getenv("HOLOSCAN_MAX_DURATION_MS");
   if (env_value != nullptr && env_value[0] != '\0') {
@@ -574,32 +852,20 @@ void Application::compose_graph() {
   is_fragment_graph_composed_ = true;
 }
 
-void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments) {
-  constexpr bool kDefaultStopOnDeadlock = true;
-  constexpr int64_t kDefaultStopOnDeadlockTimeout = 5000L;
-  constexpr int64_t kDefaultMaxDurationMs = -1L;  // optional value
-  constexpr double kDefaultCheckRecessionPeriodMs = 0.0;
+void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments,
+                                              const std::shared_ptr<Scheduler>& app_scheduler) {
+  // Collect environment variable overrides once
+  // TODO(grelee): switch to designated initializers once C++20 is supported)
+  SchedulerEnvOverrides env_overrides{Application::get_stop_on_deadlock_env(),
+                                      Application::get_stop_on_deadlock_timeout_env(),
+                                      Application::get_ucx_network_connection_timeout_env(),
+                                      Application::get_max_duration_ms_env(),
+                                      Application::get_check_recession_period_ms_env()};
 
+  // Get scheduler type from environment variable (kDefault if not set)
   auto scheduler_type_env = Application::get_distributed_app_scheduler_env();
-  auto stop_on_deadlock_env = Application::get_stop_on_deadlock_env();
-  bool stop_on_deadlock =
-      stop_on_deadlock_env ? stop_on_deadlock_env.value() : kDefaultStopOnDeadlock;
-  auto stop_on_deadlock_timeout_env = Application::get_stop_on_deadlock_timeout_env();
-  int64_t stop_on_deadlock_timeout = stop_on_deadlock_timeout_env
-                                         ? stop_on_deadlock_timeout_env.value()
-                                         : kDefaultStopOnDeadlockTimeout;
-  auto max_duration_ms_env = Application::get_max_duration_ms_env();
-  int64_t max_duration_ms =
-      max_duration_ms_env ? max_duration_ms_env.value() : kDefaultMaxDurationMs;
-  auto check_recession_period_ms_env = Application::get_check_recession_period_ms_env();
-  double check_recession_period_ms = check_recession_period_ms_env
-                                         ? check_recession_period_ms_env.value()
-                                         : kDefaultCheckRecessionPeriodMs;
-
-  SchedulerType scheduler_type = SchedulerType::kDefault;
-  if (scheduler_type_env) {
-    scheduler_type = scheduler_type_env.value();
-  }
+  SchedulerType env_scheduler_type =
+      scheduler_type_env ? scheduler_type_env.value() : SchedulerType::kDefault;
 
   for (auto& fragment : target_fragments) {
     if (fragment->is_gpu_resident()) {
@@ -607,85 +873,106 @@ void Application::set_scheduler_for_fragments(std::vector<FragmentNodeType>& tar
       continue;
     }
     std::shared_ptr<Scheduler>& scheduler = fragment->scheduler_;
-    SchedulerType scheduler_setting = scheduler_type;
+    const auto& frag_name = fragment->name();
 
-    // Make sure that multi-thread scheduler is used for the fragment
-    if (scheduler_setting == SchedulerType::kDefault) {
-      // Check if holoscan::EventBasedScheduler is already set to the fragment.
-      // If it is, then we should use the default scheduler.
-      // Otherwise, we should set a new event-based scheduler.
+    // Check if the user has explicitly set a scheduler on the fragment
+    bool user_set_scheduler = (scheduler != nullptr);
 
-      auto event_based_scheduler =
-          std::dynamic_pointer_cast<holoscan::EventBasedScheduler>(scheduler);
-      if (!event_based_scheduler) {
-        scheduler_setting = SchedulerType::kEventBased;
+    // If fragment doesn't have a scheduler set, but the application does,
+    // we'll create a new scheduler of the same type (can't share the instance
+    // because GXF entities must have unique names per fragment)
+    bool use_app_scheduler_type = (!scheduler && app_scheduler);
+    if (use_app_scheduler_type) {
+      HOLOSCAN_LOG_DEBUG("Fragment '{}': Using scheduler type from Application", frag_name);
+    }
+
+    // Detect the type of scheduler to use (from fragment scheduler or app scheduler)
+    const auto& scheduler_to_check = scheduler ? scheduler : app_scheduler;
+    SchedulerType user_scheduler_type = detect_scheduler_type(scheduler_to_check, frag_name);
+
+    // Determine the target scheduler type
+    SchedulerType resolved_scheduler_type = resolve_scheduler_type(
+        user_set_scheduler, use_app_scheduler_type, user_scheduler_type, env_scheduler_type);
+
+    // GreedyScheduler is not supported for multi-fragment apps as it causes deadlock.
+    // Override to EventBasedScheduler and warn the user.
+    if (resolved_scheduler_type == SchedulerType::kGreedy) {
+      HOLOSCAN_LOG_WARN(
+          "Fragment '{}': GreedyScheduler is not supported for multi-fragment applications "
+          "(causes deadlock). Using EventBasedScheduler instead.",
+          frag_name);
+      resolved_scheduler_type = SchedulerType::kEventBased;
+      // Reset the fragment scheduler and user_set_scheduler flag to force creation of a new
+      // EventBasedScheduler. Keep use_app_scheduler_type so we still copy args (including clock).
+      scheduler.reset();
+      user_set_scheduler = false;
+    }
+
+    // Warn if user's scheduler is being overridden by environment variable
+    if (user_set_scheduler && env_scheduler_type != SchedulerType::kDefault &&
+        user_scheduler_type != resolved_scheduler_type) {
+      HOLOSCAN_LOG_INFO(
+          "Fragment '{}': User-defined scheduler ({}) is being overridden by "
+          "HOLOSCAN_DISTRIBUTED_APP_SCHEDULER environment variable to {}",
+          frag_name,
+          magic_enum::enum_name(user_scheduler_type),
+          magic_enum::enum_name(resolved_scheduler_type));
+    }
+
+    // Create a new scheduler if needed, or keep the existing one
+    auto previous_scheduler = scheduler;
+    scheduler = create_scheduler_for_fragment(fragment,
+                                              scheduler,
+                                              resolved_scheduler_type,
+                                              user_set_scheduler,
+                                              use_app_scheduler_type,
+                                              user_scheduler_type,
+                                              env_scheduler_type);
+
+    // If a new scheduler was created, configure its arguments
+    if (scheduler != previous_scheduler) {
+      if (use_app_scheduler_type && app_scheduler) {
+        // Copy arguments from the app scheduler
+        for (const auto& arg : app_scheduler->args()) {
+          if (arg.arg_type().element_type() == ArgElementType::kResource &&
+              arg.arg_type().container_type() == ArgContainerType::kNative &&
+              arg.name() == "clock") {
+            auto clock_resource = std::any_cast<std::shared_ptr<Resource>>(arg.value());
+            if (clock_resource && clock_resource->fragment() != fragment.get()) {
+              auto cloned_clock =
+                  clone_scheduler_clock_for_fragment(fragment, clock_resource, scheduler->name());
+              if (cloned_clock) {
+                HOLOSCAN_LOG_DEBUG("Fragment '{}': Cloned clock resource '{}' for scheduler '{}'",
+                                   frag_name,
+                                   clock_resource->name(),
+                                   scheduler->name());
+                scheduler->add_arg(holoscan::Arg("clock", cloned_clock));
+              } else {
+                HOLOSCAN_LOG_DEBUG(
+                    "Fragment '{}': Skipping app scheduler clock '{}' to use default clock",
+                    frag_name,
+                    clock_resource->name());
+              }
+              continue;
+            }
+          }
+          // Note: This message text is relied on by tests in distributed_app_scheduler_test.cpp.
+          HOLOSCAN_LOG_DEBUG("Fragment '{}': Copying argument '{}' from Application scheduler",
+                             frag_name,
+                             arg.name());
+          scheduler->add_arg(arg);
+        }
+      } else {
+        // No app scheduler - use default arguments based on scheduler type
+        add_default_scheduler_args(scheduler, resolved_scheduler_type, fragment);
       }
     }
+    // else: User set a scheduler and we're keeping it - respect their configuration entirely.
+    // Environment variable overrides below will still apply if set.
 
-    switch (scheduler_setting) {
-      case SchedulerType::kDefault:
-        // Override the existing scheduler to use the proper deadlock timeout value so that
-        // the scheduler allows some time for the operator having UcxReceiver to receive input
-        // messages from the remote operators. This is necessary because the scheduler would stop
-        // immediately when no input messages from UcxReceiver are received.
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
-        break;
-      case SchedulerType::kGreedy:
-        scheduler = fragment->make_scheduler<holoscan::GreedyScheduler>("greedy-scheduler");
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock));
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
-        if (max_duration_ms >= 0) {
-          scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms));
-        }
-        scheduler->add_arg(holoscan::Arg("check_recession_period_ms", check_recession_period_ms));
-        break;
-      case SchedulerType::kMultiThread: {
-        scheduler =
-            fragment->make_scheduler<holoscan::MultiThreadScheduler>("multithread-scheduler");
-        unsigned int num_processors = std::thread::hardware_concurrency();
-        // Currently, we use the number of operators in the fragment as the number of worker threads
-        int64_t worker_thread_number =
-            std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock));
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
-        if (max_duration_ms >= 0) {
-          scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms));
-        }
-        scheduler->add_arg(holoscan::Arg("check_recession_period_ms", check_recession_period_ms));
-        scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
-      } break;
-      case SchedulerType::kEventBased: {
-        scheduler =
-            fragment->make_scheduler<holoscan::EventBasedScheduler>("event-based-scheduler");
-        unsigned int num_processors = std::thread::hardware_concurrency();
-        // TODO(unknown): check number of threads setting needed for event-based scheduler
-        // Currently, we use the number of operators in the fragment as the number of worker threads
-        int64_t worker_thread_number =
-            std::min(fragment->graph().get_nodes().size(), static_cast<size_t>(num_processors));
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock));
-        scheduler->add_arg(holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout));
-        if (max_duration_ms >= 0) {
-          scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms));
-        }
-        scheduler->add_arg(holoscan::Arg("worker_thread_number", worker_thread_number));
-      } break;
-    }
+    // Apply environment variable overrides
+    apply_scheduler_env_overrides(scheduler, env_overrides);
 
-    // Override arguments from environment variables
-    if (stop_on_deadlock_env) {
-      scheduler->add_arg(holoscan::Arg("stop_on_deadlock", stop_on_deadlock_env.value()));
-    }
-    if (stop_on_deadlock_timeout_env) {
-      scheduler->add_arg(
-          holoscan::Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout_env.value()));
-    }
-    if (max_duration_ms_env) {
-      scheduler->add_arg(holoscan::Arg("max_duration_ms", max_duration_ms_env.value()));
-    }
-    if (check_recession_period_ms_env) {
-      scheduler->add_arg(
-          holoscan::Arg("check_recession_period_ms", check_recession_period_ms_env.value()));
-    }
     fragment->scheduler(scheduler);
   }
 }
@@ -792,7 +1079,7 @@ void Application::initiate_local_app_shutdown(const std::string& fragment_name) 
       // Get the stop_on_deadlock_timeout from this fragment's scheduler
       // This is the time the scheduler waits before confirming a deadlock and exiting
       // when all operators have been stopped via stop_execution()
-      int64_t stop_on_deadlock_timeout = 5000L;  // Default fallback value
+      int64_t stop_on_deadlock_timeout = kDefaultStopOnDeadlockTimeout;
       auto scheduler = root_fragment->scheduler();
 
       // Try to cast to known scheduler types that have stop_on_deadlock_timeout()
@@ -810,7 +1097,7 @@ void Application::initiate_local_app_shutdown(const std::string& fragment_name) 
         if (env_result.has_value()) {
           stop_on_deadlock_timeout = env_result.value();
         }
-        // else: keep default 5000ms
+        // else: keep default 1000ms
       }
 
       // Add extra margin (250ms) to account for any processing overhead

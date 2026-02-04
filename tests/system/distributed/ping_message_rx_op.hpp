@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -72,7 +73,7 @@ class PingMessageRxOp : public Operator {
 
   void initialize() override;
 
-  void set_message_type(MessageType type) { type_ = type; }
+  void set_message_types(std::vector<MessageType> types) { types_ = std::move(types); }
 
   void setup(OperatorSpec& spec) override;
 
@@ -80,7 +81,8 @@ class PingMessageRxOp : public Operator {
                [[maybe_unused]] ExecutionContext& context) override;
 
  private:
-  MessageType type_ = MessageType::FLOAT;
+  std::vector<MessageType> types_ = {MessageType::FLOAT};
+  size_t current_index_ = 0;
 };
 
 }  // namespace ops

@@ -46,7 +46,7 @@ else()
 endif()
 
 if(NOT CCCL_FOUND)
-  message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${MATX_CCCL_MIN_VERSION} for MatX.
+  message(STATUS "Found CCCL ${CCCL_VERSION} but need at least CCCL ${MATX_CCCL_MIN_VERSION} for MatX.
 Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
 and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.
 Skipping the matx_basic example...")

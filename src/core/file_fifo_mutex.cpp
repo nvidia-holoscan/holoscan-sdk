@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -160,7 +160,7 @@ FileFIFOMutex::FileFIFOMutex(std::string file_path) {
   }
 
   // Queue file to maintain FIFO order
-  std::string queue_path = std::string(file_path) + ".queue";
+  std::string queue_path = std::move(file_path) + ".queue";
   queue_fd_ = open(queue_path.c_str(), O_CREAT | O_RDWR, 0666);
   if (queue_fd_ == -1) {
     throw std::invalid_argument(fmt::format("Failed to open/create queue file: {}", queue_path));

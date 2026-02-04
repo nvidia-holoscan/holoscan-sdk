@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,12 +13,24 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
-"""
+"""  # noqa: E501
 
 import pytest
 
 from holoscan.conditions import CountCondition
-from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec, Subgraph, Tracker
+from holoscan.core import (
+    Application,
+    Fragment,
+    InterfacePort,
+    InterfacePortMapping,
+    InterfacePortType,
+    IOSpec,
+    Operator,
+    OperatorSpec,
+    Subgraph,
+    Tracker,
+)
+from holoscan.data_loggers import AsyncConsoleLogger
 from holoscan.decorator import create_op
 from holoscan.operators import PingRxOp, PingTxOp
 
@@ -89,7 +101,8 @@ class PingTxSubgraph(Subgraph):
         self.add_flow(tx_op, forwarding_op, {("out", "in")})
 
         # Expose the "out" port so external operators can connect to it
-        self.add_output_interface_port("data_out", forwarding_op, "out")
+        # (allow add_interface_port to auto-detect the port direction)
+        self.add_interface_port("data_out", forwarding_op, "out")
 
 
 class MultiPingRxSubgraph(Subgraph):
@@ -106,7 +119,8 @@ class MultiPingRxSubgraph(Subgraph):
         self.add_operator(rx_op)
 
         # Expose the "receivers" port so multiple external operators can connect to it
-        self.add_input_interface_port("data_in", rx_op, "receivers")
+        # (allow add_interface_port to auto-detect the port direction)
+        self.add_interface_port("data_in", rx_op, "receivers")
 
 
 class PingRxSubgraph(Subgraph):
@@ -162,7 +176,6 @@ class NestedRxSubgraph(Subgraph):
 
         # Create a nested PingRxSubgraph (auto-composes via Python __init__)
         ping_rx_subgraph = PingRxSubgraph(self, "ping_rx")
-
         # Connect the forwarding operator to the nested subgraph
         self.add_flow(forwarding_op, ping_rx_subgraph, {("out", "data_in")})
 
@@ -219,6 +232,32 @@ class SubgraphPingApplication(Application):
         self.add_flow(tx_instance3, rx3, {("data_out", "in")})
         self.add_flow(tx_instance4, rx_instance4, {("data_out", "data_in")})
 
+        # check that interface ports are exposed
+        interface_ports = rx_instance4.interface_ports()
+        exec_interface_ports = rx_instance4.exec_interface_ports()
+
+        assert len(interface_ports) == 1
+        assert len(exec_interface_ports) == 0
+        assert isinstance(interface_ports, dict)
+        assert "data_in" in interface_ports
+        interface_port = interface_ports["data_in"]
+        assert isinstance(interface_port, InterfacePort)
+        assert interface_port.port_type == InterfacePortType.DATA
+        assert interface_port.is_input
+        assert len(interface_port) == 1  # Single mapping
+        port_mapping = interface_port.mappings[0]
+        assert isinstance(port_mapping, InterfacePortMapping)
+        assert port_mapping.internal_port_name == "in"
+        assert isinstance(port_mapping.internal_operator, Operator)
+        assert port_mapping.internal_operator.name == "rx4_receiver"
+
+        # test retrieving operator via interface port name
+        in_op, in_op_port = rx_instance4.get_interface_operator_port("data_in")
+        assert isinstance(in_op, Operator)
+        assert isinstance(in_op_port, str)
+        assert in_op.name == "rx4_receiver"
+        assert in_op_port == "in"
+
 
 class MultiPingApplication(Application):
     """
@@ -260,6 +299,18 @@ class NestedSubgraphApplication(Application):
         # Create nested subgraphs
         nested_tx = NestedTxSubgraph(self, "nested_tx")
         nested_rx = NestedRxSubgraph(self, "nested_rx")
+
+        # test that operators() method returns the correct operators
+        operators = nested_tx.operators()
+        assert len(operators) == 3
+        expected_names = [
+            "nested_tx_ping_tx_transmitter",
+            "nested_tx_ping_tx_forwarding",
+            "nested_tx_forwarding",
+        ]
+        for operator in operators:
+            assert isinstance(operator, Operator)
+            assert operator.name in expected_names
 
         # Create a middle ForwardingOp to connect the nested subgraphs
         middle_forwarding = ForwardingOp(self, name="middle_forwarding")
@@ -687,6 +738,51 @@ class NestedExecSubgraphApp(Application):
         nested_sg = NestedExecSubgraph(self, "nested_sg")
         node4 = SimpleExecOp(self, name="node4")
 
+        # check that interface ports are exposed
+        interface_ports = nested_sg.interface_ports()
+        exec_interface_ports = nested_sg.exec_interface_ports()
+
+        print("interface_ports: ", interface_ports)
+        print("exec_interface_ports: ", exec_interface_ports)
+        assert len(interface_ports) == 0
+        assert len(exec_interface_ports) == 2
+        assert isinstance(exec_interface_ports, dict)
+        for port_name, interface_port in exec_interface_ports.items():
+            assert isinstance(port_name, str)
+            assert isinstance(interface_port, InterfacePort)
+            assert interface_port.port_type == InterfacePortType.EXECUTION
+            assert len(interface_port) == 1  # Single mapping for exec ports
+            if port_name == "exec_in":
+                assert interface_port.is_input
+                assert interface_port.mappings[0].internal_port_name == "__input_exec__"
+                assert isinstance(interface_port.mappings[0].internal_operator, Operator)
+                assert (
+                    interface_port.mappings[0].internal_operator.name
+                    == "nested_sg_sequential_sg_node2"
+                )
+            elif port_name == "exec_out":
+                assert not interface_port.is_input
+                assert interface_port.mappings[0].internal_port_name == "__output_exec__"
+                assert isinstance(interface_port.mappings[0].internal_operator, Operator)
+                assert (
+                    interface_port.mappings[0].internal_operator.name
+                    == "nested_sg_sequential_sg_node3"
+                )
+            else:
+                raise RuntimeError(f"Unexpected port name: {port_name}")
+
+        # test retrieving operator via executor interface port name
+        out_exec_op, out_exec_port = nested_sg.get_exec_interface_operator_port("exec_out")
+        assert isinstance(out_exec_op, Operator)
+        assert isinstance(out_exec_port, str)
+        assert out_exec_op.name == "nested_sg_sequential_sg_node3"
+        assert out_exec_port == "__output_exec__"
+        in_exec_op, in_exec_port = nested_sg.get_exec_interface_operator_port("exec_in")
+        assert isinstance(in_exec_op, Operator)
+        assert isinstance(in_exec_port, str)
+        assert in_exec_op.name == "nested_sg_sequential_sg_node2"
+        assert in_exec_port == "__input_exec__"
+
         self.add_flow(self.start_op(), node1)
         self.add_flow(node1, nested_sg)
         self.add_flow(nested_sg, node4)
@@ -1051,8 +1147,33 @@ class SubgraphWithDecoratorOp(Subgraph):
         # rx = PingRxOp(self, name="rx")
         # self.add_flow(tx_op, rx)
 
-        # Expose the "out_ping" port so external operators can connect to it
-        self.add_output_interface_port("data_out", tx_op, "out_ping")
+        # can omit 3rd argument to add_output_interface_port if the external_name
+        # matches the internal port name
+        self.add_output_interface_port("out_ping", tx_op)
+
+
+class PingRxSubgraphDefaultPortName(Subgraph):
+    """Subgraph containing a single-receiver PingRxOp.
+
+    This subgraph is the same as `PingRxSubgraph`, except it reuses the internal operator's port
+    name instead of specifying a separate "data_in" name for the interface port.
+    """
+
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
+
+    def compose(self):
+        # Create a single-receiver PingRxOp
+        rx_op = PingRxOp(self, name="receiver")
+
+        # Add the operator to this subgraph
+        self.add_operator(rx_op)
+
+        self.add_data_logger(AsyncConsoleLogger(self, name="data_logger"))
+
+        # Expose the "in" port so external operators can connect to it
+        # (can omit the 3rd argument since "in" matches the internal port name)
+        self.add_input_interface_port("in", rx_op)
 
 
 class SubgraphWithDecoratorOpApplication(Application):
@@ -1067,8 +1188,8 @@ class SubgraphWithDecoratorOpApplication(Application):
     def compose(self):
         # Create 3 transmitter subgraphs and one transmitter operator
         tx_subgraph = SubgraphWithDecoratorOp(self, name="tx_sub")
-        rx_subgraph = PingRxSubgraph(self, name="rx_sub")
-        self.add_flow(tx_subgraph, rx_subgraph)
+        rx_subgraph = PingRxSubgraphDefaultPortName(self, name="rx_sub")
+        self.add_flow(tx_subgraph, rx_subgraph, {("out_ping", "in")})
 
 
 def test_subgraph_with_decorator_api(capfd):
@@ -1088,3 +1209,131 @@ def test_subgraph_with_decorator_api(capfd):
         f"Expected nodes: {expected_names}\n"
     )
     assert captured.out.count("Rx message value: ping") == 8
+
+    # verify that ports were logged as expected
+    assert captured.err.count("AsyncConsoleLogger[ID:tx_sub_tx.out_ping]") == 8
+    assert captured.err.count("AsyncConsoleLogger[ID:rx_sub_receiver.in]") == 8
+
+
+class SubGraphNoInterfacePorts(Subgraph):
+    # Subgraph where one of the operators is created via the decorator API and no
+    # interface ports are exposed.
+    #
+    # This subgraph also tests the Subgraph.kwargs() method.
+
+    def __init__(self, fragment, name, *, config=None):
+        # Pass config to base class so it's set before compose() runs
+        super().__init__(fragment, name, config=config)
+
+    def compose(self):
+        # Create a PingTxOp with a count condition
+        tx_op = PingTxOp(self, CountCondition(self, **self.kwargs("count_condition")), name="tx")
+        rx_op = PingRxOp(self, name="rx")
+
+        self.add_flow(tx_op, rx_op)
+
+
+class SubGraphNoInterfacePortsApplication(Application):
+    """
+    Application demonstrating adding a subgraph without any interface ports.
+
+    Parameters
+    ----------
+    subgraph_config : str or holoscan.core.Config
+        The path to the configuration file (in YAML format) or a `holoscan.core.Config`
+        object.
+    """
+
+    def __init__(self, *args, subgraph_config=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.subgraph_config = subgraph_config
+
+    def compose(self):
+        # Pass config to constructor so it's available before compose() runs
+        subg = SubGraphNoInterfacePorts(self, name="my_subgraph", config=self.subgraph_config)
+
+        # Add a subgraph without any interface ports via add_subgraph
+        subg = self.add_subgraph(subg)
+
+
+def test_subgraph_with_no_interface_ports(capfd, subgraphs_config_file):
+    """Test that decorator API operators work correctly within a subgraph."""
+    app = SubGraphNoInterfacePortsApplication(subgraph_config=subgraphs_config_file)
+    app.run()
+
+    captured = capfd.readouterr()
+
+    # Check that nodes are present
+    node_names = {node.name for node in app.graph.get_nodes()}
+    expected_names = {"my_subgraph_tx", "my_subgraph_rx"}
+
+    assert node_names == expected_names, (
+        f"Node names don't match expected names.\n"
+        f"Actual nodes: {node_names}\n"
+        f"Expected nodes: {expected_names}\n"
+    )
+    assert captured.out.count("Rx message value: 8") == 1
+    assert captured.out.count("Rx message value: 9") == 0
+
+
+# Test for 1:N connections with nested subgraph exposing same interface port to multiple operators.
+class NestedSubgraphWithMultipleOperators(Subgraph):
+    """Nested subgraph that exposes the same interface port to multiple operators."""
+
+    def compose(self):
+        receiver1 = PingRxOp(self, name="receiver1")
+        receiver2 = PingRxOp(self, name="receiver2")
+        receiver3 = PingRxOp(self, name="receiver3")
+
+        self.add_input_interface_port("in", receiver1, "in")
+        self.add_input_interface_port("in", receiver2, "in")
+        self.add_input_interface_port("in", receiver3, "in")
+
+
+class OuterSubgraphWithNestedMultipleOperators(Subgraph):
+    """Outer subgraph containing the nested subgraph with multiple operators."""
+
+    def compose(self):
+        # Create a nested subgraph that has multiple operators mapped to the same port.
+        nested_multi_op = NestedSubgraphWithMultipleOperators(self, name="nested_multi_op_subgraph")
+
+        self.add_input_interface_port("broadcast_input", nested_multi_op, "in")
+
+
+class OneToManyConnectionApp(Application):
+    """Test application demonstrating 1:N connections with nested subgraphs."""
+
+    def compose(self):
+        # Create a single transmitter.
+        transmitter = PingTxOp(self, CountCondition(self, 5), name="broadcast_transmitter")
+
+        outer_subgraph = OuterSubgraphWithNestedMultipleOperators(self, name="outer_subgraph")
+
+        self.add_flow(
+            transmitter,
+            outer_subgraph,
+            {("out", "broadcast_input")},
+        )
+
+
+def test_one_to_many_connection(capfd):
+    """Test that 1:N connections with nested subgraphs work correctly."""
+    app = OneToManyConnectionApp()
+    app.run()
+
+    captured = capfd.readouterr()
+    assert "error" not in captured.err.lower()
+
+    # Check that nodes are present
+    node_names = {node.name for node in app.graph.get_nodes()}
+    expected_names = {
+        "broadcast_transmitter",
+        "outer_subgraph_nested_multi_op_subgraph_receiver1",
+        "outer_subgraph_nested_multi_op_subgraph_receiver2",
+        "outer_subgraph_nested_multi_op_subgraph_receiver3",
+    }
+    assert node_names == expected_names, (
+        f"Node names don't match expected names.\n"
+        f"Actual nodes: {node_names}\n"
+        f"Expected nodes: {expected_names}\n"
+    )

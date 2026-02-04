@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,3 +42,20 @@ async_console_logger:
   large_data_worker_sleep_time: 200000
   large_data_queue_policy: Reject  # AsyncQueuePolicy.kReject (case-insensitive)
   enable_large_data_queue: true
+  queue_type: lock_free  # DataLoggerQueueType.LockFree (case-insensitive)
+
+async_console_logger_ordered:
+  log_inputs: true
+  log_outputs: true
+  log_metadata: true
+  log_tensor_data_content: true
+  allowlist_patterns: []
+  denylist_patterns : [".*op3.*", ".*op5.*"]
+  max_queue_size: 5000
+  worker_sleep_time: 50000
+  queue_policy: reject  # AsyncQueuePolicy.kReject (case-insensitive)
+  large_data_max_queue_size: 1000
+  large_data_worker_sleep_time: 200000
+  large_data_queue_policy: Reject  # AsyncQueuePolicy.kReject (case-insensitive)
+  enable_large_data_queue: true
+  queue_type: ordered  # DataLoggerQueueType.Ordered (case-insensitive)

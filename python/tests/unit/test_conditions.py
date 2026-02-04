@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -473,12 +473,10 @@ args:
 
 
 class TestCudaStreamCondition:
-    def test_kwarg_based_initialization(self, app, capfd):
+    def test_kwarg_based_initialization_legacy_receiver_arg(self, app, capfd):
         name = "cuda_stream_condition"
         cond = CudaStreamCondition(fragment=app, receiver="in", name=name)
-        assert isinstance(cond, GXFCondition)
         assert isinstance(cond, ConditionBase)
-        assert cond.gxf_typename == "nvidia::gxf::CudaStreamSchedulingTerm"
 
         assert f"""
 name: {name}
@@ -494,8 +492,54 @@ args:
         assert "error" not in captured.err
         assert "warning" not in captured.err
 
-    def test_default_initialization(self, app):
-        CudaStreamCondition(app)
+    def test_kwarg_based_initialization_single_receiver(self, app, capfd):
+        name = "cuda_stream_condition"
+        cond = CudaStreamCondition(fragment=app, receivers="in", name=name)
+        # CudaStreamCondition is a native condition, not a GXF wrapper
+        assert isinstance(cond, ConditionBase)
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  - name: receivers
+    type: std::vector<std::string>
+""" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_kwarg_based_initialization_multiple_receivers(self, app, capfd):
+        name = "cuda_stream_condition"
+        cond = CudaStreamCondition(fragment=app, receivers=["in1", "in2"], name=name)
+        assert isinstance(cond, ConditionBase)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_check_all_messages_parameter(self, app, capfd):
+        name = "cuda_stream_condition"
+        cond = CudaStreamCondition(
+            fragment=app, receivers="in", check_all_messages=False, name=name
+        )
+        assert isinstance(cond, ConditionBase)
+
+        # Verify the check_all_messages argument is in the repr
+        assert "check_all_messages" in repr(cond)
+
+        # assert no warnings or errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization_raises_without_receiver(self, app):
+        # CudaStreamCondition requires either 'receiver' or 'receivers' parameter
+        with pytest.raises((ValueError, RuntimeError), match="receiver"):
+            CudaStreamCondition(app)
 
 
 class TestCudaBufferAvailableCondition:

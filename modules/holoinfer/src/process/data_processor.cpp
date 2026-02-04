@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,7 +96,7 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
                   holoinfer_code::H_ERROR,
                   "Data processor, custom cuda kernel not defined as per specifications.");
             }
-            auto kernel_identifier = oper_name_split[1];
+            const auto& kernel_identifier = oper_name_split[1];
             HOLOSCAN_LOG_INFO("Custom kernel Identifier: {}", kernel_identifier);
 
             // From all entries in custom_kernels, find multiple custom cuda kernels and store them
@@ -150,7 +150,7 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
             // extract output datatype
             std::string current_out_dtype = "out_dtype-" + kernel_identifier;
             if (custom_kernels.find(current_out_dtype) != custom_kernels.end()) {
-              auto output_dtype_string = custom_kernels.at(current_out_dtype);
+              const auto& output_dtype_string = custom_kernels.at(current_out_dtype);
 
               if (kHoloInferDataTypeMap.find(output_dtype_string) == kHoloInferDataTypeMap.end()) {
                 HOLOSCAN_LOG_ERROR(
@@ -175,7 +175,7 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
             // extract output dimensions
             std::string current_output_dimensions = "output_dimensions-" + kernel_identifier;
             if (custom_kernels.find(current_output_dimensions) != custom_kernels.end()) {
-              auto output_dimensions_string = custom_kernels.at(current_output_dimensions);
+              const auto& output_dimensions_string = custom_kernels.at(current_output_dimensions);
               std::vector<std::string> output_dimensions;
               string_split(output_dimensions_string, output_dimensions, ',');
               std::vector<int> output_dimensions_int;
@@ -582,7 +582,7 @@ InferStatus DataProcessor::process_operation(const std::string& operation,
               "Data processor, Operation " + current_operation + " not as per specifications");
         }
         auto kernel_identifier = oper_name_split[1];
-        kernel_identifiers.push_back(kernel_identifier);
+        kernel_identifiers.push_back(std::move(kernel_identifier));
       }
       auto cuda_operation = "custom_cuda_kernel";
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,7 +96,7 @@ int main(int argc, char** argv) {
     auto console_logger = app->make_resource<holoscan::data_loggers::AsyncConsoleLogger>(
         "console_logger",
         holoscan::Arg("serializer", text_serializer),
-        app->from_config("basic_console_logger"));
+        app->from_config("async_console_logger"));
 
     // add the console logger to the application
     app->add_data_logger(console_logger);

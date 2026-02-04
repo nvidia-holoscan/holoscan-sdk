@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./entity_serializers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/subgraph.hpp"
@@ -47,7 +48,8 @@ class PyUcxEntitySerializer : public UcxEntitySerializer {
   explicit PyUcxEntitySerializer(
       std::variant<Fragment*, Subgraph*> fragment_or_subgraph,
       // std::vector<std::shared_ptr<holoscan::Resource>> component_serializers = {},
-      bool verbose_warning = false, const std::string& name = "ucx_entity_buffer")
+      bool verbose_warning = false,
+      const std::string& name = resource_default_name_v<UcxEntitySerializer>)
       : UcxEntitySerializer(ArgList{
             Arg{"verbose_warning", verbose_warning},
         }) {
@@ -68,7 +70,7 @@ void init_entity_serializers(py::module_& m) {
            "fragment"_a,
            // "component_serializers"_a = std::vector<std::shared_ptr<holoscan::Resource>>{},
            "verbose_warning"_a = false,
-           "name"_a = "ucx_entity_serializer"s,
+           "name"_a = std::string(resource_default_name_v<UcxEntitySerializer>),
            doc::UcxEntitySerializer::doc_UcxEntitySerializer);
 }
 }  // namespace holoscan

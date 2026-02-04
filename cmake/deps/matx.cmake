@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@ rapids_cpm_find(matx 0.9.3
     GIT_TAG v0.9.3
     GIT_SHALLOW TRUE
     EXCLUDE_FROM_ALL
+    OPTIONS CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON
 )
 
 if(matx_ADDED)

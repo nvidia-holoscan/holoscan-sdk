@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +23,15 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "./common.hpp"
 
 namespace holoscan {
+
+// Forward declaration
+class ArgList;
 
 /**
  * @brief Class to get the configuration of the application.
@@ -76,6 +80,26 @@ class Config {
    * @return The reference to the vector of YAML::Node objects.
    */
   const std::vector<YAML::Node>& yaml_nodes() const { return yaml_nodes_; }
+
+  /**
+   * @brief Get the value of a configuration key as an ArgList.
+   *
+   * This method retrieves the value from the configuration for the given key.
+   * You can use '.' (dot) to access nested fields.
+   *
+   * @param key The key of the configuration.
+   * @return The argument list of the configuration for the key.
+   */
+  ArgList from_config(const std::string& key);
+
+  /**
+   * @brief Determine the set of keys present in the config.
+   *
+   * Returns all keys including nested keys using dot notation (e.g., "parent.child").
+   *
+   * @return The set of valid keys.
+   */
+  std::unordered_set<std::string> config_keys();
 
  private:
   void parse_file(const std::string& config_file);

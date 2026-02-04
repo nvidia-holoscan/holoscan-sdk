@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -250,6 +250,17 @@ class MetadataDictionary {
 
   /// swap the contents of this dictionary and other
   void swap(MetadataDictionary& other);
+
+  /**
+   * @brief Create a deep copy of this dictionary
+   *
+   * Creates a new MetadataDictionary with its own independent copy of the underlying map
+   * and MetadataObjects. This is useful when you need to store a snapshot of metadata
+   * that won't be affected by subsequent modifications to the original.
+   *
+   * @return A new MetadataDictionary with independent copies of all data
+   */
+  MetadataDictionary deep_copy() const;
 
   /// merge (move) the contents of other dictionary into this dictionary
   void merge(MetadataDictionary& other);

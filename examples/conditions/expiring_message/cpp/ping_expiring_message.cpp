@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "holoscan/holoscan.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
@@ -45,7 +46,7 @@ class TimestampPingTxOp : public Operator {
 
     // emitting a timestamp is necessary for this port to be connected to an input port that is
     // using a ExpiringMessageAvailableCondition
-    op_output.emit(value, "out", timestamp);
+    op_output.emit(std::move(value), "out", timestamp);
   };
 
  private:

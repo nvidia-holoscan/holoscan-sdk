@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,15 +27,18 @@
 #include <memory>
 #include <string>
 #include <typeindex>
+#include <variant>
 #include <vector>
 
 #include "../../core/gil_guarded_pyobject.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/parameter.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
@@ -60,10 +63,11 @@ class PySimpleTextSerializer : public SimpleTextSerializer {
   using SimpleTextSerializer::SimpleTextSerializer;
 
   // Define a constructor that fully initializes the object.
-  PySimpleTextSerializer(Fragment* fragment, int64_t max_elements = 10,
-                         int64_t max_metadata_items = 10, bool log_video_buffer_content = false,
+  PySimpleTextSerializer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                         int64_t max_elements = 10, int64_t max_metadata_items = 10,
+                         bool log_video_buffer_content = false,
                          bool log_python_object_contents = true,
-                         const std::string& name = "simple_text_serializer");
+                         const std::string& name = resource_default_name_v<SimpleTextSerializer>);
 
   void initialize() override;
   void setup(ComponentSpec& spec) override;
@@ -79,14 +83,14 @@ class PyBasicConsoleLogger : public BasicConsoleLogger {
   using BasicConsoleLogger::BasicConsoleLogger;
 
   // Define a constructor that fully initializes the object.
-  PyBasicConsoleLogger(Fragment* fragment,
+  PyBasicConsoleLogger(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                        std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
                        bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
                        bool log_tensor_data_content = true, bool use_scheduler_clock = true,
                        std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
                        const std::vector<std::string>& allowlist_patterns = {},
                        const std::vector<std::string>& denylist_patterns = {},
-                       const std::string& name = "basic_console_logger");
+                       const std::string& name = resource_default_name_v<BasicConsoleLogger>);
 
   void initialize() override;
 };
@@ -97,13 +101,14 @@ class PyGXFConsoleLogger : public GXFConsoleLogger {
   using GXFConsoleLogger::GXFConsoleLogger;
 
   // Define a constructor that fully initializes the object.
-  PyGXFConsoleLogger(Fragment* fragment, std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
+  PyGXFConsoleLogger(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                     std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
                      bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
                      bool log_tensor_data_content = true, bool use_scheduler_clock = true,
                      std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
                      const std::vector<std::string>& allowlist_patterns = {},
                      const std::vector<std::string>& denylist_patterns = {},
-                     const std::string& name = "gxf_basic_console_logger");
+                     const std::string& name = resource_default_name_v<GXFConsoleLogger>);
 
   void initialize() override;
 };

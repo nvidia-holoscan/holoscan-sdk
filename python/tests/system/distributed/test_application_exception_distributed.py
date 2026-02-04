@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,8 +67,9 @@ def test_exception_handling_distributed():
     # sometimes fails. Try 5000 instead to see if this helps reduce stochastic CI test failures.
     env_var_settings = {
         ("HOLOSCAN_MAX_DURATION_MS", "5000"),
-        # set the stop on deadlock timeout to 5s to have enough time to run the test
-        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "5000"),
+        # network_connection_timeout (default 5s) handles connection setup, so shorter timeout is
+        # safe
+        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "1000"),
     }
 
     exception_occurred = False

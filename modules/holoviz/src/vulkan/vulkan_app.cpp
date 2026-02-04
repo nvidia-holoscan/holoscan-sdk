@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,6 +36,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -100,7 +101,7 @@ class Vulkan::Impl {
 
   void begin_transfer_pass();
   void end_transfer_pass();
-  void begin_render_pass();
+  void begin_render_pass(RenderFlags render_flags);
   void end_render_pass();
   void cleanup_transfer_jobs();
 
@@ -292,8 +293,8 @@ class Vulkan::Impl {
   std::vector<vk::UniqueCommandBuffer> command_buffers_;
   /// Fences per nb element in Swapchain
   std::vector<vk::UniqueFence> wait_fences_;
-  /// Base render pass
-  vk::UniqueRenderPass render_pass_;
+  /// Render passes, one for each begin flag
+  std::unordered_map<std::underlying_type<RenderFlags>::type, vk::UniqueRenderPass> render_passes_;
   /// Size of the window
   vk::Extent2D size_{0, 0};
   /// Cache for pipeline/shaders
@@ -354,6 +355,8 @@ class Vulkan::Impl {
   vk::UniquePipeline imgui_pipeline_;
 
   std::vector<ImageFormat> image_formats_;  ///< list of formats supported by the hardware
+
+  RenderFlags render_flags_ = RenderFlags::NONE;
 };
 
 Vulkan::Impl::~Impl() {
@@ -408,6 +411,8 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   // Allow debug names
   context_info.addInstanceExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME, true);
   context_info.addInstanceExtension(VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME);
+  context_info.addInstanceExtension(VK_KHR_SURFACE_EXTENSION_NAME);
+  context_info.addInstanceExtension(VK_KHR_GET_SURFACE_CAPABILITIES_2_EXTENSION_NAME);
 
   const std::vector<Window::DeviceExtensionInfo> device_extensions =
       window_->get_required_device_extensions();
@@ -427,6 +432,12 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   context_info.addDeviceExtension(
       VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME, true /*optional*/, &line_rasterization_feature_);
   context_info.addDeviceExtension(VK_KHR_SAMPLER_YCBCR_CONVERSION_EXTENSION_NAME);
+#ifdef VK_EXT_present_mode_fifo_latest_ready
+  context_info.addDeviceExtension(VK_EXT_PRESENT_MODE_FIFO_LATEST_READY_EXTENSION_NAME,
+                                  true /*optional*/);
+#else
+  context_info.addDeviceExtension("VK_EXT_present_mode_fifo_latest_ready", true /*optional*/);
+#endif
 
   // Creating Vulkan base application
   if (!nvvk_.vk_ctx_.initInstance(context_info)) {
@@ -732,13 +743,13 @@ void Vulkan::Impl::init_im_gui(const std::string& font_path, float font_size_in_
   init_info.PipelineCache = VK_NULL_HANDLE;
   init_info.DescriptorPool = im_gui_desc_pool_.get();
   init_info.Subpass = 0;
-  init_info.MinImageCount = 2;
+  init_info.MinImageCount = 1;
   init_info.ImageCount = static_cast<int>(fb_sequence_->get_image_count());
   init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
   init_info.CheckVkResultFn = nullptr;
   init_info.Allocator = nullptr;
 
-  if (!ImGui_ImplVulkan_Init(&init_info, render_pass_.get())) {
+  if (!ImGui_ImplVulkan_Init(&init_info, render_passes_[RenderFlags::NONE].get())) {
     throw std::runtime_error("Failed to initialize ImGui vulkan backend.");
   }
 
@@ -833,7 +844,9 @@ void Vulkan::Impl::end_transfer_pass() {
                                       VK_PIPELINE_STAGE_TRANSFER_BIT);
 }
 
-void Vulkan::Impl::begin_render_pass() {
+void Vulkan::Impl::begin_render_pass(RenderFlags render_flags) {
+  render_flags_ = render_flags;
+
   // Acquire the next image
   prepare_frame();
 
@@ -855,7 +868,13 @@ void Vulkan::Impl::begin_render_pass() {
   vk::RenderPassBeginInfo render_pass_begin_info;
   render_pass_begin_info.clearValueCount = 2;
   render_pass_begin_info.pClearValues = clear_values.data();
-  render_pass_begin_info.renderPass = render_pass_.get();
+  auto render_pass = render_passes_.find(
+      render_flags & (RenderFlags::DONT_CLEAR_COLOR | RenderFlags::DONT_CLEAR_DEPTH));
+  if (render_pass == render_passes_.end()) {
+    throw std::runtime_error("Render pass not found for RenderFlags: " +
+                             std::to_string(static_cast<int>(render_flags)));
+  }
+  render_pass_begin_info.renderPass = render_pass->second.get();
   render_pass_begin_info.framebuffer = framebuffers_[cur_frame].get();
   render_pass_begin_info.renderArea = vk::Rect2D{{0, 0}, size_};
   cmd_buf.beginRenderPass(render_pass_begin_info, vk::SubpassContents::eInline);
@@ -916,9 +935,8 @@ void Vulkan::Impl::cleanup_transfer_jobs() {
           vk::resultCheck(result, "Failed to get frame fence status");
         }
       } else {
-        // this is a stale transfer buffer (no end_transfer_pass()?), remove it
-        it = transfer_jobs_.erase(it);
-        continue;
+        // this is a active transfer buffer, keep it; the frame fence will be set after the call to
+        // this function
       }
     }
     ++it;
@@ -932,8 +950,10 @@ void Vulkan::Impl::prepare_frame() {
 
   create_frame_buffers();
 
-  // Acquire the next image from the framebuffer sequence
-  fb_sequence_->acquire();
+  if (!(render_flags_ & RenderFlags::DONT_SWAP_BUFFERS)) {
+    // Acquire the next image from the framebuffer sequence
+    fb_sequence_->acquire();
+  }
 
   // Use a fence to wait until the command buffer has finished execution before using it again
   const uint32_t image_index = get_active_image_index();
@@ -950,6 +970,9 @@ void Vulkan::Impl::prepare_frame() {
     exit(-1);
   }
 
+  // try to free previous transfer jobs (need to do this before resetting the fence)
+  cleanup_transfer_jobs();
+
   // reset the fence to be reused
   device_.resetFences(wait_fences_[image_index].get());
 
@@ -958,9 +981,6 @@ void Vulkan::Impl::prepare_frame() {
   if (!transfer_jobs_.empty() && !transfer_jobs_.back().frame_fence_) {
     transfer_jobs_.back().frame_fence_ = wait_fences_[image_index].get();
   }
-
-  // try to free previous transfer jobs
-  cleanup_transfer_jobs();
 }
 
 void Vulkan::Impl::submit_frame() {
@@ -968,20 +988,28 @@ void Vulkan::Impl::submit_frame() {
 
   nvvk_.batch_submission_.enqueue(command_buffers_[image_index].get());
 
-  // wait for the previous frame's semaphore
-  if (fb_sequence_->get_active_read_semaphore()) {
-    nvvk_.batch_submission_.enqueueWait(fb_sequence_->get_active_read_semaphore(),
-                                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+  if (!(render_flags_ & RenderFlags::DONT_SWAP_BUFFERS)) {
+    // wait for the previous frame's semaphore
+    vk::Semaphore read_semaphore = fb_sequence_->get_active_read_semaphore();
+    if (read_semaphore) {
+      nvvk_.batch_submission_.enqueueWait(read_semaphore,
+                                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+    }
+    // and signal this frames semaphore on completion
+    vk::Semaphore written_semaphore = fb_sequence_->get_active_written_semaphore();
+    if (written_semaphore) {
+      nvvk_.batch_submission_.enqueueSignal(written_semaphore);
+    }
   }
-  // and signal this frames semaphore on completion
-  nvvk_.batch_submission_.enqueueSignal(fb_sequence_->get_active_written_semaphore());
 
   const vk::Result result =
       vk::Result(nvvk_.batch_submission_.execute(wait_fences_[image_index].get(), 0b0000'0001));
   vk::resultCheck(result, "Failed to execute batch submission");
 
-  // Presenting frame
-  fb_sequence_->present(queue_gct_);
+  if (!(render_flags_ & RenderFlags::DONT_SWAP_BUFFERS)) {
+    // Presenting frame
+    fb_sequence_->present(queue_gct_);
+  }
 }
 
 void Vulkan::Impl::create_framebuffer_sequence() {
@@ -1030,19 +1058,17 @@ void Vulkan::Impl::create_framebuffer_sequence() {
 }
 
 void Vulkan::Impl::create_render_pass() {
-  render_pass_.reset();
+  render_passes_.clear();
 
   std::array<vk::AttachmentDescription, 2> attachments;
   // Color attachment
   attachments[0].format = fb_sequence_->get_color_format();
-  attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
   attachments[0].finalLayout =
       surface_ ? vk::ImageLayout::ePresentSrcKHR : vk::ImageLayout::eColorAttachmentOptimal;
   attachments[0].samples = vk::SampleCountFlagBits::e1;
 
   // Depth attachment
   attachments[1].format = fb_sequence_->get_depth_format();
-  attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
   attachments[1].finalLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
   attachments[1].samples = vk::SampleCountFlagBits::e1;
 
@@ -1076,15 +1102,38 @@ void Vulkan::Impl::create_render_pass() {
   render_pass_info.dependencyCount = static_cast<uint32_t>(subpass_dependencies.size());
   render_pass_info.pDependencies = subpass_dependencies.data();
 
-  render_pass_ = device_.createRenderPassUnique(render_pass_info);
+  for (const std::underlying_type<RenderFlags>::type& flag :
+       {std::underlying_type<RenderFlags>::type(RenderFlags::NONE),
+        std::underlying_type<RenderFlags>::type(RenderFlags::DONT_CLEAR_COLOR),
+        std::underlying_type<RenderFlags>::type(RenderFlags::DONT_CLEAR_DEPTH),
+        std::underlying_type<RenderFlags>::type(RenderFlags::DONT_CLEAR_COLOR |
+                                                RenderFlags::DONT_CLEAR_DEPTH)}) {
+    if (flag & RenderFlags::DONT_CLEAR_COLOR) {
+      attachments[0].initialLayout = vk::ImageLayout::ePresentSrcKHR;
+      attachments[0].loadOp = vk::AttachmentLoadOp::eLoad;
+    } else {
+      attachments[0].initialLayout = vk::ImageLayout::eUndefined;
+      attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
+    }
+    if (flag & RenderFlags::DONT_CLEAR_DEPTH) {
+      attachments[1].initialLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
+      attachments[1].loadOp = vk::AttachmentLoadOp::eLoad;
+    } else {
+      attachments[1].initialLayout = vk::ImageLayout::eUndefined;
+      attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
+    }
+
+    render_passes_[flag] = device_.createRenderPassUnique(render_pass_info);
 
 #ifdef _DEBUG
-  vk::DebugUtilsObjectNameInfoEXT name_info;
-  name_info.objectHandle = (uint64_t)VkRenderPass(render_pass_.get());
-  name_info.objectType = vk::ObjectType::eRenderPass;
-  name_info.pObjectName = R"(Holoviz)";
-  device_.setDebugUtilsObjectNameEXT(name_info);
+    vk::DebugUtilsObjectNameInfoEXT name_info;
+    name_info.objectHandle = (uint64_t)VkRenderPass(render_passes_[flag].get());
+    name_info.objectType = vk::ObjectType::eRenderPass;
+    std::string name = std::string("Holoviz") + std::to_string(static_cast<int>(flag));
+    name_info.pObjectName = name.c_str();
+    device_.setDebugUtilsObjectNameEXT(name_info);
 #endif  // _DEBUG
+  }
 }
 
 void Vulkan::Impl::create_pipelines() {
@@ -1230,7 +1279,7 @@ void Vulkan::Impl::create_frame_buffers() {
 
   // Create frame buffers for every swap chain image
   vk::FramebufferCreateInfo framebuffer_create_info;
-  framebuffer_create_info.renderPass = render_pass_.get();
+  framebuffer_create_info.renderPass = render_passes_[RenderFlags::NONE].get();
   framebuffer_create_info.attachmentCount = 2;
   framebuffer_create_info.width = size_.width;
   framebuffer_create_info.height = size_.height;
@@ -1375,7 +1424,8 @@ vk::UniquePipeline Vulkan::Impl::create_pipeline(
 
   state.update();
 
-  nvvk::GraphicsPipelineGenerator generator(device_, pipeline_layout, render_pass_.get(), state);
+  nvvk::GraphicsPipelineGenerator generator(
+      device_, pipeline_layout, render_passes_[RenderFlags::NONE].get(), state);
 
   std::vector<uint32_t> code;
   code.assign(vertex_shader, vertex_shader + vertex_shader_size);
@@ -2325,9 +2375,9 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
          (out_vk_format == vk::Format::eR8G8B8A8Unorm)) ||
         ((image_format == vk::Format::eB8G8R8A8Srgb) &&
          (out_vk_format == vk::Format::eR8G8B8A8Srgb))) {
-      // if the destination CUDA memory is on a different device, allocate temporary memory, convert
-      // from the read transfer buffer memory to the temporary memory and copy from temporary memory
-      // to destination memory
+      // if the destination CUDA memory is on a different device, allocate temporary memory,
+      // convert from the read transfer buffer memory to the temporary memory and copy from
+      // temporary memory to destination memory
       UniqueAsyncCUdeviceptr tmp_device_ptr;
       CUdeviceptr dst_device_ptr;
       if (!cuda_service_->IsMemOnDevice(device_ptr)) {
@@ -2476,8 +2526,8 @@ void Vulkan::end_transfer_pass() {
   impl_->end_transfer_pass();
 }
 
-void Vulkan::begin_render_pass() {
-  impl_->begin_render_pass();
+void Vulkan::begin_render_pass(RenderFlags render_flags) {
+  impl_->begin_render_pass(render_flags);
 }
 
 void Vulkan::end_render_pass() {

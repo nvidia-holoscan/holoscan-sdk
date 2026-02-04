@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,8 @@ from holoscan.resources import (
     CudaStreamPool,
     UnboundedAllocator,
 )
+
+from ..utils import requires_torch_cuda
 
 
 class TensorGeneratorOp(Operator):
@@ -171,6 +173,7 @@ class InferenceOpTestApp(Application):
         self.add_flow(infer_op, result_checker_op, {("transmitter", "input")})
 
 
+@requires_torch_cuda
 @pytest.mark.parametrize("green_context", [False, True])
 def test_inference_torch(green_context: bool):
     app = InferenceOpTestApp(green_context)

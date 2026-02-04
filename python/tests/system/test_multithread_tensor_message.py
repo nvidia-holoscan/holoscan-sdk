@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -130,7 +130,7 @@ def launch_app(scheduler="multi_thread"):
     env_var_settings = {
         # set the recession period to 100 ms to reduce debug messages
         ("HOLOSCAN_CHECK_RECESSION_PERIOD_MS", "100"),
-        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "500"),
+        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "1000"),
     }
 
     with env_var_context(env_var_settings):

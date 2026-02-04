@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/fragment.hpp"
@@ -86,7 +87,7 @@ void ComponentBase::update_params_from_args(
     } catch (const std::exception& e) {
       std::string error_msg = fmt::format("Argument '{}': {}", arg.name(), e.what());
       HOLOSCAN_LOG_ERROR("Component '{}': failed to set argument - {}", name_, error_msg);
-      errors.push_back(error_msg);
+      errors.push_back(std::move(error_msg));
     }
   }
 
@@ -147,7 +148,8 @@ void ComponentBase::reset_backend_objects() {
             }
           }
         } break;
-        default:
+        case ArgContainerType::kArray:
+          // Filtered out by earlier check - unreachable
           break;
       }
     } else if (element_type == ArgElementType::kResource) {
@@ -167,7 +169,8 @@ void ComponentBase::reset_backend_objects() {
             }
           }
         } break;
-        default:
+        case ArgContainerType::kArray:
+          // Filtered out by earlier check - unreachable
           break;
       }
     }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./transmitters_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/async_buffer_transmitter.hpp"
@@ -47,9 +48,10 @@ class PyDoubleBufferTransmitter : public DoubleBufferTransmitter {
   using DoubleBufferTransmitter::DoubleBufferTransmitter;
 
   // Define a constructor that fully initializes the object.
-  explicit PyDoubleBufferTransmitter(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                     uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                                     const std::string& name = "double_buffer_transmitter")
+  explicit PyDoubleBufferTransmitter(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, uint64_t capacity = 1UL,
+      uint64_t policy = 2UL,
+      const std::string& name = resource_default_name_v<DoubleBufferTransmitter>)
       : DoubleBufferTransmitter(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -68,7 +70,7 @@ class PyUcxTransmitter : public UcxTransmitter {
                             const std::string& local_address = std::string("0.0.0.0"),
                             uint32_t port = kDefaultUcxPort, uint32_t local_port = 0,
                             uint32_t maximum_connection_retries = 10,
-                            const std::string& name = "ucx_transmitter")
+                            const std::string& name = resource_default_name_v<UcxTransmitter>)
       : UcxTransmitter(ArgList{Arg{"capacity", capacity},
                                Arg{"policy", policy},
                                Arg{"receiver_address", receiver_address},
@@ -89,8 +91,9 @@ class PyAsyncBufferTransmitter : public AsyncBufferTransmitter {
   using AsyncBufferTransmitter::AsyncBufferTransmitter;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsyncBufferTransmitter(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                    const std::string& name = "async_buffer_transmitter")
+  explicit PyAsyncBufferTransmitter(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      const std::string& name = resource_default_name_v<AsyncBufferTransmitter>)
       : AsyncBufferTransmitter() {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -113,7 +116,7 @@ void init_transmitters(py::module_& m) {
            "fragment"_a,
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
-           "name"_a = "double_buffer_transmitter"s,
+           "name"_a = std::string(resource_default_name_v<DoubleBufferTransmitter>),
            doc::DoubleBufferTransmitter::doc_DoubleBufferTransmitter);
 
   py::class_<AsyncBufferTransmitter,
@@ -123,7 +126,7 @@ void init_transmitters(py::module_& m) {
       m, "AsyncBufferTransmitter", doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter)
       .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
-           "name"_a = "async_buffer_transmitter"s,
+           "name"_a = std::string(resource_default_name_v<AsyncBufferTransmitter>),
            doc::AsyncBufferTransmitter::doc_AsyncBufferTransmitter);
 
   py::class_<UcxTransmitter, PyUcxTransmitter, Transmitter, std::shared_ptr<UcxTransmitter>>(
@@ -147,7 +150,7 @@ void init_transmitters(py::module_& m) {
            "port"_a = kDefaultUcxPort,
            "local_port"_a = static_cast<uint32_t>(0),
            "maximum_connection_retries"_a = 10,
-           "name"_a = "ucx_transmitter"s,
+           "name"_a = std::string(resource_default_name_v<UcxTransmitter>),
            doc::UcxTransmitter::doc_UcxTransmitter);
 }
 }  // namespace holoscan

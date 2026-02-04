@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,12 @@
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/core/resources/gxf/async_buffer_receiver.hpp"
+#include "holoscan/core/resources/gxf/async_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/block_memory_pool.hpp"
+#include "holoscan/core/resources/gxf/condition_combiner.hpp"
+#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
+#include "holoscan/core/resources/gxf/cuda_green_context_pool.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
 #include "holoscan/core/resources/gxf/cpu_thread.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
@@ -93,6 +98,45 @@ TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPool) {
 
 TEST_F(ResourceClassesWithGXFContext, TestCudaStreamPoolDefaultConstructor) {
   auto resource = F.make_resource<CudaStreamPool>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCudaGreenContextPool) {
+  const std::string name{"cuda-green-context-pool"};
+  std::vector<uint32_t> sms_per_partition{4, 4};
+  ArgList arglist{
+      Arg{"dev_id", static_cast<int32_t>(0)},
+      Arg{"flags", static_cast<uint32_t>(0)},
+      Arg{"num_partitions", static_cast<uint32_t>(2)},
+      Arg{"sms_per_partition", sms_per_partition},
+  };
+  auto resource = F.make_resource<CudaGreenContextPool>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CudaGreenContextPool>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CudaGreenContextPool"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCudaGreenContextPoolDefaultConstructor) {
+  auto resource = F.make_resource<CudaGreenContextPool>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCudaGreenContext) {
+  const std::string name{"cuda-green-context"};
+  auto pool = F.make_resource<CudaGreenContextPool>("pool");
+  ArgList arglist{
+      Arg{"cuda_green_context_pool", pool},
+      Arg{"index", static_cast<int32_t>(0)},
+      Arg{"nvtx_identifier", std::string("test_context")},
+  };
+  auto resource = F.make_resource<CudaGreenContext>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<CudaGreenContext>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::CudaGreenContext"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestCudaGreenContextDefaultConstructor) {
+  auto resource = F.make_resource<CudaGreenContext>();
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestRMMAllocator) {
@@ -643,6 +687,72 @@ TEST_F(ResourceClassesWithGXFContext, TestThreadPool) {
 
 TEST_F(ResourceClassesWithGXFContext, TestThreadPoolDefaultConstructor) {
   auto resource = F.make_resource<ThreadPool>();
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestResourceUniqueDefaultNames) {
+  // Test that different resource types get unique default names when created without
+  // an explicit name parameter. This prevents naming conflicts when multiple unnamed
+  // resources of different types are added to the same operator or fragment and ensures
+  // C++ API consistency with Python API.
+
+  // Create resources without specifying names
+  auto async_buffer_receiver = F.make_resource<AsyncBufferReceiver>();
+  auto async_buffer_transmitter = F.make_resource<AsyncBufferTransmitter>();
+  auto block_pool = F.make_resource<BlockMemoryPool>(
+      Arg{"storage_type", 1}, Arg{"block_size", 1024UL}, Arg{"num_blocks", 10UL});
+  auto cpu_thread = F.make_resource<CPUThread>();
+  auto cuda_green_context = F.make_resource<CudaGreenContext>();
+  auto cuda_green_context_pool = F.make_resource<CudaGreenContextPool>();
+  auto cuda_stream_pool = F.make_resource<CudaStreamPool>();
+  auto double_buffer_receiver = F.make_resource<DoubleBufferReceiver>();
+  auto double_buffer_transmitter = F.make_resource<DoubleBufferTransmitter>();
+  auto gpu_device = F.make_resource<GPUDevice>();
+  auto manual_clock = F.make_resource<ManualClock>();
+  auto or_condition_combiner = F.make_resource<OrConditionCombiner>();
+  auto realtime_clock = F.make_resource<RealtimeClock>();
+  auto rmm_allocator = F.make_resource<RMMAllocator>();
+  auto serialization_buffer = F.make_resource<SerializationBuffer>();
+  auto std_component_serializer = F.make_resource<StdComponentSerializer>();
+  auto std_entity_serializer = F.make_resource<StdEntitySerializer>();
+  auto stream_ordered_allocator = F.make_resource<StreamOrderedAllocator>();
+  auto synthetic_clock = F.make_resource<SyntheticClock>();
+  auto thread_pool = F.make_resource<ThreadPool>();
+  auto ucx_component_serializer = F.make_resource<UcxComponentSerializer>();
+  auto ucx_entity_serializer = F.make_resource<UcxEntitySerializer>();
+  auto ucx_holoscan_component_serializer = F.make_resource<UcxHoloscanComponentSerializer>();
+  auto ucx_receiver = F.make_resource<UcxReceiver>();
+  auto ucx_serialization_buffer = F.make_resource<UcxSerializationBuffer>();
+  auto ucx_transmitter = F.make_resource<UcxTransmitter>();
+  auto unbounded = F.make_resource<UnboundedAllocator>();
+
+  // Verify each resource has the expected default name matching Python API
+  EXPECT_EQ(async_buffer_receiver->name(), "async_buffer_receiver");
+  EXPECT_EQ(async_buffer_transmitter->name(), "async_buffer_transmitter");
+  EXPECT_EQ(block_pool->name(), "block_memory_pool");
+  EXPECT_EQ(cpu_thread->name(), "cpu_thread");
+  EXPECT_EQ(cuda_green_context->name(), "cuda_green_context");
+  EXPECT_EQ(cuda_green_context_pool->name(), "cuda_green_context_pool");
+  EXPECT_EQ(cuda_stream_pool->name(), "cuda_stream_pool");
+  EXPECT_EQ(double_buffer_receiver->name(), "double_buffer_receiver");
+  EXPECT_EQ(double_buffer_transmitter->name(), "double_buffer_transmitter");
+  EXPECT_EQ(gpu_device->name(), "gpu_device");
+  EXPECT_EQ(manual_clock->name(), "manual_clock");
+  EXPECT_EQ(or_condition_combiner->name(), "or_condition_combiner");
+  EXPECT_EQ(realtime_clock->name(), "realtime_clock");
+  EXPECT_EQ(rmm_allocator->name(), "rmm_pool");
+  EXPECT_EQ(serialization_buffer->name(), "serialization_buffer");
+  EXPECT_EQ(stream_ordered_allocator->name(), "stream_ordered_allocator");
+  EXPECT_EQ(std_component_serializer->name(), "standard_component_serializer");
+  EXPECT_EQ(std_entity_serializer->name(), "standard_entity_serializer");
+  EXPECT_EQ(synthetic_clock->name(), "synthetic_clock");
+  EXPECT_EQ(thread_pool->name(), "thread_pool");
+  EXPECT_EQ(ucx_component_serializer->name(), "ucx_component_serializer");
+  EXPECT_EQ(ucx_entity_serializer->name(), "ucx_entity_serializer");
+  EXPECT_EQ(ucx_holoscan_component_serializer->name(), "ucx_holoscan_component_serializer");
+  EXPECT_EQ(ucx_receiver->name(), "ucx_receiver");
+  EXPECT_EQ(ucx_serialization_buffer->name(), "ucx_serialization_buffer");
+  EXPECT_EQ(ucx_transmitter->name(), "ucx_transmitter");
+  EXPECT_EQ(unbounded->name(), "unbounded_allocator");
 }
 
 }  // namespace holoscan

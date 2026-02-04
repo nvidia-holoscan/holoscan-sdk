@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,10 @@
 #ifndef HOLOSCAN_CORE_GXF_ENTITY_HPP
 #define HOLOSCAN_CORE_GXF_ENTITY_HPP
 
+#include <cuda_runtime_api.h>
+
 #include <memory>
+#include <optional>
 #include <utility>
 
 // Entity definition
@@ -103,15 +106,28 @@ class Entity : public nvidia::gxf::Entity {
           "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
       return nullptr;
     }
-    std::shared_ptr<Tensor> tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+    auto dl_ctx = maybe_dl_ctx.value();
+    // Get MemoryBuffer pointer for stream-aware deallocation support
+    auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+    std::shared_ptr<Tensor> tensor = std::make_shared<Tensor>(dl_ctx, mem_buf_ptr);
     return tensor;
   }
 
-  // Adds a component with given type
+  /**
+   * @brief Adds a tensor component to the entity.
+   *
+   * @tparam DataT The data type (must be holoscan::Tensor).
+   * @param data Shared pointer to the tensor data.
+   * @param name Optional name for the component.
+   * @param stream Optional CUDA stream for stream-aware memory deallocation. When provided,
+   *               the stream is set on the tensor's memory buffer, enabling allocators like
+   *               BlockMemoryPool to defer memory reuse until GPU operations complete.
+   */
   template <typename DataT,
             typename = std::enable_if_t<!holoscan::is_vector_v<DataT> &&
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
-  void add(const std::shared_ptr<DataT>& data, const char* name = nullptr) {
+  void add(const std::shared_ptr<DataT>& data, const char* name = nullptr,
+           std::optional<cudaStream_t> stream = std::nullopt) {
     gxf_tid_t tid;
     HOLOSCAN_GXF_CALL_FATAL(
         GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid));
@@ -125,6 +141,11 @@ class Entity : public nvidia::gxf::Entity {
     // Copy the member data (std::shared_ptr<DLManagedTensorContext>) from the Tensor to the
     // nvidia::gxf::Tensor
     *tensor_ptr = nvidia::gxf::Tensor(data->dl_ctx());
+
+    // Set stream on memory buffer for stream-aware deallocation if provided
+    if (stream.has_value()) {
+      tensor_ptr->memory_buffer().setStream(static_cast<void*>(stream.value()));
+    }
   }
 };
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,16 +41,14 @@ namespace holoscan::test {
  *
  * @tparam T The type of the data to emit
  */
-template<typename T>
+template <typename T>
 class TestHarnessSourceOp : public holoscan::Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(TestHarnessSourceOp)
 
   TestHarnessSourceOp() = default;
 
-  void setup(OperatorSpec& spec) override {
-    spec.output<T>("output");
-  }
+  void setup(OperatorSpec& spec) override { spec.output<T>("output"); }
 
   void compute(InputContext&, OutputContext& op_output, ExecutionContext&) override {
     if (iteration_ >= test_data_.size()) {
@@ -64,9 +62,7 @@ class TestHarnessSourceOp : public holoscan::Operator {
     iteration_++;
   }
 
-  void set_test_data(const std::vector<T>& data) {
-    test_data_ = data;
-  }
+  void set_test_data(const std::vector<T>& data) { test_data_ = data; }
 
  private:
   std::vector<T> test_data_;
@@ -83,16 +79,14 @@ class TestHarnessSourceOp : public holoscan::Operator {
  *
  * @tparam T The type of the data to receive
  */
-template<typename T>
+template <typename T>
 class TestHarnessSinkOp : public holoscan::Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(TestHarnessSinkOp)
 
   TestHarnessSinkOp() = default;
 
-  void setup(holoscan::OperatorSpec& spec) override {
-    spec.input<T>("input");
-  }
+  void setup(holoscan::OperatorSpec& spec) override { spec.input<T>("input"); }
 
   void compute(holoscan::InputContext& op_input, holoscan::OutputContext&,
                holoscan::ExecutionContext&) override {
@@ -134,16 +128,14 @@ class TestHarnessSinkOp : public holoscan::Operator {
   std::vector<T> received_data_;
 };
 
-
-
 // Helper function to create operator arguments tuple
-template<typename... Args>
+template <typename... Args>
 std::tuple<Args...> args(Args&&... arguments) {
   return std::make_tuple(std::forward<Args>(arguments)...);
 }
 
 // Helper function to create validators vector
-template<typename OutputType, typename... Validators>
+template <typename OutputType, typename... Validators>
 std::vector<std::function<void(const OutputType&)>> validators(Validators&&... validator_funcs) {
   return {std::function<void(const OutputType&)>(std::forward<Validators>(validator_funcs))...};
 }
@@ -159,16 +151,16 @@ std::vector<std::function<void(const OutputType&)>> validators(Validators&&... v
  * @tparam Args The types of the operator's arguments
  *
  */
-template<typename OperatorType, typename... Args>
+template <typename OperatorType, typename... Args>
 class OperatorTestHarness
     : public holoscan::Application,
       public std::enable_shared_from_this<OperatorTestHarness<OperatorType, Args...>> {
  public:
   explicit OperatorTestHarness(std::tuple<Args...> operator_args)
-    : operator_args_(std::move(operator_args)) {}
+      : operator_args_(std::move(operator_args)) {}
 
   // Add input port with data
-  template<typename T>
+  template <typename T>
   std::shared_ptr<OperatorTestHarness> add_input_port(const std::string& name,
                                                       const std::vector<T>& data) {
     // Determine the number of data elements
@@ -195,9 +187,9 @@ class OperatorTestHarness
   }
 
   // Add output port with validators
-  template<typename T>
-  std::shared_ptr<OperatorTestHarness> add_output_port(const std::string& name,
-        const std::vector<std::function<void(const T&)>>& validators = {}) {
+  template <typename T>
+  std::shared_ptr<OperatorTestHarness> add_output_port(
+      const std::string& name, const std::vector<std::function<void(const T&)>>& validators = {}) {
     output_port_creators_.emplace_back([this, name, validators]() {
       auto sink = this->template make_operator<TestHarnessSinkOp<T>>(name + "_sink");
 
@@ -213,7 +205,7 @@ class OperatorTestHarness
   }
 
   // Add a condition to the operator under test
-  template<typename ConditionType, typename... CondArgs>
+  template <typename ConditionType, typename... CondArgs>
   std::shared_ptr<OperatorTestHarness> add_condition(const std::string& name, CondArgs&&... args) {
     // Store condition creation for later execution in compose()
     condition_creators_.emplace_back(
@@ -235,7 +227,7 @@ class OperatorTestHarness
     // Create all input source operators
     for (auto& creator : input_port_creators_) {
       auto [source, port_name] = creator();
-      input_sources_[port_name] = source;
+      input_sources_[port_name] = std::move(source);
     }
 
     // Create operator under test using just the operator args
@@ -255,7 +247,7 @@ class OperatorTestHarness
     // Create all output sink operators
     for (auto& creator : output_port_creators_) {
       auto [sink, port_name] = creator();
-      output_sinks_[port_name] = sink;
+      output_sinks_[port_name] = std::move(sink);
     }
 
     // Connect all input sources to operator
@@ -270,7 +262,7 @@ class OperatorTestHarness
   }
 
   // Get source by name with type casting
-  template<typename T>
+  template <typename T>
   std::shared_ptr<TestHarnessSourceOp<T>> get_source(const std::string& port_name) const {
     auto it = input_sources_.find(port_name);
     if (it != input_sources_.end()) {
@@ -280,13 +272,13 @@ class OperatorTestHarness
   }
 
   // Get the operator under test with type casting
-  template<typename T = OperatorType>
+  template <typename T = OperatorType>
   std::shared_ptr<T> get_operator_under_test() const {
     return std::dynamic_pointer_cast<T>(operator_under_test_);
   }
 
   // Get sink by name with type casting
-  template<typename T>
+  template <typename T>
   std::shared_ptr<TestHarnessSinkOp<T>> get_sink(const std::string& port_name) const {
     auto it = output_sinks_.find(port_name);
     if (it != output_sinks_.end()) {
@@ -305,10 +297,10 @@ class OperatorTestHarness
   size_t data_count_ = 0;
 
   // Type-erased port creators
-  std::vector<std::function<std::pair<std::shared_ptr<holoscan::Operator>,
-                                      std::string>()>> input_port_creators_;
-  std::vector<std::function<std::pair<std::shared_ptr<holoscan::Operator>,
-                                      std::string>()>> output_port_creators_;
+  std::vector<std::function<std::pair<std::shared_ptr<holoscan::Operator>, std::string>()>>
+      input_port_creators_;
+  std::vector<std::function<std::pair<std::shared_ptr<holoscan::Operator>, std::string>()>>
+      output_port_creators_;
 
   // Runtime storage of operators
   std::map<std::string, std::shared_ptr<holoscan::Operator>> input_sources_;
@@ -319,19 +311,17 @@ class OperatorTestHarness
 };
 
 // Helper function to create operator tests
-template<typename OperatorType, typename... Args>
-std::shared_ptr<OperatorTestHarness<OperatorType, std::decay_t<Args>...>>
-create_operator_test(Args&&... args) {
+template <typename OperatorType, typename... Args>
+std::shared_ptr<OperatorTestHarness<OperatorType, std::decay_t<Args>...>> create_operator_test(
+    Args&&... args) {
   return std::make_shared<OperatorTestHarness<OperatorType, std::decay_t<Args>...>>(
-    std::make_tuple(std::forward<Args>(args)...));
+      std::make_tuple(std::forward<Args>(args)...));
 }
 
 // Overload without operator arguments
-template<typename OperatorType>
-std::shared_ptr<OperatorTestHarness<OperatorType>>
-create_operator_test() {
-  return std::make_shared<OperatorTestHarness<OperatorType>>(
-    std::make_tuple());
+template <typename OperatorType>
+std::shared_ptr<OperatorTestHarness<OperatorType>> create_operator_test() {
+  return std::make_shared<OperatorTestHarness<OperatorType>>(std::make_tuple());
 }
 
 /**

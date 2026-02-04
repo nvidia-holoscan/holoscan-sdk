@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "../core/component_util.hpp"
 #include "./event_based_scheduler_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_component.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
@@ -57,15 +58,18 @@ class PyEventBasedScheduler : public EventBasedScheduler {
   using EventBasedScheduler::EventBasedScheduler;
 
   // Define a constructor that fully initializes the object.
-  explicit PyEventBasedScheduler(Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
-                                 int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
-                                 int64_t max_duration_ms = -1LL,
-                                 int64_t stop_on_deadlock_timeout = 0LL,
-                                 std::optional<std::vector<uint32_t>> pin_cores = std::nullopt,
-                                 const std::string& name = "event_based_scheduler")
-      : EventBasedScheduler(ArgList{Arg{"worker_thread_number", worker_thread_number},
-                                    Arg{"stop_on_deadlock", stop_on_deadlock},
-                                    Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout}}) {
+  explicit PyEventBasedScheduler(
+      Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
+      int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
+      int64_t max_duration_ms = -1LL, int64_t stop_on_deadlock_timeout = 0LL,
+      int64_t network_connection_timeout = 5000LL,
+      std::optional<std::vector<uint32_t>> pin_cores = std::nullopt,
+      const std::string& name = scheduler_default_name_v<EventBasedScheduler>)
+      : EventBasedScheduler(
+            ArgList{Arg{"worker_thread_number", worker_thread_number},
+                    Arg{"stop_on_deadlock", stop_on_deadlock},
+                    Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout},
+                    Arg{"network_connection_timeout", network_connection_timeout}}) {
     // max_duration_ms is an optional argument in GXF. We use a negative value in this constructor
     // to indicate that the argument should not be set.
     if (max_duration_ms >= 0) {
@@ -101,6 +105,7 @@ void init_event_based_scheduler(py::module_& m) {
                     bool,
                     int64_t,
                     int64_t,
+                    int64_t,
                     std::optional<std::vector<uint32_t>>,
                     const std::string&>(),
            "fragment"_a,
@@ -110,8 +115,9 @@ void init_event_based_scheduler(py::module_& m) {
            "stop_on_deadlock"_a = true,
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
+           "network_connection_timeout"_a = 5000LL,
            "pin_cores"_a = std::nullopt,
-           "name"_a = "event_based_scheduler"s,
+           "name"_a = std::string(scheduler_default_name_v<EventBasedScheduler>),
            doc::EventBasedScheduler::doc_EventBasedScheduler)
       .def_property_readonly("clock", &EventBasedScheduler::clock)
       .def_property_readonly("worker_thread_number", &EventBasedScheduler::worker_thread_number)
@@ -119,6 +125,8 @@ void init_event_based_scheduler(py::module_& m) {
       .def_property_readonly("stop_on_deadlock", &EventBasedScheduler::stop_on_deadlock)
       .def_property_readonly("stop_on_deadlock_timeout",
                              &EventBasedScheduler::stop_on_deadlock_timeout)
+      .def_property_readonly("network_connection_timeout",
+                             &EventBasedScheduler::network_connection_timeout)
       .def_property_readonly("pin_cores", &EventBasedScheduler::pin_cores);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

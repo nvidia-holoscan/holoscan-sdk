@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +68,8 @@ class PyPingTensorTxOp : public holoscan::ops::PingTensorTxOp {
                    const std::variant<std::string, py::dtype>& dtype = "uint8_t",
                    const std::string& tensor_name = "tensor",
                    std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
-                   bool async_device_allocation = false, const std::string& name = "ping_tensor_tx")
+                   bool async_device_allocation = false,
+                   const std::string& name = operator_default_name_v<ops::PingTensorTxOp>)
       : PingTensorTxOp(ArgList{Arg{"storage_type", storage_type},
                                Arg{"rows", rows},
                                Arg{"tensor_name", tensor_name},
@@ -164,7 +165,7 @@ PYBIND11_MODULE(_ping_tensor_tx, m) {
            "tensor_name"_a = "tensor"s,
            "cuda_stream_pool"_a = py::none(),
            "async_device_allocation"_a = false,
-           "name"_a = "ping_tensor_tx"s,
+           "name"_a = std::string(operator_default_name_v<ops::PingTensorTxOp>),
            doc::PingTensorTxOp::doc_PingTensorTxOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

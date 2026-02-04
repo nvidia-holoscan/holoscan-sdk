@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,7 +113,7 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
       }
     }
     succ_[node_u][node_v] = datadict;
-    pred_[node_v][node_u] = datadict;
+    pred_[node_v][node_u] = std::move(datadict);
   } else {
     auto datadict = std::make_shared<EdgeDataElementType>();
 
@@ -123,7 +123,7 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
       }
     }
     succ_[node_u][node_v] = datadict;
-    pred_[node_v][node_u] = datadict;
+    pred_[node_v][node_u] = std::move(datadict);
   }
 
   // Invalidate cache since graph structure changed
@@ -438,7 +438,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
           input_to_output_map[input_port_unique_id].push_back(output_port_unique_id);
 
           // For output-to-input map: output port connects to this input port
-          output_to_input_map[output_port_unique_id].push_back(input_port_unique_id);
+          output_to_input_map[output_port_unique_id].push_back(std::move(input_port_unique_id));
         }
       }
     }

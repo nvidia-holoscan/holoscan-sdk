@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@ from holoscan.core import (
     AsyncDataLoggerResource,
     AsyncQueuePolicy,
     DataLogger,
+    DataLoggerQueueType,
     DataLoggerResource,
     ResourceBase,
 )
@@ -213,6 +214,33 @@ class TestAsyncConsoleLogger:
             large_data_queue_policy=AsyncQueuePolicy.REJECT,
             enable_large_data_queue=True,
             shutdown_wait_period_ms=5000,
+            queue_type=DataLoggerQueueType.LOCK_FREE,
+            serializer=SimpleTextSerializer(app, name="text-serializer"),
+        )
+        self.check_data_logger(data_logger, name)
+
+        # assert no errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+    def test_kwarg_based_initialization_ordered_queue(self, app, capfd):
+        name = "async-console-logger-ordered"
+        data_logger = AsyncConsoleLogger(
+            fragment=app,
+            name=name,
+            log_inputs=True,
+            log_outputs=True,
+            log_metadata=True,
+            log_tensor_data_content=True,
+            max_queue_size=5000,
+            worker_sleep_time=50000,
+            queue_policy=AsyncQueuePolicy.REJECT,
+            large_data_max_queue_size=1000,
+            large_data_worker_sleep_time=200000,
+            large_data_queue_policy=AsyncQueuePolicy.REJECT,
+            enable_large_data_queue=True,
+            shutdown_wait_period_ms=5000,
+            queue_type=DataLoggerQueueType.ORDERED,
             serializer=SimpleTextSerializer(app, name="text-serializer"),
         )
         self.check_data_logger(data_logger, name)
@@ -228,6 +256,20 @@ class TestAsyncConsoleLogger:
             fragment=app,
             name=name,
             **app.kwargs("async_console_logger"),
+        )
+        self.check_data_logger(data_logger, name)
+
+        # assert no errors logged
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+
+    def test_init_from_config_ordered_queue(self, app, data_loggers_config_file, capfd):
+        app.config(data_loggers_config_file)
+        name = "async-console-logger-ordered"
+        data_logger = AsyncConsoleLogger(
+            fragment=app,
+            name=name,
+            **app.kwargs("async_console_logger_ordered"),
         )
         self.check_data_logger(data_logger, name)
 

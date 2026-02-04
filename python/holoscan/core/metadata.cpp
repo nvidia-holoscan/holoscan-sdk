@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -86,7 +86,7 @@ void set_vector_metadata_via_numpy_array(const std::string& key, const py::array
     for (const auto& item : obj) {
       v.push_back(item.cast<T>());
     }
-    out.set(key, v);
+    out.set(key, std::move(v));
   } else if (obj.attr("ndim").cast<int>() == 2) {
     std::vector<std::vector<T>> v;
     auto shape = obj.attr("shape").cast<std::vector<py::ssize_t>>();
@@ -97,9 +97,9 @@ void set_vector_metadata_via_numpy_array(const std::string& key, const py::array
       for (const auto& inner_item : item) {
         vv.push_back(inner_item.cast<T>());
       }
-      v.push_back(vv);
+      v.push_back(std::move(vv));
     }
-    out.set(key, v);
+    out.set(key, std::move(v));
   } else {
     throw std::runtime_error("Only 1d and 2d NumPy arrays are supported.");
   }
@@ -122,9 +122,9 @@ void set_vector_metadata_via_py_sequence(const std::string& key, const py::seque
       for (const auto& inner_item : item) {
         vv.push_back(inner_item.cast<T>());
       }
-      v.push_back(vv);
+      v.push_back(std::move(vv));
     }
-    out.set(key, v);
+    out.set(key, std::move(v));
   } else {
     // 1d vector to handle a sequence of elements
     std::vector<T> v;
@@ -133,7 +133,7 @@ void set_vector_metadata_via_py_sequence(const std::string& key, const py::seque
     for (const auto& item : seq) {
       v.push_back(item.cast<T>());
     }
-    out.set(key, v);
+    out.set(key, std::move(v));
   }
 }
 
@@ -527,6 +527,56 @@ void init_metadata(py::module_& m) {
       .def("merge", &MetadataDictionary::merge, "other"_a, doc::MetadataDictionary::doc_merge)
       .def("insert", &MetadataDictionary::insert, "other"_a, doc::MetadataDictionary::doc_insert)
       .def("swap", &MetadataDictionary::swap, "other"_a, doc::MetadataDictionary::doc_swap)
+      .def(
+          "__copy__",
+          [](const MetadataDictionary& self) {
+            // Perform shallow copy (uses C++ copy constructor)
+            return MetadataDictionary(self);
+          },
+          "Support for Python's copy.copy(). Performs shallow copy like C++ copy constructor.")
+      .def(
+          "__deepcopy__",
+          [](MetadataDictionary& self, py::object memo) {
+            // First, create a deep copy of the dictionary structure and MetadataObjects
+            MetadataDictionary result = self.deep_copy();
+
+            // Now, for Python objects stored in the dictionary, we need to recursively
+            // deep copy them using Python's copy.deepcopy()
+            py::module_ copy_module = py::module_::import("copy");
+
+            // Temporarily change policy to kUpdate to ensure we can replace values
+            // (otherwise kReject would keep old values, kRaise would throw)
+            MetadataPolicy original_policy = result.policy();
+            result.policy(MetadataPolicy::kUpdate);
+
+            for (const auto& key : result.keys()) {
+              auto meta_obj = result.get(key);
+              const std::any& value = meta_obj->value();
+
+              // Check if this is a Python object (stored as GILGuardedPyObject)
+              if (value.type() == typeid(std::shared_ptr<GILGuardedPyObject>)) {
+                // Extract the Python object
+                auto gil_obj = std::any_cast<std::shared_ptr<GILGuardedPyObject>>(value);
+                py::object py_obj = gil_obj->obj();
+
+                // Deep copy the Python object using copy.deepcopy()
+                py::object deep_copied_py_obj = copy_module.attr("deepcopy")(py_obj, memo);
+
+                // Store the deep-copied Python object back
+                auto new_gil_obj = std::make_shared<GILGuardedPyObject>(deep_copied_py_obj);
+                result.set(key, new_gil_obj);
+              }
+              // For C++ types (int, float, string, vectors, etc.), the deep_copy() already
+              // created independent copies, so we don't need to do anything else
+            }
+
+            // Restore the original policy
+            result.policy(original_policy);
+            return result;
+          },
+          "memo"_a,
+          "Support for Python's copy.deepcopy(). Creates a deep copy with independent Python "
+          "objects.")
       .def("update", &MetadataDictionary::update, "other"_a, doc::MetadataDictionary::doc_update);
 }
 

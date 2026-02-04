@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -79,11 +79,16 @@ Notes
 -----
 When ``async_device_allocation`` is enabled, this operator allocates device memory asynchronously
 on a CUDA stream. The ``compute`` method may return before all GPU work has completed. Downstream
-operators that receive data from this operator should call
-``op_input.receive_cuda_stream(<port_name>)`` to synchronize the CUDA stream with the downstream
-operator's dedicated internal stream. This ensures proper synchronization before accessing the
-data. For more details on CUDA stream handling in Holoscan, see:
-https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
+operators that receive data from this operator should either:
+
+- Call ``op_input.receive_cuda_stream(<port_name>)`` (after calling ``receive`` for that port) to
+  synchronize the CUDA stream with the downstream operator's dedicated internal stream before
+  accessing the data.
+- Add a ``CudaStreamCondition`` to delay scheduling until upstream GPU work has completed.
+
+For more details on CUDA stream handling in Holoscan, see the
+:ref:`CUDA Stream Handling in Holoscan Applications <holoscan-cuda-stream-handling>` section of
+the Holoscan SDK documentation.
 )doc")
 
 }  // namespace holoscan::doc::PingTensorTxOp

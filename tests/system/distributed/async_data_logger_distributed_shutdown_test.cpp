@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,16 +97,22 @@ class SlowLoggerDistributedTestApp : public Application {
     using namespace holoscan;
 
     auto fragment = make_fragment<SlowLoggerTestFragment>("slow_logger_fragment");
-    slow_logger_fragment_ = std::dynamic_pointer_cast<SlowLoggerTestFragment>(fragment);
-    slow_logger_fragment_->set_num_iterations(num_iterations_);
-    slow_logger_fragment_->set_shutdown_wait_period_ms(shutdown_wait_period_ms_);
-    slow_logger_fragment_->set_process_delay_ms(process_delay_ms_);
+    auto typed_fragment = std::dynamic_pointer_cast<SlowLoggerTestFragment>(fragment);
+    typed_fragment->set_num_iterations(num_iterations_);
+    typed_fragment->set_shutdown_wait_period_ms(shutdown_wait_period_ms_);
+    typed_fragment->set_process_delay_ms(process_delay_ms_);
 
     add_fragment(fragment);
+
+    // Use atomic store for thread-safe publication (compose() runs on app_thread,
+    // but get_slow_logger() may be called from the main thread)
+    std::atomic_store(&slow_logger_fragment_, typed_fragment);
   }
 
   std::shared_ptr<SlowAsyncLogger> get_slow_logger() const {
-    return slow_logger_fragment_ ? slow_logger_fragment_->get_slow_logger() : nullptr;
+    // Use atomic load for thread-safe access (may be called while compose() is running)
+    auto fragment = std::atomic_load(&slow_logger_fragment_);
+    return fragment ? fragment->get_slow_logger() : nullptr;
   }
 
  private:
@@ -171,10 +177,27 @@ TEST_F(AsyncDataLoggerDistributedShutdownTest,
     app_finished.store(true);
   });
 
-  // Wait a bit for the app to start and generate some log entries
-  std::this_thread::sleep_for(std::chrono::milliseconds(pre_signal_wait_ms));
+  // Wait for the app to actually start processing entries before sending SIGINT.
+  // Distributed apps have significant initialization overhead (driver/worker services, gRPC,
+  // UCX context, etc.), so a fixed sleep is unreliable in CI. Instead, poll until the logger
+  // has processed at least one entry, proving the graph is running.
+  auto startup_start = std::chrono::steady_clock::now();
+  auto max_startup_wait = std::chrono::seconds(30);
+  bool app_started_processing = false;
+  while (!app_finished.load() &&
+         std::chrono::steady_clock::now() - startup_start < max_startup_wait) {
+    auto logger = app->get_slow_logger();
+    if (logger && logger->get_entries_processed() > 0) {
+      app_started_processing = true;
+      // Let a few more entries get queued before sending SIGINT
+      std::this_thread::sleep_for(std::chrono::milliseconds(pre_signal_wait_ms));
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
 
   // Send SIGINT to trigger the signal handler (simulates Ctrl+C)
+  // Always send SIGINT to stop the app, even if startup failed (ensures clean thread join)
   HOLOSCAN_LOG_INFO("Sending SIGINT to test distributed app interrupt handler...");
   std::raise(SIGINT);
 
@@ -186,10 +209,16 @@ TEST_F(AsyncDataLoggerDistributedShutdownTest,
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
-  ASSERT_TRUE(app_finished.load())
-      << "Distributed app did not shut down within expected time after SIGINT";
+  bool app_shutdown_in_time = app_finished.load();
 
+  // Always join the thread before asserting to avoid thread leak on test failure
   app_thread.join();
+
+  // Now safe to assert (thread is joined)
+  ASSERT_TRUE(app_started_processing) << "Distributed app did not start processing entries within "
+                                      << max_startup_wait.count() << " seconds";
+  ASSERT_TRUE(app_shutdown_in_time)
+      << "Distributed app did not shut down within expected time after SIGINT";
 
   auto logger = app->get_slow_logger();
   ASSERT_NE(logger, nullptr);

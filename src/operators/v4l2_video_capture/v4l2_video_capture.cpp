@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,8 @@
 #include <magic_enum.hpp>
 
 #include "holoscan/core/execution_context.hpp"
+#include "holoscan/core/gxf/entity.hpp"
+#include "holoscan/core/io_context.hpp"
 #include "holoscan/core/resources/gxf/allocator.hpp"
 #include "holoscan/utils/cuda_macros.hpp"
 
@@ -481,7 +483,7 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
       video_buffer_info.surface_layout =
           nvidia::gxf::SurfaceLayout::GXF_SURFACE_LAYOUT_PITCH_LINEAR;
 
-      video_buffer.value()->wrapMemory(video_buffer_info,
+      video_buffer.value()->wrapMemory(std::move(video_buffer_info),
                                        buf.length,
                                        memory_storage_type_,
                                        buffers_[buf.index].ptr,

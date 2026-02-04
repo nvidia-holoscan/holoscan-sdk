@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,6 +40,7 @@ enum MessageType : uint16_t {
   MSG_SNAPSHOT_DATA = 3,       // Server -> Client: Full PoseTree state snapshot
   MSG_CLOSE = 4,               // Both ways: Close connection
   MSG_DISTRIBUTED_CONFIG = 5,  // Server -> Client config information
+  MSG_SNAPSHOT_ACK = 6,        // Client -> Server: Acknowledge snapshot applied
 };
 
 // Ensure packed layout for all serialized structs
@@ -48,6 +49,11 @@ enum MessageType : uint16_t {
 // Payload for the MSG_SUBSCRIBE message
 struct SubscribeMessage {
   uint8_t request_snapshot;  // Boolean flag
+};
+
+// Payload for the MSG_SNAPSHOT_ACK message
+struct SnapshotAckMessage {
+  uint8_t snapshot_applied;  // Boolean flag
 };
 
 // Type of change in a DELTA message
@@ -96,6 +102,7 @@ struct FrameInfo {
 
 // Static assertions to verify expected sizes
 static_assert(sizeof(SubscribeMessage) == sizeof(uint8_t), "Unexpected SubscribeMessage size");
+static_assert(sizeof(SnapshotAckMessage) == sizeof(uint8_t), "Unexpected SnapshotAckMessage size");
 static_assert(sizeof(FrameData) ==
                   sizeof(uint64_t) + sizeof(char[PoseTree::kFrameNameMaximumLength + 1]),
               "Unexpected FrameData size");

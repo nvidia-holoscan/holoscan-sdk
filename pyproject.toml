@@ -92,6 +92,7 @@ cupy = "cp"
 numpy = "np"
 
 [tool.pytest.ini_options]
+addopts = "-ra"
 markers = [
   "slow: mark test as slow to run (opt-in via --run-slow)",
   "realtime: marks tests as requiring real-time Linux kernel configuration (opt-in via --run-realtime)",

@@ -20,14 +20,13 @@
 ############################################################
 ARG ONNX_RUNTIME_VERSION=1.22.1
 ARG ONNX_RUNTIME_STRATEGY=downloader # or builder
-ARG PYTORCH_CU12_IGPU_VERSION=2.8.0
-ARG PYTORCH_CU12_DGPU_VERSION=2.8.0+cu129
-ARG PYTORCH_CU13_VERSION=2.9.0+cu130
+ARG PYTORCH_IGPU_VERSION=2.9.1
+ARG PYTORCH_DGPU_VERSION=2.9.1
 ARG NCCL_VERSION=2.27  # strict compat to match pytorch versions (symbol: ncclCommWindowRegister)
 ARG LIBCUSPARSELT_VERSION=0.8  # strict compat to match pytorch versions
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.2.0_20251212_8f83bf174_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.2.0_20251212_8f83bf174_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.3.0_20260130_b825fab47_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.3.0_20260130_b825fab47_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.0.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.13
@@ -406,13 +405,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
     && if [ $(uname -m) = "aarch64" ]; then \
         CONDITIONAL_LIBS="nvpl-blas nvpl-lapack"; \
     fi \
-    && if [ ${CUDA_MAJOR} -ge 13 ]; then \
-        CONDITIONAL_LIBS="${CONDITIONAL_LIBS} libnvshmem3-cuda-${CUDA_MAJOR}"; \
-    fi \
     && apt-get purge -y libcusparselt0 libcusparselt-dev \
     && apt-get autoremove --purge -y \
     && apt-get install -y --no-install-recommends \
         libnccl2=${NCCL_APT_VERSION} \
+        libnvshmem3-cuda-${CUDA_MAJOR} \
         libcusparselt0-cuda-${CUDA_MAJOR}=${LIBCUSPARSELT_VERSION}* \
         ${CONDITIONAL_LIBS}
 
@@ -499,7 +496,7 @@ FROM base AS sccache-downloader
 WORKDIR /opt/sccache
 
 # Set sccache version
-ENV SCCACHE_VERSION=v0.12.0-rapids.9
+ENV SCCACHE_VERSION=v0.12.0-rapids.27
 ENV SCCACHE_BASE_URL=https://github.com/rapidsai/sccache/releases/download
 
 # Download and extract the binary
@@ -627,16 +624,12 @@ ARG TORCH_WHL_DIR=/opt/wheels
 # PyTorch (dGPU downloader)
 ############################################################
 FROM pytorch-downloader-base AS pytorch-downloader-dgpu
-ARG PYTORCH_CU12_DGPU_VERSION
-ARG PYTORCH_CU13_VERSION
+ARG PYTORCH_DGPU_VERSION
 
 # Install torch wheel
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
-    if [ "${CUDA_MAJOR}" = "12" ]; then \
-        PYTORCH_VERSION="${PYTORCH_CU12_DGPU_VERSION}"; \
-    else \
-        PYTORCH_VERSION="${PYTORCH_CU13_VERSION}"; \
-    fi; \
+    CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 --output-delimiter=""); \
+    PYTORCH_VERSION="${PYTORCH_DGPU_VERSION}+cu${CUDA_MAJOR_MINOR}"; \
     INDEX_URL="https://download.pytorch.org/whl"; \
     python3 -m pip download \
         --dest ${TORCH_WHL_DIR} \
@@ -649,13 +642,13 @@ RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGET
 # PyTorch (iGPU downloader)
 ############################################################
 FROM pytorch-downloader-base AS pytorch-downloader-igpu
-ARG PYTORCH_CU12_IGPU_VERSION
+ARG PYTORCH_IGPU_VERSION
 
 RUN python3 -m pip download \
         --dest ${TORCH_WHL_DIR} \
         --no-deps \
         --index-url "https://pypi.jetson-ai-lab.io/jp6/cu126" \
-        torch=="${PYTORCH_CU12_IGPU_VERSION}"
+        torch=="${PYTORCH_IGPU_VERSION}"
 
 ############################################################
 # PyTorch (common downloader)
@@ -789,6 +782,15 @@ RUN DOCA_ARCH=$(uname -m); \
     && echo "Package: *\nPin: origin \"${DOCA_HOSTNAME}\"\nPin-Priority: 800" \
         > /etc/apt/preferences.d/doca-pin
 
+# Setup LLVM APT repository (for newer clang-tidy)
+# https://apt.llvm.org/
+ARG LLVM_VERSION=18
+RUN DISTRO_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
+    && mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | gpg --dearmor -o /etc/apt/keyrings/llvm.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/${DISTRO_CODENAME}/ llvm-toolchain-${DISTRO_CODENAME}-${LLVM_VERSION} main" \
+        > /etc/apt/sources.list.d/llvm.list
+
 ############################################################
 # UCX (with RDMA and gdrcopy support)
 ############################################################
@@ -906,7 +908,7 @@ COPY --from=apt-repo-config /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
 
 # APT INSTALLS
 #  valgrind - dynamic analysis
-#  clang-tidy - static analysis
+#  clang-tidy-18 - static analysis (from LLVM apt repo, newer than Ubuntu's default v14)
 #  xvfb - testing on headless systems
 #  libx* - X packages
 #  libvulkan-dev, glslang-tools - for Vulkan apps (Holoviz)
@@ -919,12 +921,13 @@ COPY --from=apt-repo-config /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
 #  libjpeg-turbo8-dev - (8.0) v4l2 mjpeg dependency
 #  ucx-*: needed for distributed apps (holoscan core) - comes from the DOCA repository
 #  ibverbs* rdma*: needed for ConnectX RDMA support for ucx
+ARG LLVM_VERSION=18
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
     apt-get update \
     && apt-get install --no-install-recommends -y \
         valgrind \
-        clang-tidy \
+        clang-tidy-${LLVM_VERSION} \
         xvfb \
         libx11-dev \
         libxcb-glx0 \
@@ -943,7 +946,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         libv4l-dev \
         v4l-utils \
         libjpeg-turbo8-dev \
-        ibverbs-providers libibverbs1 librdmacm1
+        ibverbs-providers libibverbs1 librdmacm1 \
+    && ln -sf /usr/bin/clang-tidy-${LLVM_VERSION} /usr/bin/clang-tidy
 
 # Installing libvulkan-dev may re-install the python3 package.
 # Re-override to use a separate version if needed (see python-base-${GPU_TYPE} stages)
@@ -955,15 +959,27 @@ RUN if [ "${GPU_TYPE}" = "dgpu" ]; then \
 #  requirements.dev.txt
 #    coverage - test coverage of python tests
 #    pytest*  - testing
-#    pillow - convert_gxf_entities_to_images dependency
 #  requirements
-#    pip - 22.0.2+ needed for PEP 600 and a version that is greater than the Ubuntu 22.04's python3-pip package for python wheel symlinks resolution
-#    cupy-cuda - dependency for holoscan python + examples
 #    cloudpickle - dependency for distributed apps
+#    cupy-cuda - dependency for holoscan python + examples
+#    numpy - dependency for holoscan python + examples
+#    pillow - convert_gxf_entities_to_images dependency
+#    pip - 22.0.2+ needed for PEP 600 and a version that is greater than the Ubuntu 22.04's python3-pip package for python wheel symlinks resolution
 COPY python/requirements.dev.txt /tmp/requirements.dev.txt
 COPY python/requirements.cu${CUDA_MAJOR}.txt /tmp/requirements.cu${CUDA_MAJOR}.txt
+# Note: --ignore-installed is required to handle a pip/apt conflict on Ubuntu 24.04.
+# On Ubuntu 22.04, python3-yaml provides PyYAML 5.4.1 which doesn't satisfy >=6.0,
+# so pip installs a fresh copy without issues.
+# On Ubuntu 24.04, python3-yaml provides PyYAML 6.0.1 which satisfies >=6.0, but
+# when --upgrade triggers an upgrade attempt, pip fails to uninstall the apt-installed
+# package because it lacks a RECORD file (apt packages don't create these).
+# The error is: "Cannot uninstall PyYAML 6.0.1 ... no RECORD file was found".
+# Using --ignore-installed tells pip to install fresh copies without attempting to
+# uninstall existing system packages.
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
-    python3 -m pip install -r /tmp/requirements.dev.txt -r /tmp/requirements.cu${CUDA_MAJOR}.txt
+    python3 -m pip install --upgrade --ignore-installed \
+        -r /tmp/requirements.dev.txt \
+        -r /tmp/requirements.cu${CUDA_MAJOR}.txt
 
 # Disable the keep-archives setting at the end of the build stage
 # so it doesn't persist for users interacting directly with this image.

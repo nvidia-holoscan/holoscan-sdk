@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include <chrono>
 #include <memory>
 #include <thread>
+#include <utility>
 
 #include <holoscan/core/gpu_resident_operator.hpp>
 #include <holoscan/holoscan.hpp>
@@ -120,7 +121,7 @@ class InputGpuOp : public holoscan::GPUResidentOperator {
   void setup([[maybe_unused]] OperatorSpec& spec) override {}
 
   void set_source_operator(std::shared_ptr<holoscan::GPUResidentOperator> source_op) {
-    source_op_ = source_op;
+    source_op_ = std::move(source_op);
   }
 
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
@@ -209,7 +210,7 @@ class GpuResidentApplication : public holoscan::Application {
     HOLOSCAN_LOG_INFO("Configured InputGpuOp with source operator: {}", source_op->name());
 
     // register the data ready fragment
-    gpu_resident().register_data_ready_handler(data_ready_fragment);
+    gpu_resident().register_data_ready_handler(std::move(data_ready_fragment));
   }
 
   void compose() override {

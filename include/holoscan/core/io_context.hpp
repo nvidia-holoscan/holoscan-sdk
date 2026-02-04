@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,7 +38,6 @@
 #include "./domain/tensor_map.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
-#include "./execution_context.hpp"
 #include "./fragment.hpp"
 #include "./gxf/entity.hpp"
 #include "./io_spec.hpp"
@@ -47,6 +46,11 @@
 #include "./parameter.hpp"
 #include "./type_traits.hpp"
 #include "holoscan/profiler/profiler.hpp"
+
+namespace holoscan {
+// Forward declaration to break circular dependency with execution_context.hpp
+class ExecutionContext;
+}  // namespace holoscan
 
 // IO Context specific profiling events
 PROF_DEFINE_EVENT(event_receive, "receive", 0x33, 0xDD, 0xCC);
@@ -363,11 +367,21 @@ class InputContext {
     cuda_object_handler_ = std::move(handler);
   }
 
-  /** @brief Synchronize any streams found on this port to the operator's internal CUDA stream.
+  /** @brief Get the operator's internal CUDA stream, synchronizing any upstream streams to it.
    *
-   * The `receive` method must have been called for `input_port_name` prior to calling this method
-   * in order for any received streams to be found. This method will call `cudaSetDevice` to make
-   * the device corresponding to the operator's internal stream current.
+   * This is the recommended method for stream handling in most operators. It performs several
+   * operations:
+   *
+   * 1. **Synchronizes upstream streams** to the operator's internal stream using non-blocking
+   *    CUDA events (`cudaEventRecord` / `cudaStreamWaitEvent`). This ensures upstream GPU work
+   *    completes before this operator's work begins, without blocking the CPU.
+   * 2. **Sets the CUDA device** (`cudaSetDevice`) to match the internal stream's device.
+   * 3. **Configures all output ports** to automatically emit the internal stream ID when `emit()`
+   *    is called.
+   * 4. **Returns the internal `cudaStream_t`** for use in kernels and async memory operations.
+   *
+   * @note The `receive()` method must be called for `input_port_name` **before** calling this
+   * method. The `receive()` call captures stream IDs from incoming messages.
    *
    * If no `CudaStreamPool` resource was available on the operator, the operator will not have an
    * internal stream. In that case, the first stream received on the input port will be returned
@@ -377,11 +391,11 @@ class InputContext {
    *
    * @param input_port_name The name of the input port. Can be omitted if the operator only has a
    * single input port.
-   * @param allocate Whether to allocate a new stream if no stream is found. If false or the
-   * operator does not have a `cuda_stream_pool` parameter set, returns cudaStreamDefault.
-   * @param sync_to_default Whether to also synchronize any received streams to the default stream.
-   * @returns The operator's internal CUDA stream, when possible. Returns `cudaStreamDefault`
-   * instead if no CudaStreamPool resource was available and no stream was found on the input port.
+   * @param allocate Whether to allocate an internal stream if not already allocated. If false or
+   * no `CudaStreamPool` is available, the first received stream is used as the internal stream.
+   * @param sync_to_default Whether to also synchronize the internal stream to `cudaStreamDefault`.
+   * @returns The operator's internal CUDA stream (reused across all `compute()` calls). Returns
+   * `cudaStreamDefault` if no stream pool was available and no stream was found on the input port.
    */
   virtual cudaStream_t receive_cuda_stream([[maybe_unused]] const char* input_port_name = nullptr,
                                            [[maybe_unused]] bool allocate = true,
@@ -390,17 +404,24 @@ class InputContext {
     return cudaStreamDefault;
   }
 
-  /** @brief Retrieve the CUDA streams found an input port.
+  /** @brief Retrieve the CUDA streams found on an input port (advanced use).
    *
-   * This method is intended for advanced use cases where it is the users responsibility to
-   * manage any necessary stream synchronization. In most cases, it is recommended to use
-   * `receive_cuda_stream` instead.
+   * Unlike `receive_cuda_stream`, this method does **not** perform any synchronization, does not
+   * allocate an internal stream, does not set the CUDA device, and does not configure output ports.
+   * It simply returns the raw stream information found in the received messages.
+   *
+   * This method is intended for advanced use cases where manual stream management is required.
+   * For most operators, use `receive_cuda_stream` instead.
+   *
+   * @note The `receive()` method must be called for `input_port_name` **before** calling this
+   * method. The `receive()` call captures stream IDs from incoming messages.
    *
    * @param input_port_name The name of the input port. Can be omitted if the operator only has a
    * single input port.
-   * @returns Vector of (optional) cudaStream_t. The length of the vector will match the number of
-   * messages on the input port. Any messages that do not contain a stream will have value of
-   * std::nullopt.
+   * @returns Vector of (optional) cudaStream_t. In normal operation, the length of the vector
+   * matches the number of messages on the input port, with `std::nullopt` for messages without a
+   * stream. If stream handling is unavailable (e.g., CudaObjectHandler not initialized), an empty
+   * vector is returned.
    */
   virtual std::vector<std::optional<cudaStream_t>> receive_cuda_streams(
       [[maybe_unused]] const char* input_port_name = nullptr) {
@@ -568,7 +589,10 @@ class InputContext {
             "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
         return false;
       }
-      auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+      auto dl_ctx = maybe_dl_ctx.value();
+      // Get MemoryBuffer pointer for stream-aware deallocation support
+      auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+      auto holoscan_tensor = std::make_shared<Tensor>(dl_ctx, mem_buf_ptr);
       tensor_map.insert({gxf_tensor->name(), holoscan_tensor});
     }
     return true;
@@ -584,7 +608,7 @@ class InputContext {
     if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
       HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
-      error_message = std::move(static_cast<std::string>(casted_value));
+      error_message = static_cast<std::string>(std::move(casted_value));
       return false;
     }
 
@@ -597,10 +621,10 @@ class InputContext {
         if constexpr (is_one_of_v<typename DataT::value_type, nvidia::gxf::Entity>) {
           // receive_impl returns a holoscan::gxf::Entity so we need to cast it to the correct type
           auto casted_value = std::any_cast<holoscan::gxf::Entity>(value);
-          input_vector.push_back(casted_value);
+          input_vector.push_back(std::move(casted_value));
         } else {
           auto casted_value = std::any_cast<typename DataT::value_type>(value);
-          input_vector.push_back(casted_value);
+          input_vector.push_back(std::move(casted_value));
         }
       } catch (const std::bad_any_cast& e) {
         return handle_bad_any_cast<DataT>(value, port_name, input_vector, error_message);
@@ -692,7 +716,7 @@ class InputContext {
     } else if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
       HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
-      auto error_message = static_cast<std::string>(casted_value);
+      auto error_message = static_cast<std::string>(std::move(casted_value));
       return make_unexpected<holoscan::RuntimeError>(
           create_receive_error(name, error_message.c_str()));
     }
@@ -1034,14 +1058,19 @@ class OutputContext {
             const int64_t acq_timestamp = -1);
 
   /**
-   * @brief Set a stream to be emitted on a given output port.
+   * @brief Set a CUDA stream to be emitted on a given output port.
    *
-   * The actual creation of the stream component in the output message will occur on any subsequent
-   * `emit` calls on this output port, so the call to this function should occur prior to the
-   * `emit` call(s) for a given port.
+   * When using `receive_cuda_stream`, output ports are automatically configured to emit the
+   * operator's internal stream, so this method is typically not needed. Use this method when:
+   * - Using `allocate_cuda_stream` to allocate a stream for a root operator
+   * - Using `receive_cuda_streams` for manual stream handling
    *
-   * @param stream The CUDA stream
-   * @param output_port_name The name of the output port.
+   * This method must be called **before** the corresponding `emit()` call for the port.
+   *
+   * @param stream The CUDA stream to emit. Must be a Holoscan-managed stream (one returned by
+   * `receive_cuda_stream`, `receive_cuda_streams`, or `allocate_cuda_stream`).
+   * @param output_port_name The name of the output port. Can be omitted if the operator has only
+   * a single output port.
    */
   virtual void set_cuda_stream([[maybe_unused]] const cudaStream_t stream,
                                [[maybe_unused]] const char* output_port_name = nullptr) {
@@ -1088,14 +1117,17 @@ class OutputContext {
    * @param name The name of the output port.
    * @param out_type The type of the message data.
    * @param acq_timestamp The timestamp to publish in the output message. The default value of -1
+   *                      does not publish a timestamp.
    * @param omit_data_logging If true, data will not be logged via the DataLogger interface.
-   * does not publish a timestamp.
+   * @param skip_stream_propagation If true, skip propagating CUDA stream to entity memory buffers.
+   *                                Used when the caller has already set the stream on tensors.
    */
   virtual void emit_impl([[maybe_unused]] std::any data,
                          [[maybe_unused]] const char* name = nullptr,
                          [[maybe_unused]] OutputType out_type = OutputType::kAny,
                          [[maybe_unused]] const int64_t acq_timestamp = -1,
-                         [[maybe_unused]] bool omit_data_logging = false) {
+                         [[maybe_unused]] bool omit_data_logging = false,
+                         [[maybe_unused]] bool skip_stream_propagation = false) {
     HOLOSCAN_LOG_ERROR("emit_impl not implemented in base OutputContext");
   }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,7 +97,7 @@ class PyInferenceOp : public InferenceOp {
                 std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
                 // TODO(grelee): handle receivers similarly to HolovizOp?  (default: {})
                 // TODO(grelee): handle transmitter similarly to HolovizOp?
-                const std::string& name = "inference")
+                const std::string& name = operator_default_name_v<ops::InferenceOp>)
       : InferenceOp(ArgList{Arg{"backend", backend},
                             Arg{"allocator", allocator},
                             Arg{"in_tensor_names", in_tensor_names},
@@ -267,7 +267,7 @@ PYBIND11_MODULE(_inference, m) {
                    "dla_gpu_fallback"_a = true,
                    "is_engine_path"_a = false,
                    "cuda_stream_pool"_a = py::none(),
-                   "name"_a = "inference"s,
+                   "name"_a = std::string(operator_default_name_v<ops::InferenceOp>),
                    doc::InferenceOp::doc_InferenceOp);
 
   py::class_<InferenceOp::DataMap>(inference_op, "DataMap")

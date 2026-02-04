@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,6 +55,7 @@ void DataFlowTracker::end_logging() {
 void DataFlowTracker::print() const {
   // Use shared console output mutex to prevent interleaved output with other console writers
   std::lock_guard<std::mutex> lock(console_output_mutex);
+  std::lock_guard<std::mutex> metrics_lock(all_path_metrics_mutex_);
 
   std::cout << "Data Flow Tracking Results:\n";
   std::cout << "Total paths: " << all_path_metrics_.size() << "\n\n";
@@ -166,10 +167,12 @@ void DataFlowTracker::update_source_messages_number(std::string source, uint64_t
 }
 
 int DataFlowTracker::get_num_paths() {
+  std::lock_guard<std::mutex> lock(all_path_metrics_mutex_);
   return all_path_metrics_.size();
 }
 
 std::vector<std::string> DataFlowTracker::get_path_strings() {
+  std::lock_guard<std::mutex> lock(all_path_metrics_mutex_);
   std::vector<std::string> all_pathstrings;
   all_pathstrings.reserve(all_path_metrics_.size());
   for (const auto& it : all_path_metrics_) {
@@ -182,7 +185,9 @@ double DataFlowTracker::get_metric(std::string pathstring, holoscan::DataFlowMet
   if (metric == DataFlowMetric::kNumSrcMessages) {
     HOLOSCAN_LOG_ERROR("metric with pathstring must not be DataFlowMetric::kNumSrcMessages");
     return -1;
-  } else if (all_path_metrics_.find(pathstring) == all_path_metrics_.end()) {
+  }
+  std::lock_guard<std::mutex> lock(all_path_metrics_mutex_);
+  if (all_path_metrics_.find(pathstring) == all_path_metrics_.end()) {
     HOLOSCAN_LOG_ERROR(
         "pathstring not found. make sure messages are not skipped at the beginning or end or with "
         "set_skip_latencies.");

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "../core/component_util.hpp"
 #include "./memory_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/memory_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -59,7 +60,7 @@ class PyMemoryAvailableCondition : public MemoryAvailableCondition {
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       std::shared_ptr<Allocator> allocator, std::optional<uint64_t> min_bytes = std::nullopt,
       std::optional<uint64_t> min_blocks = std::nullopt,
-      const std::string& name = "noname_memory_available_condition")
+      const std::string& name = condition_default_name_v<MemoryAvailableCondition>)
       : MemoryAvailableCondition(Arg{"allocator", allocator}) {
     if (!min_bytes.has_value() && !min_blocks.has_value()) {
       throw pybind11::value_error("Either `min_bytes` or `min_blocks` must be provided.");
@@ -91,7 +92,7 @@ void init_memory_available(py::module_& m) {
            "allocator"_a,
            "min_bytes"_a = py::none(),
            "min_blocks"_a = py::none(),
-           "name"_a = "noname_memory_available_condition"s,
+           "name"_a = std::string(condition_default_name_v<MemoryAvailableCondition>),
            doc::MemoryAvailableCondition::doc_MemoryAvailableCondition)
       .def_property(
           "allocator",

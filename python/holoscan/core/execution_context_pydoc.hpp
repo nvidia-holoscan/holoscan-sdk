@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,45 +32,63 @@ Class representing an execution context.
 )doc")
 
 PYDOC(allocate_cuda_stream, R"doc(
-Allocate an internal CUDA stream using the operator's associated CUDA thread pool.
+Allocate a CUDA stream from the operator's CudaStreamPool.
+
+Streams are cached by name — calling with the same name returns the same stream on subsequent
+calls within the same operator. This is useful for root operators that need to allocate a
+stream (rather than receiving one from upstream).
+
+Streams allocated this way are **not** automatically emitted on output ports. Call
+``OutputContext.set_cuda_stream()`` before ``emit()`` if you need to propagate the stream
+to downstream operators.
 
 Parameters
 ----------
 name : str, optional
-    The name of the CUDA stream to allocate.
+    A name for the stream. The same name returns the same stream on subsequent calls.
+    If omitted, defaults to an empty string, so repeated calls without a name argument
+    will return the same stream.
 
 Returns
 -------
-stream_ptr : int
-    The memory address corresponding to the cudaStream_t that was created.
+stream_ptr : int or None
+    The memory address of the allocated cudaStream_t. Returns ``None`` if no CudaStreamPool
+    is available on the operator.
 )doc")
 
 PYDOC(synchronize_streams, R"doc(
-Allocate an internal CUDA stream using the operator's associated CUDA thread pool.
+Synchronize multiple CUDA streams to a target stream (non-blocking).
+
+Uses ``cudaEventRecord`` and ``cudaStreamWaitEvent`` to create GPU-side dependencies without
+blocking the CPU. This is the same mechanism used internally by ``receive_cuda_stream``.
+
+When using ``receive_cuda_stream``, synchronization is handled automatically and this method
+is not needed. It is provided for advanced manual stream handling use cases.
 
 Parameters
 ----------
-cuda_stream_ptrs: list[int or None], optional
-    A list of memory addresses of the CUDA streams to synchronize. Any None elements will be
-    ignored.
-target_stream_ptr: int
-    The memory address of the target CUDA stream to synchronize to.
+cuda_stream_ptrs : list[int or None]
+    A list of memory addresses of the CUDA streams to synchronize. Any ``None`` elements are
+    skipped.
+target_stream_ptr : int
+    The memory address of the target CUDA stream that will wait for all other streams.
 )doc")
 
 PYDOC(device_from_stream, R"doc(
-Determine the device ID corresponding to a given CUDA stream.
+Get the CUDA device ID for a given stream.
+
+Only works with Holoscan-managed streams (those returned by ``receive_cuda_stream``,
+``receive_cuda_streams``, or ``allocate_cuda_stream``).
 
 Parameters
 ----------
-cuda_stream_ptr: int
-    The memory address of the CUDA stream. This must be a Holoscan-managed stream for the device
-    query to work.
+cuda_stream_ptr : int
+    The memory address of the CUDA stream to query.
 
 Returns
 -------
 device_id : int or None
-    If the CUDA stream is managed by Holoscan, the device ID corresponding to the stream is
-    returned. Otherwise the output will be None.
+    The device ID if the stream is managed by Holoscan, otherwise ``None``.
 
 )doc")
 

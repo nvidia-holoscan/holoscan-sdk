@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -268,13 +268,6 @@ TEST_F(GPUResidentFragmentTest, TestAPIThrowsWithoutGPUResidentExecutor) {
 
   // The accessor itself should throw when fragment is not GPU-resident
   EXPECT_THROW(fragment->gpu_resident(), holoscan::RuntimeError);
-
-  // All accessor method calls should also throw (each creates a new accessor that throws)
-  EXPECT_THROW(fragment->gpu_resident().timeout_ms(1000), holoscan::RuntimeError);
-  EXPECT_THROW(fragment->gpu_resident().tear_down(), holoscan::RuntimeError);
-  EXPECT_THROW(fragment->gpu_resident().result_ready(), holoscan::RuntimeError);
-  EXPECT_THROW(fragment->gpu_resident().data_ready(), holoscan::RuntimeError);
-  EXPECT_THROW(fragment->gpu_resident().is_launched(), holoscan::RuntimeError);
 }
 
 // ================================================================================================

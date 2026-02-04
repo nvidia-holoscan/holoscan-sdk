@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,8 +62,8 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
   holoscan::PyEntity entity_wrapper(in_entity);
 
   try {
-    auto components_expected = entity_wrapper.findAll();
-    auto components = components_expected.value();
+    auto components_expected = entity_wrapper.findAllHeap();
+    auto components = std::move(components_expected).value();
     auto n_components = components.size();
 
     HOLOSCAN_LOG_DEBUG("py_receive: Entity Case");
@@ -235,13 +235,13 @@ struct emitter_receiver<holoscan::Tensor> {
       // This way we don't have to add try/except logic around importing the CuPy module.
       // One consequence of this is that Non-CuPy arrays having __cuda_array_interface__ will be
       // cast to CuPy arrays on deserialization.
-      tensor_map["#cupy: tensor"] = tensor;
+      tensor_map["#cupy: tensor"] = std::move(tensor);
     } else if (py::hasattr(data, "__array_interface__")) {
       // objects with __array_interface__ defined will be cast to NumPy array on
       // deserialization.
-      tensor_map["#numpy: tensor"] = tensor;
+      tensor_map["#numpy: tensor"] = std::move(tensor);
     } else {
-      tensor_map["#holoscan: tensor"] = tensor;
+      tensor_map["#holoscan: tensor"] = std::move(tensor);
     }
     py::gil_scoped_release release;
     op_output.emit(tensor_map, name.c_str(), acq_timestamp);
@@ -286,7 +286,7 @@ struct emitter_receiver<pybind11::dict> {
         auto py_tensor_obj = PyTensor::as_tensor(value_obj);
         std::shared_ptr<Tensor> tensor =
             std::static_pointer_cast<Tensor>(py::cast<std::shared_ptr<PyTensor>>(py_tensor_obj));
-        tensor_map[key] = tensor;
+        tensor_map[key] = std::move(tensor);
       }
       py::gil_scoped_release release;
       op_output.emit(tensor_map, name.c_str(), acq_timestamp);

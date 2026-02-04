@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -124,14 +124,16 @@ void UcxContext::initialize() {
 }
 
 void UcxContext::initiate_shutdown() {
-  shutting_down_ = true;
   if (auto* gxf_ucx_context = get()) {
     gxf_ucx_context->initiate_shutdown();
   }
 }
 
 bool UcxContext::is_shutting_down() const {
-  return shutting_down_;
+  if (auto* gxf_ucx_context = get()) {
+    return gxf_ucx_context->is_shutting_down();
+  }
+  return false;
 }
 
 }  // namespace holoscan

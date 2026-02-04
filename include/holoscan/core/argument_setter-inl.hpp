@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +22,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "./condition.hpp"
@@ -98,31 +99,40 @@ inline bool convert_unsigned_integer_with_check(SourceT arg_value, ParamT& param
     // Integer to floating-point conversion is always safe (no range check needed)
   } else if constexpr (std::is_signed_v<ValueT>) {
     // Converting unsigned to signed - check against signed max
-    // Cast the signed max to unsigned to avoid sign-compare warning
+    // Use unsigned comparison to avoid sign-compare warnings
     using UnsignedValueT = std::make_unsigned_t<ValueT>;
-    if (arg_value >
-        static_cast<SourceT>(static_cast<UnsignedValueT>(std::numeric_limits<ValueT>::max()))) {
-      HOLOSCAN_LOG_ERROR(
-          "Value {} is out of range for parameter type '{}' (valid range: {} to {}) for '{}'",
-          arg_value,
-          typeid(ValueT).name(),
-          static_cast<int64_t>(std::numeric_limits<ValueT>::min()),
-          static_cast<int64_t>(std::numeric_limits<ValueT>::max()),
-          arg_name);
-      return false;
+    constexpr auto value_max = static_cast<UnsignedValueT>(std::numeric_limits<ValueT>::max());
+    constexpr auto source_max = std::numeric_limits<SourceT>::max();
+    // Only perform runtime check if SourceT can represent values larger than ValueT's max.
+    // This avoids "operands don't affect result" warnings when SourceT is smaller.
+    if constexpr (source_max > value_max) {
+      if (arg_value > value_max) {
+        HOLOSCAN_LOG_ERROR(
+            "Value {} is out of range for parameter type '{}' (valid range: {} to {}) for '{}'",
+            arg_value,
+            typeid(ValueT).name(),
+            static_cast<int64_t>(std::numeric_limits<ValueT>::min()),
+            static_cast<int64_t>(std::numeric_limits<ValueT>::max()),
+            arg_name);
+        return false;
+      }
     }
   } else {
     // Both unsigned - only check max (min is always 0 for both)
-    // Cast to SourceT to ensure same type comparison and avoid sign-compare warnings
-    if (arg_value > static_cast<SourceT>(std::numeric_limits<ValueT>::max())) {
-      HOLOSCAN_LOG_ERROR(
-          "Value {} is out of range for parameter type '{}' (valid range: {} to {}) for '{}'",
-          arg_value,
-          typeid(ValueT).name(),
-          static_cast<uint64_t>(std::numeric_limits<ValueT>::min()),
-          static_cast<uint64_t>(std::numeric_limits<ValueT>::max()),
-          arg_name);
-      return false;
+    constexpr auto value_max = std::numeric_limits<ValueT>::max();
+    constexpr auto source_max = std::numeric_limits<SourceT>::max();
+    // Only perform runtime check if SourceT can represent values larger than ValueT's max.
+    if constexpr (source_max > value_max) {
+      if (arg_value > value_max) {
+        HOLOSCAN_LOG_ERROR(
+            "Value {} is out of range for parameter type '{}' (valid range: {} to {}) for '{}'",
+            arg_value,
+            typeid(ValueT).name(),
+            static_cast<uint64_t>(std::numeric_limits<ValueT>::min()),
+            static_cast<uint64_t>(std::numeric_limits<ValueT>::max()),
+            arg_name);
+        return false;
+      }
     }
   }
   param = static_cast<ValueT>(arg_value);
@@ -133,7 +143,7 @@ inline bool convert_unsigned_integer_with_check(SourceT arg_value, ParamT& param
 // ValueT is the target value type (e.g., int32_t), ParamT is the parameter wrapper type
 template <typename ValueT, typename SourceT, typename ParamT>
 inline bool convert_float_to_integer_with_check(SourceT arg_value, ParamT& param,
-                                                 const std::string& arg_name) {
+                                                const std::string& arg_name) {
   static_assert(std::is_floating_point_v<SourceT>, "SourceT must be a floating-point type");
   static_assert(std::is_integral_v<ValueT>, "ValueT must be an integral type");
 
@@ -220,11 +230,11 @@ inline bool convert_float_with_check(float arg_value, ParamT& param, const std::
 // ValueT is the target value type, ParamT is the parameter wrapper type
 template <typename ValueT, typename ParamT>
 inline bool convert_double_with_check(double arg_value, ParamT& param,
-                                       const std::string& arg_name) {
+                                      const std::string& arg_name) {
   // Check for out-of-range values when narrowing double to float
   if constexpr (std::is_same_v<ValueT, float>) {
     if (std::isfinite(arg_value) && (arg_value < std::numeric_limits<float>::lowest() ||
-                                      arg_value > std::numeric_limits<float>::max())) {
+                                     arg_value > std::numeric_limits<float>::max())) {
       HOLOSCAN_LOG_ERROR(
           "Value {} is out of range for parameter type 'float' (valid range: {} to {}) for '{}'",
           arg_value,
@@ -861,7 +871,7 @@ void ArgumentSetter::add_argument_setter() {
                         condition->initialize();
                       }
 
-                      converted_value.push_back(condition);
+                      converted_value.push_back(std::move(condition));
                     }
                     param = converted_value;
                   }
@@ -887,7 +897,7 @@ void ArgumentSetter::add_argument_setter() {
                         resource->initialize();
                       }
 
-                      converted_value.push_back(resource);
+                      converted_value.push_back(std::move(resource));
                     }
                     param = converted_value;
                   }

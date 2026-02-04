@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
@@ -200,7 +201,7 @@ grpc::Status AppWorkerServiceImpl::ExecuteFragments(
       auto connection_elem = std::make_shared<holoscan::ConnectionItem>(
           connection_item.name(), io_type, connector_type, arg_list);
 
-      connection_vector.push_back(connection_elem);
+      connection_vector.push_back(std::move(connection_elem));
     }
     HOLOSCAN_LOG_DEBUG("");
   }

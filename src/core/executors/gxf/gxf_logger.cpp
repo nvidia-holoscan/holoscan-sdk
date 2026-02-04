@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -76,7 +76,9 @@ void GXFLogger::log(const char* file, int line, const char* /* name */, int leve
   }
 
   std::string_view file_str(file);
-  std::string_view file_base = file_str.substr(file_str.find_last_of("/") + 1);
+  auto last_slash = file_str.find_last_of("/");
+  std::string_view file_base =
+      (last_slash == std::string_view::npos) ? file_str : file_str.substr(last_slash + 1);
 
   holoscan::log_message(file_base.data(), line, "gxf", holoscan_log_level, log);
 }

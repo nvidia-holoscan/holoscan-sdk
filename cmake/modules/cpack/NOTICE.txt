@@ -184,7 +184,7 @@ Copyright (C) 2016-2020      Advanced Micro Devices, Inc.  All rights reserved.
 Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
 Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
 Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.17.0/LICENSE)
+Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.19.0/LICENSE)
 
 UCXX (https://github.com/rapidsai/ucxx)
 Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -48,7 +48,6 @@ namespace holoscan {
 class CudaGreenContext : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaGreenContext, gxf::GXFResource)
-  CudaGreenContext() = default;
   CudaGreenContext(std::shared_ptr<CudaGreenContextPool> green_context_pool = nullptr,
                    int32_t index = -1, const std::string& nvtx_identifier = "defaultGreenContext")
       : cuda_green_context_pool_(green_context_pool),

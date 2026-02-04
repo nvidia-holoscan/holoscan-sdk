@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/fragment.hpp"
@@ -97,7 +98,7 @@ void GXFComponentResource::set_parameters() {
                                             static_cast<int>(result));
         HOLOSCAN_LOG_ERROR(
             "GXFComponentResource '{}': failed to set GXF parameter - {}", name(), error_msg);
-        errors.push_back(error_msg);
+        errors.push_back(std::move(error_msg));
       }
     }
   }

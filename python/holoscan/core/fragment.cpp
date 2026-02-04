@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -112,6 +112,10 @@ void init_fragment(py::module_& m) {
            &Fragment::add_operator,
            "op"_a,
            doc::Fragment::doc_add_operator)  // note: virtual function
+      .def("add_subgraph",
+           &Fragment::add_subgraph,
+           "subgraph"_a,
+           doc::Fragment::doc_add_subgraph)  // note: virtual function
       // TODO(unknown): sphinx API doc build complains if more than one overloaded add_flow method
       // has a docstring specified. For now using the docstring defined for 3-argument
       // Operator-based version and describing the other variants in the Notes section.
@@ -342,22 +346,38 @@ void init_fragment(py::module_& m) {
             auto py_fragment = std::dynamic_pointer_cast<PyFragment>(fragment);
             auto py_app = std::dynamic_pointer_cast<PyApplication>(fragment);
 
-            // For storing in Python registry, we need to determine the actual storage key
+            // For storing in Python registry, we need to determine the actual storage key.
+            // Prefer the underlying Resource name when a service wraps a Resource.
             std::string storage_id(effective_id);
+            std::shared_ptr<Resource> resource_ptr;
             try {
               auto fs_ptr = service_obj.cast<std::shared_ptr<FragmentService>>();
-              if (auto resource_ptr = fs_ptr->resource()) {
-                storage_id = resource_ptr->name();
+              try {
+                resource_ptr = fs_ptr->resource();
+              } catch (...) {
+                // resource() might throw for services that don't implement it.
+              }
+              if (!resource_ptr) {
+                try {
+                  resource_ptr = service_obj.cast<std::shared_ptr<Resource>>();
+                  if (resource_ptr) {
+                    fs_ptr->resource(resource_ptr);
+                  }
+                } catch (const py::cast_error&) {
+                  // Not a Resource, keep storage_id as effective_id.
+                } catch (...) {
+                  // resource() setter might throw; ignore for registry storage.
+                }
               }
             } catch (const py::cast_error&) {
               try {
-                auto resource_ptr = service_obj.cast<std::shared_ptr<Resource>>();
-                storage_id = resource_ptr->name();
+                resource_ptr = service_obj.cast<std::shared_ptr<Resource>>();
               } catch (const py::cast_error&) {
-                // Not a resource or a service with a resource, use effective_id
+                // Not a Resource or a service with a resource; keep storage_id as effective_id.
               }
-            } catch (...) {
-              // resource() might throw an exception for services that don't implement it
+            }
+            if (resource_ptr) {
+              storage_id = resource_ptr->name();
             }
 
             if (py_fragment) {
@@ -554,9 +574,9 @@ void init_fragment(py::module_& m) {
             }
             if (py_service.is_none() && effective_id != id) {
               // Otherwise check with the generated __py__ id
-              py_service = check_python_registry(py_fragment, effective_id);
+              py_service = check_python_registry(std::move(py_fragment), effective_id);
               if (py_service.is_none()) {
-                py_service = check_python_registry(py_app, effective_id);
+                py_service = check_python_registry(std::move(py_app), effective_id);
               }
             }
 
@@ -700,6 +720,11 @@ void PyFragment::add_operator(const std::shared_ptr<Operator>& op) {
 
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Fragment, add_operator, op);
+}
+
+void PyFragment::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
+  /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
+  PYBIND11_OVERRIDE(void, Fragment, add_subgraph, subgraph);
 }
 
 void PyFragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -953,7 +978,7 @@ bool PyFragment::register_service_from(Fragment* application, std::string_view i
       auto service = py_service.cast<std::shared_ptr<FragmentService>>();
 
       // Use DefaultFragmentService for all Python services to ensure consistent lookup
-      ServiceKey key{typeid(DefaultFragmentService), service_id};
+      ServiceKey key{typeid(DefaultFragmentService), std::move(service_id)};
       fragment_services_by_key_[key] = std::move(service);
     } catch (const py::cast_error&) {
       // If it's not a FragmentService, it might be a Resource or other type

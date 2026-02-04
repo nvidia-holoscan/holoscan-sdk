@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,7 +87,8 @@ void GXFExecutionContext::synchronize_streams(
       streams.push_back(stream.value());
     }
   }
-  auto result_code = cuda_object_handler_->synchronize_streams(streams, target_cuda_stream);
+  auto result_code =
+      cuda_object_handler_->synchronize_streams(std::move(streams), target_cuda_stream);
   gxf_result_t gxf_result = static_cast<gxf_result_t>(result_code);
   if (gxf_result != GXF_SUCCESS) {
     throw std::runtime_error(fmt::format("Failed to sync streams: {}", GxfResultStr(gxf_result)));

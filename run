@@ -540,6 +540,9 @@ Arguments:
   --tidy [true | false] : Build the SDK with clang-tidy (will be slower)
         Default: false
         Associated environment variable: HOLOSCAN_ENABLE_CLANG_TIDY
+  --tidy-headers [true | false] : Also check project headers with clang-tidy (requires --tidy true)
+        Default: false
+        Associated environment variable: HOLOSCAN_CLANG_TIDY_CHECK_HEADERS
   --build-python [true | false] : Build the SDK without python support
         Default: true
         Associated environment variable: HOLOSCAN_BUILD_PYTHON
@@ -571,6 +574,7 @@ build() {
     local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
     local build_python="${HOLOSCAN_BUILD_PYTHON:-'ON'}"
     local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-'OFF'}"
+    local clang_tidy_check_headers="${HOLOSCAN_CLANG_TIDY_CHECK_HEADERS:-'OFF'}"
     local use_sccache="${HOLOSCAN_USE_SCCACHE:-'OFF'}"
     local config_args=""
 
@@ -616,6 +620,15 @@ build() {
             tidy_val=$(get_boolean "$2")
             if [ "$tidy_val" == "true" ]; then
                 enable_clang_tidy='ON'
+            fi
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --tidy-headers)
+            tidy_headers_val=$(get_boolean "$2")
+            if [ "$tidy_headers_val" == "true" ]; then
+                clang_tidy_check_headers='ON'
             fi
             reconfigure=true
             shift
@@ -772,6 +785,7 @@ build() {
                     -D HOLOSCAN_BUILD_PYTHON=${build_python} \
                     -D HOLOSCAN_PYTHON_EXAMPLES=${build_python} \
                     -D HOLOSCAN_ENABLE_CLANG_TIDY=${enable_clang_tidy} \
+                    -D HOLOSCAN_CLANG_TIDY_CHECK_HEADERS=${clang_tidy_check_headers} \
                     -D HOLOSCAN_USE_SCCACHE=${use_sccache} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
                     -D CMAKE_BUILD_TYPE=${build_type} \

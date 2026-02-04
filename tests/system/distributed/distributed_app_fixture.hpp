@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,9 +91,15 @@ class DistributedApp : public ::testing::Test {
     unsetenv("HOLOSCAN_LOG_LEVEL");
     set_log_level(LogLevel::DEBUG);
 
+    // Preserve HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT if already set, otherwise use 3000ms default
+    const char* timeout_env = std::getenv("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT");
+    std::string timeout_value = timeout_env ? timeout_env : "3000";
+
     wrapper_ =
         std::make_unique<EnvVarWrapper>(std::initializer_list<std::pair<std::string, std::string>>{
-            {"HOLOSCAN_EXECUTOR_LOG_LEVEL", "INFO"}, {"HOLOSCAN_UCX_PORTS", env_var_value_}});
+            {"HOLOSCAN_EXECUTOR_LOG_LEVEL", "INFO"},
+            {"HOLOSCAN_UCX_PORTS", env_var_value_},
+            {"HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", timeout_value}});
   }
 
   void TearDown() override {

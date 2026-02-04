@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -1601,10 +1601,6 @@ void HolovizOp::start() {
   // make the instance current
   ScopedPushInstance scoped_instance(instance_);
 
-  if (vsync_) {
-    viz::SetPresentMode(viz::PresentMode::FIFO);
-  }
-
   // initialize Holoviz
   viz::InitFlags init_flags = viz::InitFlags::NONE;
   if (fullscreen_ && headless_) {
@@ -1632,6 +1628,22 @@ void HolovizOp::start() {
               window_title_.get().c_str(),
               init_flags,
               display_name_.get().empty() ? nullptr : display_name_.get().c_str());
+  }
+
+  if (vsync_) {
+    uint32_t present_mode_count = 0;
+    viz::GetPresentModes(&present_mode_count, nullptr);
+    std::vector<viz::PresentMode> present_modes(present_mode_count);
+    viz::GetPresentModes(&present_mode_count, present_modes.data());
+    // Use FIFO_LATEST_READY if supported, otherwise use FIFO. FIFO_LATEST_READY has the benefit
+    // of reducing latency compared to FIFO since it drops old frames.
+    if (std::find(present_modes.begin(),
+                  present_modes.end(),
+                  viz::PresentMode::FIFO_LATEST_READY) != present_modes.end()) {
+      viz::SetPresentMode(viz::PresentMode::FIFO_LATEST_READY);
+    } else {
+      viz::SetPresentMode(viz::PresentMode::FIFO);
+    }
   }
 
   if (framebuffer_srgb_.get() || (display_color_space_.get() != ColorSpace::AUTO)) {
@@ -1825,7 +1837,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
     HOLOSCAN_LOG_ERROR(err_msg);
     throw std::runtime_error(err_msg);
   }
-  const auto receivers_messages = maybe_receivers_messages.value();
+  const auto& receivers_messages = maybe_receivers_messages.value();
 
   const auto input_specs_messages =
       op_input.receive<std::vector<holoscan::ops::HolovizOp::InputSpec>>("input_specs");
@@ -1892,12 +1904,27 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         input_spec_list.end(), input_specs_messages->begin(), input_specs_messages->end());
   }
 
+  // Get the CUDA stream for this operator. This is needed for:
+  // 1. Setting the stream on Holoviz for GPU operations
+  // 2. Setting the stream on memory buffers for stream-aware deallocation
+  cudaStream_t cuda_stream = cudaStreamDefault;
+  if (receivers_messages.size() > 0) {
+    cuda_stream = op_input.receive_cuda_stream("receivers");
+  }
+  // For stream-aware deallocation: only set stream on buffers if not using default stream
+  void* stream_ptr = (cuda_stream != cudaStreamDefault) ? static_cast<void*>(cuda_stream) : nullptr;
+
   // then get all tensors and video buffers of all messages, check if an input spec for the tensor
   // is already there, if not try to detect the input spec from the tensor or video buffer
-  // information
+  // information. Also set the CUDA stream on memory buffers for stream-aware deallocation -
+  // this ensures allocators like BlockMemoryPool defer memory reuse until GPU operations complete.
   for (auto&& message : receivers_messages) {
-    const auto tensors = message.nvidia::gxf::Entity::findAll<nvidia::gxf::Tensor>();
+    const auto tensors = message.nvidia::gxf::Entity::findAllHeap<nvidia::gxf::Tensor>();
     for (auto&& tensor : tensors.value()) {
+      // Set stream on memory buffer for stream-aware deallocation (sink operators don't emit)
+      if (stream_ptr) {
+        tensor.value()->memory_buffer().setStream(stream_ptr);
+      }
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(tensor->name());
       const auto it = std::find_if(
@@ -1928,6 +1955,11 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
     const auto video_buffers = message.findAllHeap<nvidia::gxf::VideoBuffer>();
     for (auto&& video_buffer : video_buffers.value()) {
+      // Set stream on memory buffer for stream-aware deallocation (sink operators don't emit)
+      if (stream_ptr) {
+        video_buffer.value()->memory_buffer().setStream(stream_ptr);
+      }
+
       // check if an input spec with the same tensor name already exist
       const std::string tensor_name(video_buffer->name());
       const auto it = std::find_if(
@@ -1955,14 +1987,6 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         }
       }
     }
-  }
-
-  // get the CUDA stream from the input message
-  cudaStream_t cuda_stream = cudaStreamDefault;
-  // `receive_cuda_stream` returns a new stream if there is a cuda stream pool or the first input
-  // stream. If there are multiple streams, the streams are synchronized to the returned stream.
-  if (receivers_messages.size() > 0) {
-    cuda_stream = op_input.receive_cuda_stream("receivers");
   }
 
   viz::SetCudaStream(cuda_stream);
@@ -2106,7 +2130,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         // Store the depth map information, we render after the end of the input spec loop when
         // we also have the (optional) depth map color information.
         input_spec_depth_map = &input_spec;
-        buffer_info_depth_map = buffer_info;
+        buffer_info_depth_map = std::move(buffer_info);
       } break;
       case InputType::DEPTH_MAP_COLOR: {
         // 2D depth map color
@@ -2130,7 +2154,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
         // Store the depth map color information, we render after the end of the input spec loop
         // when we have both the depth and color information
         input_spec_depth_map_color = &input_spec;
-        buffer_info_depth_map_color = buffer_info;
+        buffer_info_depth_map_color = std::move(buffer_info);
       } break;
       default:
         throw std::runtime_error(
@@ -2178,7 +2202,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
 
       viz::GetCameraPose(camera_pose_output->size(), camera_pose_output->data());
 
-      op_output.emit(camera_pose_output, "camera_pose_output");
+      op_output.emit(std::move(camera_pose_output), "camera_pose_output");
     } else if (camera_pose_output_type_.get() == "extrinsics_model") {
       float rotation[9];
       float translation[3];
@@ -2188,7 +2212,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       auto pose = std::make_shared<nvidia::gxf::Pose3D>();
       std::copy(std::begin(rotation), std::end(rotation), std::begin(pose->rotation));
       std::copy(std::begin(translation), std::end(translation), std::begin(pose->translation));
-      op_output.emit(pose, "camera_pose_output");
+      op_output.emit(std::move(pose), "camera_pose_output");
     } else {
       throw std::runtime_error(fmt::format("Unhandled camera pose output type type '{}'",
                                            camera_pose_output_type_.get()));

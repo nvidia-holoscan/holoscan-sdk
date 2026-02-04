@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -62,39 +62,67 @@ data : object
 )doc")
 
 PYDOC(receive_cuda_stream, R"doc(
-Receive the CUDA stream associated with the specified input port.
+Get the operator's internal CUDA stream, synchronizing any upstream streams to it.
+
+This is the recommended method for stream handling in most operators. It performs several
+operations:
+
+1. **Synchronizes upstream streams** to the operator's internal stream using non-blocking
+   CUDA events (``cudaEventRecord`` / ``cudaStreamWaitEvent``). This ensures upstream GPU work
+   completes before this operator's work begins, without blocking the CPU.
+2. **Sets the CUDA device** to match the internal stream's device.
+3. **Configures all output ports** to automatically emit the internal stream ID when ``emit()``
+   is called.
+4. **Returns the internal stream pointer** for use in kernels and async memory operations.
+
+.. note::
+   The ``receive()`` method must be called for ``input_port_name`` **before** calling this
+   method. The ``receive()`` call captures stream IDs from incoming messages.
 
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port to receive the object from.
+	The name of the input port. Can be omitted if the operator has only one input port.
 allocate : bool, optional
-	If True, the operator should allocate its own CUDA stream and synchronize any incoming streams
-	to it. The stream returned by this function is then the internally, allocated stream.
+	If True (default), allocates an internal stream if not already allocated. If False,
+	the first received stream is used as the internal stream.
+sync_to_default : bool, optional
+	If True, also synchronizes the internal stream to ``cudaStreamDefault``. Default is False.
 
 Returns
 -------
 stream_ptr : int
-	The memory address of the underlying cudaStream_t.
+	The memory address of the operator's internal cudaStream_t (reused across all ``compute()``
+	calls). Returns 0 (cudaStreamDefault) if no stream pool is available and no stream was found.
 
 )doc")
 
 PYDOC(receive_cuda_streams, R"doc(
-Receive a list of CUDA streams associated with the specified input port.
+Retrieve the raw CUDA streams found on an input port (advanced use).
 
-The size of the list will be equal to the number of messages received on the port. For messages
-not containing a CudaStream, the corresponding entry in the list will be ``None``.
+Unlike ``receive_cuda_stream``, this method does **not** perform any synchronization, does not
+allocate an internal stream, does not set the CUDA device, and does not configure output ports.
+It simply returns the raw stream information found in the received messages.
+
+This method is intended for advanced use cases where manual stream management is required.
+For most operators, use ``receive_cuda_stream`` instead.
+
+.. note::
+   The ``receive()`` method must be called for ``input_port_name`` **before** calling this
+   method. The ``receive()`` call captures stream IDs from incoming messages.
 
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port to receive the object from.
+	The name of the input port. Can be omitted if the operator has only one input port.
 
 Returns
 -------
-stream_ptrs : list[int]
-	The memory addresses of the underlying cudaStream_t for each message. For any messages without
-	a stream, the list will contain None.
+stream_ptrs : list[int or None]
+	The memory addresses of the cudaStream_t for each message. In normal operation, the list
+	length matches the number of messages on the port, with ``None`` for messages without a
+	stream. If stream handling is unavailable (e.g., CudaObjectHandler not initialized), an
+	empty list is returned.
 
 )doc")
 
@@ -167,15 +195,23 @@ emitter_name : str, optional
 )doc")
 
 PYDOC(set_cuda_stream, R"doc(
-Specify a CUDA stream to be emitted along with any data on the specified output port.
+Set a CUDA stream to be emitted on a given output port.
+
+When using ``receive_cuda_stream``, output ports are automatically configured to emit the
+operator's internal stream, so this method is typically not needed. Use this method when:
+
+- Using ``allocate_cuda_stream`` to allocate a stream for a root operator
+- Using ``receive_cuda_streams`` for manual stream handling
+
+This method must be called **before** the corresponding ``emit()`` call for the port.
 
 Parameters
 ----------
 stream_ptr : int
-	The memory address of the underlying cudaStream_t to be emitted.
+	The memory address of the cudaStream_t to emit. Must be a Holoscan-managed stream (one
+	returned by ``receive_cuda_stream``, ``receive_cuda_streams``, or ``allocate_cuda_stream``).
 output_port_name : str, optional
-	The name of the output port to emit the stream on. Can be unspecified if there is only a single
-	output port on the operator.
+	The name of the output port. Can be omitted if the operator has only one output port.
 )doc")
 
 }  // namespace OutputContext

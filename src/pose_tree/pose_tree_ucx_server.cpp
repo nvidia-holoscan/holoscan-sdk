@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,7 +111,9 @@ struct PoseTreeUCXServer::ServerImpl {
         try {
           it->request->checkError();
         } catch (const ucxx::ConnectionResetError&) {
-          HOLOSCAN_LOG_ERROR("PoseTreeUCXServer: Connection reset error on client {}",
+          // A connection reset usually means the peer endpoint was closed (often during normal
+          // shutdown). Treat this as a disconnect signal rather than an application error.
+          HOLOSCAN_LOG_DEBUG("PoseTreeUCXServer: Client {} disconnected (connection reset)",
                              it->client_id);
           if (it->client_id != -1) {
             // Remove client directly since we already hold the clients_mtx
@@ -154,13 +156,24 @@ struct PoseTreeUCXServer::ServerImpl {
     ClientSession(std::shared_ptr<ucxx::Endpoint> ep, ServerImpl* server_impl, int client_id);
     void handle_subscribe(bool want_snap);
     void handle_delta_message(const DeltaMessage& delta_msg);
+    void handle_snapshot_ack(const SnapshotAckMessage& ack_msg);
     void send_snapshot();
     void send_config();
+    void flush_pending_deltas();
 
     std::shared_ptr<ucxx::Endpoint> ep_;
     ServerImpl* server_impl_;
     int client_id_;
     std::atomic<bool> disconnected_{false};
+    std::atomic<bool> subscribed_{false};
+    std::atomic<bool> waiting_for_snapshot_ack_{false};
+
+    // Pending delta buffers for clients awaiting snapshot ack. Protected by pending_deltas_mutex_.
+    std::vector<std::shared_ptr<std::vector<char>>> pending_delta_buffers_;
+    mutable std::mutex pending_deltas_mutex_;
+
+    // Maximum number of buffered deltas per client to prevent unbounded memory growth.
+    static constexpr size_t kMaxPendingDeltas = 10000;
   };
 
   ClientSession* find_client_session(ucp_ep_h ep) {
@@ -181,9 +194,47 @@ PoseTreeUCXServer::ServerImpl::ClientSession::ClientSession(
 // NOLINTEND(whitespace/indent_namespace)
 
 void PoseTreeUCXServer::ServerImpl::ClientSession::handle_subscribe(bool want_snap) {
+  subscribed_ = true;
+  waiting_for_snapshot_ack_ = want_snap;
+  {
+    std::lock_guard<std::mutex> lk(pending_deltas_mutex_);
+    pending_delta_buffers_.clear();
+  }
   send_config();
   if (want_snap) {
     send_snapshot();
+  }
+}
+
+void PoseTreeUCXServer::ServerImpl::ClientSession::handle_snapshot_ack(
+    const SnapshotAckMessage& ack_msg) {
+  if (ack_msg.snapshot_applied == 0) {
+    HOLOSCAN_LOG_WARN("PoseTreeUCXServer: Client {} reported snapshot not applied", client_id_);
+    return;
+  }
+  waiting_for_snapshot_ack_ = false;
+  flush_pending_deltas();
+}
+
+void PoseTreeUCXServer::ServerImpl::ClientSession::flush_pending_deltas() {
+  std::vector<std::shared_ptr<std::vector<char>>> buffers_to_send;
+  {
+    std::lock_guard<std::mutex> lk(pending_deltas_mutex_);
+    if (pending_delta_buffers_.empty()) {
+      return;
+    }
+    buffers_to_send = std::move(pending_delta_buffers_);
+    pending_delta_buffers_.clear();
+  }
+
+  ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_DELTA);
+  for (auto& msg_buffer : buffers_to_send) {
+    if (!msg_buffer) {
+      continue;
+    }
+    auto request =
+        ep_->amSend(msg_buffer->data(), msg_buffer->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
+    server_impl_->addPendingRequest(std::move(request), client_id_, msg_buffer, ep_);
   }
 }
 
@@ -280,7 +331,7 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::send_snapshot() {
   auto buf = std::make_shared<std::vector<char>>(serialize_snapshot(frames, edges));
   ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_SNAPSHOT_DATA);
   auto request = ep_->amSend(buf->data(), buf->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
-  server_impl_->addPendingRequest(std::move(request), client_id_, buf, ep_);
+  server_impl_->addPendingRequest(std::move(request), client_id_, std::move(buf), ep_);
   HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: send_snapshot: frames.size() = {}", frames.size());
   HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: send_snapshot: edges.size() = {}", edges.size());
 }
@@ -296,7 +347,7 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::send_config() {
   ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_DISTRIBUTED_CONFIG);
   auto request =
       ep_->amSend(msg_buffer->data(), msg_buffer->size(), UCS_MEMORY_TYPE_HOST, callbackInfo);
-  server_impl_->addPendingRequest(std::move(request), client_id_, msg_buffer, ep_);
+  server_impl_->addPendingRequest(std::move(request), client_id_, std::move(msg_buffer), ep_);
 }
 
 void PoseTreeUCXServer::ServerImpl::broadcast_frame_created(holoscan::PoseTree::frame_t frame_id,
@@ -311,9 +362,32 @@ void PoseTreeUCXServer::ServerImpl::broadcast_frame_created(holoscan::PoseTree::
   std::memcpy(msg_buffer->data(), &delta_msg, sizeof(delta_msg));
 
   ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_DELTA);
+  ucxx::AmReceiverCallbackInfo closeInfo("AMClient", MSG_CLOSE);
   std::lock_guard<std::mutex> lk(clients_mtx);
   for (auto& client : clients) {
     if (client.get() == origin_session || client->disconnected_) {
+      continue;
+    }
+    if (!client->subscribed_) {
+      continue;
+    }
+    if (client->waiting_for_snapshot_ack_) {
+      std::lock_guard<std::mutex> lk(client->pending_deltas_mutex_);
+      if (client->pending_delta_buffers_.size() < ClientSession::kMaxPendingDeltas) {
+        client->pending_delta_buffers_.push_back(msg_buffer);
+      } else {
+        // Exceeding the pending buffer indicates the client is not keeping up (or never acks).
+        // Dropping deltas would leave the client with an inconsistent PoseTree state, so treat
+        // this as a fatal condition and force a disconnect to allow resync on reconnect.
+        HOLOSCAN_LOG_ERROR(
+            "PoseTreeUCXServer: Client {} pending delta buffer full, forcing disconnect",
+            client->client_id_);
+        client->disconnected_ = true;
+        client->waiting_for_snapshot_ack_ = false;
+        client->pending_delta_buffers_.clear();
+        auto request = client->ep_->amSend(nullptr, 0, UCS_MEMORY_TYPE_HOST, closeInfo);
+        addPendingRequest(std::move(request), client->client_id_, nullptr, client->ep_);
+      }
       continue;
     }
     HOLOSCAN_LOG_TRACE("client.get()={}, origin_session={}, disconnected={}",
@@ -348,9 +422,32 @@ void PoseTreeUCXServer::ServerImpl::broadcast_edge_set(holoscan::PoseTree::frame
   std::memcpy(msg_buffer->data(), &delta_msg, sizeof(delta_msg));
 
   ucxx::AmReceiverCallbackInfo callbackInfo("AMClient", MSG_DELTA);
+  ucxx::AmReceiverCallbackInfo closeInfo("AMClient", MSG_CLOSE);
   std::lock_guard<std::mutex> lk(clients_mtx);
   for (auto& client : clients) {
     if (client.get() == origin_session || client->disconnected_) {
+      continue;
+    }
+    if (!client->subscribed_) {
+      continue;
+    }
+    if (client->waiting_for_snapshot_ack_) {
+      std::lock_guard<std::mutex> lk(client->pending_deltas_mutex_);
+      if (client->pending_delta_buffers_.size() < ClientSession::kMaxPendingDeltas) {
+        client->pending_delta_buffers_.push_back(msg_buffer);
+      } else {
+        // Exceeding the pending buffer indicates the client is not keeping up (or never acks).
+        // Dropping deltas would leave the client with an inconsistent PoseTree state, so treat
+        // this as a fatal condition and force a disconnect to allow resync on reconnect.
+        HOLOSCAN_LOG_ERROR(
+            "PoseTreeUCXServer: Client {} pending delta buffer full, forcing disconnect",
+            client->client_id_);
+        client->disconnected_ = true;
+        client->waiting_for_snapshot_ack_ = false;
+        client->pending_delta_buffers_.clear();
+        auto request = client->ep_->amSend(nullptr, 0, UCS_MEMORY_TYPE_HOST, closeInfo);
+        addPendingRequest(std::move(request), client->client_id_, nullptr, client->ep_);
+      }
       continue;
     }
     HOLOSCAN_LOG_TRACE("PoseTreeUCXServer: Broadcasting edge set to client {}", client->client_id_);
@@ -531,6 +628,18 @@ void PoseTreeUCXServer::run() {
           }
           break;
         }
+        case MSG_SNAPSHOT_ACK: {
+          if (size == sizeof(SnapshotAckMessage)) {
+            SnapshotAckMessage ack_msg;
+            std::memcpy(&ack_msg, data, sizeof(SnapshotAckMessage));
+            client_session->handle_snapshot_ack(ack_msg);
+          } else {
+            HOLOSCAN_LOG_WARN("PoseTreeUCXServer: Invalid snapshot ack size {} from client {}",
+                              size,
+                              client_session->client_id_);
+          }
+          break;
+        }
       }
     } catch (const std::exception& e) {
       HOLOSCAN_LOG_ERROR("PoseTreeUCXServer: AM receiver threw: {}", e.what());
@@ -549,6 +658,10 @@ void PoseTreeUCXServer::run() {
   impl_->worker->registerAmReceiverCallback(
       std::move(close_callback_info),
       [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_CLOSE); });
+  ucxx::AmReceiverCallbackInfo snapshot_ack_callback_info("AMServer", MSG_SNAPSHOT_ACK);
+  impl_->worker->registerAmReceiverCallback(
+      std::move(snapshot_ack_callback_info),
+      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_SNAPSHOT_ACK); });
 
   {
     std::lock_guard<std::mutex> lk(ready_mutex_);

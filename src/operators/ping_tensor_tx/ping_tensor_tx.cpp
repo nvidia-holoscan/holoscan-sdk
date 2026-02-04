@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -252,7 +252,10 @@ void PingTensorTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCont
     HOLOSCAN_LOG_ERROR(
         "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
   }
-  std::shared_ptr<Tensor> holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+  auto dl_ctx = maybe_dl_ctx.value();
+  // Get MemoryBuffer pointer for stream-aware deallocation support
+  auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+  std::shared_ptr<Tensor> holoscan_tensor = std::make_shared<Tensor>(dl_ctx, mem_buf_ptr);
 
   // insert tensor into the TensorMap
   out_message.insert({tensor_name_.get().c_str(), holoscan_tensor});

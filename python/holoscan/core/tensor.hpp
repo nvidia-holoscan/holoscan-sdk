@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -187,8 +187,11 @@ class PyTensor : public Tensor {
    * @brief Construct a new Tensor from an existing DLManagedTensorContext.
    *
    * @param ctx A shared pointer to the DLManagedTensorContext to be used in Tensor construction.
+   * @param memory_buffer_ptr Optional pointer to the underlying nvidia::gxf::MemoryBuffer.
+   *        When provided (for tensors from GXF allocators), enables stream-aware deallocation.
    */
-  explicit PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx);
+  explicit PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx,
+                    nvidia::gxf::MemoryBuffer* memory_buffer_ptr = nullptr);
 
   /**
    * @brief Construct a new Tensor from an existing DLManagedTensor pointer.

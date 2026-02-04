@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,7 +16,9 @@
  */
 
 #include <memory>
+#include <utility>
 #include <vector>
+
 #include "holoscan/holoscan.hpp"
 
 namespace holoscan::ops {
@@ -39,7 +41,7 @@ class PingTxOp : public Operator {
       output.push_back(value1++);
     }
 
-    op_output.emit(output, "out");
+    op_output.emit(std::move(output), "out");
   };
 
  private:
@@ -74,9 +76,9 @@ class PingMxOp : public Operator {
       values3.push_back(val * multiplier_ * multiplier_);
     }
 
-    op_output.emit(values1, "out1");
-    op_output.emit(values2, "out2");
-    op_output.emit(values3, "out3");
+    op_output.emit(std::move(values1), "out1");
+    op_output.emit(std::move(values2), "out2");
+    op_output.emit(std::move(values3), "out3");
   };
 
  private:

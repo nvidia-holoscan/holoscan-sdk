@@ -2074,7 +2074,7 @@ Here, three input ports are defined, each of which has a queue size of 20. A `Mu
 
 ### Important note on sending tensor objects between Python and C++ operators
 
-Holoscan's C++ API does not have any Python dependency and thus operators implemented in C++ will not be capable of directly receiving any Python objects. For a case such as a native Python operator that emits a CuPy or NumPy tensor, the default behavior is to emit that Python object type directly as that is preferable for a pure Python operator workflow. However, emitting the Python object is problematic if the downstream operator is a C++-based one like `PingTensorRxOp` as it will not be able to handle this Python object. For interoperability of tensors with C++ operators, the `emitter_name="holoscan::Tensor"` kwarg should be provided to the `op_output.emit` call in the Python operator's `compute` method so that any tensors emitted are compatible with downstream C++-based operators. In practice this "holoscan::Tensor" emitter is configured to emit a C++ `holoscan::TensorMap` containing the tensor (no data copy is required for this). This means that any downstream C++ operator can receive this tensor either as a `TensorMap`
+Holoscan's C++ API does not have any Python dependency and thus operators implemented in C++ will not be capable of directly receiving any Python objects. For a case such as a native Python operator that emits a NumPy, CuPy, or PyTorch tensor, the default behavior is to emit that Python object type directly as that is preferable for a pure Python operator workflow. However, emitting the Python object is problematic if the downstream operator is a C++-based one like `PingTensorRxOp` as it will not be able to handle this Python object. For interoperability of tensors with C++ operators, the `emitter_name="holoscan::Tensor"` kwarg should be provided to the `op_output.emit` call in the Python operator's `compute` method so that any tensors emitted are compatible with downstream C++-based operators. In practice this "holoscan::Tensor" emitter is configured to emit a C++ `holoscan::TensorMap` containing the tensor (no data copy is required for this). This means that any downstream C++ operator can receive this tensor either as a `TensorMap`
 ```cpp
     auto maybe_tensormap = op_input.receive<TensorMap>(port_name);
 ```
@@ -2352,7 +2352,13 @@ To learn more about overriding connectors and/or conditions there is a [multi_br
 
 The Holoscan SDK enables seamless integration with various powerful, GPU-accelerated libraries to build efficient, high-performance pipelines.
 
-This guide provides a detailed example of integrating the [MatX](https://github.com/NVIDIA/MatX) library below. For more examples, please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository. This tutorial covers libraries such as [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
+In Python, `holoscan.core.Tensor` supports the DLPack protocol and NumPy/CUDA array interfaces, enabling efficient (often zero-copy) interchange with common tensor/array libraries. See the following examples:
+
+- [numpy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/numpy_native)
+- [cupy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cupy_native)
+- [pytorch_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/pytorch_native)
+
+The section below provides a detailed example of integrating the [MatX](https://github.com/NVIDIA/MatX) library. For more examples, please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository. This tutorial covers libraries such as [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
 
 (interoperability-with-matx)=
 #### MatX Integration (C++, since v3.5)

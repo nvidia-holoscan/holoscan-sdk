@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -102,7 +102,6 @@ TEST_F(GPUResidentErrorConditionsTest, TestSingleOperatorFragment) {
   while (!fragment.gpu_resident().is_launched()) {
     if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
       FAIL() << "Fragment did not launch within 5 seconds";
-      future.get();
     }
   }
 

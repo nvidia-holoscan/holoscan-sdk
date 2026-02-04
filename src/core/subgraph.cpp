@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,29 +20,94 @@
 #include <fmt/format.h>
 
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
+#include "holoscan/core/arg.hpp"
+#include "holoscan/core/config.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/logger/logger.hpp"
 
+namespace {
+
+// Helper to format a port map's keys as a comma-separated list
+template <typename PortMapT>
+std::string format_port_list(const PortMapT& ports) {
+  std::string result;
+  bool first = true;
+  for (const auto& [name, _] : ports) {
+    if (!first) {
+      result += ", ";
+    }
+    result += name;
+    first = false;
+  }
+  return result;
+}
+
+}  // namespace
+
 namespace holoscan {
 
-Subgraph::Subgraph(Fragment* fragment, const std::string& name) : fragment_(fragment), name_(name) {
+Subgraph::Subgraph(Fragment* fragment, const std::string& name, const std::string& config_file)
+    : fragment_(fragment), name_(name) {
   if (fragment == nullptr) {
     throw std::runtime_error("Subgraph: fragment cannot be nullptr");
   }
   if (name.empty()) {
     throw std::runtime_error("Subgraph: name cannot be empty");
   }
+  // Set configuration before compose() is called (by make_subgraph or Python __init__)
+  if (!config_file.empty()) {
+    config_ = std::make_shared<Config>(config_file);
+  }
 }
 
-void Subgraph::add_operator(std::shared_ptr<Operator> op) {
+// ========== Configuration Methods ==========
+
+void Subgraph::config(const std::string& config_file, const std::string& prefix) {
+  if (config_) {
+    HOLOSCAN_LOG_WARN("Subgraph config was already set. Overwriting...");
+  }
+  if (is_composed_) {
+    HOLOSCAN_LOG_WARN(
+        "Subgraph has already been composed. Please make sure that composition is not dependent "
+        "on this config() call.");
+  }
+
+  if (!config_file.empty()) {
+    config_ = std::make_shared<Config>(config_file, prefix);
+  }
+}
+
+Config& Subgraph::config() {
+  return *config_shared();
+}
+
+std::shared_ptr<Config> Subgraph::config_shared() {
+  if (!config_) {
+    config_ = std::make_shared<Config>();
+  }
+  return config_;
+}
+
+ArgList Subgraph::from_config(const std::string& key) {
+  return config().from_config(key);
+}
+
+std::unordered_set<std::string> Subgraph::config_keys() {
+  return config().config_keys();
+}
+
+void Subgraph::add_operator(const std::shared_ptr<Operator>& op) {
   if (!op) {
     HOLOSCAN_LOG_ERROR("Cannot add null operator to subgraph");
     return;
@@ -69,33 +134,39 @@ void Subgraph::add_operator(std::shared_ptr<Operator> op) {
   fragment_->add_operator(op);
 }
 
+void Subgraph::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
+  if (fragment_) {
+    fragment_->add_subgraph(subgraph);
+  }
+}
+
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream,
                         const std::shared_ptr<Operator>& downstream,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
   // update operator names and add them to the graph
   add_operator(downstream);
   add_operator(upstream);
-  fragment_->add_flow(upstream, downstream, port_pairs);
+  fragment_->add_flow(upstream, downstream, std::move(port_pairs));
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
   add_operator(upstream_op);
-  fragment_->add_flow(upstream_op, downstream_subgraph, port_pairs);
+  fragment_->add_flow(upstream_op, downstream_subgraph, std::move(port_pairs));
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
   add_operator(downstream_op);
-  fragment_->add_flow(upstream_subgraph, downstream_op, port_pairs);
+  fragment_->add_flow(upstream_subgraph, downstream_op, std::move(port_pairs));
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
-  fragment_->add_flow(upstream_subgraph, downstream_subgraph, port_pairs);
+  fragment_->add_flow(upstream_subgraph, downstream_subgraph, std::move(port_pairs));
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -110,7 +181,7 @@ void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
   add_operator(upstream_op);
-  fragment_->add_flow(upstream_op, downstream_subgraph, port_pairs, connector_type);
+  fragment_->add_flow(upstream_op, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -125,7 +196,7 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
   add_operator(downstream_op);
-  fragment_->add_flow(upstream_subgraph, downstream_op, port_pairs, connector_type);
+  fragment_->add_flow(upstream_subgraph, downstream_op, std::move(port_pairs), connector_type);
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -138,7 +209,8 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
-  fragment_->add_flow(upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
+  fragment_->add_flow(
+      upstream_subgraph, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 void Subgraph::set_dynamic_flows(
@@ -149,9 +221,16 @@ void Subgraph::set_dynamic_flows(
   }
 }
 
+void Subgraph::add_data_logger(const std::shared_ptr<DataLogger>& logger) {
+  if (fragment_) {
+    fragment_->add_data_logger(logger);
+  }
+}
+
 void Subgraph::add_interface_port(const std::string& external_name,
                                   const std::shared_ptr<Operator>& internal_op,
-                                  const std::string& internal_port, bool is_input) {
+                                  std::optional<std::string> internal_port,
+                                  std::optional<bool> is_input) {
   if (!internal_op) {
     auto err_msg =
         fmt::format("Cannot add interface port '{}': internal operator is null", external_name);
@@ -159,50 +238,147 @@ void Subgraph::add_interface_port(const std::string& external_name,
     throw std::runtime_error(err_msg);
   }
 
+  // Use external_name as internal_port if not specified
+  const std::string& port_name = internal_port.value_or(external_name);
+
   // Add the operator to the fragment graph with qualified name (if not already added)
   std::string qualified_name = get_qualified_name(internal_op->name(), "operator");
   if (!fragment_->graph().find_node(qualified_name)) {
     add_operator(internal_op);
   }
 
-  if (interface_ports_.find(external_name) != interface_ports_.end()) {
-    auto err_msg =
-        fmt::format("Interface port '{}' already exists in Subgraph '{}'", external_name, name_);
-    HOLOSCAN_LOG_ERROR(err_msg);
-    throw std::runtime_error(err_msg);
+  // Determine port direction: use provided value or auto-detect from operator's port definitions
+  bool port_is_input;
+  if (is_input.has_value()) {
+    port_is_input = is_input.value();
+  } else {
+    // Auto-detect port direction by checking both inputs and outputs
+    if (!internal_op->spec()) {
+      auto err_msg = fmt::format(
+          "Cannot auto-detect port direction for '{}' on operator '{}': operator spec is null",
+          port_name,
+          internal_op->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+
+    auto* op_spec = internal_op->spec();
+    const auto& inputs = op_spec->inputs();
+    const auto& outputs = op_spec->outputs();
+
+    bool found_in_inputs = inputs.find(port_name) != inputs.end();
+    bool found_in_outputs = outputs.find(port_name) != outputs.end();
+
+    if (found_in_inputs && found_in_outputs) {
+      auto err_msg = fmt::format(
+          "Port '{}' exists as both an input and output on operator '{}'. "
+          "Please specify is_input explicitly using add_input_interface_port() or "
+          "add_output_interface_port() to disambiguate.",
+          port_name,
+          internal_op->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    } else if (found_in_inputs) {
+      port_is_input = true;
+      HOLOSCAN_LOG_DEBUG(
+          "Auto-detected port '{}' as input port on operator '{}'", port_name, internal_op->name());
+    } else if (found_in_outputs) {
+      port_is_input = false;
+      HOLOSCAN_LOG_DEBUG("Auto-detected port '{}' as output port on operator '{}'",
+                         port_name,
+                         internal_op->name());
+    } else {
+      auto err_msg =
+          fmt::format("Port '{}' not found on operator '{}'. Available inputs: [{}], outputs: [{}]",
+                      port_name,
+                      internal_op->name(),
+                      format_port_list(inputs),
+                      format_port_list(outputs));
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
   }
 
-  // Validate that the operator has the specified port with correct type
-  if (!validate_operator_port(internal_op, internal_port, is_input)) {
-    throw std::runtime_error("validation of interface port failed");
-  }
+  auto it = interface_ports_.find(external_name);
+  if (it != interface_ports_.end()) {
+    // Port name already exists - check if we can add another mapping
+    if (!port_is_input) {
+      // Output ports cannot have multiple mappings
+      auto err_msg = fmt::format(
+          "Output interface port '{}' already exists in Subgraph '{}'. "
+          "Output ports can only have a single mapping.",
+          external_name,
+          name_);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
 
-  // Store the interface port mapping
-  interface_ports_[external_name] = InterfacePort{internal_op, internal_port, is_input};
+    // For input ports, verify the existing port is also an input port
+    if (!it->second.is_input) {
+      auto err_msg = fmt::format(
+          "Cannot add input interface port '{}': an output port with the same name already exists "
+          "in Subgraph '{}'",
+          external_name,
+          name_);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+
+    // Input port with broadcast support - append to existing mappings
+    HOLOSCAN_LOG_DEBUG(
+        "Adding additional mapping to input interface port '{}' -> '{}:{}' in Subgraph '{}' "
+        "(total mappings: {})",
+        external_name,
+        internal_op->name(),
+        port_name,
+        name_,
+        it->second.size() + 1);
+
+    // Validate that the operator has the specified port with correct type
+    if (!validate_operator_port(internal_op, port_name, port_is_input)) {
+      throw std::runtime_error("validation of interface port failed");
+    }
+
+    // Append to existing interface port mappings
+    it->second.add_mapping(internal_op, port_name);
+  } else {
+    // Validate that the operator has the specified port with correct type
+    if (!validate_operator_port(internal_op, port_name, port_is_input)) {
+      throw std::runtime_error("validation of interface port failed");
+    }
+
+    // Create new interface port with first mapping
+    InterfacePort new_port;
+    new_port.is_input = port_is_input;
+    new_port.port_type = InterfacePort::PortType::kData;
+    new_port.add_mapping(internal_op, port_name);
+    interface_ports_[external_name] = std::move(new_port);
+  }
 
   HOLOSCAN_LOG_DEBUG("Added interface port '{}' -> '{}:{}' (input: {}) to Subgraph '{}'",
                      external_name,
                      internal_op->name(),
-                     internal_port,
-                     is_input,
+                     port_name,
+                     port_is_input,
                      name_);
 }
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
                                         const std::shared_ptr<Operator>& internal_op,
-                                        const std::string& internal_port) {
-  add_interface_port(external_name, internal_op, internal_port, true);
+                                        std::optional<std::string> internal_port) {
+  add_interface_port(external_name, internal_op, std::move(internal_port), true);
 }
 
 void Subgraph::add_output_interface_port(const std::string& external_name,
                                          const std::shared_ptr<Operator>& internal_op,
-                                         const std::string& internal_port) {
-  add_interface_port(external_name, internal_op, internal_port, false);
+                                         std::optional<std::string> internal_port) {
+  add_interface_port(external_name, internal_op, std::move(internal_port), false);
 }
 
 void Subgraph::add_interface_port(const std::string& external_name,
                                   const std::shared_ptr<Subgraph>& internal_subgraph,
-                                  const std::string& internal_interface_port, bool is_input) {
+                                  std::optional<std::string> internal_interface_port,
+                                  std::optional<bool> is_input) {
   if (!internal_subgraph) {
     auto err_msg =
         fmt::format("Cannot add interface port '{}': internal subgraph is null", external_name);
@@ -210,31 +386,26 @@ void Subgraph::add_interface_port(const std::string& external_name,
     throw std::runtime_error(err_msg);
   }
 
-  if (interface_ports_.find(external_name) != interface_ports_.end()) {
-    auto err_msg =
-        fmt::format("Interface port '{}' already exists in Subgraph '{}'", external_name, name_);
-    HOLOSCAN_LOG_ERROR(err_msg);
-    throw std::runtime_error(err_msg);
-  }
+  // Use external_name as internal_interface_port if not specified
+  const std::string& port_name = internal_interface_port.value_or(external_name);
 
-  // Resolve the interface port from the nested subgraph to find the actual operator and port
-  auto [resolved_op, resolved_port] =
-      internal_subgraph->get_interface_operator_port(internal_interface_port);
+  // Find the interface port in the nested subgraph
+  const auto& nested_ports = internal_subgraph->interface_ports();
+  auto nested_it = nested_ports.find(port_name);
 
-  if (!resolved_op) {
+  if (nested_it == nested_ports.end()) {
     // Check if this is an execution interface port to provide a better error message
     const auto& nested_exec_ports = internal_subgraph->exec_interface_ports();
-    auto exec_it = nested_exec_ports.find(internal_interface_port);
+    auto exec_it = nested_exec_ports.find(port_name);
     if (exec_it != nested_exec_ports.end()) {
       auto err_msg = fmt::format(
           "Cannot add interface port '{}': nested subgraph '{}' has an execution interface port "
-          "named '{}', but a data interface port is required. Use add_{}_interface_port() for "
-          "data ports or add_{}_exec_interface_port() for execution ports.",
+          "named '{}', but a data interface port is required. Use add_input_interface_port()/"
+          "add_output_interface_port() for data ports or add_input_exec_interface_port()/"
+          "add_output_exec_interface_port() for execution ports.",
           external_name,
           internal_subgraph->name(),
-          internal_interface_port,
-          is_input ? "input" : "output",
-          is_input ? "input" : "output");
+          port_name);
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     } else {
@@ -242,60 +413,129 @@ void Subgraph::add_interface_port(const std::string& external_name,
           "Cannot add interface port '{}': nested subgraph '{}' does not have interface port '{}'",
           external_name,
           internal_subgraph->name(),
-          internal_interface_port);
+          port_name);
       HOLOSCAN_LOG_ERROR(err_msg);
       throw std::runtime_error(err_msg);
     }
   }
 
-  // Validate that the resolved port has the correct type
-  if (!validate_operator_port(resolved_op, resolved_port, is_input)) {
-    auto err_msg = fmt::format(
-        "Cannot add interface port '{}': nested subgraph '{}' interface port '{}' resolves to "
-        "operator '{}' port '{}' which has incorrect type (expected {})",
+  const InterfacePort& nested_port = nested_it->second;
+
+  // Determine port direction: use provided value or auto-detect from nested subgraph's port
+  bool port_is_input;
+  if (is_input.has_value()) {
+    port_is_input = is_input.value();
+    // Validate that the specified direction matches the nested port
+    if (port_is_input != nested_port.is_input) {
+      auto err_msg = fmt::format(
+          "Cannot add interface port '{}': is_input={} was specified but nested subgraph '{}' "
+          "interface port '{}' is an {} port",
+          external_name,
+          port_is_input,
+          internal_subgraph->name(),
+          port_name,
+          nested_port.is_input ? "input" : "output");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+  } else {
+    // Auto-detect from nested subgraph's interface port
+    port_is_input = nested_port.is_input;
+    HOLOSCAN_LOG_DEBUG(
+        "Auto-detected interface port '{}' as {} port from nested subgraph '{}' port '{}'",
         external_name,
+        port_is_input ? "input" : "output",
         internal_subgraph->name(),
-        internal_interface_port,
-        resolved_op->name(),
-        resolved_port,
-        is_input ? "input" : "output");
-    HOLOSCAN_LOG_ERROR(err_msg);
-    throw std::runtime_error(err_msg);
+        port_name);
   }
 
-  // Store the interface port mapping with the resolved operator and port
-  interface_ports_[external_name] = InterfacePort{resolved_op, resolved_port, is_input};
+  auto it = interface_ports_.find(external_name);
+  if (it != interface_ports_.end()) {
+    // Port name already exists - check if we can add another mapping
+    if (!port_is_input) {
+      auto err_msg = fmt::format(
+          "Output interface port '{}' already exists in Subgraph '{}'. "
+          "Output ports can only have a single mapping.",
+          external_name,
+          name_);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+
+    // For input ports, verify the existing port is also an input port
+    if (!it->second.is_input) {
+      auto err_msg = fmt::format(
+          "Cannot add input interface port '{}': an output port with the same name already exists "
+          "in Subgraph '{}'",
+          external_name,
+          name_);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+  }
+
+  // Add all resolved port mappings from the nested subgraph
+  for (const auto& mapping : nested_port.mappings) {
+    // Validate that the resolved port has the correct type
+    if (!validate_operator_port(
+            mapping.internal_operator, mapping.internal_port_name, port_is_input)) {
+      auto err_msg = fmt::format(
+          "Cannot add interface port '{}': nested subgraph '{}' interface port '{}' resolves to "
+          "operator '{}' port '{}' which has incorrect type (expected {})",
+          external_name,
+          internal_subgraph->name(),
+          port_name,
+          mapping.internal_operator->name(),
+          mapping.internal_port_name,
+          port_is_input ? "input" : "output");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
+
+    // Add to existing or create new interface port
+    if (it != interface_ports_.end()) {
+      it->second.add_mapping(mapping.internal_operator, mapping.internal_port_name);
+    } else {
+      InterfacePort new_port;
+      new_port.is_input = port_is_input;
+      new_port.port_type = InterfacePort::PortType::kData;
+      new_port.add_mapping(mapping.internal_operator, mapping.internal_port_name);
+      interface_ports_[external_name] = std::move(new_port);
+      it = interface_ports_.find(external_name);  // Update iterator for subsequent mappings
+    }
+  }
 
   HOLOSCAN_LOG_DEBUG(
-      "Added interface port '{}' -> nested subgraph '{}' interface port '{}' (resolves to "
-      "'{}:{}', input: {}) to Subgraph '{}'",
+      "Added interface port '{}' -> nested subgraph '{}' interface port '{}' ({} mappings, "
+      "input: {}) to Subgraph '{}'",
       external_name,
       internal_subgraph->name(),
-      internal_interface_port,
-      resolved_op->name(),
-      resolved_port,
-      is_input,
+      port_name,
+      nested_port.mappings.size(),
+      port_is_input,
       name_);
 }
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
                                         const std::shared_ptr<Subgraph>& internal_subgraph,
-                                        const std::string& internal_interface_port) {
-  add_interface_port(external_name, internal_subgraph, internal_interface_port, true);
+                                        std::optional<std::string> internal_interface_port) {
+  add_interface_port(external_name, internal_subgraph, std::move(internal_interface_port), true);
 }
 
 void Subgraph::add_output_interface_port(const std::string& external_name,
                                          const std::shared_ptr<Subgraph>& internal_subgraph,
-                                         const std::string& internal_interface_port) {
-  add_interface_port(external_name, internal_subgraph, internal_interface_port, false);
+                                         std::optional<std::string> internal_interface_port) {
+  add_interface_port(external_name, internal_subgraph, std::move(internal_interface_port), false);
 }
 
 std::pair<std::shared_ptr<Operator>, std::string> Subgraph::get_interface_operator_port(
     const std::string& port_name) const {
   // First check local interface ports
   auto it = interface_ports_.find(port_name);
-  if (it != interface_ports_.end()) {
-    return {it->second.internal_operator, it->second.internal_port_name};
+  if (it != interface_ports_.end() && !it->second.empty()) {
+    // Return the first mapping
+    const auto& first_mapping = it->second.mappings[0];
+    return {first_mapping.internal_operator, first_mapping.internal_port_name};
   }
 
   // If not found locally, check nested subgraphs recursively
@@ -314,8 +554,9 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::get_exec_interface_o
     const std::string& port_name) const {
   // First check local exec interface ports
   auto it = exec_interface_ports_.find(port_name);
-  if (it != exec_interface_ports_.end()) {
-    return {it->second.internal_operator, it->second.internal_port_name};
+  if (it != exec_interface_ports_.end() && !it->second.empty()) {
+    const auto& first_mapping = it->second.mappings[0];
+    return {first_mapping.internal_operator, first_mapping.internal_port_name};
   }
 
   // If not found locally, check nested subgraphs recursively
@@ -328,6 +569,25 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::get_exec_interface_o
 
   // Port not found in this subgraph or its nested subgraphs
   return {nullptr, ""};
+}
+
+std::vector<std::shared_ptr<Operator>> Subgraph::operators() const {
+  std::vector<std::shared_ptr<Operator>> result;
+
+  // Get all nodes from the fragment's graph
+  const auto& nodes = fragment_->graph().get_nodes();
+
+  // Filter operators whose names start with this subgraph's name followed by underscore
+  const std::string prefix = name_ + "_";
+  for (const auto& node : nodes) {
+    const auto& name = node->name();
+    // Check if name starts with prefix using compare (C++17 compatible)
+    if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0) {
+      result.push_back(node);
+    }
+  }
+
+  return result;
 }
 
 std::string Subgraph::format_port_list(
@@ -344,8 +604,8 @@ std::string Subgraph::format_port_list(
   return fmt::to_string(buf);
 }
 
-bool Subgraph::validate_operator_port(std::shared_ptr<Operator> op, const std::string& port_name,
-                                      bool expect_input) {
+bool Subgraph::validate_operator_port(const std::shared_ptr<Operator>& op,
+                                      const std::string& port_name, bool expect_input) {
   if (!op->spec()) {
     auto err_msg = fmt::format(
         "Cannot validate port '{}' on operator '{}': operator spec is null", port_name, op->name());
@@ -415,7 +675,7 @@ bool Subgraph::validate_operator_port(std::shared_ptr<Operator> op, const std::s
   return false;
 }
 
-bool Subgraph::validate_operator_exec_port(std::shared_ptr<Operator> op) {
+bool Subgraph::validate_operator_exec_port(const std::shared_ptr<Operator>& op) {
   if (!op) {
     HOLOSCAN_LOG_ERROR("Operator pointer is null");
     return false;
@@ -458,12 +718,11 @@ void Subgraph::register_exec_interface_port(const std::string& external_name,
                                             const std::shared_ptr<Operator>& internal_op,
                                             const std::string& internal_port_name, bool is_input) {
   InterfacePort port;
-  port.internal_operator = internal_op;
-  port.internal_port_name = internal_port_name;
   port.is_input = is_input;
   port.port_type = InterfacePort::PortType::kExecution;
+  port.add_mapping(internal_op, internal_port_name);
 
-  exec_interface_ports_[external_name] = port;
+  exec_interface_ports_[external_name] = std::move(port);
   HOLOSCAN_LOG_DEBUG("Added {} execution interface port '{}' -> operator '{}' in subgraph '{}'",
                      is_input ? "input" : "output",
                      external_name,
@@ -514,6 +773,17 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_
     throw std::runtime_error(err_msg);
   }
 
+  if (nested_port.empty()) {
+    auto err_msg = fmt::format(
+        "Execution interface port '{}' in nested subgraph '{}' has no "
+        "mappings",
+        internal_interface_port,
+        internal_subgraph->name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
+
+  const auto& first_mapping = nested_port.mappings[0];
   HOLOSCAN_LOG_DEBUG(
       "Resolved {} execution interface port '{}' -> nested subgraph '{}' port '{}' -> operator "
       "'{}'",
@@ -521,9 +791,9 @@ std::pair<std::shared_ptr<Operator>, std::string> Subgraph::resolve_nested_exec_
       external_name,
       internal_subgraph->name(),
       internal_interface_port,
-      nested_port.internal_operator->name());
+      first_mapping.internal_operator->name());
 
-  return {nested_port.internal_operator, nested_port.internal_port_name};
+  return {first_mapping.internal_operator, first_mapping.internal_port_name};
 }
 
 // ========== Execution Interface Port Methods ==========
@@ -568,18 +838,21 @@ void Subgraph::add_output_exec_interface_port(const std::string& external_name,
 
 void Subgraph::add_input_exec_interface_port(const std::string& external_name,
                                              const std::shared_ptr<Subgraph>& internal_subgraph,
-                                             const std::string& internal_interface_port) {
+                                             std::optional<std::string> internal_interface_port) {
   if (!internal_subgraph) {
     HOLOSCAN_LOG_ERROR("Internal subgraph pointer is null");
     throw std::runtime_error("Internal subgraph pointer is null");
   }
+
+  // Use external_name as internal_interface_port if not specified
+  const std::string& port_name = internal_interface_port.value_or(external_name);
 
   if (!check_exec_port_name_available(external_name)) {
     return;
   }
 
   auto [resolved_op, resolved_port] =
-      resolve_nested_exec_port(external_name, internal_subgraph, internal_interface_port, true);
+      resolve_nested_exec_port(external_name, internal_subgraph, port_name, true);
 
   if (!resolved_op) {
     return;
@@ -590,18 +863,21 @@ void Subgraph::add_input_exec_interface_port(const std::string& external_name,
 
 void Subgraph::add_output_exec_interface_port(const std::string& external_name,
                                               const std::shared_ptr<Subgraph>& internal_subgraph,
-                                              const std::string& internal_interface_port) {
+                                              std::optional<std::string> internal_interface_port) {
   if (!internal_subgraph) {
     HOLOSCAN_LOG_ERROR("Internal subgraph pointer is null");
     throw std::runtime_error("Internal subgraph pointer is null");
   }
+
+  // Use external_name as internal_interface_port if not specified
+  const std::string& port_name = internal_interface_port.value_or(external_name);
 
   if (!check_exec_port_name_available(external_name)) {
     return;
   }
 
   auto [resolved_op, resolved_port] =
-      resolve_nested_exec_port(external_name, internal_subgraph, internal_interface_port, false);
+      resolve_nested_exec_port(external_name, internal_subgraph, port_name, false);
 
   if (!resolved_op) {
     return;

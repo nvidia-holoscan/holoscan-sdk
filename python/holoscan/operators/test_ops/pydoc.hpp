@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,6 +73,25 @@ fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
 )doc")
 
 }  // namespace DataTypeRxTestOp
+
+namespace PoseTreeManagerLookupOp {
+
+// PoseTreeManagerLookupOp Constructor
+PYDOC(PoseTreeManagerLookupOp, R"doc(
+C++ PoseTreeManager service lookup operator intended for use in tests.
+
+During initialization, it attempts to retrieve the PoseTreeManager service using the
+"pose_tree_manager" id and throws if the service is not found.
+
+Parameters
+----------
+fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
+    The fragment that the operator belongs to.
+name : str, optional
+    The name of the operator. Default value is ``"pose_tree_manager_lookup_op"``.
+)doc")
+
+}  // namespace PoseTreeManagerLookupOp
 
 }  // namespace holoscan::doc
 

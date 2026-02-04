@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -218,11 +218,22 @@ void OutputContext::emit(holoscan::TensorMap& data, const char* name, const int6
     log_tensormap(data, unique_id, output_name.c_str());
   }
 
+  // Get CUDA stream for stream-aware deallocation. When provided, this enables allocators
+  // like BlockMemoryPool to defer memory reuse until GPU operations complete.
+  auto stream = stream_to_emit(output_name.c_str());
+
   auto out_message = holoscan::gxf::Entity::New(execution_context_);
   for (auto& [key, tensor] : data) {
-    out_message.add(tensor, key.c_str());
+    out_message.add(tensor, key.c_str(), stream);
   }
-  emit_impl(nvidia::gxf::Entity(out_message), name, OutputType::kGXFEntity, acq_timestamp, true);
+
+  // Pass skip_stream_propagation=true since we already set streams via Entity::add above
+  emit_impl(nvidia::gxf::Entity(out_message),
+            name,
+            OutputType::kGXFEntity,
+            acq_timestamp,
+            /*omit_data_logging=*/true,
+            /*skip_stream_propagation=*/true);
 }
 
 void OutputContext::emit(std::shared_ptr<holoscan::Tensor> data, const char* name,
@@ -244,9 +255,20 @@ void OutputContext::emit(std::shared_ptr<holoscan::Tensor> data, const char* nam
     log_tensor(data, unique_id, output_name.c_str());
   }
 
+  // Get CUDA stream for stream-aware deallocation. When provided, this enables allocators
+  // like BlockMemoryPool to defer memory reuse until GPU operations complete.
+  auto stream = stream_to_emit(output_name.c_str());
+
   auto out_message = holoscan::gxf::Entity::New(execution_context_);
-  out_message.add(data, "");
-  emit_impl(nvidia::gxf::Entity(out_message), name, OutputType::kGXFEntity, acq_timestamp, true);
+  out_message.add(data, "", stream);
+
+  // Pass skip_stream_propagation=true since we already set the stream via Entity::add above
+  emit_impl(nvidia::gxf::Entity(out_message),
+            name,
+            OutputType::kGXFEntity,
+            acq_timestamp,
+            /*omit_data_logging=*/true,
+            /*skip_stream_propagation=*/true);
 }
 
 bool OutputContext::log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,

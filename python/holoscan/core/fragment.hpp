@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,7 @@ class PyFragment : public Fragment {
 
   /* Trampolines (need one for each virtual function) */
   void add_operator(const std::shared_ptr<Operator>& op) override;
+  void add_subgraph(const std::shared_ptr<Subgraph>& subgraph) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,
                 const std::shared_ptr<Operator>& downstream_op) override;
   void add_flow(const std::shared_ptr<Operator>& upstream_op,

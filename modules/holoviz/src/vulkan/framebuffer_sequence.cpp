@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include <nvvk/commands_vk.hpp>
@@ -31,6 +32,15 @@
 #include "format_util.hpp"
 
 namespace holoscan::viz {
+
+// The Ubuntu 24.04 Vulkan SDK has that extension not available, so we need to use a constant for
+// the present mode.
+#ifdef VK_EXT_present_mode_fifo_latest_ready
+static constexpr vk::PresentModeKHR PRESENT_MODE_FIFO_LATEST_READY =
+    vk::PresentModeKHR::eFifoLatestReadyEXT;
+#else
+static constexpr vk::PresentModeKHR PRESENT_MODE_FIFO_LATEST_READY = vk::PresentModeKHR(1000361000);
+#endif
 
 FramebufferSequence::~FramebufferSequence() {
   if (swap_chain_) {
@@ -165,6 +175,12 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
         physical_device_.getSurfacePresentModesKHR(surface_);
     HOLOSCAN_LOG_INFO("Available present modes");
     for (auto present_mode : present_modes) {
+#ifndef VK_EXT_present_mode_fifo_latest_ready
+      if (present_mode == PRESENT_MODE_FIFO_LATEST_READY) {
+        HOLOSCAN_LOG_INFO(" FifoLatestReadyEXT");
+        continue;
+      }
+#endif
       HOLOSCAN_LOG_INFO(" {}", to_string(present_mode));
     }
   }
@@ -220,6 +236,9 @@ std::vector<SurfaceFormat> FramebufferSequence::get_surface_formats() const {
 std::vector<PresentMode> FramebufferSequence::get_present_modes() const {
   std::vector<PresentMode> present_modes;
   if (surface_) {
+    // auto mode is always supported
+    present_modes.push_back(PresentMode::AUTO);
+
     const std::vector<vk::PresentModeKHR> vulkan_present_modes =
         physical_device_.getSurfacePresentModesKHR(surface_);
 
@@ -233,6 +252,18 @@ std::vector<PresentMode> FramebufferSequence::get_present_modes() const {
           break;
         case vk::PresentModeKHR::eMailbox:
           present_modes.push_back(PresentMode::MAILBOX);
+          break;
+        case PRESENT_MODE_FIFO_LATEST_READY:
+          present_modes.push_back(PresentMode::FIFO_LATEST_READY);
+          break;
+        case vk::PresentModeKHR::eSharedDemandRefresh:
+          present_modes.push_back(PresentMode::SHARED_DEMAND_REFRESH);
+          break;
+        case vk::PresentModeKHR::eSharedContinuousRefresh:
+          present_modes.push_back(PresentMode::SHARED_CONTINUOUS_REFRESH);
+          break;
+        case vk::PresentModeKHR::eFifoRelaxed:
+          present_modes.push_back(PresentMode::FIFO_RELAXED);
           break;
         default:
           // ignore
@@ -252,20 +283,31 @@ void FramebufferSequence::update(uint32_t width, uint32_t height, PresentMode pr
     vk::PresentModeKHR vk_present_mode;
     if (present_mode == PresentMode::AUTO) {
       // auto select
-
+      // selection priority:
+      // 1. MAILBOX
+      // 2. IMMEDIATE
+      // 3. FIFO_LATEST_READY
+      // 4. FIFO
       // everyone must support FIFO mode
       vk_present_mode = vk::PresentModeKHR::eFifo;
-      // try to find a non-blocking alternative to FIFO
-      for (auto mode : present_modes) {
-        if (mode == vk::PresentModeKHR::eMailbox) {
-          // prefer mailbox due to no tearing
-          vk_present_mode = mode;
-          break;
+
+      auto has_mode = [&](vk::PresentModeKHR candidate) {
+        return std::find(present_modes.begin(), present_modes.end(), candidate) !=
+               present_modes.end();
+      };
+
+      if (has_mode(vk::PresentModeKHR::eMailbox)) {
+        // 1. MAILBOX (no tearing, non-blocking)
+        vk_present_mode = vk::PresentModeKHR::eMailbox;
+      } else if (has_mode(vk::PresentModeKHR::eImmediate)) {
+        // 2. IMMEDIATE (non-blocking, but may tear)
+        vk_present_mode = vk::PresentModeKHR::eImmediate;
+      } else {
+        if (has_mode(PRESENT_MODE_FIFO_LATEST_READY)) {
+          // 3. FIFO_LATEST_READY (no tearing, lower latency than FIFO)
+          vk_present_mode = PRESENT_MODE_FIFO_LATEST_READY;
         }
-        if (mode == vk::PresentModeKHR::eImmediate) {
-          // immediate mode is non-blocking, but has tearing
-          vk_present_mode = mode;
-        }
+        // 4. otherwise remain on FIFO
       }
     } else {
       switch (present_mode) {
@@ -278,17 +320,44 @@ void FramebufferSequence::update(uint32_t width, uint32_t height, PresentMode pr
         case PresentMode::MAILBOX:
           vk_present_mode = vk::PresentModeKHR::eMailbox;
           break;
+        case PresentMode::FIFO_LATEST_READY:
+          vk_present_mode = PRESENT_MODE_FIFO_LATEST_READY;
+          break;
+        case PresentMode::SHARED_DEMAND_REFRESH:
+          vk_present_mode = vk::PresentModeKHR::eSharedDemandRefresh;
+          break;
+        case PresentMode::SHARED_CONTINUOUS_REFRESH:
+          vk_present_mode = vk::PresentModeKHR::eSharedContinuousRefresh;
+          break;
+        case PresentMode::FIFO_RELAXED:
+          vk_present_mode = vk::PresentModeKHR::eFifoRelaxed;
+          break;
         default:
           throw std::runtime_error(fmt::format("Unhandled present mode '{}'", int(present_mode)));
       }
 
       auto it = std::find(present_modes.begin(), present_modes.end(), vk_present_mode);
       if (it == present_modes.end()) {
+#ifdef VK_EXT_present_mode_fifo_latest_ready
+        std::string present_mode_string = to_string(vk_present_mode);
+#else
+        std::string present_mode_string = (vk_present_mode == PRESENT_MODE_FIFO_LATEST_READY)
+                                              ? "FifoLatestReadyEXT"
+                                              : to_string(vk_present_mode);
+#endif
         throw std::runtime_error(
-            fmt::format("Present mode {} is not supported", to_string(vk_present_mode)));
+            fmt::format("Present mode {} is not supported", present_mode_string));
       }
     }
-    HOLOSCAN_LOG_INFO("Using present mode '{}'", to_string(vk_present_mode));
+
+#ifdef VK_EXT_present_mode_fifo_latest_ready
+    std::string present_mode_string = to_string(vk_present_mode);
+#else
+    std::string present_mode_string = (vk_present_mode == PRESENT_MODE_FIFO_LATEST_READY)
+                                          ? "FifoLatestReadyEXT"
+                                          : to_string(vk_present_mode);
+#endif
+    HOLOSCAN_LOG_INFO("Using present mode '{}'", present_mode_string);
 
     // vkCreateSwapchainKHR() randomly fails with VK_ERROR_INITIALIZATION_FAILED on driver 510
     // https://nvbugswb.nvidia.com/NvBugs5/SWBug.aspx?bugid=3612509&cmtNo=
@@ -423,7 +492,10 @@ void FramebufferSequence::present(vk::Queue queue) {
 
 vk::Semaphore FramebufferSequence::get_active_read_semaphore() const {
   if (swap_chain_) {
-    return swap_chain_->getActiveReadSemaphore();
+    if (image_count_ > 1) {
+      return swap_chain_->getActiveReadSemaphore();
+    }
+    return nullptr;
   }
 
   return active_semaphore_;
@@ -431,7 +503,10 @@ vk::Semaphore FramebufferSequence::get_active_read_semaphore() const {
 
 vk::Semaphore FramebufferSequence::get_active_written_semaphore() const {
   if (swap_chain_) {
-    return swap_chain_->getActiveWrittenSemaphore();
+    if (image_count_ > 1) {
+      return swap_chain_->getActiveWrittenSemaphore();
+    }
+    return nullptr;
   }
 
   return semaphores_[current_image_].get();

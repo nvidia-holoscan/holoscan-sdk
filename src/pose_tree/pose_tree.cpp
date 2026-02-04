@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -721,6 +721,10 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::disconnect_frame(const std::
 
 PoseTree::expected_t<std::string_view> PoseTree::get_frame_name(const frame_t uid) const {
   std::shared_lock<std::shared_timed_mutex> lock(mutex_);
+  return get_frame_name_unlocked(uid);
+}
+
+PoseTree::expected_t<std::string_view> PoseTree::get_frame_name_unlocked(const frame_t uid) const {
   const auto uid_it = frame_map_.try_get(uid);
   if (!uid_it) {
     HOLOSCAN_LOG_WARN("No pose frame found with UID {}", uid);
@@ -925,32 +929,16 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
   return version;
 }
 
-PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(std::string_view lhs,
-                                                                     std::string_view rhs) const {
-  std::shared_lock<std::shared_timed_mutex> lock(mutex_);
-  const auto lhs_frame = find_frame_impl(lhs);
-  if (!lhs_frame) {
-    HOLOSCAN_LOG_WARN("Pose frame {} not found", lhs);
-    return unexpected_t(Error::kFrameNotFound);
-  }
-  const auto rhs_frame = find_frame_impl(rhs);
-  if (!rhs_frame) {
-    HOLOSCAN_LOG_WARN("Pose frame {} not found", rhs);
-    return unexpected_t(Error::kFrameNotFound);
-  }
-  return get_latest(lhs_frame.value(), rhs_frame.value());
-}
-
-PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(frame_t lhs,
-                                                                     frame_t rhs) const {
+// Internal implementation that assumes the lock is already held
+PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest_impl(frame_t lhs,
+                                                                          frame_t rhs) const {
   if (lhs > rhs) {
-    const auto result = get_latest(rhs, lhs);
+    const auto result = get_latest_impl(rhs, lhs);
     if (!result) {
       return result;
     }
     return std::make_pair(result.value().first.inverse(), result.value().second);
   }
-  std::shared_lock<std::shared_timed_mutex> lock(mutex_);
   // Make sure both the frame and edge exists.
   const auto lhs_it = frame_map_.try_get(lhs);
   const auto rhs_it = frame_map_.try_get(rhs);
@@ -973,6 +961,28 @@ PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(frame_t lhs
     return unexpected_t(Error::kInvalidArgument);
   }
   return std::make_pair(timed_pose.value().pose, timed_pose.value().time);
+}
+
+PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(std::string_view lhs,
+                                                                     std::string_view rhs) const {
+  std::shared_lock<std::shared_timed_mutex> lock(mutex_);
+  const auto lhs_frame = find_frame_impl(lhs);
+  if (!lhs_frame) {
+    HOLOSCAN_LOG_WARN("Pose frame {} not found", lhs);
+    return unexpected_t(Error::kFrameNotFound);
+  }
+  const auto rhs_frame = find_frame_impl(rhs);
+  if (!rhs_frame) {
+    HOLOSCAN_LOG_WARN("Pose frame {} not found", rhs);
+    return unexpected_t(Error::kFrameNotFound);
+  }
+  return get_latest_impl(lhs_frame.value(), rhs_frame.value());
+}
+
+PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest(frame_t lhs,
+                                                                     frame_t rhs) const {
+  std::shared_lock<std::shared_timed_mutex> lock(mutex_);
+  return get_latest_impl(lhs, rhs);
 }
 
 PoseTree::expected_t<Pose3d> PoseTree::get(std::string_view lhs, std::string_view rhs,

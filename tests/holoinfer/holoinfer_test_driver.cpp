@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <exception>
 #include <iostream>
 #include <memory>
 
@@ -39,8 +40,11 @@ int main() {
 
     status = holoinfer_tests->get_status();
     status += processor_tests->get_status();
+  } catch (const std::exception& e) {
+    std::cerr << "Exception in executing tests: " << e.what() << "\n";
+    std::exit(1);
   } catch (...) {
-    std::cout << "Exception in executing tests.\n";
+    std::cerr << "Unknown exception in executing tests.\n";
     std::exit(1);
   }
   // summary of tests

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,10 +26,12 @@
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/subgraph.hpp"
+#include "holoscan/operators/test_ops/pose_tree_manager_lookup.hpp"
 #include "holoscan/operators/test_ops/rx_dtype_test.hpp"
 #include "holoscan/operators/test_ops/tx_dtype_test.hpp"
 
@@ -57,7 +59,7 @@ class PyDataTypeTxTestOp : public holoscan::ops::DataTypeTxTestOp {
   // Define a constructor that fully initializes the object.
   PyDataTypeTxTestOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                      const py::args& args, const std::string& data_type = "double"s,
-                     const std::string& name = "data_type_tx_test_op"s)
+                     const std::string& name = operator_default_name_v<DataTypeTxTestOp>)
       : DataTypeTxTestOp(ArgList{Arg{"data_type", data_type}}) {
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);
@@ -71,8 +73,24 @@ class PyDataTypeRxTestOp : public holoscan::ops::DataTypeRxTestOp {
 
   // Define a constructor that fully initializes the object.
   PyDataTypeRxTestOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                     const py::args& args, const std::string& name = "data_type_rx_test_op"s)
+                     const py::args& args,
+                     const std::string& name = operator_default_name_v<DataTypeRxTestOp>)
       : DataTypeRxTestOp() {
+    add_positional_condition_and_resource_args(this, args);
+    init_operator_base(this, fragment_or_subgraph, name);
+  }
+};
+
+class PyPoseTreeManagerLookupOp : public holoscan::ops::PoseTreeManagerLookupOp {
+ public:
+  using PoseTreeManagerLookupOp::PoseTreeManagerLookupOp;
+
+  // Define a constructor that fully initializes the object.
+  PyPoseTreeManagerLookupOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+                            const py::args& args,
+                            const std::string& name =
+                                operator_default_name_v<PoseTreeManagerLookupOp>)
+      : PoseTreeManagerLookupOp() {
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);
   }
@@ -95,14 +113,24 @@ PYBIND11_MODULE(_test_ops, m) {
                     const std::string&>(),
            "fragment"_a,
            "data_type"_a = "double"s,
-           "name"_a = "data_type_tx_test_op"s,
+           "name"_a = std::string(operator_default_name_v<DataTypeTxTestOp>),
            doc::DataTypeTxTestOp::doc_DataTypeTxTestOp);
 
   py::class_<DataTypeRxTestOp, PyDataTypeRxTestOp, Operator, std::shared_ptr<DataTypeRxTestOp>>(
       m, "DataTypeRxTestOp", doc::DataTypeRxTestOp::doc_DataTypeRxTestOp)
       .def(py::init<std::variant<Fragment*, Subgraph*>, const py::args&, const std::string&>(),
            "fragment"_a,
-           "name"_a = "data_type_rx_test_op"s,
+           "name"_a = std::string(operator_default_name_v<DataTypeRxTestOp>),
            doc::DataTypeRxTestOp::doc_DataTypeRxTestOp);
+
+  py::class_<PoseTreeManagerLookupOp,
+             PyPoseTreeManagerLookupOp,
+             Operator,
+             std::shared_ptr<PoseTreeManagerLookupOp>>(
+      m, "PoseTreeManagerLookupOp", doc::PoseTreeManagerLookupOp::doc_PoseTreeManagerLookupOp)
+      .def(py::init<std::variant<Fragment*, Subgraph*>, const py::args&, const std::string&>(),
+           "fragment"_a,
+           "name"_a = std::string(operator_default_name_v<PoseTreeManagerLookupOp>),
+           doc::PoseTreeManagerLookupOp::doc_PoseTreeManagerLookupOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,11 @@ set(TORCH_SEARCH_DIRS
   "$ENV{HOME}/.local/lib/python${PYTHON_MAJOR_MINOR}/site-packages"
   "/opt/nvidia/torch"
 )
+# Suppress PyTorch's CUDA hash computation warning
+set(_CMAKE_MESSAGE_LOG_LEVEL ${CMAKE_MESSAGE_LOG_LEVEL})
+set(CMAKE_MESSAGE_LOG_LEVEL ERROR)
 find_package(Torch 2.8 REQUIRED CONFIG PATHS ${TORCH_SEARCH_DIRS})
+set(CMAKE_MESSAGE_LOG_LEVEL ${_CMAKE_MESSAGE_LOG_LEVEL})
 
 # Create the holoinfer torch backend library
 add_library(holoinfer_torch SHARED core.cpp)

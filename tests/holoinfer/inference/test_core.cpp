@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,11 +87,24 @@ void HoloInferTests::holoinfer_assert_with_message(const HoloInfer::InferStatus&
   }
 }
 
+void HoloInferTests::holoinfer_skip(const std::string& module, unsigned int current_test,
+                                    const std::string& test_name, const std::string& reason) {
+  total_test_count++;
+  skip_test_count++;
+
+  auto test_id = module + std::to_string(current_test);
+  test_tracker.insert({test_id, true});  // Mark as "not failed" for tracking purposes
+
+  std::cout << "Test " << current_test << ": " << test_name << " in " << module << " -> SKIP ("
+            << reason << ").\n";
+}
+
 void HoloInferTests::print_summary() {
   std::cout << "\nInference sub module test summary.\n\n";
   std::cout << "Tests executed   :\t" << total_test_count << "\n";
   std::cout << "Tests passed     :\t" << pass_test_count << " ("
             << 100.0 * (float(pass_test_count) / float(total_test_count)) << "%)\n";
+  std::cout << "Tests skipped    :\t" << skip_test_count << "\n";
   std::cout << "Tests failed     :\t" << fail_test_count << "\n\n";
 
   for (const auto& ftest : failed_tests) {

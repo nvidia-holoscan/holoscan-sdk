@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./count_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/count.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -55,7 +56,8 @@ class PyCountCondition : public CountCondition {
 
   // Define a constructor that fully initializes the object.
   explicit PyCountCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                            int64_t count = 1L, const std::string& name = "noname_count_condition")
+                            int64_t count = 1L,
+                            const std::string& name = condition_default_name_v<CountCondition>)
       : CountCondition(Arg{"count", count}) {
     init_component_base(this, fragment_or_subgraph, name, "condition");
   }
@@ -67,7 +69,7 @@ void init_count(py::module_& m) {
       .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "count"_a = 1L,
-           "name"_a = "noname_count_condition"s,
+           "name"_a = std::string(condition_default_name_v<CountCondition>),
            doc::CountCondition::doc_CountCondition)
       .def_property("count",
                     py::overload_cast<>(&CountCondition::count),

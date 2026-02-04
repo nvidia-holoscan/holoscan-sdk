@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,11 +21,14 @@
 #include <stdlib.h>
 
 #include <iostream>
+#include <sstream>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include <holoscan/holoscan.hpp>
 
+#include "../env_wrapper.hpp"
 #include "common/assert.hpp"
 
 #include "ping_message_rx_op.hpp"
@@ -36,36 +39,47 @@ using namespace std::string_literals;
 
 namespace holoscan {
 
-class MessageTypeParmeterizedTestFixture : public ::testing::TestWithParam<MessageType> {};
-
-class UcxMessageTypeParmeterizedTestFixture : public ::testing::TestWithParam<MessageType> {};
-
-// Non-UCX variant
+// Non-UCX variant (single-fragment)
 class MessageSerializationApp : public holoscan::Application {
  public:
-  explicit MessageSerializationApp(MessageType type) : type_(type) {}
+  explicit MessageSerializationApp(std::vector<MessageType> types) : types_(std::move(types)) {}
 
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingMessageTxOp>("tx", make_condition<CountCondition>(1));
-    tx->set_message_type(type_);
-    auto rx = make_operator<ops::PingMessageRxOp>("rx");
-    rx->set_message_type(type_);
+    auto tx =
+        make_operator<ops::PingMessageTxOp>("tx", make_condition<CountCondition>(types_.size()));
+    tx->set_message_types(types_);
+    auto rx =
+        make_operator<ops::PingMessageRxOp>("rx", make_condition<CountCondition>(types_.size()));
+    rx->set_message_types(types_);
 
     add_flow(tx, rx, {{"out", "in"}});
   }
 
  private:
-  MessageType type_ = MessageType::FLOAT;
+  std::vector<MessageType> types_ = {MessageType::FLOAT};
 };
 
-TEST_P(MessageTypeParmeterizedTestFixture, TestMessageSerializationApp) {
-  MessageType message_type = GetParam();
+TEST(MessageSerializationTests, TestSingleFragmentMessageSerialization) {
+  // Test all message types in a single application run
+  std::vector<MessageType> all_types = {MessageType::BOOL,
+                                        MessageType::INT32,
+                                        MessageType::UINT32,
+                                        MessageType::FLOAT,
+                                        MessageType::STRING,
+                                        MessageType::VEC_BOOL,
+                                        MessageType::VEC_FLOAT,
+                                        MessageType::VEC_STRING,
+                                        MessageType::SHARED_VEC_STRING,
+                                        MessageType::VEC_VEC_BOOL,
+                                        MessageType::VEC_VEC_FLOAT,
+                                        MessageType::VEC_VEC_STRING,
+                                        MessageType::VEC_INPUTSPEC,
+                                        MessageType::CAMERA_POSE};
 
-  std::cout << "Creating MessageSerializationApp for type: "
-            << message_type_name_map.at(message_type) << std::endl;
+  HOLOSCAN_LOG_INFO("Creating MessageSerializationApp with {} message types", all_types.size());
 
-  auto app = make_application<MessageSerializationApp>(message_type);
+  auto app = make_application<MessageSerializationApp>(all_types);
   app->is_metadata_enabled(true);
 
   // capture output so that we can check that the expected value is present
@@ -74,91 +88,114 @@ TEST_P(MessageTypeParmeterizedTestFixture, TestMessageSerializationApp) {
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
-}
 
-INSTANTIATE_TEST_CASE_P(MessageSerializationAppTests, MessageTypeParmeterizedTestFixture,
-                        ::testing::Values(MessageType::BOOL, MessageType::INT32,
-                                          MessageType::UINT32, MessageType::FLOAT,
-                                          MessageType::STRING, MessageType::VEC_BOOL,
-                                          MessageType::VEC_FLOAT, MessageType::VEC_STRING,
-                                          MessageType::SHARED_VEC_STRING, MessageType::VEC_VEC_BOOL,
-                                          MessageType::VEC_VEC_FLOAT, MessageType::VEC_VEC_STRING,
-                                          MessageType::VEC_INPUTSPEC, MessageType::CAMERA_POSE));
+  // Count successful test cases
+  size_t success_count = 0;
+  size_t pos = 0;
+  while ((pos = log_output.find("Found expected value in deserialized message for test case:",
+                                pos)) != std::string::npos) {
+    success_count++;
+    pos++;
+  }
+
+  // If count doesn't match, print detailed information
+  if (success_count != all_types.size()) {
+    std::cerr << "\n=== Test case results ===\n";
+    std::istringstream iss(log_output);
+    std::string line;
+    while (std::getline(iss, line)) {
+      if (line.find("test case:") != std::string::npos) {
+        std::cerr << line << "\n";
+      }
+    }
+    std::cerr << "Expected " << all_types.size() << " test cases, got " << success_count << "\n";
+  }
+
+  EXPECT_EQ(success_count, all_types.size())
+      << "Expected " << all_types.size() << " successful type tests, got " << success_count
+      << "\nCheck stderr for details on which test cases passed/failed.";
+}
 
 // Multi-fragment UCX variant
 
 class TxFragment : public holoscan::Fragment {
  public:
-  explicit TxFragment(MessageType type) : type_(type) {}
+  explicit TxFragment(std::vector<MessageType> types) : types_(std::move(types)) {}
 
   void compose() override {
     using namespace holoscan;
-    auto tx = make_operator<ops::PingMessageTxOp>("tx", make_condition<CountCondition>(1));
-    tx->set_message_type(type_);
+    auto tx =
+        make_operator<ops::PingMessageTxOp>("tx", make_condition<CountCondition>(types_.size()));
+    tx->set_message_types(types_);
 
     add_operator(tx);
   }
 
  private:
-  MessageType type_ = MessageType::FLOAT;
+  std::vector<MessageType> types_ = {MessageType::FLOAT};
 };
 
 class RxFragment : public holoscan::Fragment {
  public:
-  explicit RxFragment(MessageType type) : type_(type) {}
+  explicit RxFragment(std::vector<MessageType> types) : types_(std::move(types)) {}
 
   void compose() override {
     using namespace holoscan;
-    auto rx = make_operator<ops::PingMessageRxOp>("rx");
-    rx->set_message_type(type_);
+    auto rx =
+        make_operator<ops::PingMessageRxOp>("rx", make_condition<CountCondition>(types_.size()));
+    rx->set_message_types(types_);
     add_operator(rx);
   }
 
  private:
-  MessageType type_ = MessageType::FLOAT;
+  std::vector<MessageType> types_ = {MessageType::FLOAT};
 };
 
 class UcxMessageSerializationApp : public holoscan::Application {
  public:
-  // Inherit the constructor
-  using Application::Application;
-
-  explicit UcxMessageSerializationApp(MessageType type) : type_(type) {}
+  explicit UcxMessageSerializationApp(std::vector<MessageType> types) : types_(std::move(types)) {}
 
   void compose() override {
     using namespace holoscan;
 
-    auto tx_fragment = make_fragment<TxFragment>("tx_fragment", type_);
+    auto tx_fragment = make_fragment<TxFragment>("tx_fragment", types_);
     tx_fragment->is_metadata_enabled(true);
-    auto rx_fragment = make_fragment<RxFragment>("rx_fragment", type_);
+    auto rx_fragment = make_fragment<RxFragment>("rx_fragment", types_);
     rx_fragment->is_metadata_enabled(true);
 
     add_flow(tx_fragment, rx_fragment, {{"tx", "rx"}});
   }
 
  private:
-  MessageType type_ = MessageType::FLOAT;
+  std::vector<MessageType> types_ = {MessageType::FLOAT};
 };
 
-TEST_P(UcxMessageTypeParmeterizedTestFixture, TestUcxMessageSerializationApp) {
-  MessageType message_type = GetParam();
+TEST(UcxMessageSerializationTests, TestDistributedMessageSerialization) {
+  // Test all message types in a single application run to reduce connection overhead
+  std::vector<MessageType> all_types = {MessageType::BOOL,
+                                        MessageType::INT32,
+                                        MessageType::UINT32,
+                                        MessageType::FLOAT,
+                                        MessageType::STRING,
+                                        MessageType::VEC_BOOL,
+                                        MessageType::VEC_FLOAT,
+                                        MessageType::VEC_STRING,
+                                        MessageType::SHARED_VEC_STRING,
+                                        MessageType::VEC_VEC_BOOL,
+                                        MessageType::VEC_VEC_FLOAT,
+                                        MessageType::VEC_VEC_STRING,
+                                        MessageType::VEC_INPUTSPEC,
+                                        MessageType::VEC_DOUBLE_LARGE,
+                                        MessageType::CAMERA_POSE};
 
-  const char* env_orig = std::getenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE");
+  // Set buffer size large enough to hold VEC_DOUBLE_LARGE message.
+  // EnvVarWrapper saves the original value and restores it when it goes out of scope.
+  EnvVarWrapper env_wrapper("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE",
+                            std::to_string(10 * 1024 * 1024));
 
-  if (message_type == MessageType::VEC_DOUBLE_LARGE) {
-    // message is larger than kDefaultUcxSerializationBufferSize
-    // set HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE to a value large enough to hold the data
-    std::string buffer_size = std::to_string(10 * 1024 * 1024);
-    setenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE", buffer_size.c_str(), 1);
-  }
+  HOLOSCAN_LOG_INFO("Creating UcxMessageSerializationApp with {} message types", all_types.size());
 
-  HOLOSCAN_LOG_INFO("Creating UcxMessageSerializationApp for type: {}",
-                    message_type_name_map.at(message_type));
-
-  auto app = make_application<UcxMessageSerializationApp>(message_type);
+  auto app = make_application<UcxMessageSerializationApp>(all_types);
 
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStderr();
@@ -167,32 +204,36 @@ TEST_P(UcxMessageTypeParmeterizedTestFixture, TestUcxMessageSerializationApp) {
 
   // check for the string that gets printed if receive value validation succeeded
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("Found expected value in deserialized message.") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+
+  // Count successful test cases
+  size_t success_count = 0;
+  size_t pos = 0;
+  while ((pos = log_output.find("Found expected value in deserialized message for test case:",
+                                pos)) != std::string::npos) {
+    success_count++;
+    pos++;
+  }
+
+  // If count doesn't match, print detailed information
+  if (success_count != all_types.size()) {
+    std::cerr << "\n=== Test case results ===\n";
+    std::istringstream iss(log_output);
+    std::string line;
+    while (std::getline(iss, line)) {
+      if (line.find("test case:") != std::string::npos) {
+        std::cerr << line << "\n";
+      }
+    }
+    std::cerr << "Expected " << all_types.size() << " test cases, got " << success_count << "\n";
+  }
+
+  EXPECT_EQ(success_count, all_types.size())
+      << "Expected " << all_types.size() << " successful type tests, got " << success_count
+      << "\nCheck stderr for details on which test cases passed/failed.";
 
   EXPECT_TRUE(remove_ignored_errors(log_output).find("error") == std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
-
-  // restore the original log level
-  if (message_type == MessageType::VEC_DOUBLE_LARGE) {
-    if (env_orig) {
-      setenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE", env_orig, 1);
-    } else {
-      unsetenv("HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE");
-    }
-  }
 }
-
-INSTANTIATE_TEST_CASE_P(UcxMessageSerializationAppTests, UcxMessageTypeParmeterizedTestFixture,
-                        ::testing::Values(MessageType::BOOL, MessageType::INT32,
-                                          MessageType::UINT32, MessageType::FLOAT,
-                                          MessageType::STRING, MessageType::VEC_BOOL,
-                                          MessageType::VEC_FLOAT, MessageType::VEC_STRING,
-                                          MessageType::SHARED_VEC_STRING, MessageType::VEC_VEC_BOOL,
-                                          MessageType::VEC_VEC_FLOAT, MessageType::VEC_VEC_STRING,
-                                          MessageType::VEC_INPUTSPEC, MessageType::VEC_DOUBLE_LARGE,
-                                          MessageType::CAMERA_POSE));
 
 }  // namespace holoscan

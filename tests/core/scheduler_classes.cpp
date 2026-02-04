@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,6 +146,23 @@ TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithRealtimeClock)
   const std::string name{"event-based-scheduler"};
   ArgList arglist{Arg{"clock", F.make_resource<RealtimeClock>()}};
   auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
+}
+
+TEST(SchedulerClasses, TestSchedulerUniqueDefaultNames) {
+  // Test that different scheduler types get unique default names when created without
+  // an explicit name parameter. This prevents naming conflicts and ensures
+  // C++ API consistency with Python API.
+  Fragment F;
+
+  // Create schedulers without specifying names
+  auto greedy = F.make_scheduler<GreedyScheduler>();
+  auto multithread = F.make_scheduler<MultiThreadScheduler>();
+  auto event_based = F.make_scheduler<EventBasedScheduler>();
+
+  // Verify each scheduler has the expected default name matching Python API
+  EXPECT_EQ(greedy->name(), "greedy_scheduler");
+  EXPECT_EQ(multithread->name(), "multithread_scheduler");
+  EXPECT_EQ(event_based->name(), "event_based_scheduler");
 }
 
 }  // namespace holoscan

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,6 +68,7 @@ if(HOLOSCAN_PYTHON_EXAMPLES)
   add_subdirectory(bring_your_own_model)
   add_subdirectory(cupy_native)
   add_subdirectory(numpy_native)
+  add_subdirectory(pytorch_native)
   add_subdirectory(python_decorator)
 endif()
 

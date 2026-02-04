@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -351,8 +351,8 @@ bool TrtInfer::set_dynamic_input_dimension(
     auto tensor_name = engine_->getIOTensorName(i);
 
     if (engine_->getTensorIOMode(tensor_name) == nvinfer1::TensorIOMode::kINPUT) {
-      auto holoscan_tensor_name = input_holoscan_tensors[input_index++];
-      auto dims = dims_per_tensor.at(holoscan_tensor_name);
+      const auto& holoscan_tensor_name = input_holoscan_tensors[input_index++];
+      const auto& dims = dims_per_tensor.at(holoscan_tensor_name);
 
       if (dims.size() > 8) {
         HOLOSCAN_LOG_INFO("All tensors must have dimension size less than or equal to 8.");

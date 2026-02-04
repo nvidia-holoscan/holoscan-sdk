@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -421,13 +421,13 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
       in_memory_storage_type = nvidia::gxf::MemoryStorageType::kDevice;
     }
   } else {
-    const auto maybe_tensor = in_message.get<Tensor>(in_tensor_name_.get().c_str());
+    auto maybe_tensor = in_message.get<Tensor>(in_tensor_name_.get().c_str());
     if (!maybe_tensor) {
       throw std::runtime_error(
           fmt::format("Tensor '{}' not found in message.\n", in_tensor_name_.get()));
     }
     // Tensor in_tensor;
-    auto in_tensor = maybe_tensor;
+    auto in_tensor = std::move(maybe_tensor);
 
     // Get needed information from the tensor
     // cast Holoscan::Tensor to nvidia::gxf::Tensor to use it's APIs directly

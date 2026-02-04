@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,64 +38,27 @@ void PingMessageRxOp::initialize() {
 }
 
 void PingMessageRxOp::setup(OperatorSpec& spec) {
-  switch (type_) {
-    case MessageType::BOOL:
-      spec.input<bool>("in");
-      break;
-    case MessageType::FLOAT:
-      spec.input<float>("in");
-      break;
-    case MessageType::INT32:
-      spec.input<int32_t>("in");
-      break;
-    case MessageType::UINT32:
-      spec.input<uint32_t>("in");
-      break;
-    case MessageType::STRING:
-      spec.input<std::string>("in");
-      break;
-    case MessageType::VEC_BOOL:
-      spec.input<std::vector<bool>>("in");
-      break;
-    case MessageType::VEC_FLOAT:
-      spec.input<std::vector<float>>("in");
-      break;
-    case MessageType::VEC_STRING:
-      spec.input<std::vector<std::string>>("in");
-      break;
-    case MessageType::SHARED_VEC_STRING:
-      spec.input<std::shared_ptr<std::vector<std::string>>>("in");
-      break;
-    case MessageType::VEC_VEC_BOOL:
-      spec.input<std::vector<std::vector<bool>>>("in");
-      break;
-    case MessageType::VEC_VEC_FLOAT:
-      spec.input<std::vector<std::vector<float>>>("in");
-      break;
-    case MessageType::VEC_VEC_STRING:
-      spec.input<std::vector<std::vector<std::string>>>("in");
-      break;
-    case MessageType::VEC_INPUTSPEC:
-      spec.input<std::vector<HolovizOp::InputSpec>>("in");
-      break;
-    case MessageType::VEC_DOUBLE_LARGE:
-      spec.input<std::vector<double>>("in");
-      break;
-    case MessageType::CAMERA_POSE:
-      spec.input<std::shared_ptr<std::array<float, 16>>>("in");
-      break;
-    default:
-      throw std::runtime_error("unsupported type");
-  }
+  // Use generic input that works with UCX serialization for all types
+  // The actual type is handled at runtime by the serialization layer
+  spec.input<nvidia::gxf::Entity>("in");
 }
 
 void PingMessageRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                               [[maybe_unused]] ExecutionContext& context) {
   // NOTE: Values in PingMessageRxOp::compute and PingMessageTxOp::compute must remain consistent.
   //       If any value is changed in PingMessageTxOp, please also update the check here.
+
+  // Get current type and cycle to next
+  if (types_.empty()) {
+    HOLOSCAN_LOG_ERROR("No message types configured");
+    return;
+  }
+  MessageType current_type = types_[current_index_];
+  current_index_ = (current_index_ + 1) % types_.size();
+
   bool valid_value = false;
 
-  switch (type_) {
+  switch (current_type) {
     case MessageType::BOOL: {
       auto value = op_input.receive<bool>("in");
       if (value) {
@@ -292,9 +255,11 @@ void PingMessageRxOp::compute(InputContext& op_input, [[maybe_unused]] OutputCon
     valid_value &= vec[2] == 3.0;
   }
   if (valid_value) {
-    HOLOSCAN_LOG_INFO("Found expected value in deserialized message.");
+    HOLOSCAN_LOG_INFO("Found expected value in deserialized message for test case: {}",
+                      message_type_name_map.at(current_type));
   } else {
-    HOLOSCAN_LOG_ERROR("Found unexpected value in deserialized message.");
+    HOLOSCAN_LOG_ERROR("FAILED test case: {} - Found unexpected value in deserialized message.",
+                       message_type_name_map.at(current_type));
   }
 }
 }  // namespace ops

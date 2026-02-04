@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2021, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,11 +13,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
 #include <nvvk/stagingmemorymanager_vk.hpp>
+
+#include <utility>
 
 #include <nvh/nvprint.hpp>
 #include <nvvk/debug_util_vk.hpp>
@@ -295,7 +297,7 @@ uint32_t StagingMemoryManager::newStagingIndex()
 
   StagingSet info;
   info.index = newIndex;
-  m_sets.push_back(info);
+  m_sets.push_back(std::move(info));
 
   assert(m_sets[newIndex].index == newIndex);
   return newIndex;

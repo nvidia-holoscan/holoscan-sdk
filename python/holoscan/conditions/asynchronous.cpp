@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,7 +26,8 @@
 #include "../core/component_util.hpp"
 #include "./asynchronous_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/conditions/gxf/count.hpp"
+#include "holoscan/core/component_traits.hpp"
+#include "holoscan/core/conditions/gxf/asynchronous.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/subgraph.hpp"
@@ -54,8 +55,9 @@ class PyAsynchronousCondition : public AsynchronousCondition {
   using AsynchronousCondition::AsynchronousCondition;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsynchronousCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                   const std::string& name = "noname_async_condition") {
+  explicit PyAsynchronousCondition(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      const std::string& name = condition_default_name_v<AsynchronousCondition>) {
     init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
@@ -75,7 +77,7 @@ void init_asynchronous(py::module_& m) {
       m, "AsynchronousCondition", doc::AsynchronousCondition::doc_AsynchronousCondition)
       .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
-           "name"_a = "noname_async_condition"s,
+           "name"_a = std::string(condition_default_name_v<AsynchronousCondition>),
            doc::AsynchronousCondition::doc_AsynchronousCondition_python)
       .def_property(
           "event_state",

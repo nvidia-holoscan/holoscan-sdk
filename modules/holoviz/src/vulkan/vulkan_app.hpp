@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,7 @@
 #include "../holoviz/display_event_type.hpp"
 #include "../holoviz/image_format.hpp"
 #include "../holoviz/present_mode.hpp"
+#include "../holoviz/render_flags.hpp"
 #include "../holoviz/surface_format.hpp"
 #include "../window.hpp"
 
@@ -133,8 +134,10 @@ class Vulkan {
   /**
    * Begin the render pass. This acquires the next image to render to
    * and sets up the render command buffer.
+   *
+   * @param render_flags render flags to control the render pass
    */
-  void begin_render_pass();
+  void begin_render_pass(RenderFlags render_flags);
 
   /**
    * End the render pass. Submits the render command buffer.

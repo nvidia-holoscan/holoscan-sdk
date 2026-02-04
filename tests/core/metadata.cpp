@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -257,6 +257,89 @@ TEST(MetadataDictionary, TestMetadataUpdatePolicyRaise) {
 
   d.policy(MetadataPolicy::kRaise);
   EXPECT_THROW(d.update(d2), std::runtime_error);
+}
+
+TEST(MetadataDictionary, TestShallowVsDeepCopy) {
+  // Compare shallow copy (assignment/copy constructor) vs deep copy
+  MetadataDictionary original{MetadataPolicy::kUpdate};
+  original.set("value", 42);
+
+  // Shallow copies (assignment and copy constructor)
+  MetadataDictionary shallow_copy_assign{};
+  shallow_copy_assign = original;
+
+  MetadataDictionary shallow_copy_ctor(original);
+
+  // Deep copy
+  MetadataDictionary deep = original.deep_copy();
+
+  // All should have the same value initially
+  EXPECT_EQ(original.get<int>("value"), 42);
+  EXPECT_EQ(shallow_copy_assign.get<int>("value"), 42);
+  EXPECT_EQ(shallow_copy_ctor.get<int>("value"), 42);
+  EXPECT_EQ(deep.get<int>("value"), 42);
+
+  // Get MetadataObject pointers before any modifications
+  auto original_obj = original.get("value");
+  auto shallow_assign_obj = shallow_copy_assign.get("value");
+  auto shallow_ctor_obj = shallow_copy_ctor.get("value");
+  auto deep_obj = deep.get("value");
+
+  // Shallow copies should share the MetadataObject
+  EXPECT_EQ(original_obj.get(), shallow_assign_obj.get());
+  EXPECT_EQ(original_obj.get(), shallow_ctor_obj.get());
+
+  // Deep copy should have a different MetadataObject
+  EXPECT_NE(original_obj.get(), deep_obj.get());
+
+  // Modify the original
+  original.set("value", 100);
+
+  // After modification, shallow copies are unaffected due to copy-on-write
+  EXPECT_EQ(original.get<int>("value"), 100);
+  EXPECT_EQ(shallow_copy_assign.get<int>("value"), 42);
+  EXPECT_EQ(shallow_copy_ctor.get<int>("value"), 42);
+  EXPECT_EQ(deep.get<int>("value"), 42);
+}
+
+TEST(MetadataDictionary, TestDeepCopyWithSharedPtr) {
+  // Test that deep_copy creates independent MetadataObject instances
+  // This is the key difference from shallow copy: MetadataObjects are not shared
+  MetadataDictionary original{MetadataPolicy::kUpdate};
+  original.set("value", 42);
+
+  // Get a shared pointer to the MetadataObject
+  auto original_obj = original.get("value");
+
+  // Create a deep copy
+  MetadataDictionary copy = original.deep_copy();
+  auto copy_obj = copy.get("value");
+
+  // Verify policy is preserved
+  EXPECT_EQ(copy.policy(), MetadataPolicy::kUpdate);
+
+  // Verify values are equal
+  EXPECT_EQ(std::any_cast<int>(original_obj->value()), 42);
+  EXPECT_EQ(std::any_cast<int>(copy_obj->value()), 42);
+
+  // Verify they are different MetadataObject instances (key test for deep_copy)
+  EXPECT_NE(original_obj.get(), copy_obj.get());
+
+  // Modify the original's MetadataObject value IN-PLACE
+  // kInplaceUpdate modifies the std::any within the existing MetadataObject
+  // rather than creating a new MetadataObject
+  original.policy(MetadataPolicy::kInplaceUpdate);
+  original.set("value", 99);
+
+  // Verify the copy's value is unchanged even though the original's MetadataObject
+  // was modified in-place (proves deep_copy created independent MetadataObjects)
+  EXPECT_EQ(std::any_cast<int>(original_obj->value()), 99);
+  EXPECT_EQ(std::any_cast<int>(copy_obj->value()), 42);
+
+  // Test that changing the copy's policy doesn't affect the original
+  copy.policy(MetadataPolicy::kReject);
+  EXPECT_EQ(original.policy(), MetadataPolicy::kInplaceUpdate);
+  EXPECT_EQ(copy.policy(), MetadataPolicy::kReject);
 }
 
 }  // namespace holoscan

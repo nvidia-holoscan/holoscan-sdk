@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,7 +77,9 @@ void SimpleTextSerializer::initialize_default_encoders() {
   encoders_[std::type_index(typeid(char*))] = [](const std::any& value) {
     return std::string(std::any_cast<char*>(value));
   };
-  encoders_[std::type_index(typeid(std::shared_ptr<std::string>))] = [](const std::any& value) {
+  // Explicit return type: copy is intentional (encoder API returns by value)
+  encoders_[std::type_index(typeid(std::shared_ptr<std::string>))] =
+      [](const std::any& value) -> std::string {
     return *std::any_cast<std::shared_ptr<std::string>>(value);
   };
 

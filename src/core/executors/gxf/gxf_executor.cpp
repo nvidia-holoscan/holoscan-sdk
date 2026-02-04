@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -192,9 +192,6 @@ static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
 // Timeout in seconds before forcing application exit on SIGINT/SIGTERM
 static constexpr int kForceExitTimeoutSeconds = 3;
 
-// Define the static mutex for protecting active_countdown_flag_ access
-std::mutex GXFExecutor::countdown_flag_mutex_;
-
 static void setup_gxf_logging() {
   LogLevel holoscan_log_level = holoscan::log_level();
   nvidia::Severity gxf_log_level = nvidia::Severity::INFO;
@@ -345,13 +342,49 @@ std::future<void> GXFExecutor::run_async(OperatorGraph& graph) {
   });
 }
 
-void GXFExecutor::interrupt() {
+bool GXFExecutor::interrupt() {
   if (context_) {
+    // GxgGraphInterrupt is thread-safe (uses atomic operations)
     gxf_result_t code = GxfGraphInterrupt(context_);
-    if (code != GXF_SUCCESS) {
+    if (code == GXF_INVALID_EXECUTION_SEQUENCE) {
+      // Graph is not running (already stopped or not started) - this is expected
+      // if the signal arrives after natural termination or during shutdown.
+      HOLOSCAN_LOG_DEBUG("GxfGraphInterrupt: Graph not running (already stopped)");
+      return false;
+    } else if (code != GXF_SUCCESS) {
       HOLOSCAN_LOG_ERROR("GxfGraphInterrupt Error: {}", GxfResultStr(code));
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
+void GXFExecutor::wait() {
+  // Note: This method is typically called from the main thread (via run_gxf_graph()).
+  // Calling GxfGraphWait() from multiple threads concurrently can cause race conditions
+  // where one thread "consumes" the completion notification, leaving others stuck.
+  // We detect and warn about unexpected concurrent calls.
+  bool expected = false;
+  if (!wait_in_progress_.compare_exchange_strong(expected, true)) {
+    HOLOSCAN_LOG_WARN(
+        "GXFExecutor::wait() called concurrently from multiple threads. "
+        "This is not supported and may cause hangs.");
+    return;  // Don't proceed - would likely hang anyway
+  }
+
+  if (context_) {
+    gxf_result_t code = GxfGraphWait(context_);
+    if (code == GXF_INVALID_EXECUTION_SEQUENCE) {
+      // Graph is not in a state where wait is meaningful - this is expected
+      // if called after the graph has already stopped.
+      HOLOSCAN_LOG_DEBUG("GxfGraphWait: Graph already stopped");
+    } else if (code != GXF_SUCCESS) {
+      HOLOSCAN_LOG_ERROR("GxfGraphWait Error: {}", GxfResultStr(code));
     }
   }
+
+  wait_in_progress_.store(false);
 }
 
 void GXFExecutor::reset_execution_state() {
@@ -482,8 +515,6 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
   const char* rx_name = io_spec->name().c_str();  // input port name
   auto rx_type = io_spec->connector_type();
 
-  auto graph_entity = op->graph_entity();
-
   int64_t queue_size = io_spec->queue_size();
   if (queue_size == static_cast<int64_t>(IOSpec::kAnySize)) {
     // Do not create a receiver for this as we are using the parameterized receiver method.
@@ -536,10 +567,12 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
           rx_name,
           op->name());
     }
+
+    auto graph_entity = op->graph_entity();
     auto gxf_receiver = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
     if (gxf_receiver && graph_entity) {
       gxf_receiver->gxf_eid(graph_entity->eid());
-      gxf_receiver->gxf_graph_entity(graph_entity);
+      gxf_receiver->gxf_graph_entity(std::move(graph_entity));
     }
   } else {
     if (queue_policy_set && rx_type != IOSpec::ConnectorType::kDefault) {
@@ -652,7 +685,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
     }
 
     // Set the connector for this input
-    connector = rx_resource;
+    connector = std::move(rx_resource);
     io_spec->connector(connector);
   }
 
@@ -776,8 +809,6 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
   const char* tx_name = io_spec->name().c_str();
   auto tx_type = io_spec->connector_type();
 
-  auto graph_entity = op->graph_entity();
-
   bool queue_policy_set = io_spec->queue_policy().has_value();
   auto connector = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
@@ -789,10 +820,11 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
           tx_name,
           op->name());
     }
+    auto graph_entity = op->graph_entity();
     auto gxf_transmitter = std::dynamic_pointer_cast<holoscan::gxf::GXFResource>(connector);
     if (gxf_transmitter && graph_entity) {
       gxf_transmitter->gxf_eid(graph_entity->eid());
-      gxf_transmitter->gxf_graph_entity(graph_entity);
+      gxf_transmitter->gxf_graph_entity(std::move(graph_entity));
     }
   } else {
     if (queue_policy_set && tx_type != IOSpec::ConnectorType::kDefault) {
@@ -882,7 +914,7 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
     }
 
     // Set the connector for this output
-    connector = tx_resource;
+    connector = std::move(tx_resource);
     io_spec->connector(connector);
   }
 
@@ -1071,11 +1103,11 @@ void create_virtual_operators_and_connections(
           }
 
           // Create and insert a forward operator to connect virtual_op.port_name to op.port_name
-          const std::string forward_op_name =
+          std::string forward_op_name =
               param_index == -1
                   ? fmt::format("forward_{}_{}", op->name(), port_name)
                   : fmt::format("forward_{}_{}:{}", op->name(), port_name, param_index);
-          auto forward_op = fragment->make_operator<ops::ForwardOp>(forward_op_name);
+          auto forward_op = fragment->make_operator<ops::ForwardOp>(std::move(forward_op_name));
           auto& in_spec =
               forward_op->spec()->inputs()["in"];  // get the input spec of the forward op
 
@@ -2140,7 +2172,7 @@ std::shared_ptr<GPUDevice> GXFExecutor::add_gpu_device_to_graph_entity(
       device_name, holoscan::Arg("dev_id", static_cast<int32_t>(gpu_id)));
 
   gpu_device->gxf_eid(graph_entity->eid());
-  gpu_device->add_to_graph_entity(fragment_, graph_entity);
+  gpu_device->add_to_graph_entity(fragment_, std::move(graph_entity));
   gpu_device->initialize();
 
   return gpu_device;
@@ -2360,7 +2392,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
               node->name(),
               entity_group_name,
               maybe_device_id.value());
-          groups_with_device.insert(entity_group_name);
+          groups_with_device.insert(std::move(entity_group_name));
         } else {
           HOLOSCAN_LOG_DEBUG("operator '{}' is in EntityGroup '{}' without a GPUDevice resource",
                              node->name(),
@@ -2430,65 +2462,14 @@ void GXFExecutor::activate_gxf_graph() {
   }
 }
 
-// Initialize the static members
-std::atomic<bool> GXFExecutor::interrupt_requested_(false);
-std::atomic<bool> GXFExecutor::force_exit_countdown_started_(false);
-std::atomic<int64_t> GXFExecutor::first_interrupt_time_ms_(0);
-std::shared_ptr<std::atomic<bool>> GXFExecutor::active_countdown_flag_(nullptr);
-
 // Update setup_signal_handlers to use class members
 std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fragment) {
-  // Calculate the force exit timeout based on the scheduler's stop_on_deadlock_timeout
-  int64_t stop_on_deadlock_timeout = 5000L;  // Default fallback value
-  auto scheduler = fragment->scheduler();
-
-  // Try to cast to known scheduler types that have stop_on_deadlock_timeout()
-  // Wrap in try-catch because the parameter may not be set when the graph is empty
-  try {
-    if (auto* ebs = dynamic_cast<EventBasedScheduler*>(scheduler.get())) {
-      stop_on_deadlock_timeout = ebs->stop_on_deadlock_timeout();
-      HOLOSCAN_LOG_DEBUG(
-          "Fragment '{}': EventBasedScheduler::stop_on_deadlock_timeout() returned {} ms",
-          fragment->name(),
-          stop_on_deadlock_timeout);
-
-    } else if (auto* mts = dynamic_cast<MultiThreadScheduler*>(scheduler.get())) {
-      stop_on_deadlock_timeout = mts->stop_on_deadlock_timeout();
-      HOLOSCAN_LOG_DEBUG(
-          "Fragment '{}': MultiThreadScheduler::stop_on_deadlock_timeout() returned {} ms",
-          fragment->name(),
-          stop_on_deadlock_timeout);
-    } else if (auto* gs = dynamic_cast<GreedyScheduler*>(scheduler.get())) {
-      stop_on_deadlock_timeout = gs->stop_on_deadlock_timeout();
-      HOLOSCAN_LOG_DEBUG(
-          "Fragment '{}': GreedyScheduler::stop_on_deadlock_timeout() returned {} ms",
-          fragment->name(),
-          stop_on_deadlock_timeout);
-    }
-  } catch (const std::runtime_error& e) {
-    // Parameter not set on scheduler (e.g., when graph is empty due to invalid flows)
-    // Use default 5000ms
-    HOLOSCAN_LOG_WARN(
-        "Fragment '{}': Exception when reading stop_on_deadlock_timeout from scheduler: {}. Using "
-        "default {} ms",
-        fragment->name(),
-        e.what(),
-        stop_on_deadlock_timeout);
-  }
-
-  // Add kForceExitTimeoutSeconds (3000ms) to the stop_on_deadlock_timeout as some other
-  // fragment(s) may have a longer deadlock timeout interval.
-  int64_t force_exit_timeout_ms = stop_on_deadlock_timeout + 1000 * kForceExitTimeoutSeconds;
-
-  HOLOSCAN_LOG_DEBUG(
-      "Fragment '{}': force exit timeout set to {} ms (based on stop_on_deadlock_timeout={} ms)",
-      fragment->name(),
-      force_exit_timeout_ms,
-      stop_on_deadlock_timeout);
-
   // Define the signal handler
-  auto sig_handler = [fragment, force_exit_timeout_ms]([[maybe_unused]] void* user_data,
-                                                       [[maybe_unused]] int sig) {
+  // Note: For single-fragment apps, we use GxfGraphInterrupt() + GxfGraphWait() for immediate
+  // shutdown, so stop_on_deadlock_timeout is no longer relevant. The force exit countdown uses
+  // a fixed timeout (kForceExitTimeoutSeconds). For distributed apps, the AppWorker has its own
+  // watchdog, so no force exit countdown is started here.
+  auto sig_handler = [fragment]([[maybe_unused]] void* user_data, [[maybe_unused]] int sig) {
     // Get current time in milliseconds since epoch
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
                    std::chrono::steady_clock::now().time_since_epoch())
@@ -2504,7 +2485,7 @@ std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fra
       first_interrupt_time_ms_.store(now);
 
       // Launch a thread to handle the interrupt outside the signal handler context
-      std::thread([fragment, force_exit_timeout_ms]() {
+      std::thread([fragment]() {
         // First signal, request graceful shutdown
         HOLOSCAN_LOG_INFO("Interrupt signal received. Shutting down gracefully...");
 
@@ -2523,20 +2504,31 @@ std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fra
           // signal handler has its own watchdog that is better coordinated with the
           // distributed shutdown process.
         } else {
-          // Single fragment - just stop execution directly
-          fragment->stop_execution();
+          // Single fragment - interrupt the scheduler directly via GxfGraphInterrupt().
+          //
+          // We ONLY call interrupt() here - never wait(). The main thread's run_gxf_graph()
+          // already has the correct shutdown sequence:
+          //   1. GxfGraphWait() - blocks until scheduler stops
+          //   2. shutdown_data_loggers() - drains queues while GXF context is valid
+          //   3. GxfGraphDeactivate() - then deactivates
+          //
+          // Calling GxfGraphWait() from both the signal handler AND main thread can cause
+          // a race condition where one thread "consumes" the completion notification,
+          // leaving the other stuck forever. By only calling interrupt() here, we avoid
+          // this race entirely.
+          //
+          // The interrupt() call signals the scheduler to stop (non-blocking). The main
+          // thread's GxfGraphWait() will then return, and it handles all cleanup including
+          // data logger shutdown.
+          fragment->executor().interrupt();
 
-          // Shutdown data loggers BEFORE starting force exit countdown to ensure
-          // async loggers have time to drain their queues
-          if (!fragment->data_loggers().empty()) {
-            HOLOSCAN_LOG_INFO("Shutting down {} data logger(s) before force exit countdown...",
-                              fragment->data_loggers().size());
-            fragment->shutdown_data_loggers();
-            HOLOSCAN_LOG_INFO("Data logger shutdown complete.");
-          }
-
-          // Start a force exit countdown if graceful shutdown takes too long
-          // Use mutex to protect access to active_countdown_flag_ and prevent race conditions
+          // Start a force exit countdown as a safety net for the final cleanup.
+          // Note: With GxfGraphInterrupt() + GxfGraphWait(), the scheduler has already
+          // stopped at this point. This countdown only covers the time for:
+          // - GxfGraphDeactivate() on main thread
+          // - reset_backend_objects() on main thread
+          // We use a fixed timeout (kForceExitTimeoutSeconds) since stop_on_deadlock_timeout
+          // is no longer relevant for single-fragment apps (that was for the old soft-stop).
           {
             std::lock_guard<std::mutex> lock(countdown_flag_mutex_);
             if (!force_exit_countdown_started_.load()) {
@@ -2545,22 +2537,23 @@ std::function<void(void*, int)> GXFExecutor::setup_signal_handlers(Fragment* fra
               // Launch another thread for the force exit countdown
               // Use a shared flag to allow cancellation of this specific countdown
               auto countdown_active = std::make_shared<std::atomic<bool>>(true);
-              std::thread([force_exit_timeout_ms, countdown_active]() {
-                // Sleep for the calculated timeout, then force exit if we're still alive
-                std::this_thread::sleep_for(std::chrono::milliseconds(force_exit_timeout_ms));
+              std::thread([countdown_active]() {
+                // Sleep for the fixed timeout, then force exit if we're still alive
+                std::this_thread::sleep_for(std::chrono::seconds(kForceExitTimeoutSeconds));
                 // Check both that interrupt is still requested AND this specific countdown is still
                 // active (countdown_active can be set to false if interrupt flags are reset between
                 // tests)
                 if (interrupt_requested_.load() && countdown_active->load()) {
                   HOLOSCAN_LOG_ERROR(
-                      "Application did not shut down within {} ms of interrupt. Forcing exit...",
-                      force_exit_timeout_ms);
+                      "Application did not shut down within {} seconds of interrupt. Forcing "
+                      "exit...",
+                      kForceExitTimeoutSeconds);
                   std::quick_exit(1);  // Force immediate termination
                 }
               }).detach();
 
               // Store the countdown_active flag so it can be cancelled during reset
-              active_countdown_flag_ = countdown_active;
+              active_countdown_flag_ = std::move(countdown_active);
             }
           }
         }
@@ -2595,7 +2588,7 @@ void GXFExecutor::run_gxf_graph() {
   auto sig_handler = setup_signal_handlers(fragment);
   // Register signal handlers that are effective during GXF graph execution.
   SignalHandler::register_signal_handler(context, SIGINT, sig_handler);
-  SignalHandler::register_signal_handler(context, SIGTERM, sig_handler);
+  SignalHandler::register_signal_handler(context, SIGTERM, std::move(sig_handler));
 
   // Run the graph
   auto frag_name_display = fragment->name();
@@ -2871,7 +2864,7 @@ bool GXFExecutor::add_condition_to_graph_entity(
       HOLOSCAN_LOG_TRACE(
           "Adding Condition '{}' to graph entity '{}'", condition->name(), graph_entity->name());
       gxf_condition->gxf_eid(graph_entity->eid());
-      gxf_condition->gxf_graph_entity(graph_entity);
+      gxf_condition->gxf_graph_entity(std::move(graph_entity));
       // Don't have to call initialize() here, ArgumentSetter already calls it later.
       return true;
     }
@@ -2893,7 +2886,7 @@ bool GXFExecutor::add_resource_to_graph_entity(
       HOLOSCAN_LOG_TRACE(
           "Adding Resource '{}' to graph entity '{}'", resource->name(), graph_entity->name());
       gxf_resource->gxf_eid(graph_entity->eid());
-      gxf_resource->gxf_graph_entity(graph_entity);
+      gxf_resource->gxf_graph_entity(std::move(graph_entity));
       // Don't have to call initialize() here, ArgumentSetter already calls it later.
       return true;
     }

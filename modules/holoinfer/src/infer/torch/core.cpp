@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #include "core.hpp"
 
+#include <c10/cuda/CUDAFunctions.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
 #include <fmt/ranges.h>
@@ -35,6 +36,39 @@
 
 namespace holoscan {
 namespace inference {
+
+bool is_torch_cuda_available() {
+  return c10::cuda::device_count() > 0;
+}
+
+/// @brief Check if PyTorch CUDA is compatible with the current GPU by attempting a small operation.
+/// @param device_id The CUDA device ID to check.
+/// @return true if compatible, false if CUDA unavailable or "no kernel image" error is detected.
+bool is_torch_cuda_sm_compatible(int device_id) {
+  if (!is_torch_cuda_available()) {
+    return false;
+  }
+
+  // Reset any stale CUDA errors from previous tests
+  cudaGetLastError();
+
+  try {
+    auto options = torch::TensorOptions().dtype(torch::kFloat32).device(torch::kCUDA, device_id);
+    auto tensor = torch::zeros({1}, options);
+    // Force synchronization to ensure any async errors surface
+    cudaDeviceSynchronize();
+    return true;
+  } catch (const c10::Error& e) {
+    std::string error_msg = e.what();
+    if (error_msg.find("no kernel image is available") != std::string::npos) {
+      HOLOSCAN_LOG_INFO("Torch CUDA SM incompatibility detected");
+      return false;
+    }
+    // Re-throw other c10::Error exceptions - these are real errors we need to see
+    throw;
+  }
+  // Don't catch other exceptions - let them propagate so we can debug
+}
 
 // Input processor optimization
 static const std::unordered_map<std::string, torch::ScalarType> kTorchTypeMap = {
@@ -841,6 +875,33 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
     }
     stream_guard_ = std::make_unique<c10::cuda::CUDAStreamGuard>(infer_stream_);
     check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
+
+    // Early check for CUDA availability and SM compatibility - fail fast with clear error message
+    if (cuda_flag) {
+      if (!is_torch_cuda_available()) {
+        std::string error_msg =
+            "Torch core: CUDA is not available. Check that a CUDA-capable GPU is present "
+            "and that CUDA drivers are properly installed, or set infer_on_cpu=true.";
+        HOLOSCAN_LOG_ERROR("{}", error_msg);
+        throw std::runtime_error(error_msg);
+      }
+      if (!is_torch_cuda_sm_compatible(device_id_)) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, device_id_);
+        std::string error_msg = fmt::format(
+            "Torch core: GPU sm_{}{} ({}) is not compatible with this PyTorch build. "
+            "The PyTorch library was not compiled with CUDA kernels for this GPU architecture. "
+            "To see supported architectures, run: python -c \"import torch; "
+            "print(torch.cuda.get_arch_list())\". "
+            "Consider using a compatible PyTorch build, or set infer_on_cpu=true to use CPU "
+            "inference.",
+            prop.major,
+            prop.minor,
+            prop.name);
+        HOLOSCAN_LOG_ERROR("{}", error_msg);
+        throw std::runtime_error(error_msg);
+      }
+    }
 
     HOLOSCAN_LOG_INFO("Loading torchscript: {}", model_path_);
     inference_module_ = torch::jit::load(model_path_);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -87,6 +87,29 @@ InferStatus processor_validity_check(const MultiMappings& processed_map,
  * @brief Checks if the processor is arm based
  */
 bool is_platform_aarch64();
+
+#if defined(HOLOINFER_TORCH_ENABLED)
+/**
+ * @brief Check if PyTorch CUDA is available.
+ *
+ * @return true if at least one CUDA device is available, false otherwise
+ */
+bool is_torch_cuda_available();
+
+/**
+ * @brief Check if PyTorch CUDA is available and compatible with the current GPU.
+ *
+ * Returns false if:
+ * - CUDA is not available (no GPU, no drivers, PyTorch not built with CUDA)
+ * - GPU SM architecture is not supported by this PyTorch build ("no kernel image" error)
+ *
+ * This is useful to check compatibility before creating a TorchInfer context.
+ *
+ * @param device_id The CUDA device ID to check (default: 0)
+ * @return true if CUDA is available and SM compatible, false otherwise
+ */
+bool is_torch_cuda_sm_compatible(int device_id = 0);
+#endif
 
 void timer_init(TimePoint& _t);
 

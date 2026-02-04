@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_DOMAIN_TENSOR_HPP
 #define HOLOSCAN_CORE_DOMAIN_TENSOR_HPP
 
+#include <cuda_runtime_api.h>
 #include <dlpack/dlpack.h>
 
 #include <cstdint>
@@ -68,8 +69,13 @@ class Tensor {
    * @brief Construct a new Tensor from an existing DLManagedTensorContext.
    *
    * @param ctx A shared pointer to the DLManagedTensorContext to be used in Tensor construction.
+   * @param memory_buffer_ptr Optional pointer to the underlying nvidia::gxf::MemoryBuffer.
+   *        When provided (for tensors from GXF allocators), enables stream-aware deallocation
+   *        via set_deallocation_stream(). Pass nullptr for external DLPack tensors.
    */
-  explicit Tensor(std::shared_ptr<DLManagedTensorContext>& ctx) : dl_ctx_(ctx) {}
+  explicit Tensor(std::shared_ptr<DLManagedTensorContext>& ctx,
+                  nvidia::gxf::MemoryBuffer* memory_buffer_ptr = nullptr)
+      : dl_ctx_(ctx), memory_buffer_ptr_(memory_buffer_ptr) {}
 
   /**
    * @brief Construct a new Tensor from an existing DLManagedTensor pointer.
@@ -201,8 +207,31 @@ class Tensor {
    */
   std::shared_ptr<DLManagedTensorContext>& dl_ctx() { return dl_ctx_; }
 
+  /**
+   * @brief Set the CUDA stream for stream-aware memory deallocation.
+   *
+   * For sink operators that don't emit data, this method should be called with the operator's
+   * working CUDA stream to ensure allocators (like BlockMemoryPool) defer memory reuse until
+   * GPU operations on the stream complete. This prevents race conditions where memory is
+   * returned to the pool while GPU kernels are still reading from it.
+   *
+   * This method only works for tensors whose memory is managed by a Holoscan/GXF allocator
+   * (i.e., tensors received from upstream operators in the pipeline). For tensors created
+   * from external sources via the DLPack interface (e.g., from CuPy or PyTorch), this method
+   * returns false and has no effect.
+   *
+   * @param stream The CUDA stream that last accessed this tensor's data.
+   * @return true if the stream was set successfully, false if the tensor's memory is not
+   *         managed by a Holoscan/GXF allocator.
+   */
+  bool set_deallocation_stream(cudaStream_t stream);
+
  protected:
   std::shared_ptr<DLManagedTensorContext> dl_ctx_;  ///< The DLManagedTensorContext object.
+  /// Pointer to the underlying MemoryBuffer when tensor is from a GXF allocator.
+  /// nullptr for external DLPack tensors (from CuPy, PyTorch, etc.).
+  /// This enables stream-aware deallocation via set_deallocation_stream().
+  nvidia::gxf::MemoryBuffer* memory_buffer_ptr_ = nullptr;
 };
 
 /**

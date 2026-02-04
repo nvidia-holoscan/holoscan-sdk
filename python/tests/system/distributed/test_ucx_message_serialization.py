@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,10 +68,13 @@ class PingMessageTxOp(Operator):
         output: "out"
 
     On each tick, it transmits the object passed via `value`.
+    If `value` is a list, it cycles through the values on each compute call.
     """
 
     def __init__(self, fragment, *args, value=1, **kwargs):
         self.value = value
+        self.values = value if isinstance(value, list) else [value]
+        self.index = 0
         # Need to call the base class constructor last
         super().__init__(fragment, *args, **kwargs)
 
@@ -79,32 +82,49 @@ class PingMessageTxOp(Operator):
         spec.output("out")
 
     def compute(self, op_input, op_output, context):
-        if self.value == "numpy-tensormap":
+        if not self.values:
+            raise ValueError("values list cannot be empty")
+        current_value = self.values[self.index]
+        self.index = (self.index + 1) % len(self.values)
+
+        # Get a string representation of the current test case
+        if isinstance(current_value, str):
+            test_case_name = current_value
+        elif isinstance(current_value, dict):
+            test_case_name = "dict"
+        elif isinstance(current_value, list):
+            test_case_name = "input_specs"
+        else:
+            test_case_name = str(type(current_value).__name__)
+
+        print(f"Transmitting test case: {test_case_name}", file=sys.stderr)
+
+        if current_value == "numpy-tensormap":
             tensormap = dict(
                 r=np.arange(10000, dtype=np.int16),
                 z=np.zeros((10, 5), dtype=float),
             )
             op_output.emit(tensormap, "out")
-        elif self.value == "cupy-tensormap":
+        elif current_value == "cupy-tensormap":
             tensormap = dict(
                 r=cp.arange(10000, dtype=cp.int16),
                 z=cp.zeros((10, 5), dtype=float),
             )
             op_output.emit(tensormap, "out")
-        elif self.value == "numpy":
+        elif current_value == "numpy":
             z = np.zeros((16, 8, 4), dtype=np.float32)
             op_output.emit(z, "out")
-        elif self.value == "cupy":
+        elif current_value == "cupy":
             z = cp.zeros((16, 8, 4), dtype=cp.float32)
             op_output.emit(z, "out")
-        elif self.value == "cupy-as-holoscan-tensor":
+        elif current_value == "cupy-as-holoscan-tensor":
             z = cp.zeros((16, 8, 4), dtype=cp.float32)
             op_output.emit(z, "out", emitter_name="holoscan::Tensor")
-        elif self.value == "cupy-complex":
+        elif current_value == "cupy-complex":
             tensormap = dict(z=cp.ones((16, 8, 4), dtype=cp.complex64))
             op_output.emit(tensormap, "out")
         else:
-            op_output.emit(self.value, "out")
+            op_output.emit(current_value, "out")
 
 
 def _check_value(value, expected_value):
@@ -176,11 +196,16 @@ class PingMessageRxOp(Operator):
 
     This is an example of a native operator with one input port.
     On each tick, it receives an integer from the "in" port.
+    If `expected_value` is a list, it cycles through the values on each compute call.
     """
 
     def __init__(self, fragment, *args, expected_value=1, **kwargs):
         # Need to call the base class constructor last
         self.expected_value = expected_value
+        self.expected_values = (
+            expected_value if isinstance(expected_value, list) else [expected_value]
+        )
+        self.index = 0
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
@@ -188,8 +213,27 @@ class PingMessageRxOp(Operator):
 
     def compute(self, op_input, op_output, context):
         value = op_input.receive("in")
-        _check_value(value, expected_value=self.expected_value)
-        print("received expected value", file=sys.stderr)
+        if not self.expected_values:
+            raise ValueError("expected_values list cannot be empty")
+        current_expected = self.expected_values[self.index]
+        self.index = (self.index + 1) % len(self.expected_values)
+
+        # Get a string representation of the current test case
+        if isinstance(current_expected, str):
+            test_case_name = current_expected
+        elif isinstance(current_expected, dict):
+            test_case_name = "dict"
+        elif isinstance(current_expected, list):
+            test_case_name = "input_specs"
+        else:
+            test_case_name = str(type(current_expected).__name__)
+
+        try:
+            _check_value(value, expected_value=current_expected)
+            print(f"received expected value for test case: {test_case_name}", file=sys.stderr)
+        except AssertionError as e:
+            print(f"FAILED test case: {test_case_name}", file=sys.stderr)
+            raise AssertionError(f"Test case '{test_case_name}' failed: {e}") from e
 
 
 class TxFragment(Fragment):
@@ -198,7 +242,8 @@ class TxFragment(Fragment):
         super().__init__(*args, **kwargs)
 
     def compose(self):
-        tx = PingMessageTxOp(self, CountCondition(self, 1), name="tx", value=self.value)
+        count = len(self.value) if isinstance(self.value, list) else 1
+        tx = PingMessageTxOp(self, CountCondition(self, count), name="tx", value=self.value)
         self.add_operator(tx)
 
 
@@ -208,8 +253,9 @@ class RxFragment(Fragment):
         super().__init__(*args, **kwargs)
 
     def compose(self):
+        count = len(self.expected_value) if isinstance(self.expected_value, list) else 1
         rx = PingMessageRxOp(
-            self, CountCondition(self, 1), name="rx", expected_value=self.expected_value
+            self, CountCondition(self, count), name="rx", expected_value=self.expected_value
         )
         self.add_operator(rx)
 
@@ -275,9 +321,17 @@ def test_single_fragment_data_ping_app(value, capfd):
     assert "Exception occurred" not in captured.err
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
+def test_ucx_object_serialization_app(capfd):
+    """Testing UCX-based serialization of PyObject, tensors, etc. with all types in one run.
+
+    This test cycles through all data types in a single application run to reduce overhead
+    from network connection setup and teardown.
+    """
+    pytest.importorskip("numpy")
+    pytest.importorskip("cupy")
+
+    # List of all test values to cycle through
+    test_values = [
         3.5,
         dict(a=5, b=7, c=[1, 2, 3], d="abc"),
         "numpy-tensormap",  # dict of numpy arrays
@@ -286,19 +340,10 @@ def test_single_fragment_data_ping_app(value, capfd):
         "cupy",  # single cupy array
         "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
         "cupy-complex",  # single complex-valued cupy array
-        "input_specs",  # list of HolovizOp.InputSpec
-    ],
-)
-def test_ucx_object_serialization_app(value, capfd):
-    """Testing UCX-based serialization of PyObject, tensors, etc."""
-    if value in ["numpy", "numpy-tensormap"]:
-        pytest.importorskip("numpy")
-    elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-complex", "cupy-tensormap"]:
-        pytest.importorskip("cupy")
-    elif value == "input_specs":
-        value = test_input_specs
+        test_input_specs,  # list of HolovizOp.InputSpec
+    ]
 
-    app = MultiFragmentPyObjectPingApp(value=value)
+    app = MultiFragmentPyObjectPingApp(value=test_values)
     app.run()
 
     # assert that no errors were logged
@@ -306,7 +351,24 @@ def test_ucx_object_serialization_app(value, capfd):
     # avoid catching the expected error message
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
-    assert "received expected value" in captured_error
+
+    # Check that we received the expected value for each test case
+    expected_count = len(test_values)
+    actual_count = captured_error.count("received expected value for test case:")
+
+    # If the count doesn't match, print detailed information about which cases passed
+    if actual_count != expected_count:
+        print("\n=== Test case results ===", file=sys.stderr)
+        for line in captured_error.split("\n"):
+            if "test case:" in line:
+                print(line, file=sys.stderr)
+        print(f"Expected {expected_count} test cases, got {actual_count}", file=sys.stderr)
+
+    assert actual_count == expected_count, (
+        f"Expected {expected_count} successful receives, got {actual_count}. "
+        f"Check stderr for details on which test cases passed/failed."
+    )
+
     assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error
 
@@ -319,11 +381,16 @@ class PingMessageReceiversRxOp(Operator):
 
     This is an example of a native operator with one input port.
     On each tick, it receives an integer from the "in" port.
+    If `expected_value` is a list, it cycles through the values on each compute call.
     """
 
     def __init__(self, fragment, *args, expected_value=1, **kwargs):
         # Need to call the base class constructor last
         self.expected_value = expected_value
+        self.expected_values = (
+            expected_value if isinstance(expected_value, list) else [expected_value]
+        )
+        self.index = 0
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
@@ -333,8 +400,25 @@ class PingMessageReceiversRxOp(Operator):
         values = op_input.receive("receivers")
         assert values is not None
         assert len(values) == 1
-        _check_value(values[0], expected_value=self.expected_value)
-        print("received expected value", file=sys.stderr)
+        current_expected = self.expected_values[self.index]
+        self.index = (self.index + 1) % len(self.expected_values)
+
+        # Get a string representation of the current test case
+        if isinstance(current_expected, str):
+            test_case_name = current_expected
+        elif isinstance(current_expected, dict):
+            test_case_name = "dict"
+        elif isinstance(current_expected, list):
+            test_case_name = "input_specs"
+        else:
+            test_case_name = str(type(current_expected).__name__)
+
+        try:
+            _check_value(values[0], expected_value=current_expected)
+            print(f"received expected value for test case: {test_case_name}", file=sys.stderr)
+        except AssertionError as e:
+            print(f"FAILED test case: {test_case_name}", file=sys.stderr)
+            raise AssertionError(f"Test case '{test_case_name}' failed: {e}") from e
 
 
 class RxReceiversFragment(Fragment):
@@ -343,8 +427,9 @@ class RxReceiversFragment(Fragment):
         super().__init__(*args, **kwargs)
 
     def compose(self):
+        count = len(self.expected_value) if isinstance(self.expected_value, list) else 1
         rx = PingMessageReceiversRxOp(
-            self, CountCondition(self, 1), name="rx", expected_value=self.expected_value
+            self, CountCondition(self, count), name="rx", expected_value=self.expected_value
         )
         self.add_operator(rx)
 
@@ -362,9 +447,17 @@ class MultiFragmentPyObjectReceiversPingApp(Application):
         self.add_flow(tx_fragment, rx_fragment, {("tx.out", "rx.receivers")})
 
 
-@pytest.mark.parametrize(
-    "value",
-    [
+def test_ucx_object_receivers_serialization_app(capfd):
+    """Testing UCX-based serialization of PyObject, tensors, etc. with all types in one run.
+
+    This test cycles through all data types in a single application run to reduce overhead
+    from network connection setup and teardown.
+    """
+    pytest.importorskip("numpy")
+    pytest.importorskip("cupy")
+
+    # List of all test values to cycle through
+    test_values = [
         3.5,
         dict(a=5, b=7, c=[1, 2, 3], d="abc"),
         "numpy-tensormap",  # dict of numpy arrays
@@ -372,19 +465,10 @@ class MultiFragmentPyObjectReceiversPingApp(Application):
         "numpy",  # single numpy array
         "cupy",  # single cupy array
         "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
-        "input_specs",  # list of HolovizOp.InputSpec
-    ],
-)
-def test_ucx_object_receivers_serialization_app(value, capfd):
-    """Testing UCX-based serialization of PyObject, tensors, etc."""
-    if value in ["numpy", "numpy-tensormap"]:
-        pytest.importorskip("numpy")
-    elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-tensormap"]:
-        pytest.importorskip("cupy")
-    elif value == "input_specs":
-        value = test_input_specs
+        test_input_specs,  # list of HolovizOp.InputSpec
+    ]
 
-    app = MultiFragmentPyObjectReceiversPingApp(value=value)
+    app = MultiFragmentPyObjectReceiversPingApp(value=test_values)
     app.run()
 
     # assert that no errors were logged
@@ -392,6 +476,23 @@ def test_ucx_object_receivers_serialization_app(value, capfd):
     # avoid catching the expected error message
     # : "error handling callback was invoked with status -25 (Connection reset by remote peer)"
     captured_error = captured.err.replace("error handling callback", "ucx handling callback")
-    assert "received expected value" in captured_error
+
+    # Check that we received the expected value for each test case
+    expected_count = len(test_values)
+    actual_count = captured_error.count("received expected value for test case:")
+
+    # If the count doesn't match, print detailed information about which cases passed
+    if actual_count != expected_count:
+        print("\n=== Test case results ===", file=sys.stderr)
+        for line in captured_error.split("\n"):
+            if "test case:" in line:
+                print(line, file=sys.stderr)
+        print(f"Expected {expected_count} test cases, got {actual_count}", file=sys.stderr)
+
+    assert actual_count == expected_count, (
+        f"Expected {expected_count} successful receives, got {actual_count}. "
+        f"Check stderr for details on which test cases passed/failed."
+    )
+
     assert "error" not in remove_ignored_errors(captured_error)
     assert "Exception occurred" not in captured_error

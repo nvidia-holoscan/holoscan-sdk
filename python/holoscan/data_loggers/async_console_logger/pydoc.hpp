@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -97,6 +97,11 @@ shutdown_wait_period_ms : int, optional
     Time in milliseconds to wait for queues to drain during shutdown. Use -1 to wait
     indefinitely (default), 0 to not wait, or a positive value for a specific
     timeout in milliseconds. Default is -1.
+queue_type : DataLoggerQueueType, optional
+    Type of queue implementation to use. Can be ``DataLoggerQueueType.LOCK_FREE``
+    (default) for higher throughput with per-producer FIFO ordering only, or
+    ``DataLoggerQueueType.ORDERED`` for strict global FIFO ordering across all
+    producers at the cost of lower throughput. Default is ``DataLoggerQueueType.LOCK_FREE``.
 name : str, optional (constructor only)
     The name of the data logger. Default value is ``"basic_console_logger"``.
 }  // namespace AsyncConsoleLogger

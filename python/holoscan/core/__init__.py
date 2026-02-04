@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,6 +39,7 @@ create a custom application.
     holoscan.core.DataFlowMetric
     holoscan.core.DataFlowTracker
     holoscan.core.DataLogger
+    holoscan.core.DataLoggerQueueType
     holoscan.core.DataLoggerResource
     holoscan.core.DefaultFragmentService
     holoscan.core.DLDevice
@@ -51,6 +52,9 @@ create a custom application.
     holoscan.core.Graph
     holoscan.core.FragmentService
     holoscan.core.InputContext
+    holoscan.core.InterfacePort
+    holoscan.core.InterfacePortMapping
+    holoscan.core.InterfacePortType
     holoscan.core.IOSpec
     holoscan.core.Message
     holoscan.core.MetadataDictionary
@@ -78,6 +82,7 @@ create a custom application.
 """
 
 import logging
+import pathlib
 import sys
 
 # Note: Python 3.7+ expects the threading module to be initialized (imported) before additional
@@ -138,6 +143,7 @@ from ._core import (
     DataFlowMetric,
     DataFlowTracker,
     DataLogger,
+    DataLoggerQueueType,
     DataLoggerResource,
     DistributedAppService,
     DLDevice,
@@ -145,6 +151,9 @@ from ._core import (
     Executor,
     FlowInfo,
     FragmentService,
+    InterfacePort,
+    InterfacePortMapping,
+    InterfacePortType,
     IOSpec,
     Message,
     MetadataDictionary,
@@ -202,6 +211,7 @@ __all__ = [
     "DataFlowMetric",
     "DataFlowTracker",
     "DataLogger",
+    "DataLoggerQueueType",
     "DataLoggerResource",
     "DefaultFragmentService",
     "DistributedAppService",
@@ -215,6 +225,9 @@ __all__ = [
     "FragmentService",
     "Graph",
     "InputContext",
+    "InterfacePort",
+    "InterfacePortMapping",
+    "InterfacePortType",
     "IOSpec",
     "Message",
     "MetadataDictionary",
@@ -525,6 +538,7 @@ class Subgraph(_Subgraph):
         fragment: _Fragment | _Subgraph,
         name: str | None = None,
         *,
+        config: str | pathlib.Path | None = None,
         instance_name: str | None = None,
     ):
         if not isinstance(fragment, (_Fragment, _Subgraph)):
@@ -549,9 +563,13 @@ class Subgraph(_Subgraph):
             )
             name = instance_name
 
+        # Convert pathlib.Path to string for C++ compatibility
+        config_str = str(config) if config is not None else ""
+
         # It is recommended to not use super()
         # (https://pybind11.readthedocs.io/en/stable/advanced/classes.html#overriding-virtual-functions-in-python)
-        _Subgraph.__init__(self, self, fragment, name)
+        # Pass config to C++ constructor so it's set before compose() runs
+        _Subgraph.__init__(self, self, fragment, name, config_str)
 
         # store Fragment as an attribute so it is accessible from Operator constructor, etc.
         if isinstance(fragment, _Subgraph):
@@ -650,6 +668,41 @@ class Subgraph(_Subgraph):
             ``None``.
         """
         self.fragment.set_dynamic_flows(op, func)
+
+    def register_service(self, service, service_id: str = ""):
+        """Register a service instance with the fragment.
+
+        Registers an already created service instance with the fragment.
+        This allows the service to be retrieved later using Fragment.service().
+
+        Parameters
+        ----------
+        service : holoscan.core.Resource or holoscan.core.FragmentService
+            The service instance to register.
+        service_id : str, optional
+            The identifier for the service registration. If empty, uses the service type
+            or resource name as identifier.
+
+        Returns
+        -------
+        bool
+            True if the service was successfully registered, False otherwise.
+        """
+        return self.fragment.register_service(service, service_id)
+
+    def add_subgraph(self, subgraph):
+        """Add a subgraph to the fragment.
+
+        This method ensures the subgraph is composed and its operators are added to the fragment.
+        Use this method when a nested subgraph has no interface ports and doesn't need to be
+        connected to other operators or subgraphs via add_flow.
+
+        Parameters
+        ----------
+        subgraph : Subgraph
+            The subgraph to add.
+        """
+        return self.fragment.add_subgraph(subgraph)
 
 
 # copy docstrings defined in core_pydoc.hpp

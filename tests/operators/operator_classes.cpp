@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -740,4 +740,44 @@ TEST_F(OperatorClassesWithGXFContext, TestValidOperatorNames) {
     EXPECT_EQ(op4->name(), "_rx");
   });
 }
+
+TEST_F(OperatorClassesWithGXFContext, TestOperatorUniqueDefaultNames) {
+  // Test that different operator types from holoscan::ops get unique default names when
+  // created without an explicit name parameter.
+
+  // Create operators without specifying names
+  auto async_ping_rx = F.make_operator<ops::AsyncPingRxOp>();
+  auto async_ping_tx = F.make_operator<ops::AsyncPingTxOp>();
+  auto bayer_demosaic = F.make_operator<ops::BayerDemosaicOp>();
+  auto format_converter = F.make_operator<ops::FormatConverterOp>();
+  auto holoviz = F.make_operator<ops::HolovizOp>();
+  auto inference = F.make_operator<ops::InferenceOp>();
+  auto inference_processor = F.make_operator<ops::InferenceProcessorOp>();
+  auto ping_rx = F.make_operator<ops::PingRxOp>();
+  auto ping_tensor_rx = F.make_operator<ops::PingTensorRxOp>();
+  auto ping_tensor_tx = F.make_operator<ops::PingTensorTxOp>();
+  auto ping_tx = F.make_operator<ops::PingTxOp>();
+  auto segmentation_postprocessor = F.make_operator<ops::SegmentationPostprocessorOp>();
+  auto v4l2_video_capture = F.make_operator<ops::V4L2VideoCaptureOp>();
+  auto video_stream_recorder = F.make_operator<ops::VideoStreamRecorderOp>();
+  auto video_replayer = F.make_operator<ops::VideoStreamReplayerOp>();
+
+  // Verify each operator has the expected default
+  EXPECT_EQ(async_ping_rx->name(), "async_ping_rx");
+  EXPECT_EQ(async_ping_tx->name(), "async_ping_tx");
+  EXPECT_EQ(bayer_demosaic->name(), "bayer_demosaic");
+  EXPECT_EQ(format_converter->name(), "format_converter");
+  EXPECT_EQ(holoviz->name(), "holoviz_op");
+  EXPECT_EQ(inference->name(), "inference");
+  EXPECT_EQ(inference_processor->name(), "postprocessor");
+  EXPECT_EQ(ping_rx->name(), "ping_rx");
+  EXPECT_EQ(ping_tensor_rx->name(), "ping_tensor_rx");
+  EXPECT_EQ(ping_tensor_tx->name(), "ping_tensor_tx");
+  EXPECT_EQ(ping_tx->name(), "ping_tx");
+  EXPECT_EQ(segmentation_postprocessor->name(), "segmentation_postprocessor");
+  EXPECT_EQ(v4l2_video_capture->name(), "v4l2_video_capture");
+  EXPECT_EQ(video_stream_recorder->name(), "video_stream_recorder");
+  EXPECT_EQ(video_replayer->name(), "video_stream_replayer");
+}
+
 }  // namespace holoscan

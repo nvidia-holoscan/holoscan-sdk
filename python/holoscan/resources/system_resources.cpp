@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,12 +21,14 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "../core/component_util.hpp"
 #include "./system_resources_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/operator.hpp"
@@ -47,7 +49,8 @@ class PyThreadPool : public ThreadPool {
 
   // Define a constructor that fully initializes the object.
   explicit PyThreadPool(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                        int64_t initial_size = 1, const std::string& name = "thread_pool")
+                        int64_t initial_size = 1,
+                        const std::string& name = resource_default_name_v<ThreadPool>)
       : ThreadPool(ArgList{Arg("initial_size", initial_size)}) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -67,7 +70,7 @@ void init_system_resources(py::module_& m) {
       .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_size"_a = 1,
-           "name"_a = "thread_pool"s,
+           "name"_a = std::string(resource_default_name_v<ThreadPool>),
            doc::ThreadPool::doc_ThreadPool_kwargs)
       .def("add",
            py::overload_cast<const std::shared_ptr<Operator>&, bool, std::vector<uint32_t>>(
@@ -97,7 +100,7 @@ void init_system_resources(py::module_& m) {
              uint64_t sched_deadline = 0,
              uint64_t sched_period = 0) {
             // Convert variant to SchedulingPolicy enum
-            SchedulingPolicy policy;
+            SchedulingPolicy policy{};
             std::visit(
                 [&policy](auto&& arg) {
                   using T = std::decay_t<decltype(arg)>;
@@ -140,7 +143,7 @@ void init_system_resources(py::module_& m) {
             self.add_realtime(op,
                               policy,
                               pin_operator,
-                              pin_cores,
+                              std::move(pin_cores),
                               sched_priority,
                               sched_runtime,
                               sched_deadline,

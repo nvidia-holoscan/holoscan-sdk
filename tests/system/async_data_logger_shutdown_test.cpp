@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include <vector>
 
 #include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/schedulers/gxf/greedy_scheduler.hpp>
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/ping_rx/ping_rx.hpp>
 #include <holoscan/operators/ping_tx/ping_tx.hpp>
@@ -170,6 +171,11 @@ class AsyncDataLoggerShutdownTest : public ::testing::Test {
   void TearDown() override {
     // Clean up interrupt flags after each test
     holoscan::gxf::GXFExecutor::reset_interrupt_flags();
+
+    // Allow time for any detached countdown threads to see the cancelled flag
+    // before starting the next test. This prevents race conditions where
+    // a thread from a previous test might interfere with the next test.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
   }
 };
 
@@ -278,6 +284,16 @@ TEST_F(AsyncDataLoggerShutdownTest, ZeroTimeoutStopsImmediately) {
  * 2. The app terminates gracefully without the watchdog force-killing it
  * 3. Entries are processed during the shutdown drain period (not just before SIGINT)
  *
+ * Test scenario timing:
+ * - The operators run quickly (no PeriodicCondition), so the scheduler will reach deadlock
+ *   and stop BEFORE SIGINT is sent (200 iterations complete in < 500ms)
+ * - However, the data logger has a slow process_delay_ms (50ms per entry), so the logger
+ *   queue is still being drained when SIGINT arrives
+ * - This tests the case where SIGINT arrives AFTER scheduler termination but WHILE the
+ *   data logger is still processing queued entries
+ * - The signal handler's interrupt() will return false (graph already stopped), but
+ *   shutdown_data_loggers() is still called to drain remaining entries
+ *
  * Note: We intentionally do not use EXPECT_EXIT here because GoogleTest's death tests use fork(),
  * which is unsafe in multi-threaded contexts. Since Holoscan applications spawn multiple threads,
  * using EXPECT_EXIT would trigger warnings and potentially cause undefined behavior.
@@ -287,8 +303,11 @@ TEST_F(AsyncDataLoggerShutdownTest, InterruptSignalTriggersDataLoggerShutdown) {
   // Timing parameters for threshold calculation:
   // - pre_signal_wait_ms: time before SIGINT is sent
   // - shutdown_wait_period_ms: time allowed for drain during shutdown
-  // - process_delay_ms: time to process each entry
-  // - num_iterations: total iterations (generates only 1 log entry per iteration)
+  // - process_delay_ms: time to process each log entry (slows down LOGGER, not operators)
+  // - num_iterations: total iterations (generates 1 log entry per iteration)
+  //
+  // Note: The operators run without delay, so scheduler will reach deadlock quickly.
+  // The process_delay_ms only affects how fast the logger drains its queue.
   constexpr int64_t pre_signal_wait_ms = 500;
   constexpr int64_t shutdown_wait_period_ms = 2000;
   constexpr int64_t process_delay_ms = 50;
@@ -303,7 +322,7 @@ TEST_F(AsyncDataLoggerShutdownTest, InterruptSignalTriggersDataLoggerShutdown) {
   constexpr size_t max_total_entries = num_iterations;                      // 200 entries
 
   auto app = make_application<SlowLoggerTestApp>();
-  app->set_num_iterations(num_iterations);  // Many iterations so app doesn't finish naturally
+  app->set_num_iterations(num_iterations);  // Operators complete quickly, logger drains slowly
   app->set_process_delay_ms(process_delay_ms);
   app->set_shutdown_wait_period_ms(shutdown_wait_period_ms);
 
@@ -416,6 +435,188 @@ TEST_F(AsyncDataLoggerShutdownTest, DistributedAppInterruptSignalTriggersDataLog
   // - Less than max_total_entries (200): proves interrupt stopped app early
   EXPECT_LT(processed, max_total_entries)
       << "Expected interrupt to stop distributed app before completion";
+}
+
+/**
+ * @brief Slow test application for testing interrupt during active execution.
+ *
+ * Uses a PeriodicCondition to throttle operator execution, ensuring the scheduler
+ * is still actively running when SIGINT is sent.
+ */
+class SlowExecutionTestApp : public Application {
+ public:
+  void set_execution_period(const std::string& period) { execution_period_ = period; }
+  void set_num_iterations(int n) { num_iterations_ = n; }
+
+  void compose() override {
+    using namespace holoscan;
+
+    // Use a PeriodicCondition to throttle execution - this ensures the scheduler
+    // is still running when we send SIGINT
+    // recess_period is a string like "10ms", "100ms", "1s", etc.
+    auto tx = make_operator<ops::PingTxOp>(
+        "tx",
+        make_condition<CountCondition>(num_iterations_),
+        make_condition<PeriodicCondition>("periodic", Arg("recess_period", execution_period_)));
+    auto rx = make_operator<ops::PingRxOp>("rx");
+
+    add_flow(tx, rx);
+  }
+
+ private:
+  std::string execution_period_ = "10ms";  // 10ms between executions
+  int num_iterations_ = 100;
+};
+
+/**
+ * @brief Test that GxfGraphInterrupt() provides immediate scheduler shutdown.
+ *
+ * This test validates that with the GxfGraphInterrupt() approach, the scheduler
+ * stops quickly rather than waiting for stop_on_deadlock_timeout. The key improvement
+ * is that shutdown should complete in ~1-2 seconds, not the full stop_on_deadlock_timeout.
+ *
+ * We verify this by:
+ * 1. Configuring a LONG stop_on_deadlock_timeout (30 seconds)
+ * 2. Running an app with slow execution (PeriodicCondition) so it won't finish naturally
+ * 3. Sending SIGINT while the scheduler is actively running
+ * 4. Measuring total shutdown time
+ * 5. Verifying it completes quickly (< 5 seconds), NOT 30+ seconds
+ *
+ * Historical context: The old EVENT_NEVER soft-stop approach would wait for
+ * stop_on_deadlock_timeout before the scheduler would exit. GxfGraphInterrupt()
+ * bypasses this wait entirely by directly signaling the scheduler to stop.
+ */
+TEST_F(AsyncDataLoggerShutdownTest, InterruptStopsSchedulerImmediately) {
+  // Configuration:
+  // - Long stop_on_deadlock_timeout to prove we don't wait for it
+  // - Slow execution (10ms period) so scheduler is still running when SIGINT sent
+  // - Many iterations so app won't finish naturally before SIGINT
+  constexpr int64_t stop_on_deadlock_timeout_ms = 30000;  // 30 seconds - we should NOT wait this!
+  const std::string execution_period = "10ms";            // 10ms between operator executions
+  constexpr int64_t pre_signal_wait_ms = 500;             // Wait 500ms before sending SIGINT
+  constexpr int num_iterations = 1000;  // Would take ~10 seconds to complete naturally
+
+  auto app = make_application<SlowExecutionTestApp>();
+  app->set_num_iterations(num_iterations);
+  app->set_execution_period(execution_period);
+
+  // Configure scheduler with a long stop_on_deadlock_timeout.
+  // With the old soft-stop approach (EVENT_NEVER), shutdown would wait this long.
+  // With GxfGraphInterrupt(), shutdown should be immediate regardless of this value.
+  auto scheduler = app->make_scheduler<GreedyScheduler>(
+      "greedy-scheduler",
+      Arg("stop_on_deadlock", true),
+      Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout_ms));
+  app->scheduler(scheduler);
+
+  auto future = app->run_async();
+
+  // Wait for app to start running and process some messages
+  std::this_thread::sleep_for(std::chrono::milliseconds(pre_signal_wait_ms));
+
+  // Record time before signal and send SIGINT
+  auto before_signal = std::chrono::steady_clock::now();
+  HOLOSCAN_LOG_INFO("Sending SIGINT to test immediate scheduler stop...");
+  std::raise(SIGINT);
+
+  // Wait for app to finish - use a longer timeout since we're not racing the force exit
+  auto status = future.wait_for(std::chrono::seconds(15));
+  ASSERT_EQ(status, std::future_status::ready)
+      << "App did not shut down within expected time after SIGINT";
+
+  auto after_shutdown = std::chrono::steady_clock::now();
+  auto shutdown_time_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(after_shutdown - before_signal).count();
+
+  HOLOSCAN_LOG_INFO(
+      "Immediate stop test: shutdown completed in {} ms (stop_on_deadlock_timeout was {} ms)",
+      shutdown_time_ms,
+      stop_on_deadlock_timeout_ms);
+
+  // With GxfGraphInterrupt(), scheduler should stop almost immediately.
+  // Total time should be roughly: scheduler stop (~immediate) + cleanup overhead
+  // Should be well under 10 seconds total, NOT 30+ seconds (stop_on_deadlock_timeout).
+  //
+  // This proves that GxfGraphInterrupt() bypasses the stop_on_deadlock_timeout wait entirely.
+  // The old EVENT_NEVER soft-stop approach would have waited the full 30 seconds.
+  EXPECT_LT(shutdown_time_ms, 10000)
+      << "Shutdown took too long (" << shutdown_time_ms << " ms) - GxfGraphInterrupt() should "
+      << "provide immediate scheduler stop, not wait for stop_on_deadlock_timeout ("
+      << stop_on_deadlock_timeout_ms << " ms)";
+
+  // Verify we stopped early (didn't process all iterations)
+  // With 10ms period and 500ms wait, we should have processed ~50 iterations, not 10000
+  EXPECT_LT(shutdown_time_ms, stop_on_deadlock_timeout_ms)
+      << "Shutdown time should be much less than stop_on_deadlock_timeout";
+}
+
+/**
+ * @brief Test that interrupt signal works correctly when no data loggers are present.
+ *
+ * This test verifies the signal handler path when there are no data loggers to drain.
+ * The signal handler only calls GxfGraphInterrupt() - the main thread handles all cleanup
+ * (including data logger shutdown if any) after its GxfGraphWait() returns.
+ *
+ * Uses SlowExecutionTestApp (which has no data loggers) with PeriodicCondition to ensure
+ * SIGINT arrives while the scheduler is still actively running.
+ */
+TEST_F(AsyncDataLoggerShutdownTest, InterruptWorksWithoutDataLoggers) {
+  // Configuration:
+  // - Slow execution (10ms period) so scheduler is still running when SIGINT sent
+  // - 1000 iterations at 10ms = 10 seconds, well beyond the 500ms pre-signal wait
+  // - Long stop_on_deadlock_timeout to ensure we're testing GxfGraphInterrupt(), not natural
+  // timeout
+  const std::string execution_period = "10ms";            // 10ms between operator executions
+  constexpr int64_t pre_signal_wait_ms = 500;             // Wait 500ms before sending SIGINT
+  constexpr int num_iterations = 1000;                    // Would take ~10 seconds naturally
+  constexpr int64_t stop_on_deadlock_timeout_ms = 30000;  // 30 seconds - ensures we test interrupt
+
+  // SlowExecutionTestApp has no data loggers - just PingTx/PingRx with PeriodicCondition
+  auto app = make_application<SlowExecutionTestApp>();
+  app->set_num_iterations(num_iterations);
+  app->set_execution_period(execution_period);
+
+  // Configure scheduler with long timeout to ensure we're testing interrupt, not natural completion
+  auto scheduler = app->make_scheduler<GreedyScheduler>(
+      "greedy-scheduler",
+      Arg("stop_on_deadlock", true),
+      Arg("stop_on_deadlock_timeout", stop_on_deadlock_timeout_ms));
+  app->scheduler(scheduler);
+
+  auto future = app->run_async();
+
+  // Wait for app to start running and process some messages
+  std::this_thread::sleep_for(std::chrono::milliseconds(pre_signal_wait_ms));
+
+  // Record time before signal and send SIGINT
+  auto before_signal = std::chrono::steady_clock::now();
+  HOLOSCAN_LOG_INFO("Sending SIGINT to test interrupt without data loggers...");
+  std::raise(SIGINT);
+
+  // Wait for app to finish - use a longer timeout since we're not racing the force exit
+  auto status = future.wait_for(std::chrono::seconds(15));
+  ASSERT_EQ(status, std::future_status::ready)
+      << "App without data loggers did not shut down within expected time after SIGINT";
+
+  auto after_shutdown = std::chrono::steady_clock::now();
+  auto shutdown_time_ms =
+      std::chrono::duration_cast<std::chrono::milliseconds>(after_shutdown - before_signal).count();
+
+  HOLOSCAN_LOG_INFO(
+      "No-logger test: shutdown completed in {} ms (stop_on_deadlock_timeout was {} ms)",
+      shutdown_time_ms,
+      stop_on_deadlock_timeout_ms);
+
+  // With GxfGraphInterrupt(), scheduler should stop almost immediately.
+  // Without data loggers, there's no drain time - just scheduler stop + deactivate.
+  // Should complete well under 10 seconds, NOT 30+ seconds (stop_on_deadlock_timeout).
+  EXPECT_LT(shutdown_time_ms, 10000)
+      << "Shutdown took too long (" << shutdown_time_ms << " ms) - GxfGraphInterrupt() should "
+      << "provide immediate scheduler stop";
+
+  // Verify we stopped early (didn't wait for stop_on_deadlock_timeout)
+  EXPECT_LT(shutdown_time_ms, stop_on_deadlock_timeout_ms)
+      << "Shutdown time should be much less than stop_on_deadlock_timeout";
 }
 
 }  // namespace holoscan

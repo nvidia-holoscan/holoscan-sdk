@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,6 +41,10 @@ endfunction()
 #       old, we need to override cccl library to 2.8.0+.
 rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps/rapids-cmake-packages.json")
 
+# Temporarily disable clang-tidy for third-party dependencies to avoid warnings from external code
+set(_SAVED_CMAKE_CXX_CLANG_TIDY "${CMAKE_CXX_CLANG_TIDY}")
+set(CMAKE_CXX_CLANG_TIDY "")
+
 # Define packages to override the default ones.
 superbuild_depend(cccl)
 # fmt must be populated before rmm and spdlog to ensure fmt headers are installed in the package
@@ -78,5 +82,9 @@ if(HOLOSCAN_BUILD_PYTHON)
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
     superbuild_depend(pybind11)
 endif()
+
+# Restore clang-tidy for project code
+set(CMAKE_CXX_CLANG_TIDY "${_SAVED_CMAKE_CXX_CLANG_TIDY}")
+unset(_SAVED_CMAKE_CXX_CLANG_TIDY)
 
 unset(CMAKE_POLICY_DEFAULT_CMP0169)

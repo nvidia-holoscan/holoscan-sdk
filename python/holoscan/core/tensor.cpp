@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -162,7 +162,15 @@ void init_tensor(py::module_& m) {
           "dl_device"_a = py::none(),
           "copy"_a = py::none(),
           doc::Tensor::doc_dlpack)
-      .def("__dlpack_device__", &PyTensor::dlpack_device, doc::Tensor::doc_dlpack_device);
+      .def("__dlpack_device__", &PyTensor::dlpack_device, doc::Tensor::doc_dlpack_device)
+      .def(
+          "set_deallocation_stream",
+          [](Tensor& tensor, intptr_t stream_ptr) {
+            auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
+            return tensor.set_deallocation_stream(cuda_stream);
+          },
+          "stream"_a,
+          doc::Tensor::doc_set_deallocation_stream);
 
   py::class_<PyTensor, Tensor, std::shared_ptr<PyTensor>>(m, "PyTensor", doc::Tensor::doc_Tensor)
       .def_static("as_tensor", &PyTensor::as_tensor, "obj"_a, doc::Tensor::doc_as_tensor)
@@ -312,6 +320,7 @@ void LazyDLManagedTensorDeleter::run() {
     std::unique_lock<std::mutex> lock(s_mutex);
 
     s_cv.wait(lock, [] {
+      // coverity[missing_lock:FALSE]  // predicate evaluated while lock is held
       return s_stop || !s_dlmanaged_tensors_queue.empty() || s_cv_do_not_wait_thread;
     });
 
@@ -330,7 +339,7 @@ void LazyDLManagedTensorDeleter::run() {
     std::queue<TensorPtr> local_queue;
     local_queue.swap(s_dlmanaged_tensors_queue);
 
-    lock.unlock();
+    lock.unlock();  // coverity[double_unlock:FALSE]  // unique_lock releases ownership
     // Call the deleter function for each pointer in the queue
     while (!local_queue.empty()) {
       auto tensor_ptr = local_queue.front();
@@ -416,7 +425,9 @@ void LazyDLManagedTensorDeleter::on_fork_child() {
 // PyTensor definition
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-PyTensor::PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx) : Tensor(ctx) {}
+PyTensor::PyTensor(std::shared_ptr<DLManagedTensorContext>& ctx,
+                   nvidia::gxf::MemoryBuffer* memory_buffer_ptr)
+    : Tensor(ctx, memory_buffer_ptr) {}
 
 PyTensor::PyTensor(DLManagedTensor* dl_managed_tensor_ptr) {
   dl_ctx_ = std::make_shared<DLManagedTensorContext>();

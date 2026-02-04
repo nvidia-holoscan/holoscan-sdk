@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,7 @@ class PyUcxContext : public UcxContext {
   // Define a constructor that fully initializes the object.
   explicit PyUcxContext(Fragment* fragment,
                         std::shared_ptr<UcxEntitySerializer> serializer = nullptr,
-                        const std::string& name = "ucx_context") {
+                        const std::string& name = network_context_default_name_v<UcxContext>) {
     if (serializer) {
       this->add_arg(Arg{"serializer", serializer});
     }
@@ -81,7 +81,7 @@ PYBIND11_MODULE(_network_contexts, m) {
       .def(py::init<Fragment*, std::shared_ptr<UcxEntitySerializer>, const std::string&>(),
            "fragment"_a,
            "serializer"_a = nullptr,
-           "name"_a = "ucx_context"s,
+           "name"_a = std::string(network_context_default_name_v<UcxContext>),
            doc::UcxContext::doc_UcxContext_python);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

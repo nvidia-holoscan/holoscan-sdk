@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,9 @@
 
 #include "holoscan/core/gxf/gxf_io_context.hpp"
 
+#include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -38,7 +40,9 @@
 #include "holoscan/profiler/profiler.hpp"
 
 #include "gxf/core/gxf.h"
+#include "gxf/multimedia/video.hpp"
 #include "gxf/std/receiver.hpp"
+#include "gxf/std/tensor.hpp"
 #include "gxf/std/timestamp.hpp"
 #include "gxf/std/transmitter.hpp"
 
@@ -424,11 +428,15 @@ gxf_context_t GXFOutputContext::gxf_context() const {
   return nullptr;
 }
 
-void GXFOutputContext::populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata) {
+void GXFOutputContext::populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata,
+                                                const std::string& output_name) {
   // insert the operator's metadata into the provided (empty) metadata object
   auto dynamic_metadata = op_->metadata();
   metadata->insert(*dynamic_metadata);
-  HOLOSCAN_LOG_DEBUG("output context: op '{}' metadata.size() = {}", op_->name(), metadata->size());
+  HOLOSCAN_LOG_TRACE("MetadataDictionary with size {} emitted on output '{}' of operator '{}'",
+                     metadata->size(),
+                     output_name,
+                     op_->name());
 }
 
 void GXFOutputContext::set_cuda_stream(const cudaStream_t stream, const char* output_port_name) {
@@ -481,7 +489,50 @@ std::optional<cudaStream_t> GXFOutputContext::stream_to_emit(const char* output_
 
 namespace {
 
-gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t stream_cid) {
+/**
+ * @brief Add or update a CudaStreamId component in an entity.
+ *
+ * By default (replace_existing=true), if the entity already contains a CudaStreamId, it is
+ * updated with the new stream_cid. This is the correct behavior when forwarding a received
+ * entity after processing on a different stream - downstream operators should see the most
+ * recent stream, not the original upstream stream.
+ *
+ * The replace_existing=false mode allows adding additional CudaStreamId components for
+ * advanced use cases where an entity needs to track multiple streams (e.g., when different
+ * parts of an entity were processed on different streams). Note that the standard
+ * receive_cuda_stream/receive_cuda_streams APIs only return the FIRST CudaStreamId found
+ * via entity.get<CudaStreamId>(). CudaStreamCondition uses findAll and can wait on all streams.
+ *
+ * @param gxf_entity The entity to add/update the CudaStreamId in.
+ * @param stream_cid The component ID of the CudaStream to reference.
+ * @param replace_existing If true (default), update existing CudaStreamId if present.
+ *                         If false, always add a new CudaStreamId component.
+ * @return GXF_SUCCESS on success, GXF_FAILURE on error.
+ */
+gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t stream_cid,
+                                     bool replace_existing = true) {
+  if (replace_existing) {
+    // Check if there's already a CudaStreamId in the entity (e.g., when forwarding
+    // a received entity). If so, update it instead of adding a new one. This ensures
+    // downstream operators see the correct (most recent) stream via entity.get<CudaStreamId>().
+    auto existing_stream_id = gxf_entity.get<nvidia::gxf::CudaStreamId>();
+    if (!existing_stream_id) {
+      // Check if it's an actual error vs just "component not found"
+      auto code = nvidia::gxf::ToResultCode(existing_stream_id);
+      if (code != GXF_ENTITY_COMPONENT_NOT_FOUND) {
+        HOLOSCAN_LOG_ERROR("Failed to get existing CudaStreamId with error: {}",
+                           GxfResultStr(code));
+        return code;
+      }
+      // Component not found is expected - fall through to add a new one
+    } else {
+      existing_stream_id.value()->stream_cid = stream_cid;
+      HOLOSCAN_LOG_TRACE("Updated existing CudaStreamId in entity to stream_cid: {}", stream_cid);
+      return GXF_SUCCESS;
+    }
+  }
+
+  // No existing CudaStreamId (or replace_existing=false), add a new one
   const auto maybe_stream_id = gxf_entity.add<nvidia::gxf::CudaStreamId>("cuda_stream_id_");
   if (!maybe_stream_id) {
     auto code = nvidia::gxf::ToResultCode(maybe_stream_id);
@@ -493,10 +544,76 @@ gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t 
   return GXF_SUCCESS;
 }
 
+// Check if stream propagation for raw entities is disabled via environment variable.
+// This allows users to opt-out of the automatic findAll behavior for performance tuning.
+bool is_entity_stream_propagation_disabled() {
+  static std::once_flag init_flag;
+  static bool disabled = false;
+  std::call_once(init_flag, []() {
+    const char* env_value = std::getenv("HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION");
+    disabled = (env_value != nullptr && std::string(env_value) == "1");
+    if (disabled) {
+      HOLOSCAN_LOG_INFO(
+          "Entity stream propagation disabled via HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION=1");
+    }
+  });
+  return disabled;
+}
+
+// Propagate CUDA stream to memory buffers in an entity for stream-aware deallocation.
+// This enables allocators like BlockMemoryPool to defer memory reuse until GPU operations
+// complete on the specified stream, preventing data corruption from race conditions.
+//
+// This function iterates through all Tensor and VideoBuffer components in the entity
+// and sets the stream on their memory buffers.
+void propagate_stream_to_entity_memory_buffers(nvidia::gxf::Entity& gxf_entity,
+                                               gxf_context_t gxf_ctx, gxf_uid_t stream_cid) {
+  // Check if disabled via environment variable
+  if (is_entity_stream_propagation_disabled()) {
+    return;
+  }
+
+  // Get the cudaStream_t from the stream component
+  auto maybe_stream_handle = gxf::CudaStreamHandle::Create(gxf_ctx, stream_cid);
+  if (!maybe_stream_handle) {
+    HOLOSCAN_LOG_DEBUG("Failed to create CudaStreamHandle for stream propagation");
+    return;
+  }
+
+  auto stream_result = maybe_stream_handle.value()->stream();
+  if (!stream_result) {
+    HOLOSCAN_LOG_DEBUG("Failed to get CUDA stream from stream handle");
+    return;
+  }
+  cudaStream_t cuda_stream = stream_result.value();
+  void* stream_ptr = static_cast<void*>(cuda_stream);
+
+  // Set stream on all Tensors
+  auto tensors = gxf_entity.findAll<nvidia::gxf::Tensor>();
+  if (tensors) {
+    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
+    for (auto tensor_handle : tensors.value()) {
+      auto tensor_ptr = tensor_handle.value();
+      tensor_ptr->memory_buffer().setStream(stream_ptr);
+    }
+  }
+
+  // Set stream on all VideoBuffers
+  auto video_buffers = gxf_entity.findAll<nvidia::gxf::VideoBuffer>();
+  if (video_buffers) {
+    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
+    for (auto vb_handle : video_buffers.value()) {
+      auto vb_ptr = vb_handle.value();
+      vb_ptr->memory_buffer().setStream(stream_ptr);
+    }
+  }
+}
+
 }  // namespace
 
 void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
-                                 const int64_t acq_timestamp, bool omit_data_logging) {
+                                 const int64_t acq_timestamp, bool omit_data_logging,
+                                 bool skip_stream_propagation) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
   PROF_SCOPED_EVENT(op_->id(), event_emit_impl);
   HOLOSCAN_LOG_TRACE("GXFOutputContext::emit_impl for op: {}, output_name: {}, out_type: {}",
@@ -604,7 +721,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         {
           PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
           auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
-          populate_output_metadata(metadata.value());
+          populate_output_metadata(metadata.value(), output_name);
         }
       }
 
@@ -673,7 +790,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           {
             PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
             auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
-            populate_output_metadata(metadata.value());
+            populate_output_metadata(metadata.value(), output_name);
           }
         }
 
@@ -684,6 +801,11 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
             if (stream_result != GXF_SUCCESS) {
               throw std::runtime_error(fmt::format(
                   "Failed to add CUDA stream to output message: {}", GxfResultStr(stream_result)));
+            }
+            // Propagate stream to memory buffers for stream-aware deallocation
+            // Skip if caller already set the stream (e.g., via Entity::add with stream parameter)
+            if (!skip_stream_propagation) {
+              propagate_stream_to_entity_memory_buffers(gxf_entity, gxf_context(), stream_cid);
             }
           }
         }

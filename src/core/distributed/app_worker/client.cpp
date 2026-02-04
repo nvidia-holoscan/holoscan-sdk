@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -232,7 +232,7 @@ bool AppWorkerClient::fragment_execution(
       }
 
       auto& fragment_id = fragment->name();
-      (*request.mutable_fragment_connections_map())[fragment_id] = connection_item_list;
+      (*request.mutable_fragment_connections_map())[fragment_id] = std::move(connection_item_list);
     }
   }
 

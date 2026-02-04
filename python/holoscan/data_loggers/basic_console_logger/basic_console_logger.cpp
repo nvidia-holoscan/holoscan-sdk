@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <typeindex>
+#include <variant>
 #include <vector>
 
 #include "./basic_console_logger.hpp"
@@ -33,10 +34,13 @@
 #include "../../core/gil_guarded_pyobject.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/parameter.hpp"
 #include "holoscan/core/resource.hpp"
+#include "holoscan/core/resources/async_data_logger.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
@@ -48,6 +52,32 @@ namespace py = pybind11;
 
 namespace holoscan::data_loggers {
 
+// Declaration of internal Python API for detecting interpreter finalization (Python < 3.13)
+#if PY_VERSION_HEX < 0x030D0000
+extern "C" int _Py_IsFinalizing(void);
+#endif
+
+namespace {
+
+/**
+ * @brief Check if the Python interpreter is finalizing (shutting down).
+ *
+ * During finalization, acquiring the GIL can cause deadlock if the main thread
+ * holds the GIL while waiting for worker threads to join. This function allows
+ * worker threads to detect finalization and skip Python object serialization.
+ *
+ * @return true if Python is finalizing, false otherwise
+ */
+inline bool is_python_finalizing() {
+#if PY_VERSION_HEX >= 0x030D0000  // Python 3.13+: use public API
+  return Py_IsFinalizing() != 0;
+#else  // Python < 3.13: use internal API (available since 3.6)
+  return _Py_IsFinalizing() != 0;
+#endif
+}
+
+}  // namespace
+
 /* Trampoline class for handling Python kwargs
  *
  * These add a constructor that takes a Fragment for which to initialize the resource.
@@ -58,16 +88,15 @@ namespace holoscan::data_loggers {
  * The sequence of events in this constructor is based on Fragment::make_resource<ResourceT>
  */
 
-PySimpleTextSerializer::PySimpleTextSerializer(Fragment* fragment, int64_t max_elements,
-                                               int64_t max_metadata_items,
-                                               bool log_video_buffer_content,
-                                               bool log_python_object_contents,
-                                               const std::string& name)
+PySimpleTextSerializer::PySimpleTextSerializer(
+    const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int64_t max_elements,
+    int64_t max_metadata_items, bool log_video_buffer_content, bool log_python_object_contents,
+    const std::string& name)
     : SimpleTextSerializer(ArgList{Arg{"max_elements", max_elements},
                                    Arg{"max_metadata_items", max_metadata_items},
                                    Arg{"log_video_buffer_content", log_video_buffer_content},
                                    Arg{"log_python_object_contents", log_python_object_contents}}) {
-  init_component_base(this, fragment, name);
+  init_component_base(this, fragment_or_subgraph, name, "resource");
 }
 
 void PySimpleTextSerializer::initialize() {
@@ -115,6 +144,16 @@ void PySimpleTextSerializer::register_gil_guarded_pyobject_encoder() {
           // Try to acquire GIL and access Python object safely
           // If this fails, we're likely in an unsafe threading context
           try {
+            // Check if Python is finalizing or async logger shutdown is in progress.
+            // Skip GIL acquisition to prevent deadlock where main thread holds GIL
+            // while waiting for worker threads to join.
+            // Check finalization first as it can be true before our shutdown flag is set.
+            if (is_python_finalizing()) {
+              return std::string{"Python Object (interpreter finalizing)"};
+            }
+            if (holoscan::async_logger_shutdown_in_progress().load(std::memory_order_acquire)) {
+              return std::string{"Python Object (logger shutdown)"};
+            }
             py::gil_scoped_acquire acquire;
             py::object py_obj = gil_obj_ptr->obj();
 
@@ -150,14 +189,13 @@ void PySimpleTextSerializer::register_gil_guarded_pyobject_encoder() {
       });
 }
 
-PyBasicConsoleLogger::PyBasicConsoleLogger(Fragment* fragment,
-                                           std::shared_ptr<SimpleTextSerializer> serializer,
-                                           bool log_inputs, bool log_outputs, bool log_metadata,
-                                           bool log_tensor_data_content, bool use_scheduler_clock,
-                                           std::optional<std::shared_ptr<Resource>> clock,
-                                           const std::vector<std::string>& allowlist_patterns,
-                                           const std::vector<std::string>& denylist_patterns,
-                                           const std::string& name)
+PyBasicConsoleLogger::PyBasicConsoleLogger(
+    const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+    std::shared_ptr<SimpleTextSerializer> serializer, bool log_inputs, bool log_outputs,
+    bool log_metadata, bool log_tensor_data_content, bool use_scheduler_clock,
+    std::optional<std::shared_ptr<Resource>> clock,
+    const std::vector<std::string>& allowlist_patterns,
+    const std::vector<std::string>& denylist_patterns, const std::string& name)
     : BasicConsoleLogger(ArgList{Arg{"log_inputs", log_inputs},
                                  Arg{"log_outputs", log_outputs},
                                  Arg{"log_metadata", log_metadata},
@@ -171,7 +209,7 @@ PyBasicConsoleLogger::PyBasicConsoleLogger(Fragment* fragment,
   if (clock.has_value()) {
     this->add_arg(Arg{"clock", clock.value()});
   }
-  init_component_base(this, fragment, name);
+  init_component_base(this, fragment_or_subgraph, name, "resource");
 }
 
 void PyBasicConsoleLogger::initialize() {
@@ -189,14 +227,13 @@ void PyBasicConsoleLogger::initialize() {
   BasicConsoleLogger::initialize();
 }
 
-PyGXFConsoleLogger::PyGXFConsoleLogger(Fragment* fragment,
-                                       std::shared_ptr<SimpleTextSerializer> serializer,
-                                       bool log_inputs, bool log_outputs, bool log_metadata,
-                                       bool log_tensor_data_content, bool use_scheduler_clock,
-                                       std::optional<std::shared_ptr<Resource>> clock,
-                                       const std::vector<std::string>& allowlist_patterns,
-                                       const std::vector<std::string>& denylist_patterns,
-                                       const std::string& name)
+PyGXFConsoleLogger::PyGXFConsoleLogger(
+    const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+    std::shared_ptr<SimpleTextSerializer> serializer, bool log_inputs, bool log_outputs,
+    bool log_metadata, bool log_tensor_data_content, bool use_scheduler_clock,
+    std::optional<std::shared_ptr<Resource>> clock,
+    const std::vector<std::string>& allowlist_patterns,
+    const std::vector<std::string>& denylist_patterns, const std::string& name)
     : GXFConsoleLogger(ArgList{Arg{"log_inputs", log_inputs},
                                Arg{"log_outputs", log_outputs},
                                Arg{"log_metadata", log_metadata},
@@ -210,7 +247,7 @@ PyGXFConsoleLogger::PyGXFConsoleLogger(Fragment* fragment,
   if (clock.has_value()) {
     this->add_arg(Arg{"clock", clock.value()});
   }
-  init_component_base(this, fragment, name);
+  init_component_base(this, fragment_or_subgraph, name, "resource");
 }
 
 void PyGXFConsoleLogger::initialize() {
@@ -242,13 +279,18 @@ PYBIND11_MODULE(_basic_console_logger, m) {
              Resource,
              std::shared_ptr<SimpleTextSerializer>>(
       m, "SimpleTextSerializer", doc::SimpleTextSerializer::doc_SimpleTextSerializer)
-      .def(py::init<Fragment*, int64_t, int64_t, bool, bool, const std::string&>(),
+      .def(py::init<const std::variant<Fragment*, Subgraph*>&,
+                    int64_t,
+                    int64_t,
+                    bool,
+                    bool,
+                    const std::string&>(),
            "fragment"_a,
            "max_elements"_a = 10,
            "max_metadata_items"_a = 10,
            "log_video_buffer_content"_a = false,
            "log_python_object_contents"_a = true,
-           "name"_a = "simple_text_serializer"s,
+           "name"_a = std::string(resource_default_name_v<SimpleTextSerializer>),
            doc::SimpleTextSerializer::doc_SimpleTextSerializer);
 
   py::class_<BasicConsoleLogger,
@@ -256,7 +298,7 @@ PYBIND11_MODULE(_basic_console_logger, m) {
              DataLoggerResource,
              std::shared_ptr<BasicConsoleLogger>>(
       m, "BasicConsoleLogger", doc::BasicConsoleLogger::doc_BasicConsoleLogger)
-      .def(py::init<Fragment*,
+      .def(py::init<const std::variant<Fragment*, Subgraph*>&,
                     std::shared_ptr<SimpleTextSerializer>,
                     bool,
                     bool,
@@ -277,7 +319,7 @@ PYBIND11_MODULE(_basic_console_logger, m) {
            "clock"_a = py::none(),
            "allowlist_patterns"_a = py::list(),
            "denylist_patterns"_a = py::list(),
-           "name"_a = "basic_console_logger"s,
+           "name"_a = std::string(resource_default_name_v<BasicConsoleLogger>),
            doc::BasicConsoleLogger::doc_BasicConsoleLogger);
 
   py::class_<GXFConsoleLogger,
@@ -285,7 +327,7 @@ PYBIND11_MODULE(_basic_console_logger, m) {
              BasicConsoleLogger,
              std::shared_ptr<GXFConsoleLogger>>(
       m, "GXFConsoleLogger", "GXF-specific extension of BasicConsoleLogger with Entity support")
-      .def(py::init<Fragment*,
+      .def(py::init<const std::variant<Fragment*, Subgraph*>&,
                     std::shared_ptr<SimpleTextSerializer>,
                     bool,
                     bool,
@@ -306,7 +348,7 @@ PYBIND11_MODULE(_basic_console_logger, m) {
            "clock"_a = py::none(),
            "allowlist_patterns"_a = py::list(),
            "denylist_patterns"_a = py::list(),
-           "name"_a = "gxf_basic_console_logger"s,
+           "name"_a = std::string(resource_default_name_v<GXFConsoleLogger>),
            doc::GXFConsoleLogger::doc_GXFConsoleLogger);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::data_loggers

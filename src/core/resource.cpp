@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/core/resource.hpp"
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/component_spec.hpp"
@@ -82,7 +83,7 @@ void Resource::set_parameters() {
       } catch (const std::exception& e) {
         std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
         HOLOSCAN_LOG_ERROR("Resource '{}': failed to set default parameter - {}", name_, error_msg);
-        errors.push_back(error_msg);
+        errors.push_back(std::move(error_msg));
       }
     }
 

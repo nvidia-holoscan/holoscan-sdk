@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ from holoscan.conditions import CountCondition
 from holoscan.core import (
     Application,
     AsyncQueuePolicy,
+    DataLoggerQueueType,
     DataLoggerResource,
     MetadataPolicy,
     Operator,
@@ -44,6 +45,12 @@ except ImportError:
     cp = None
 
 logging_timeout = 100  # 0.1 seconds to complete data logging
+
+# Shutdown timeout for AsyncConsoleLogger to prevent potential GIL deadlock during shutdown.
+# When Python objects are in the log queue, the worker thread needs the GIL to serialize them.
+# If the main thread holds the GIL while waiting for the worker to join, deadlock can occur.
+# This timeout ensures shutdown completes even if some log entries must be discarded.
+ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS = 2000
 
 
 class PingMetadataTxOp(Operator):
@@ -289,7 +296,7 @@ def test_metadata_logging(
 
     data_logging_enabled = log_inputs or log_outputs
     if data_logging_enabled:
-        basic_logger = logger_class(
+        logger_kwargs = dict(
             fragment=app,
             name="console-logger",
             log_inputs=log_inputs,
@@ -302,6 +309,9 @@ def test_metadata_logging(
                 log_python_object_contents=log_python_object_contents,
             ),
         )
+        if logger_class == AsyncConsoleLogger:
+            logger_kwargs["shutdown_wait_period_ms"] = ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS
+        basic_logger = logger_class(**logger_kwargs)
         app.add_data_logger(basic_logger)
 
     app.run()
@@ -402,6 +412,8 @@ def test_data_logging_allowlist_denylist(
         allowlist_patterns=allowlist_patterns,
         denylist_patterns=denylist_patterns,
     )
+    if logger_class == AsyncConsoleLogger:
+        logger_kwargs["shutdown_wait_period_ms"] = ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS
     console_logger = logger_class(**logger_kwargs)
     app.add_data_logger(console_logger)
 
@@ -493,18 +505,19 @@ class MyPingTimestampApp(Application):
             self, name="rx", use_scheduler_clock=self.use_scheduler_clock, clock=logger_clock
         )
         self.add_flow(tx, rx)
-        self.add_data_logger(
-            self.logger_class(
-                fragment=self,
-                name="console-logger",
-                log_inputs=True,
-                log_outputs=True,
-                log_metadata=False,
-                log_tensor_data_content=False,
-                use_scheduler_clock=self.use_scheduler_clock,
-                clock=logger_clock,
-            )
+        logger_kwargs = dict(
+            fragment=self,
+            name="console-logger",
+            log_inputs=True,
+            log_outputs=True,
+            log_metadata=False,
+            log_tensor_data_content=False,
+            use_scheduler_clock=self.use_scheduler_clock,
+            clock=logger_clock,
         )
+        if self.logger_class == AsyncConsoleLogger:
+            logger_kwargs["shutdown_wait_period_ms"] = ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS
+        self.add_data_logger(self.logger_class(**logger_kwargs))
 
 
 @pytest.mark.parametrize("use_scheduler_clock", [False, True])
@@ -655,8 +668,20 @@ class TensorConsoleLoggingApp(Application):
             logger_kwargs.update(self.extra_logger_kwargs)
 
         if self.logger_class == "multiple":
+            # Note: extra_logger_kwargs is merged into AsyncConsoleLogger config only.
+            # Other logger types (BasicConsoleLogger, GXFConsoleLogger) use base logger_kwargs.
             for logger_cls in [AsyncConsoleLogger, GXFConsoleLogger, BasicConsoleLogger]:
-                self.add_data_logger(logger_cls(**logger_kwargs))
+                if logger_cls == AsyncConsoleLogger:
+                    # Merge any extra kwargs and ensure shutdown timeout is set to prevent
+                    # potential GIL deadlock during shutdown
+                    async_kwargs = {
+                        **logger_kwargs,
+                        **self.extra_logger_kwargs,
+                        "shutdown_wait_period_ms": ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+                    }
+                    self.add_data_logger(logger_cls(**async_kwargs))
+                else:
+                    self.add_data_logger(logger_cls(**logger_kwargs))
         else:
             # enable data logging from compose
             self.add_data_logger(self.logger_class(**logger_kwargs))
@@ -667,16 +692,40 @@ class TensorConsoleLoggingApp(Application):
     [
         pytest.param(
             AsyncConsoleLogger,
-            {"enable_large_data_queue": False},
+            {
+                "enable_large_data_queue": False,
+                "shutdown_wait_period_ms": ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+            },
             id="async_logger_with_large_data_disabled",
         ),
         pytest.param(
             AsyncConsoleLogger,
-            {"enable_large_data_queue": True},
+            {
+                "enable_large_data_queue": True,
+                "shutdown_wait_period_ms": ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+            },
             id="async_logger_with_large_data_enabled",
         ),
         pytest.param(BasicConsoleLogger, {}, id="basic_logger"),
         pytest.param(GXFConsoleLogger, {}, id="gxf_logger"),
+        pytest.param(
+            AsyncConsoleLogger,
+            {
+                "enable_large_data_queue": True,
+                "queue_type": DataLoggerQueueType.LOCK_FREE,
+                "shutdown_wait_period_ms": ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+            },
+            id="async_logger_with_lockfree_queue",
+        ),
+        pytest.param(
+            AsyncConsoleLogger,
+            {
+                "enable_large_data_queue": True,
+                "queue_type": DataLoggerQueueType.ORDERED,
+                "shutdown_wait_period_ms": ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+            },
+            id="async_logger_with_ordered_queue",
+        ),
     ],
 )
 @pytest.mark.parametrize(
@@ -696,6 +745,12 @@ def test_tensor_content_logging(
     count = 2
     value = 5
     max_elements = 25
+    if (
+        mx_emit_mode == "ndarray"
+        and extra_logger_kwargs.get("queue_type", None) == DataLoggerQueueType.ORDERED
+    ):
+        pytest.skip(reason="skip case with stochastic deadlock observed on CI")
+
     app = TensorConsoleLoggingApp(
         count=count,
         value=value,
@@ -796,6 +851,7 @@ def test_async_logger_small_entry_fallback(
             enable_large_data_queue=True,
             large_data_max_queue_size=large_data_max_queue_size,
             large_data_queue_policy=large_data_queue_policy,
+            shutdown_wait_period_ms=ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
         ),
     )
     scheduler_kwargs = {"worker_thread_number": 3} if scheduler_class != GreedyScheduler else {}

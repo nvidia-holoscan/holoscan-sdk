@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -66,6 +66,7 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
   bool stop_on_deadlock() { return stop_on_deadlock_; }
   int64_t check_recession_period_ms() { return check_recession_period_ms_; }
   int64_t stop_on_deadlock_timeout() { return stop_on_deadlock_timeout_; }
+  int64_t network_connection_timeout() { return network_connection_timeout_; }
   // could return std::optional<int64_t>, but just using int64_t simplifies the Python bindings
   int64_t max_duration_ms() { return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1; }
 
@@ -77,7 +78,8 @@ class MultiThreadScheduler : public gxf::GXFScheduler {
   Parameter<bool> stop_on_deadlock_;
   Parameter<double> check_recession_period_ms_;
   Parameter<int64_t> max_duration_ms_;
-  Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
+  Parameter<int64_t> stop_on_deadlock_timeout_;    // in ms
+  Parameter<int64_t> network_connection_timeout_;  // in ms
   Parameter<bool> strict_job_thread_pinning_;
 
   void* clock_gxf_cptr() const override;

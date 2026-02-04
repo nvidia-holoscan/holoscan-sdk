@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./condition_combiners_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
@@ -44,9 +45,10 @@ class PyOrConditionCombiner : public OrConditionCombiner {
   using OrConditionCombiner::OrConditionCombiner;
 
   // Define a constructor that fully initializes the object.
-  explicit PyOrConditionCombiner(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                 std::vector<std::shared_ptr<holoscan::Condition>> terms = {},
-                                 const std::string& name = "or_condition_combiner")
+  explicit PyOrConditionCombiner(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::vector<std::shared_ptr<holoscan::Condition>> terms = {},
+      const std::string& name = resource_default_name_v<OrConditionCombiner>)
       : OrConditionCombiner(Arg{"terms", terms}) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -63,7 +65,7 @@ void init_condition_combiners(py::module_& m) {
                     const std::string&>(),
            "fragment"_a,
            "terms"_a,
-           "name"_a = "or_condition_combiner"s,
+           "name"_a = std::string(resource_default_name_v<OrConditionCombiner>),
            doc::ConditionCombiners::doc_OrConditionCombiner);
 }
 }  // namespace holoscan

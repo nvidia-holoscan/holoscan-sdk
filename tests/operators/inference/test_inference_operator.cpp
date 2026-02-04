@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include <holoscan/core/execution_context.hpp>
 #include <holoscan/operators/inference/inference.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
+#include <holoinfer_utils.hpp>
 
 // Test tensor dimensions BATCH_SIZE x TENSOR_SIZE x TENSOR_SIZE
 constexpr int TENSOR_SIZE = 256;
@@ -284,6 +285,21 @@ TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
   using namespace holoscan;
 
   auto& [backend, model, enable_green_context, test_two] = GetParam();
+
+  // Skip torch tests if torch CUDA is unavailable or SM-incompatible
+  if (backend == "torch") {
+#if defined(HOLOINFER_TORCH_ENABLED)
+    if (!inference::is_torch_cuda_available()) {
+      GTEST_SKIP() << "Torch CUDA unavailable";
+    }
+    if (!inference::is_torch_cuda_sm_compatible()) {
+      GTEST_SKIP() << "Torch CUDA SM incompatible";
+    }
+#else
+    GTEST_SKIP() << "Torch backend not enabled";
+#endif
+  }
+
   HOLOSCAN_LOG_INFO("backend = {}", backend);
   HOLOSCAN_LOG_INFO("model = {}", model);
   HOLOSCAN_LOG_INFO("enable_green_context = {}", enable_green_context);

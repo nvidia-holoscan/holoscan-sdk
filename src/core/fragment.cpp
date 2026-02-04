@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -276,96 +276,12 @@ std::shared_ptr<NetworkContext> Fragment::network_context() {
   return network_context_;
 }
 
-namespace {  // anonymous details to avoid polluting holoscan namespace
-
-std::unordered_set<std::string> nested_yaml_map_keys_(YAML::Node yaml_node) {
-  std::unordered_set<std::string> keys;
-  for (auto it = yaml_node.begin(); it != yaml_node.end(); ++it) {
-    const auto& key = it->first.as<std::string>();
-    const auto& value = it->second;
-    keys.emplace(key);
-    if (value.IsMap()) {
-      std::unordered_set<std::string> inner_keys = nested_yaml_map_keys_(it->second);
-      for (const auto& inner_key : inner_keys) {
-        keys.emplace(key + "."s + inner_key);
-      }
-    }
-  }
-  return keys;
-}
-
-}  // namespace
-
 std::unordered_set<std::string> Fragment::config_keys() {
-  auto& yaml_nodes = config().yaml_nodes();
-
-  std::unordered_set<std::string> all_keys;
-  for (const auto& yaml_node : yaml_nodes) {
-    if (yaml_node.IsMap()) {
-      auto node_keys = nested_yaml_map_keys_(yaml_node);
-      for (const auto& k : node_keys) {
-        all_keys.insert(k);
-      }
-    }
-  }
-  return all_keys;
+  return config().config_keys();
 }
 
 ArgList Fragment::from_config(const std::string& key) {
-  auto& yaml_nodes = config().yaml_nodes();
-  ArgList args;
-
-  std::vector<std::string> key_parts;
-
-  size_t pos = 0;
-  while (pos != std::string::npos) {
-    size_t next_pos = key.find_first_of('.', pos);
-    if (next_pos == std::string::npos) {
-      break;
-    }
-    key_parts.push_back(key.substr(pos, next_pos - pos));
-    pos = next_pos + 1;
-  }
-  key_parts.push_back(key.substr(pos));
-
-  size_t key_parts_size = key_parts.size();
-
-  for (const auto& yaml_node : yaml_nodes) {
-    if (yaml_node.IsMap()) {
-      auto yaml_map = yaml_node.as<YAML::Node>();
-      size_t key_index = 0;
-      for (const auto& key_part : key_parts) {
-        (void)key_part;
-        if (yaml_map.IsMap()) {
-          yaml_map.reset(yaml_map[key_part]);
-          ++key_index;
-        } else {
-          break;
-        }
-      }
-      if (!yaml_map || key_index < key_parts_size) {
-        HOLOSCAN_LOG_ERROR("Unable to find the parameter item/map with key '{}'", key);
-        continue;
-      }
-
-      const auto& parameters = yaml_map;
-
-      if (parameters.IsScalar()) {
-        const std::string& param_key = key_parts[key_parts_size - 1];
-        auto& value = parameters;
-        args.add(Arg(param_key) = value);
-        continue;
-      }
-
-      for (const auto& p : parameters) {
-        const std::string param_key = p.first.as<std::string>();
-        auto& value = p.second;
-        args.add(Arg(param_key) = value);
-      }
-    }
-  }
-
-  return args;
+  return config().from_config(key);
 }
 
 bool Fragment::register_service_from(Fragment* fragment, std::string_view id) {
@@ -435,6 +351,20 @@ void Fragment::add_operator(const std::shared_ptr<Operator>& op) {
   }
   op->set_self_shared(op);
   graph().add_node(op);
+}
+
+void Fragment::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
+  if (!subgraph) {
+    HOLOSCAN_LOG_ERROR("Cannot add null subgraph to fragment");
+    return;
+  }
+
+  // Compose the subgraph if not already composed
+  // This will add all operators and flows to the fragment's graph
+  if (!subgraph->is_composed()) {
+    subgraph->compose();
+    subgraph->set_composed(true);
+  }
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -1214,7 +1144,7 @@ std::shared_ptr<ThreadPool> Fragment::make_thread_pool(const std::string& name,
 
   // Assign the pool to the entity that was created above and initialize it via add_to_graph_entity
   pool_resource->gxf_eid(pool_entity->eid());
-  pool_resource->add_to_graph_entity(this, pool_entity);
+  pool_resource->add_to_graph_entity(this, std::move(pool_entity));
 
   auto pool_group = std::make_shared<gxf::EntityGroup>(executor().context(),
                                                        fmt::format("{}_group", pool_entity_name));
@@ -1239,6 +1169,18 @@ std::shared_ptr<FragmentService> Fragment::get_service_erased(const std::type_in
   if (it == fragment_services_by_key_.end()) {
     HOLOSCAN_LOG_DEBUG(
         "Service (erased) for type_info {} id '{}' not found", service_type.name(), id);
+    return nullptr;
+  }
+  return it->second;
+}
+
+std::shared_ptr<Resource> Fragment::get_service_resource_by_name(std::string_view id) const {
+  if (id.empty()) {
+    return nullptr;
+  }
+  std::shared_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
+  auto it = fragment_resource_services_by_name_.find(std::string(id));
+  if (it == fragment_resource_services_by_name_.end()) {
     return nullptr;
   }
   return it->second;
@@ -1368,7 +1310,7 @@ void Fragment::GPUResidentAccessor::register_data_ready_handler(
     throw std::runtime_error(err_msg);
   }
   auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
-  gpu_resident_executor->data_ready_handler(data_ready_handler_fragment);
+  gpu_resident_executor->data_ready_handler(std::move(data_ready_handler_fragment));
 }
 
 std::shared_ptr<Fragment> Fragment::GPUResidentAccessor::data_ready_handler_fragment() {
@@ -1523,36 +1465,56 @@ void Fragment::resolve_and_create_op_to_subgraph_flows(
     const std::set<std::pair<std::string, std::string>>& port_pairs,
     const IOSpec::ConnectorType connector_type) {
   // Resolve subgraph interface ports to actual operators
-  for (const auto& [upstream_port, interface_port] : port_pairs) {
-    // Try data ports first
-    auto [downstream_op, downstream_port] =
-        downstream_subgraph->get_interface_operator_port(interface_port);
+  for (const auto& [upstream_port, interface_port_name] : port_pairs) {
+    // Try data ports first - get the InterfacePort for broadcast input support
+    const auto& data_ports = downstream_subgraph->interface_ports();
+    auto data_it = data_ports.find(interface_port_name);
 
-    // If not found in data ports, try exec ports
-    if (!downstream_op) {
-      std::tie(downstream_op, downstream_port) =
-          downstream_subgraph->get_exec_interface_operator_port(interface_port);
-    }
-
-    if (!downstream_op) {
-      auto err_msg = fmt::format("Interface port '{}' not found in Subgraph '{}'",
-                                 interface_port,
-                                 downstream_subgraph->name());
-      HOLOSCAN_LOG_ERROR(err_msg);
-      throw std::runtime_error(err_msg);
-    }
-
-    // Check if this is a control flow connection (exec port)
-    if (upstream_port == Operator::kOutputExecPortName &&
-        downstream_port == Operator::kInputExecPortName) {
-      // This is a control flow connection
-      if (!validate_control_flow_prerequisites(upstream_op, downstream_op, connector_type)) {
-        continue;
+    if (data_it != data_ports.end()) {
+      // Create flows for all mapped downstream ports (supports broadcast input ports)
+      for (const auto& mapping : data_it->second.mappings) {
+        // Check if this is a control flow connection (exec port)
+        if (upstream_port == Operator::kOutputExecPortName &&
+            mapping.internal_port_name == Operator::kInputExecPortName) {
+          // This is a control flow connection
+          if (!validate_control_flow_prerequisites(
+                  upstream_op, mapping.internal_operator, connector_type)) {
+            continue;
+          }
+          create_control_flow_connection(upstream_op, mapping.internal_operator);
+        } else {
+          // Regular data flow connection
+          add_flow(upstream_op,
+                   mapping.internal_operator,
+                   {{upstream_port, mapping.internal_port_name}},
+                   connector_type);
+        }
       }
-      create_control_flow_connection(upstream_op, downstream_op);
     } else {
-      // Regular data flow connection
-      add_flow(upstream_op, downstream_op, {{upstream_port, downstream_port}}, connector_type);
+      // If not found in data ports, try exec ports
+      auto [exec_op, exec_port] =
+          downstream_subgraph->get_exec_interface_operator_port(interface_port_name);
+
+      if (!exec_op) {
+        auto err_msg = fmt::format("Interface port '{}' not found in Subgraph '{}'",
+                                   interface_port_name,
+                                   downstream_subgraph->name());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
+
+      // Check if this is a control flow connection (exec port)
+      if (upstream_port == Operator::kOutputExecPortName &&
+          exec_port == Operator::kInputExecPortName) {
+        // This is a control flow connection
+        if (!validate_control_flow_prerequisites(upstream_op, exec_op, connector_type)) {
+          continue;
+        }
+        create_control_flow_connection(upstream_op, exec_op);
+      } else {
+        // Regular data flow connection
+        add_flow(upstream_op, exec_op, {{upstream_port, exec_port}}, connector_type);
+      }
     }
   }
 }
@@ -1604,7 +1566,7 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
     const IOSpec::ConnectorType connector_type) {
   // Resolve both subgraph interface ports to actual operators
   for (const auto& [upstream_interface_port, downstream_interface_port] : port_pairs) {
-    // Try data ports first for upstream
+    // Try data ports first for upstream (output ports always have single mapping)
     auto [upstream_op, upstream_port] =
         upstream_subgraph->get_interface_operator_port(upstream_interface_port);
 
@@ -1612,16 +1574,6 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
     if (!upstream_op) {
       std::tie(upstream_op, upstream_port) =
           upstream_subgraph->get_exec_interface_operator_port(upstream_interface_port);
-    }
-
-    // Try data ports first for downstream
-    auto [downstream_op, downstream_port] =
-        downstream_subgraph->get_interface_operator_port(downstream_interface_port);
-
-    // If not found in data ports, try exec ports
-    if (!downstream_op) {
-      std::tie(downstream_op, downstream_port) =
-          downstream_subgraph->get_exec_interface_operator_port(downstream_interface_port);
     }
 
     if (!upstream_op) {
@@ -1632,25 +1584,55 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
       throw std::runtime_error(err_msg);
     }
 
-    if (!downstream_op) {
-      auto err_msg = fmt::format("Interface port '{}' not found in downstream Subgraph '{}'",
-                                 downstream_interface_port,
-                                 downstream_subgraph->name());
-      HOLOSCAN_LOG_ERROR(err_msg);
-      throw std::runtime_error(err_msg);
-    }
+    // Try data ports first for downstream - get the InterfacePort for broadcast input support
+    const auto& downstream_data_ports = downstream_subgraph->interface_ports();
+    auto downstream_data_it = downstream_data_ports.find(downstream_interface_port);
 
-    // Check if this is a control flow connection (exec port)
-    if (upstream_port == Operator::kOutputExecPortName &&
-        downstream_port == Operator::kInputExecPortName) {
-      // This is a control flow connection
-      if (!validate_control_flow_prerequisites(upstream_op, downstream_op, connector_type)) {
-        continue;
+    if (downstream_data_it != downstream_data_ports.end()) {
+      // Create flows for all mapped downstream ports (supports broadcast input ports)
+      for (const auto& mapping : downstream_data_it->second.mappings) {
+        // Check if this is a control flow connection (exec port)
+        if (upstream_port == Operator::kOutputExecPortName &&
+            mapping.internal_port_name == Operator::kInputExecPortName) {
+          // This is a control flow connection
+          if (!validate_control_flow_prerequisites(
+                  upstream_op, mapping.internal_operator, connector_type)) {
+            continue;
+          }
+          create_control_flow_connection(upstream_op, mapping.internal_operator);
+        } else {
+          // Regular data flow connection
+          add_flow(upstream_op,
+                   mapping.internal_operator,
+                   {{upstream_port, mapping.internal_port_name}},
+                   connector_type);
+        }
       }
-      create_control_flow_connection(upstream_op, downstream_op);
     } else {
-      // Regular data flow connection
-      add_flow(upstream_op, downstream_op, {{upstream_port, downstream_port}}, connector_type);
+      // If not found in data ports, try exec ports
+      auto [exec_op, exec_port] =
+          downstream_subgraph->get_exec_interface_operator_port(downstream_interface_port);
+
+      if (!exec_op) {
+        auto err_msg = fmt::format("Interface port '{}' not found in downstream Subgraph '{}'",
+                                   downstream_interface_port,
+                                   downstream_subgraph->name());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
+
+      // Check if this is a control flow connection (exec port)
+      if (upstream_port == Operator::kOutputExecPortName &&
+          exec_port == Operator::kInputExecPortName) {
+        // This is a control flow connection
+        if (!validate_control_flow_prerequisites(upstream_op, exec_op, connector_type)) {
+          continue;
+        }
+        create_control_flow_connection(upstream_op, exec_op);
+      } else {
+        // Regular data flow connection
+        add_flow(upstream_op, exec_op, {{upstream_port, exec_port}}, connector_type);
+      }
     }
   }
 }
@@ -1717,7 +1699,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
   // Resolve subgraph interface ports and create flows
   resolve_and_create_op_to_subgraph_flows(
-      upstream_op, downstream_subgraph, port_pairs, IOSpec::ConnectorType::kDefault);
+      upstream_op, downstream_subgraph, std::move(port_pairs), IOSpec::ConnectorType::kDefault);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1779,7 +1761,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 
   // Resolve subgraph interface ports and create flows
   resolve_and_create_subgraph_to_op_flows(
-      upstream_subgraph, downstream_op, port_pairs, IOSpec::ConnectorType::kDefault);
+      upstream_subgraph, downstream_op, std::move(port_pairs), IOSpec::ConnectorType::kDefault);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1839,8 +1821,10 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
   }
 
   // Resolve both subgraph interface ports and create flows
-  resolve_and_create_subgraph_to_subgraph_flows(
-      upstream_subgraph, downstream_subgraph, port_pairs, IOSpec::ConnectorType::kDefault);
+  resolve_and_create_subgraph_to_subgraph_flows(upstream_subgraph,
+                                                downstream_subgraph,
+                                                std::move(port_pairs),
+                                                IOSpec::ConnectorType::kDefault);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -1857,7 +1841,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                          fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                          port_pairs);
 
-  add_flow(upstream_op, downstream_subgraph, port_pairs, connector_type);
+  add_flow(upstream_op, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -1877,7 +1861,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
   }
 
   resolve_and_create_op_to_subgraph_flows(
-      upstream_op, downstream_subgraph, port_pairs, connector_type);
+      upstream_op, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1894,7 +1878,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                          fmt::format("Operator '{}'", downstream_op->name()),
                          port_pairs);
 
-  add_flow(upstream_subgraph, downstream_op, port_pairs, connector_type);
+  add_flow(upstream_subgraph, downstream_op, std::move(port_pairs), connector_type);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1914,7 +1898,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
   }
 
   resolve_and_create_subgraph_to_op_flows(
-      upstream_subgraph, downstream_op, port_pairs, connector_type);
+      upstream_subgraph, downstream_op, std::move(port_pairs), connector_type);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1931,7 +1915,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                          fmt::format("Subgraph '{}'", downstream_subgraph->name()),
                          port_pairs);
 
-  add_flow(upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
+  add_flow(upstream_subgraph, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
@@ -1951,7 +1935,7 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
   }
 
   resolve_and_create_subgraph_to_subgraph_flows(
-      upstream_subgraph, downstream_subgraph, port_pairs, connector_type);
+      upstream_subgraph, downstream_subgraph, std::move(port_pairs), connector_type);
 }
 
 std::pair<std::shared_ptr<Operator>, std::string> Fragment::resolve_subgraph_port(

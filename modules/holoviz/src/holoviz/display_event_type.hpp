@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,10 +20,10 @@
 
 namespace holoscan::viz {
 
-typedef enum {
+enum class DisplayEventType {
   FIRST_PIXEL_OUT,  // signaled when the first pixel of the next display refresh cycle leaves the
                     // display engine for the display
-} DisplayEventType;
+};
 
 }  // namespace holoscan::viz
 

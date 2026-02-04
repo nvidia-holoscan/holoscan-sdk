@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -527,7 +527,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         return report_error(module,
                             "Data Transmission, Mapped data not found for " + out_tensors[i]);
       }
-      auto current_out_tensor = out_tensors[i];
+      const auto& current_out_tensor = out_tensors[i];
 
       // key_name is the model and tensor_index is the mapped tensor index in the
       // model_to_tensor_map.
@@ -742,7 +742,7 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
         return report_error(module,
                             "Data Transmission, Mapped data not found for " + out_tensors[i]);
       }
-      auto current_out_tensor = out_tensors[i];
+      const auto& current_out_tensor = out_tensors[i];
 
       // key_name is the model and tensor_index is the mapped tensor index in the
       // model_to_tensor_map.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -96,12 +96,16 @@ TEST_P(VSync, Modes) {
 
   switch (present_mode) {
     case viz::PresentMode::FIFO:
+    case viz::PresentMode::FIFO_RELAXED:
       // rendered frames should be within 10% of displayed frames
       EXPECT_LE(std::abs((float(frames) / displayed_frames) - 1.F), 0.1F);
       break;
     case viz::PresentMode::AUTO:
     case viz::PresentMode::IMMEDIATE:
     case viz::PresentMode::MAILBOX:
+    case viz::PresentMode::SHARED_DEMAND_REFRESH:
+    case viz::PresentMode::SHARED_CONTINUOUS_REFRESH:
+    case viz::PresentMode::FIFO_LATEST_READY:
       // no vsync, should render at least two times the refresh rate
       EXPECT_GT(frames, displayed_frames * 2.F);
       break;
@@ -112,4 +116,8 @@ TEST_P(VSync, Modes) {
 
 INSTANTIATE_TEST_SUITE_P(VSync, VSync,
                          testing::Values(viz::PresentMode::AUTO, viz::PresentMode::FIFO,
-                                         viz::PresentMode::IMMEDIATE, viz::PresentMode::MAILBOX));
+                                         viz::PresentMode::IMMEDIATE, viz::PresentMode::MAILBOX,
+                                         viz::PresentMode::FIFO_LATEST_READY,
+                                         viz::PresentMode::SHARED_DEMAND_REFRESH,
+                                         viz::PresentMode::SHARED_CONTINUOUS_REFRESH,
+                                         viz::PresentMode::FIFO_RELAXED));

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,7 @@ class PyPingTensorRxOp : public holoscan::ops::PingTensorRxOp {
   // Define a constructor that fully initializes the object.
   PyPingTensorRxOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                    const py::args& args, bool receive_as_tensormap = true,
-                   const std::string& name = "ping_tensor_rx")
+                   const std::string& name = operator_default_name_v<ops::PingTensorRxOp>)
       : PingTensorRxOp(Arg{"receive_as_tensormap", receive_as_tensormap}) {
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);
@@ -78,7 +78,7 @@ PYBIND11_MODULE(_ping_tensor_rx, m) {
           py::init<std::variant<Fragment*, Subgraph*>, const py::args&, bool, const std::string&>(),
           "fragment"_a,
           "receive_as_tensormap"_a = true,
-          "name"_a = "ping_tensor_rx"s,
+          "name"_a = std::string(operator_default_name_v<ops::PingTensorRxOp>),
           doc::PingTensorRxOp::doc_PingTensorRxOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

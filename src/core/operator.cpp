@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,8 +37,110 @@
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/condition_combiner.hpp"
 #include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include "holoscan/core/resources/gxf/receiver.hpp"
 #include "holoscan/logger/logger.hpp"
 #include "holoscan/profiler/profiler.hpp"
+
+namespace {
+
+/**
+ * @brief Collect receivers matching a port name from the operator's input spec.
+ *
+ * Handles both regular ports (exact match) and multi-receiver ports (IOSpec::kAnySize)
+ * where indexed ports like "port_name:0", "port_name:1" need to be discovered.
+ *
+ * @param port_name The port name to look up (e.g., "input" or "receivers")
+ * @param inputs The operator's input port map from spec_->inputs()
+ * @param operator_name The operator's name (for logging)
+ * @return Vector of matching Receiver objects (may be empty if no matches found)
+ */
+std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name(
+    const std::string& port_name,
+    const std::unordered_map<std::string, std::shared_ptr<holoscan::IOSpec>>& inputs,
+    const std::string& operator_name) {
+  std::vector<std::shared_ptr<holoscan::Receiver>> receivers;
+
+  // First, check if this is an exact match for a regular port
+  auto it = inputs.find(port_name);
+  if (it != inputs.end()) {
+    // Found exact match - check if it's a regular port or a kAnySize port
+    auto connector = it->second->connector();
+    bool is_any_size =
+        (it->second->queue_size() == static_cast<int64_t>(holoscan::IOSpec::kAnySize));
+
+    if (connector && !is_any_size) {
+      // Regular port with connector - use it directly
+      auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(connector);
+      if (receiver) {
+        receivers.push_back(receiver);
+        HOLOSCAN_LOG_DEBUG(
+            "Operator '{}': found regular receiver port '{}'", operator_name, port_name);
+      }
+      return receivers;
+    }
+
+    if (is_any_size) {
+      // kAnySize port - look for indexed ports (port_name:0, port_name:1, etc.)
+      std::string prefix = port_name + ":";
+      for (const auto& [input_port_name, io_spec] : inputs) {
+        if (input_port_name.rfind(prefix, 0) == 0) {  // starts with "port_name:"
+          auto indexed_connector = io_spec->connector();
+          if (indexed_connector) {
+            auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(indexed_connector);
+            if (receiver) {
+              receivers.push_back(receiver);
+              HOLOSCAN_LOG_DEBUG("Operator '{}': found multi-receiver port '{}' for base name '{}'",
+                                 operator_name,
+                                 input_port_name,
+                                 port_name);
+            }
+          }
+        }
+      }
+      if (receivers.empty()) {
+        HOLOSCAN_LOG_WARN(
+            "Operator '{}': 'receivers' argument specified kAnySize port '{}' but no "
+            "indexed ports ({}:0, {}:1, etc.) were found",
+            operator_name,
+            port_name,
+            port_name,
+            port_name);
+      }
+      return receivers;
+    }
+  }
+
+  // Port name not found as exact match in inputs.
+  // This handles parameter-based multi-receivers where indexed ports exist but base name doesn't.
+  std::string prefix = port_name + ":";
+  for (const auto& [input_port_name, io_spec] : inputs) {
+    if (input_port_name.rfind(prefix, 0) == 0) {  // starts with "port_name:"
+      auto connector = io_spec->connector();
+      if (connector) {
+        auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(connector);
+        if (receiver) {
+          receivers.push_back(receiver);
+          HOLOSCAN_LOG_DEBUG("Operator '{}': found multi-receiver port '{}' for base name '{}'",
+                             operator_name,
+                             input_port_name,
+                             port_name);
+        }
+      }
+    }
+  }
+
+  if (receivers.empty()) {
+    HOLOSCAN_LOG_WARN(
+        "Operator '{}': 'receivers' argument specified port '{}' but no matching input "
+        "port found (neither exact match nor multi-receiver pattern)",
+        operator_name,
+        port_name);
+  }
+
+  return receivers;
+}
+
+}  // anonymous namespace
 
 namespace holoscan {
 
@@ -532,6 +634,33 @@ void Operator::find_ports_used_by_condition_args() {
         }
       }
     }
+
+    // Handle "receivers" argument for CudaStreamCondition and similar conditions.
+    // These are port names that can be either:
+    // - Regular ports: exact match (e.g., "input")
+    // - Multi-receiver ports (IOSpec::kAnySize): base names that expand to "receivers:0", etc.
+    // Support both single string and vector of strings.
+    for (auto& arg : cond_args) {
+      if (arg.name() != "receivers" || arg.arg_type().element_type() != ArgElementType::kString) {
+        continue;
+      }
+
+      std::vector<std::string> port_names;
+      if (arg.arg_type().container_type() == ArgContainerType::kNative) {
+        // Single string like "input" or "receivers"
+        port_names.push_back(std::any_cast<std::string>(arg.value()));
+      } else if (arg.arg_type().container_type() == ArgContainerType::kVector) {
+        // Vector of strings like ["input", "receivers"]
+        port_names = std::any_cast<std::vector<std::string>>(arg.value());
+      }
+
+      for (auto& name : port_names) {
+        // Add the name to prevent default conditions from being added
+        // (works for both regular and multi-receiver ports)
+        non_default_input_ports_.emplace_back(name);
+      }
+      break;  // Found the receivers arg
+    }
   }
 }
 
@@ -606,6 +735,49 @@ void Operator::update_connector_arguments() {
         condition.second->add_arg(Arg(arg_name, it->second->connector()));
       }
     }
+
+    // Handle "receivers" argument for CudaStreamCondition and similar conditions.
+    // Port names can be either:
+    // - Regular ports: exact match (e.g., "input")
+    // - Multi-receiver ports (IOSpec::kAnySize): base names that expand to "receivers:0", etc.
+    // Support both single string and vector of strings.
+    auto receivers_arg_iter = std::find_if(cond_args.begin(), cond_args.end(), [](const auto& arg) {
+      return (arg.name() == "receivers" &&
+              arg.arg_type().element_type() == ArgElementType::kString &&
+              (arg.arg_type().container_type() == ArgContainerType::kNative ||
+               arg.arg_type().container_type() == ArgContainerType::kVector));
+    });
+    if (receivers_arg_iter != cond_args.end()) {
+      // Extract port names from the argument (single string or vector)
+      std::vector<std::string> port_names;
+      if (receivers_arg_iter->arg_type().container_type() == ArgContainerType::kNative) {
+        port_names.push_back(std::any_cast<std::string>(receivers_arg_iter->value()));
+      } else {
+        port_names = std::any_cast<std::vector<std::string>>(receivers_arg_iter->value());
+      }
+
+      // Collect all receivers for the specified port names
+      std::vector<std::shared_ptr<Receiver>> all_receivers;
+      const auto& inputs = spec_->inputs();
+      for (const auto& port_name : port_names) {
+        auto receivers = collect_receivers_for_port_name(port_name, inputs, name_);
+        all_receivers.insert(all_receivers.end(), receivers.begin(), receivers.end());
+      }
+
+      // Replace string argument with actual Receiver objects
+      if (!all_receivers.empty()) {
+        HOLOSCAN_LOG_DEBUG(
+            "Operator '{}': replacing 'receivers' string argument with {} actual Receiver objects",
+            name_,
+            all_receivers.size());
+
+        auto new_arg_end = std::remove_if(cond_args.begin(), cond_args.end(), [](const auto& arg) {
+          return arg.name() == "receivers";
+        });
+        cond_args.erase(new_arg_end, cond_args.end());
+        condition.second->add_arg(Arg("receivers", all_receivers));
+      }
+    }
   }
 }
 
@@ -632,7 +804,7 @@ void Operator::set_parameters() {
     } catch (const std::exception& e) {
       std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
       HOLOSCAN_LOG_ERROR("Operator '{}': failed to set default parameter - {}", name_, error_msg);
-      errors.push_back(error_msg);
+      errors.push_back(std::move(error_msg));
     }
   }
 
@@ -894,7 +1066,7 @@ void Operator::add_dynamic_flow(const std::string& curr_output_port_name,
   }
 
   auto flow = std::make_shared<FlowInfo>(self_shared(), output_port_name, next_op, input_port_name);
-  dynamic_flows_->push_back(flow);
+  dynamic_flows_->push_back(std::move(flow));
 }
 
 void Operator::add_dynamic_flow(const std::shared_ptr<Operator>& next_op,

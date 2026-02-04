@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/messagelabel.hpp"
@@ -101,12 +102,12 @@ void MessageLabel::add_new_op_timestamp(holoscan::OperatorTimestampLabel o_times
     TimestampedPath new_path;
     new_path.reserve(DEFAULT_PATH_LENGTH);
 
-    message_paths.push_back(new_path);
+    message_paths.push_back(std::move(new_path));
     message_paths[0].push_back(o_timestamp);
 
     PathOperators new_path_operators;
     new_path_operators.insert(o_timestamp.operator_name);
-    message_path_operators.push_back(new_path_operators);
+    message_path_operators.push_back(std::move(new_path_operators));
   } else {
     for (int i = 0; i < num_paths(); i++) {
       // By default, allocate space for DEFAULT_PATH_LENGTH Operators in a path
@@ -132,7 +133,7 @@ void MessageLabel::add_new_path(MessageLabel::TimestampedPath path) {
   for (auto& op : path) {
     new_path_operators.insert(op.operator_name);
   }
-  message_path_operators.push_back(new_path_operators);
+  message_path_operators.push_back(std::move(new_path_operators));
 }
 
 MessageLabel::TimestampedPath MessageLabel::get_path(int index) {

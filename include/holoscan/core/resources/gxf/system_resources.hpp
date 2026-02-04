@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,14 +42,19 @@ namespace holoscan {
  * `Fragment::make_resource` method as it requires additional configuration of an associated
  * GXF EntityGroup.
  *
+ * User-defined thread pools create additional worker threads beyond the default thread pool
+ * that is automatically created by the scheduler (based on the scheduler's `worker_thread_number`
+ * parameter). Operators not assigned to a user-defined pool will use the default pool.
+ *
  * pool1 = make_thread_pool("pool1", Arg("initial_size", static_cast<int64_t>(2)));
  *
  * The operators can be added via the `add` method. For strict thread pinning, the `pin_operator`
  * argument should be true and the initial_size of the thread pool should be at least as large as
- * the number of operators that will be pinned to threads.
+ * the number of operators that will be pinned to threads. The optional `pin_cores` parameter
+ * allows restricting the thread to specific CPU cores (supported by EventBasedScheduler only).
  *
  * pool1.add(op1, true);
- * pool1.add(op2, true);
+ * pool1.add(op2, true, {0, 1});  // Pin to cores 0 and 1
  *
  * This add method takes care of adding any needed holoscan::CPUThread resource to the operator.
  *

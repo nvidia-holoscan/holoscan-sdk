@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,9 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-add_holoscan_operator(test_ops rx_dtype_test.cpp tx_dtype_test.cpp)
+add_holoscan_operator(test_ops
+  pose_tree_manager_lookup.cpp
+  rx_dtype_test.cpp
+  tx_dtype_test.cpp
+)
 
 target_link_libraries(op_test_ops
     PUBLIC
         holoscan::core
+        holoscan::pose_tree
 )

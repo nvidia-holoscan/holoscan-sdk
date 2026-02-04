@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <iomanip>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -276,6 +277,104 @@ class PingDefaultStreamPoolRxOp : public Operator {
   }
 };
 
+/**
+ * @brief Operator that receives an entity, uses receive_cuda_stream, and forwards the same entity.
+ *
+ * This tests the fix for the bug where forwarding a received entity would result in the downstream
+ * operator seeing the original upstream stream instead of this operator's internal stream.
+ */
+class EntityForwardingOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(EntityForwardingOp)
+
+  EntityForwardingOp() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.input<gxf::Entity>("in");
+    spec.output<gxf::Entity>("out");
+  }
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    // Receive the entity
+    auto maybe_entity = op_input.receive<gxf::Entity>("in");
+    if (!maybe_entity) {
+      throw std::runtime_error("Failed to receive entity");
+    }
+    auto& entity = static_cast<nvidia::gxf::Entity&>(maybe_entity.value());
+
+    // Get this operator's internal stream (this should be different from the upstream stream)
+    internal_stream_ = op_input.receive_cuda_stream("in");
+
+    // Get the upstream stream for comparison
+    auto upstream_streams = op_input.receive_cuda_streams("in");
+    if (upstream_streams.size() == 1 && upstream_streams[0].has_value()) {
+      upstream_stream_ = upstream_streams[0].value();
+    }
+
+    HOLOSCAN_LOG_INFO("{}: internal_stream={}, upstream_stream={}",
+                      name(),
+                      fmt::ptr(internal_stream_),
+                      fmt::ptr(upstream_stream_));
+
+    // Forward the SAME entity (this is the bug scenario)
+    op_output.emit(entity, "out");
+  }
+
+  cudaStream_t internal_stream() const { return internal_stream_; }
+  cudaStream_t upstream_stream() const { return upstream_stream_; }
+
+ private:
+  cudaStream_t internal_stream_{cudaStreamDefault};
+  cudaStream_t upstream_stream_{cudaStreamDefault};
+};
+
+/**
+ * @brief Sink operator that verifies it receives the forwarder's stream, not the original upstream.
+ */
+class EntityForwardingVerifyRxOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(EntityForwardingVerifyRxOp)
+
+  EntityForwardingVerifyRxOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.input<gxf::Entity>("in"); }
+
+  void compute(InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    auto maybe_entity = op_input.receive<gxf::Entity>("in");
+    if (!maybe_entity) {
+      throw std::runtime_error("Failed to receive entity");
+    }
+
+    // Get this operator's internal stream
+    cudaStream_t internal_stream = op_input.receive_cuda_stream("in");
+
+    // Get the stream that was attached to the incoming message
+    auto upstream_streams = op_input.receive_cuda_streams("in");
+    if (upstream_streams.empty() || !upstream_streams[0].has_value()) {
+      throw std::runtime_error("No upstream stream found in forwarded entity");
+    }
+    cudaStream_t received_stream = upstream_streams[0].value();
+
+    HOLOSCAN_LOG_INFO("{}: received_stream={}, internal_stream={}",
+                      name(),
+                      fmt::ptr(received_stream),
+                      fmt::ptr(internal_stream));
+
+    // Store for verification by the test
+    received_stream_ = received_stream;
+    internal_stream_ = internal_stream;
+  }
+
+  cudaStream_t received_stream() const { return received_stream_; }
+  cudaStream_t internal_stream() const { return internal_stream_; }
+
+ private:
+  cudaStream_t received_stream_{cudaStreamDefault};
+  cudaStream_t internal_stream_{cudaStreamDefault};
+};
+
 }  // namespace ops
 
 /**
@@ -510,6 +609,52 @@ class DefaultStreamPoolApp : public holoscan::Application {
   }
 };
 
+/**
+ * @brief Application testing entity forwarding with CUDA stream handling.
+ *
+ * Tests that when an operator receives an entity, uses receive_cuda_stream to get its internal
+ * stream, and then forwards the same entity, the downstream operator receives the forwarder's
+ * stream (not the original upstream stream).
+ *
+ * Pipeline: tx -> forwarder -> rx
+ *   - tx emits entity with stream A
+ *   - forwarder receives entity, uses receive_cuda_stream (gets stream B), forwards same entity
+ *   - rx should receive stream B (forwarder's stream), NOT stream A
+ */
+class EntityForwardingStreamApp : public holoscan::Application {
+ public:
+  void compose() override {
+    const int32_t width = 320;
+    const int32_t height = 240;
+    const std::shared_ptr<CudaStreamPool> cuda_stream_pool =
+        make_resource<CudaStreamPool>("cuda_stream", 0, 0, 0, 1, 10);
+
+    auto tx_args = ArgList({
+        Arg("rows", height),
+        Arg("columns", width),
+        Arg("channels", 4),
+        Arg("storage_type", std::string("device")),
+        Arg("cuda_stream_pool", cuda_stream_pool),
+        Arg("async_device_allocation", true),
+    });
+
+    auto tx = make_operator<ops::PingTensorTxOp>("tx", make_condition<CountCondition>(3), tx_args);
+
+    forwarder_ = make_operator<ops::EntityForwardingOp>("forwarder", cuda_stream_pool);
+    rx_ = make_operator<ops::EntityForwardingVerifyRxOp>("rx", cuda_stream_pool);
+
+    add_flow(tx, forwarder_, {{"out", "in"}});
+    add_flow(forwarder_, rx_, {{"out", "in"}});
+  }
+
+  std::shared_ptr<ops::EntityForwardingOp> forwarder() { return forwarder_; }
+  std::shared_ptr<ops::EntityForwardingVerifyRxOp> rx() { return rx_; }
+
+ private:
+  std::shared_ptr<ops::EntityForwardingOp> forwarder_;
+  std::shared_ptr<ops::EntityForwardingVerifyRxOp> rx_;
+};
+
 }  // namespace holoscan
 
 class CudaStreamParameterizedTestFixture
@@ -679,4 +824,77 @@ TEST(CudaStreamApps, TestDefaultStreamPoolApp) {
   EXPECT_TRUE(log_output.find(success_msg2) != std::string::npos)
       << "Success message should appear in log output:\n=== LOG ===\n"
       << log_output << "\n===========\n";
+}
+
+/**
+ * @brief Test that entity forwarding correctly updates the CudaStreamId.
+ *
+ * This tests the fix for a bug where forwarding a received entity would cause the downstream
+ * operator to see the original upstream stream instead of the forwarder's internal stream.
+ *
+ * The bug occurred because add_stream_id_to_entity always ADDED a new CudaStreamId component,
+ * and downstream's entity.get<CudaStreamId>() returned the FIRST (original) one.
+ *
+ * The fix updates any existing CudaStreamId instead of adding a new one.
+ */
+TEST(CudaStreamApps, TestEntityForwardingStream) {
+  using namespace holoscan;
+
+  auto app = make_application<EntityForwardingStreamApp>();
+
+  // capture output to check that the expected messages were logged
+  testing::internal::CaptureStderr();
+
+  // Test should complete without any runtime errors
+  std::string exception_message;
+  bool exception_thrown = false;
+
+  try {
+    app->run();
+  } catch (const std::exception& e) {
+    exception_thrown = true;
+    exception_message = e.what();
+  }
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  // If an exception was thrown, fail with log output for debugging
+  if (exception_thrown) {
+    FAIL() << "Application threw an exception: " << exception_message << "\n=== LOG OUTPUT ===\n"
+           << log_output << "\n=================\n";
+  }
+
+  // Extract the forwarder's internal stream from the log
+  // Format: "forwarder: internal_stream=0x..., upstream_stream=0x..."
+  std::string forwarder_prefix = "forwarder: internal_stream=";
+  auto forwarder_pos = log_output.find(forwarder_prefix);
+  ASSERT_NE(forwarder_pos, std::string::npos) << "Could not find forwarder log message";
+  auto forwarder_value_start = forwarder_pos + forwarder_prefix.length();
+  auto forwarder_comma_pos = log_output.find(",", forwarder_value_start);
+  ASSERT_NE(forwarder_comma_pos, std::string::npos) << "Could not find comma in forwarder log";
+  auto forwarder_internal_stream = std::stoull(
+      log_output.substr(forwarder_value_start, forwarder_comma_pos - forwarder_value_start),
+      nullptr,
+      16);
+
+  // Extract the rx's received stream from the log
+  // Format: "rx: received_stream=0x..., internal_stream=0x..."
+  std::string rx_prefix = "rx: received_stream=";
+  auto rx_pos = log_output.find(rx_prefix);
+  ASSERT_NE(rx_pos, std::string::npos) << "Could not find rx log message";
+  auto rx_value_start = rx_pos + rx_prefix.length();
+  auto rx_comma_pos = log_output.find(",", rx_value_start);
+  ASSERT_NE(rx_comma_pos, std::string::npos) << "Could not find comma in rx log";
+  auto rx_received_stream =
+      std::stoull(log_output.substr(rx_value_start, rx_comma_pos - rx_value_start), nullptr, 16);
+
+  // The key assertion: rx should have received the forwarder's internal stream,
+  // NOT the original tx stream
+  EXPECT_EQ(forwarder_internal_stream, rx_received_stream)
+      << "The downstream operator (rx) should receive the forwarder's internal stream, "
+      << "not the original upstream stream.\n"
+      << "forwarder's internal_stream: 0x" << std::hex << forwarder_internal_stream << "\n"
+      << "rx's received_stream: 0x" << std::hex << rx_received_stream << "\n"
+      << "=== LOG OUTPUT ===\n"
+      << log_output << "\n=================\n";
 }

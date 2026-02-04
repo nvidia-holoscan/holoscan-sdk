@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -125,7 +125,7 @@ class PyHolovizOp : public HolovizOp {
       const std::string& font_path = ""s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
       std::shared_ptr<holoscan::BooleanCondition> window_close_condition = nullptr,
-      const std::string& name = "holoviz_op")
+      const std::string& name = operator_default_name_v<ops::HolovizOp>)
       : HolovizOp(ArgList{Arg{"allocator", allocator},
                           Arg{"color_lut", color_lut},
                           Arg{"window_title", window_title},
@@ -167,32 +167,35 @@ class PyHolovizOp : public HolovizOp {
     if (key_callback) {
       this->add_arg(
           Arg{"key_callback",
-              KeyCallbackFunction(
-                  [key_callback](Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
-                    py::gil_scoped_acquire guard;
-                    key_callback(key, action, modifiers);
-                  })});
+              KeyCallbackFunction([key_callback = std::move(key_callback)](
+                                      Key key, KeyAndButtonAction action, KeyModifiers modifiers) {
+                py::gil_scoped_acquire guard;
+                key_callback(key, action, modifiers);
+              })});
     }
     if (unicode_char_callback) {
-      this->add_arg(Arg{"unicode_char_callback",
-                        UnicodeCharCallbackFunction([unicode_char_callback](uint32_t code_point) {
-                          py::gil_scoped_acquire guard;
-                          unicode_char_callback(code_point);
-                        })});
+      this->add_arg(
+          Arg{"unicode_char_callback",
+              UnicodeCharCallbackFunction(
+                  [unicode_char_callback = std::move(unicode_char_callback)](uint32_t code_point) {
+                    py::gil_scoped_acquire guard;
+                    unicode_char_callback(code_point);
+                  })});
     }
     if (mouse_button_callback) {
       this->add_arg(
           Arg{"mouse_button_callback",
-              MouseButtonCallbackFunction([mouse_button_callback](MouseButton button,
-                                                                  KeyAndButtonAction action,
-                                                                  KeyModifiers modifiers) {
-                py::gil_scoped_acquire guard;
-                mouse_button_callback(button, action, modifiers);
-              })});
+              MouseButtonCallbackFunction(
+                  [mouse_button_callback = std::move(mouse_button_callback)](
+                      MouseButton button, KeyAndButtonAction action, KeyModifiers modifiers) {
+                    py::gil_scoped_acquire guard;
+                    mouse_button_callback(button, action, modifiers);
+                  })});
     }
     if (scroll_callback) {
       this->add_arg(Arg{"scroll_callback",
-                        ScrollCallbackFunction([scroll_callback](double x_offset, double y_offset) {
+                        ScrollCallbackFunction([scroll_callback = std::move(scroll_callback)](
+                                                   double x_offset, double y_offset) {
                           py::gil_scoped_acquire guard;
                           scroll_callback(x_offset, y_offset);
                         })});
@@ -200,31 +203,36 @@ class PyHolovizOp : public HolovizOp {
     if (cursor_pos_callback) {
       this->add_arg(
           Arg{"cursor_pos_callback",
-              CursorPosCallbackFunction([cursor_pos_callback](double x_pos, double y_pos) {
+              CursorPosCallbackFunction([cursor_pos_callback = std::move(cursor_pos_callback)](
+                                            double x_pos, double y_pos) {
                 py::gil_scoped_acquire guard;
                 cursor_pos_callback(x_pos, y_pos);
               })});
     }
     if (framebuffer_size_callback) {
-      this->add_arg(Arg{"framebuffer_size_callback",
-                        FramebufferSizeCallbackFunction([framebuffer_size_callback](int w, int h) {
-                          py::gil_scoped_acquire guard;
-                          framebuffer_size_callback(w, h);
-                        })});
+      this->add_arg(
+          Arg{"framebuffer_size_callback",
+              FramebufferSizeCallbackFunction(
+                  [framebuffer_size_callback = std::move(framebuffer_size_callback)](int w, int h) {
+                    py::gil_scoped_acquire guard;
+                    framebuffer_size_callback(w, h);
+                  })});
     }
     if (window_size_callback) {
       this->add_arg(Arg{"window_size_callback",
-                        WindowSizeCallbackFunction([window_size_callback](int w, int h) {
-                          py::gil_scoped_acquire guard;
-                          window_size_callback(w, h);
-                        })});
+                        WindowSizeCallbackFunction(
+                            [window_size_callback = std::move(window_size_callback)](int w, int h) {
+                              py::gil_scoped_acquire guard;
+                              window_size_callback(w, h);
+                            })});
     }
     if (window_close_callback) {
-      this->add_arg(
-          Arg{"window_close_callback", WindowCloseCallbackFunction([window_close_callback]() {
-                py::gil_scoped_acquire guard;
-                window_close_callback();
-              })});
+      this->add_arg(Arg{
+          "window_close_callback",
+          WindowCloseCallbackFunction([window_close_callback = std::move(window_close_callback)]() {
+            py::gil_scoped_acquire guard;
+            window_close_callback();
+          })});
     }
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);
@@ -318,7 +326,7 @@ PYBIND11_MODULE(_holoviz, m) {
                  "font_path"_a = ""s,
                  "cuda_stream_pool"_a = py::none(),
                  "window_close_condition"_a = py::none(),
-                 "name"_a = "holoviz_op"s,
+                 "name"_a = std::string(operator_default_name_v<ops::HolovizOp>),
                  doc::HolovizOp::doc_HolovizOp);
 
   // Expose the default window close callback so Python users can chain it

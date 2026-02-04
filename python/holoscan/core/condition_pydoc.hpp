@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,6 +146,37 @@ Returns
 -------
 transmitter : holoscan.resources.Transmitter or None
     The transmitter used by this output port. Will be None if the port does not exist.
+)doc")
+
+PYDOC(notify_scheduler, R"doc(
+Notify the scheduler that an asynchronous event has completed.
+
+This method is used by event-based conditions (those returning
+`SchedulingStatusType.WAIT_EVENT` from `check()`) to signal to the scheduler
+that the condition is now ready to be re-evaluated.
+
+This method can be called from any thread (e.g., a CUDA host callback or a
+worker thread). It is thread-safe.
+
+Returns
+-------
+success : bool
+    True if the notification was successful, False otherwise.
+
+Notes
+-----
+This method should be called after updating the condition's internal state
+to indicate readiness. For example:
+
+.. code-block:: python
+
+    def my_callback(self):
+        self.state = State.EVENT_COMPLETE
+        self.notify_scheduler()
+
+See Also
+--------
+holoscan.core.SchedulingStatusType.WAIT_EVENT
 )doc")
 
 }  // namespace Condition

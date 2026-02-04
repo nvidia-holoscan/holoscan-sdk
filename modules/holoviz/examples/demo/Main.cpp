@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoviz/holoviz.hpp>
@@ -521,7 +522,9 @@ int main(int argc, char** argv) {
                   << "  -d, --display NAME       name of the display to use in exclusive display "
                      "or fullscreen mode (either EDID, `xrandr` or `hwinfo --monitor` name)"
                   << "  -p, --present_mode MODE  determines how the rendered result will be "
-                     "presented on the screen (`auto`, `fifo`, `immediate` or `mailbox`)"
+                     "presented on the screen (`auto`, `fifo`, `immediate`, `mailbox`, "
+                     "`fifo_latest_ready`, `shared_demand_refresh`, `shared_continuous_refresh`, "
+                     "`fifo_relaxed`)"
                   << "  -c, --color_space SPACE  specifies how the surface data is interpreted "
                      "when presented on screen (`srgb_nonlinear`, `extended_srgb_linear`, "
                      "`bt2020_linear`, `hdr10_st2084` or `bt709_linear`)"
@@ -545,7 +548,7 @@ int main(int argc, char** argv) {
         exclusive_display = true;
         break;
       case 'd':
-        display_name = argument;
+        display_name = std::move(argument);
         break;
       case 'p': {
         std::string lower_case_argument;
@@ -564,6 +567,18 @@ int main(int argc, char** argv) {
           break;
         } else if (lower_case_argument == "mailbox") {
           present_mode = viz::PresentMode::MAILBOX;
+          break;
+        } else if (lower_case_argument == "fifo_latest_ready") {
+          present_mode = viz::PresentMode::FIFO_LATEST_READY;
+          break;
+        } else if (lower_case_argument == "shared_demand_refresh") {
+          present_mode = viz::PresentMode::SHARED_DEMAND_REFRESH;
+          break;
+        } else if (lower_case_argument == "shared_continuous_refresh") {
+          present_mode = viz::PresentMode::SHARED_CONTINUOUS_REFRESH;
+          break;
+        } else if (lower_case_argument == "fifo_relaxed") {
+          present_mode = viz::PresentMode::FIFO_RELAXED;
           break;
         } else {
           throw std::runtime_error("Unhandled present mode");

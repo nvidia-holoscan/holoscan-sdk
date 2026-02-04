@@ -1,4 +1,4 @@
-(gxf-job-satistics)=
+(gxf-job-statistics)=
 # GXF job statistics
 
 Holoscan can have the underlying graph execution framework (GXF) collect job statistics during application execution. Collection of these statistics causes a small amount of runtime overhead, so they are disabled by default, but can be enabled on request via the environment variables documented below. The job statistics will appear in the console on application shutdown, but can optionally also be saved to a JSON file.

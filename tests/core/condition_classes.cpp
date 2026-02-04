@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -668,16 +668,41 @@ TEST(ConditionClasses, TestCudaBufferAvailableConditionDefaultConstructor) {
 TEST(ConditionClasses, TestCudaStreamCondition) {
   Fragment F;
   const std::string name{"cuda-stream-condition"};
-  auto condition = F.make_condition<CudaStreamCondition>(name);
+  auto condition =
+      F.make_condition<CudaStreamCondition>(name, Arg{"receivers", std::vector<std::string>{"in"}});
   EXPECT_EQ(condition->name(), name);
   EXPECT_EQ(typeid(condition), typeid(std::make_shared<CudaStreamCondition>()));
-  EXPECT_EQ(std::string(condition->gxf_typename()), "nvidia::gxf::CudaStreamSchedulingTerm"s);
+  // CudaStreamCondition is a native condition, not a GXF wrapper
   EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
 }
 
 TEST(ConditionClasses, TestCudaStreamConditionDefaultConstructor) {
   Fragment F;
   auto condition = F.make_condition<CudaStreamCondition>();
+}
+
+TEST(ConditionClasses, TestCudaStreamConditionMultipleReceivers) {
+  Fragment F;
+  const std::string name{"cuda-stream-condition"};
+  auto condition = F.make_condition<CudaStreamCondition>(
+      name, Arg{"receivers", std::vector<std::string>{"in1", "in2", "in3"}});
+  EXPECT_EQ(condition->name(), name);
+  EXPECT_TRUE(condition->description().find("name: " + name) != std::string::npos);
+}
+
+TEST(ConditionClasses, TestCudaStreamConditionCheckAllMessages) {
+  Fragment F;
+  const std::string name{"cuda-stream-condition"};
+  auto condition = F.make_condition<CudaStreamCondition>(
+      name, Arg{"receivers", std::vector<std::string>{"in"}}, Arg{"check_all_messages", false});
+  EXPECT_EQ(condition->name(), name);
+
+  // Verify check_all_messages parameter can be set
+  condition->check_all_messages(true);
+  EXPECT_EQ(condition->check_all_messages(), true);
+
+  condition->check_all_messages(false);
+  EXPECT_EQ(condition->check_all_messages(), false);
 }
 
 TEST(ConditionClasses, TestCudaEventCondition) {
@@ -694,6 +719,49 @@ TEST(ConditionClasses, TestCudaEventCondition) {
 TEST(ConditionClasses, TestCudaEventConditionDefaultConstructor) {
   Fragment F;
   auto condition = F.make_condition<CudaEventCondition>();
+}
+
+TEST(ConditionClasses, TestConditionUniqueDefaultNames) {
+  // Test that different condition types get unique default names when created without
+  // an explicit name parameter. This prevents naming conflicts when multiple unnamed
+  // conditions of different types are added to the same operator.
+  Fragment F;
+
+  // Create conditions without specifying names
+  auto async_cond = F.make_condition<AsynchronousCondition>();
+  auto boolean_cond = F.make_condition<BooleanCondition>(Arg{"enable_tick", true});
+  auto count_cond = F.make_condition<CountCondition>(Arg{"count", 5});
+  auto cuda_buffer_available_cond = F.make_condition<CudaBufferAvailableCondition>();
+  auto cuda_event_cond = F.make_condition<CudaEventCondition>();
+  auto cuda_stream_cond = F.make_condition<CudaStreamCondition>();
+  auto downstream_cond = F.make_condition<DownstreamMessageAffordableCondition>();
+  auto expiring_message_available_cond = F.make_condition<ExpiringMessageAvailableCondition>();
+  auto message_cond = F.make_condition<MessageAvailableCondition>();
+  auto multi_message_cond = F.make_condition<MultiMessageAvailableCondition>();
+  auto multi_message_timeout_cond = F.make_condition<MultiMessageAvailableTimeoutCondition>();
+  auto periodic_cond = F.make_condition<PeriodicCondition>(Arg{"recess_period", 100000000L});
+
+  // Verify each condition has the expected default name
+  EXPECT_EQ(async_cond->name(), "async_condition");
+  EXPECT_EQ(boolean_cond->name(), "boolean_condition");
+  EXPECT_EQ(count_cond->name(), "count_condition");
+  EXPECT_EQ(cuda_buffer_available_cond->name(), "cuda_buffer_available_condition");
+  EXPECT_EQ(cuda_event_cond->name(), "cuda_event_condition");
+  EXPECT_EQ(cuda_stream_cond->name(), "cuda_stream_condition");
+  EXPECT_EQ(downstream_cond->name(), "downstream_affordable_condition");
+  EXPECT_EQ(expiring_message_available_cond->name(), "expiring_message_available_condition");
+  EXPECT_EQ(message_cond->name(), "message_available_condition");
+  EXPECT_EQ(multi_message_cond->name(), "multi_message_condition");
+  EXPECT_EQ(multi_message_timeout_cond->name(), "multi_message_timeout_condition");
+  EXPECT_EQ(periodic_cond->name(), "periodic_condition");
+
+  // Test explicit constructors
+  auto boolean_cond2 = F.make_condition<BooleanCondition>(true);
+  auto count_cond2 = F.make_condition<CountCondition>(5);
+  auto periodic_cond2 = F.make_condition<PeriodicCondition>(100000000L);
+  EXPECT_EQ(boolean_cond2->name(), "boolean_condition");
+  EXPECT_EQ(count_cond2->name(), "count_condition");
+  EXPECT_EQ(periodic_cond2->name(), "periodic_condition");
 }
 
 }  // namespace holoscan

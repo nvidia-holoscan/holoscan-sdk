@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/arg.hpp"
@@ -168,7 +169,7 @@ std::vector<std::vector<T>> process_nested_shared_ptr_sequence(const py::sequenc
     for (const auto& inner_item : item) {
       vv.push_back(inner_item.cast<T>());
     }
-    v.push_back(vv);
+    v.push_back(std::move(vv));
   }
   return v;
 }

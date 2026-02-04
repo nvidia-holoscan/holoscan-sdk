@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -74,18 +74,19 @@ class PyInferenceProcessorOp : public InferenceProcessorOp {
   using InferenceProcessorOp::InferenceProcessorOp;
 
   // Define a constructor that fully initializes the object.
-  PyInferenceProcessorOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                         const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
-                         const py::dict& process_operations,  // InferenceProcessorOp::DataVecMap
-                         const py::dict& processed_map,       // InferenceProcessorOp::DataVecMap
-                         const std::vector<std::string>& in_tensor_names,
-                         const std::vector<std::string>& out_tensor_names,
-                         const py::dict& custom_kernels,  // InferenceProcessorOp::DataMap
-                         bool input_on_cuda = false, bool output_on_cuda = false,
-                         bool transmit_on_cuda = false, bool disable_transmitter = false,
-                         std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
-                         const std::string& config_path = ""s,
-                         const std::string& name = "postprocessor"s)
+  PyInferenceProcessorOp(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      std::shared_ptr<::holoscan::Allocator> allocator,
+      const py::dict& process_operations,  // InferenceProcessorOp::DataVecMap
+      const py::dict& processed_map,       // InferenceProcessorOp::DataVecMap
+      const std::vector<std::string>& in_tensor_names,
+      const std::vector<std::string>& out_tensor_names,
+      const py::dict& custom_kernels,  // InferenceProcessorOp::DataMap
+      bool input_on_cuda = false, bool output_on_cuda = false, bool transmit_on_cuda = false,
+      bool disable_transmitter = false,
+      std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
+      const std::string& config_path = ""s,
+      const std::string& name = operator_default_name_v<ops::InferenceProcessorOp>)
       : InferenceProcessorOp(ArgList{Arg{"allocator", allocator},
                                      Arg{"in_tensor_names", in_tensor_names},
                                      Arg{"out_tensor_names", out_tensor_names},
@@ -162,36 +163,37 @@ PYBIND11_MODULE(_inference_processor, m) {
       inference_processor_op(
           m, "InferenceProcessorOp", doc::InferenceProcessorOp::doc_InferenceProcessorOp);
 
-  inference_processor_op.def(py::init<std::variant<Fragment*, Subgraph*>,
-                                      const py::args&,
-                                      std::shared_ptr<::holoscan::Allocator>,
-                                      py::dict,
-                                      py::dict,
-                                      const std::vector<std::string>&,
-                                      const std::vector<std::string>&,
-                                      py::dict,
-                                      bool,
-                                      bool,
-                                      bool,
-                                      bool,
-                                      std::shared_ptr<holoscan::CudaStreamPool>,
-                                      const std::string&,
-                                      const std::string&>(),
-                             "fragment"_a,
-                             "allocator"_a,
-                             "process_operations"_a = py::dict(),
-                             "processed_map"_a = py::dict(),
-                             "in_tensor_names"_a = std::vector<std::string>{},
-                             "out_tensor_names"_a = std::vector<std::string>{},
-                             "custom_kernels"_a = py::dict(),
-                             "input_on_cuda"_a = false,
-                             "output_on_cuda"_a = false,
-                             "transmit_on_cuda"_a = false,
-                             "disable_transmitter"_a = false,
-                             "cuda_stream_pool"_a = py::none(),
-                             "config_path"_a = ""s,
-                             "name"_a = "postprocessor"s,
-                             doc::InferenceProcessorOp::doc_InferenceProcessorOp);
+  inference_processor_op.def(
+      py::init<std::variant<Fragment*, Subgraph*>,
+               const py::args&,
+               std::shared_ptr<::holoscan::Allocator>,
+               py::dict,
+               py::dict,
+               const std::vector<std::string>&,
+               const std::vector<std::string>&,
+               py::dict,
+               bool,
+               bool,
+               bool,
+               bool,
+               std::shared_ptr<holoscan::CudaStreamPool>,
+               const std::string&,
+               const std::string&>(),
+      "fragment"_a,
+      "allocator"_a,
+      "process_operations"_a = py::dict(),
+      "processed_map"_a = py::dict(),
+      "in_tensor_names"_a = std::vector<std::string>{},
+      "out_tensor_names"_a = std::vector<std::string>{},
+      "custom_kernels"_a = py::dict(),
+      "input_on_cuda"_a = false,
+      "output_on_cuda"_a = false,
+      "transmit_on_cuda"_a = false,
+      "disable_transmitter"_a = false,
+      "cuda_stream_pool"_a = py::none(),
+      "config_path"_a = ""s,
+      "name"_a = std::string(operator_default_name_v<ops::InferenceProcessorOp>),
+      doc::InferenceProcessorOp::doc_InferenceProcessorOp);
 
   py::class_<InferenceProcessorOp::DataMap>(inference_processor_op, "DataMap")
       .def(py::init<>())

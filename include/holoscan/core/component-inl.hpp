@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -107,6 +107,24 @@ std::shared_ptr<ServiceT> ComponentBase::service(std::string_view id) const {
   // Get the base service from the provider
   auto base_service = service_provider_->get_service_erased(typeid(ServiceT), id);
   if (!base_service) {
+    // Keep this fallback lookup logic in sync with Fragment::service().
+    if constexpr (std::is_base_of_v<Resource, ServiceT>) {
+      if (!id.empty()) {
+        auto service_resource_by_name = service_provider_->get_service_resource_by_name(id);
+        if (service_resource_by_name) {
+          auto typed_resource = std::dynamic_pointer_cast<ServiceT>(service_resource_by_name);
+          if (typed_resource) {
+            return typed_resource;
+          }
+          HOLOSCAN_LOG_DEBUG(
+              "Component '{}': Service resource with id '{}' is not type-castable to type '{}'.",
+              name(),
+              std::string(id),
+              typeid(ServiceT).name());
+        }
+      }
+    }
+
     HOLOSCAN_LOG_DEBUG("Component '{}': Service of type {} with id '{}' not found.",
                        name(),
                        typeid(ServiceT).name(),

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -147,7 +148,7 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
 
     // Create a green context pool which will be used as the default green context pool for the
     // current fragment
-    const auto cuda_green_context_pool = add_default_green_context_pool(0, partitions);
+    const auto cuda_green_context_pool = add_default_green_context_pool(0, std::move(partitions));
 
     // Use green context 0 from the provided green context pool
     const auto cuda_green_context1 =

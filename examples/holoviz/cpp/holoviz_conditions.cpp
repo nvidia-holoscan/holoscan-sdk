@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -135,8 +136,8 @@ class SourceOp : public Operator {
     spec.type_ = HolovizOp::InputType::TEXT;
     // The text to display, showing frame number and frame rate
     spec.text_.push_back(fmt::format("Frame {} rate {}", frame_index_, frame_rate));
-    specs.push_back(spec);
-    op_output.emit(specs, "output_specs");
+    specs.push_back(std::move(spec));
+    op_output.emit(std::move(specs), "output_specs");
 
     // Increment frame counter for next iteration
     ++frame_index_;

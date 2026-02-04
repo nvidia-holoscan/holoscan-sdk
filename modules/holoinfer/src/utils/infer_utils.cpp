@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -443,7 +443,7 @@ InferStatus parse_yaml_node(const YAML::Node& in_config, std::vector<std::string
             }
             dim.push_back(std::stoi(t));
           }
-          dims.push_back(dim);
+          dims.push_back(std::move(dim));
         }
       } else {
         HOLOSCAN_LOG_ERROR("Dimensions cannot be empty for {}", key);
@@ -457,7 +457,7 @@ InferStatus parse_yaml_node(const YAML::Node& in_config, std::vector<std::string
     if (properties_yaml["dtype"]) {
       auto value = properties_yaml["dtype"].as<std::string>();
       if (kHoloInferDataTypeMap.find(value) != kHoloInferDataTypeMap.end()) {
-        types.push_back(value);
+        types.push_back(std::move(value));
       } else {
         HOLOSCAN_LOG_ERROR("Output datatype {} not supported", value);
         return InferStatus(holoinfer_code::H_ERROR, "Error in yaml node parsing.");

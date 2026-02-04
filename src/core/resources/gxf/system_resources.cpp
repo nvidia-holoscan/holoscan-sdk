@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <typeinfo>
+#include <utility>
 #include <vector>
 
 #include <gxf/std/resources.hpp>
@@ -64,7 +65,7 @@ void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator,
     // Create a CPUThread resource and add it to the Operator's list of arguments
     const std::string thread_name = fmt::format("{}_cpu_thread", op->name());
     auto cpu_thread = fragment_->make_resource<CPUThread>(
-        thread_name, Arg{"pin_operator", pin_operator}, Arg{"pin_cores", pin_cores});
+        std::move(thread_name), Arg{"pin_operator", pin_operator}, Arg{"pin_cores", pin_cores});
     auto cpu_thread_resource = std::dynamic_pointer_cast<holoscan::Resource>(cpu_thread);
     if (!cpu_thread_resource) {
       throw std::runtime_error(
@@ -101,7 +102,7 @@ void ThreadPool::add_realtime(const std::shared_ptr<Operator>& op, SchedulingPol
     YAML::Node sched_policy_node;
     sched_policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(sched_policy);
     const std::string thread_name = fmt::format("{}_cpu_thread", op->name());
-    auto cpu_thread = fragment_->make_resource<CPUThread>(thread_name,
+    auto cpu_thread = fragment_->make_resource<CPUThread>(std::move(thread_name),
                                                           Arg{"pin_operator", pin_operator},
                                                           Arg{"pin_cores", pin_cores},
                                                           Arg{"sched_policy", sched_policy_node},

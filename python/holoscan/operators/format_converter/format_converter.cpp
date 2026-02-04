@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -68,7 +68,7 @@ class PyFormatConverterOp : public FormatConverterOp {
                       int32_t resize_height = 0, int32_t resize_width = 0, int32_t resize_mode = 0,
                       const std::vector<int>& out_channel_order = std::vector<int>{},
                       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
-                      const std::string& name = "format_converter")
+                      const std::string& name = operator_default_name_v<ops::FormatConverterOp>)
       : FormatConverterOp(ArgList{Arg{"in_tensor_name", in_tensor_name},
                                   Arg{"in_dtype", in_dtype},
                                   Arg{"out_tensor_name", out_tensor_name},
@@ -130,7 +130,7 @@ PYBIND11_MODULE(_format_converter, m) {
            "resize_mode"_a = 0,
            "out_channel_order"_a = std::vector<int>{},
            "cuda_stream_pool"_a = py::none(),
-           "name"_a = "format_converter"s,
+           "name"_a = std::string(operator_default_name_v<ops::FormatConverterOp>),
            doc::FormatConverterOp::doc_FormatConverterOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

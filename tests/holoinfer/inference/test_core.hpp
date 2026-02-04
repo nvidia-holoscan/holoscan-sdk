@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -38,6 +38,9 @@ class HoloInferTests {
                                      const std::string& module, unsigned int current_test,
                                      const std::string& test_name, const std::string& message);
 
+  void holoinfer_skip(const std::string& module, unsigned int current_test,
+                      const std::string& test_name, const std::string& reason);
+
   void clear_specs();
   HoloInfer::InferStatus create_specifications();
   void setup_specifications();
@@ -55,7 +58,7 @@ class HoloInferTests {
 
  private:
   /// Default parameters for inference
-  unsigned int pass_test_count = 0, fail_test_count = 0, total_test_count = 0;
+  unsigned int pass_test_count = 0, fail_test_count = 0, skip_test_count = 0, total_test_count = 0;
 
   std::string backend = "trt";
 

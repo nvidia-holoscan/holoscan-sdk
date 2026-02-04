@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,8 +100,8 @@ inline void init_component_base(ComponentT* component,
   }
   auto [frag_ptr, qualified_name] =
       get_fragment_ptr_name_pair(fragment_or_subgraph, name, component_type);
-  component->fragment(frag_ptr);
   component->name(qualified_name);
+  frag_ptr->setup_component_internals(component);
   auto spec = std::make_shared<ComponentSpec>(frag_ptr);
   component->spec(spec);
   component->setup(*spec);
@@ -134,8 +134,8 @@ inline void init_component_base(ComponentT* component, Fragment* fragment,
   if (fragment == nullptr) {
     throw std::runtime_error("fragment pointer cannot be null");
   }
-  component->fragment(fragment);
   component->name(name);
+  fragment->setup_component_internals(component);
   auto spec = std::make_shared<ComponentSpec>(fragment);
   component->spec(spec);
   component->setup(*spec);
@@ -166,8 +166,8 @@ inline void init_operator_base(OperatorT* op,
   }
   auto [frag_ptr, qualified_name] =
       get_fragment_ptr_name_pair(fragment_or_subgraph, name, "operator");
-  op->fragment(frag_ptr);
   op->name(qualified_name);
+  frag_ptr->setup_component_internals(op);
   auto spec = std::make_shared<OperatorSpec>(frag_ptr);
   op->spec(spec);
   op->setup(*spec);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,6 +123,73 @@ op : Operator
     The operator to add
 )doc")
 
+// Configuration methods
+PYDOC(config_kwargs, R"doc(
+Get the configuration object for this subgraph.
+
+Returns the `holoscan.core.Config` object containing the configuration parameters
+that were loaded from a YAML file passed to the subgraph constructor.
+
+.. note::
+
+    Configuration must be passed to the subgraph constructor via the ``config`` parameter.
+    It cannot be set after construction.
+
+.. note::
+
+    Loading GXF extensions is not supported from the subgraph config file. GXF extensions
+    should be loaded via the application-level configuration only.
+
+Returns
+-------
+holoscan.core.Config
+    The configuration object for this subgraph.
+)doc")
+
+PYDOC(config_keys, R"doc(
+The set of keys present in the subgraph's configuration file.
+)doc")
+
+PYDOC(from_config, R"doc(
+Retrieve parameters from the subgraph's associated configuration.
+
+Parameters
+----------
+key : str
+    The key within the configuration file to retrieve. This can also be a specific
+    component of the parameter via syntax `'key.sub_key'`.
+
+Returns
+-------
+args : holoscan.core.ArgList
+    An argument list associated with the key.
+)doc")
+
+PYDOC(kwargs, R"doc(
+Retrieve a dictionary of parameters from the subgraph's associated configuration.
+
+This is the Python equivalent for passing configuration to operators. Use with
+``**`` unpacking to pass parameters to operator constructors.
+
+Parameters
+----------
+key : str
+    The key within the configuration file to retrieve. This can also be a specific
+    component of the parameter via syntax `'key.sub_key'`.
+
+Returns
+-------
+dict
+    A dictionary of the parameters stored under key.
+
+Examples
+--------
+.. code-block:: python
+
+    def compose(self):
+        op = MyOp(self, name="my_op", **self.kwargs("my_op"))
+)doc")
+
 // add_flow method (single docstring for all overloads)
 PYDOC(add_flow, R"doc(
 Connect components within this Subgraph.
@@ -167,7 +234,13 @@ only a single output on the upstream component and a single input on the downstr
 PYDOC(add_interface_port, R"doc(
 Add an interface port.
 
-This is a convenience method that automatically sets is_input=true.
+If is_input is not specified, the port direction is auto-detected:
+- For operator ports: checks if the port exists as an input or output
+- For subgraph ports: uses the nested subgraph's interface port direction
+
+If the port name exists as both an input and output (rare), you must
+either specify the is_input argument explicitly, or use
+add_input_interface_port() or add_output_interface_port() instead.
 
 Parameters
 ----------
@@ -175,11 +248,12 @@ external_name : str
     The name of the interface port (used in add_flow calls)
 internal_op : holoscan.core.Operator or holoscan.core.Subgraph
     The internal operator (or subgraph) that owns the actual port
-internal_port : str
+internal_port : str, optional
     The port name on the internal operator (or the interface port name on
-    the internal subgraph).
-is_input : bool
-    Whether this is an input port (vs output)
+    the internal subgraph). Defaults to external_name if not specified.
+is_input : bool, optional
+    Whether this is an input port (vs output). If not specified, auto-detected
+    from the operator or subgraph's port definitions.
 )doc")
 
 // Interface port methods
@@ -284,6 +358,91 @@ This is an overloaded function with two variants:
    - ``add_output_exec_interface_port(external_name, internal_subgraph, internal_interface_port)``
    - Exposes a nested subgraph's execution interface port as an external interface port
    - Enables hierarchical execution control flow composition
+)doc")
+
+PYDOC(add_data_logger, R"doc(
+Add a data logger to the fragment.
+
+This method dispatches to the fragment's add_data_logger method.
+
+Parameters
+----------
+logger : holoscan.core.DataLogger
+    The data logger to add
+)doc")
+
+PYDOC(interface_ports, R"doc(
+Get all data interface ports.
+
+Returns a dictionary mapping interface port names to InterfacePort objects.
+Each InterfacePort contains a list of mappings - most ports have a single mapping,
+but input interface ports can have multiple mappings to broadcast to multiple
+internal operators.
+
+Returns
+-------
+dict
+    A dictionary mapping interface port names to InterfacePort objects.
+)doc")
+
+PYDOC(exec_interface_ports, R"doc(
+Get all execution interface ports.
+
+Returns
+-------
+dict
+    A dictionary mapping execution interface port names to InterfacePort objects.
+)doc")
+
+PYDOC(get_interface_operator_port, R"doc(
+Get the first operator and port name for a data interface port.
+
+Resolves the interface port name to the actual internal operator and port,
+recursively checking nested subgraphs for hierarchical port resolution.
+
+For broadcast input ports that have multiple mappings, this returns
+only the first mapping. Access the InterfacePort directly via ``interface_ports()``
+to get all mappings via its ``mappings`` attribute.
+
+Parameters
+----------
+port_name : str
+    The interface port name to resolve.
+
+Returns
+-------
+tuple of (Operator, str)
+    A tuple of (operator, port_name) if found, or (None, "") if not found.
+)doc")
+
+PYDOC(get_exec_interface_operator_port, R"doc(
+Get the operator and port name for an execution interface port.
+
+Resolves the execution interface port name to the actual internal operator and port,
+recursively checking nested subgraphs for hierarchical port resolution.
+
+Parameters
+----------
+port_name : str
+    The execution interface port name to resolve.
+
+Returns
+-------
+tuple of (Operator, str)
+    A tuple of (operator, port_name) if found, or (None, "") if not found.
+)doc")
+
+PYDOC(operators, R"doc(
+Get all operators belonging to this subgraph and its nested subgraphs.
+
+Returns all operators whose names are prefixed with this subgraph's name
+followed by an underscore. This includes operators from nested subgraphs
+since their names are also prefixed with the parent subgraph's name.
+
+Returns
+-------
+list of Operator
+    List of operators belonging to this subgraph.
 )doc")
 
 }  // namespace Subgraph

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "../core/component_util.hpp"
 #include "./downstream_message_affordable_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -59,7 +60,7 @@ class PyDownstreamMessageAffordableCondition : public DownstreamMessageAffordabl
   explicit PyDownstreamMessageAffordableCondition(
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, uint64_t min_size = 1L,
       std::optional<const std::string> transmitter = std::nullopt,
-      const std::string& name = "noname_downstream_affordable_condition")
+      const std::string& name = condition_default_name_v<DownstreamMessageAffordableCondition>)
       : DownstreamMessageAffordableCondition(Arg{"min_size", min_size}) {
     if (transmitter.has_value()) {
       this->add_arg(Arg("transmitter", transmitter.value()));
@@ -84,7 +85,7 @@ void init_downstream_message_affordable(py::module_& m) {
            "fragment"_a,
            "min_size"_a = 1L,
            "transmitter"_a = py::none(),
-           "name"_a = "noname_downstream_affordable_condition"s,
+           "name"_a = std::string(condition_default_name_v<DownstreamMessageAffordableCondition>),
            doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
       .def_property("min_size",
                     py::overload_cast<>(&DownstreamMessageAffordableCondition::min_size),

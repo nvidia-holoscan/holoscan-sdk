@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,29 +24,15 @@
 
 #include "holoscan/holoscan.hpp"
 
+#include "holoscan/operators/ping_tx/ping_tx.hpp"
+
 namespace holoscan::ops {
 
-class QueueSizeWarningTxOp : public Operator {
+
+class DefaultMinSizeRxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(QueueSizeWarningTxOp)
-  QueueSizeWarningTxOp() = default;
-
-  void setup(OperatorSpec& spec) override { spec.output<int>("out"); }
-
-  void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
-               [[maybe_unused]] ExecutionContext& context) override {
-    op_output.emit(index_, "out");
-    ++index_;
-  }
-
- private:
-  int index_ = 0;
-};
-
-class QueueSizeWarningDefaultRxOp : public Operator {
- public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(QueueSizeWarningDefaultRxOp)
-  QueueSizeWarningDefaultRxOp() = default;
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(DefaultMinSizeRxOp)
+  DefaultMinSizeRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
     // queue_size > 1 with no explicit condition triggers the warning and uses min_size=queue_size.
@@ -60,10 +46,10 @@ class QueueSizeWarningDefaultRxOp : public Operator {
   }
 };
 
-class QueueSizeWarningExplicitMinSizeRxOp : public Operator {
+class ExplicitMinSizeRxOp : public Operator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(QueueSizeWarningExplicitMinSizeRxOp)
-  QueueSizeWarningExplicitMinSizeRxOp() = default;
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(ExplicitMinSizeRxOp)
+  ExplicitMinSizeRxOp() = default;
 
   void setup(OperatorSpec& spec) override {
     // queue_size=2 (buffering) but min_size=1 (no batching)
@@ -91,11 +77,11 @@ class QueueSizeWarningDefaultApp : public holoscan::Application {
     using namespace holoscan;
     using namespace std::chrono_literals;
 
-    auto tx = make_operator<ops::QueueSizeWarningTxOp>(
+    auto tx = make_operator<ops::PingTxOp>(
         "tx",
         make_condition<CountCondition>("count", 2),
         make_condition<PeriodicCondition>("periodic", 0.01s));
-    auto rx = make_operator<ops::QueueSizeWarningDefaultRxOp>("rx");
+    auto rx = make_operator<ops::DefaultMinSizeRxOp>("rx");
     add_flow(tx, rx);
   }
 };
@@ -106,11 +92,11 @@ class QueueSizeWarningExplicitMinSizeApp : public holoscan::Application {
     using namespace holoscan;
     using namespace std::chrono_literals;
 
-    auto tx = make_operator<ops::QueueSizeWarningTxOp>(
+    auto tx = make_operator<ops::PingTxOp>(
         "tx",
         make_condition<CountCondition>("count", 2),
         make_condition<PeriodicCondition>("periodic", 0.01s));
-    auto rx = make_operator<ops::QueueSizeWarningExplicitMinSizeRxOp>("rx");
+    auto rx = make_operator<ops::ExplicitMinSizeRxOp>("rx");
     add_flow(tx, rx);
   }
 };

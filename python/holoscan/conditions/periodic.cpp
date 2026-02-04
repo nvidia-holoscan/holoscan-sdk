@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,6 +29,7 @@
 #include "../core/component_util.hpp"
 #include "./periodic_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -83,7 +84,7 @@ class PyPeriodicCondition : public PeriodicCondition {
                       int64_t recess_period_ns,
                       const std::variant<std::string, PeriodicConditionPolicy>& policy =
                           PeriodicConditionPolicy::kCatchUpMissedTicks,
-                      const std::string& name = "noname_periodic_condition")
+                      const std::string& name = condition_default_name_v<PeriodicCondition>)
       : PeriodicCondition(recess_period_ns) {
     // Update policy
     if (std::holds_alternative<std::string>(policy)) {
@@ -99,7 +100,7 @@ class PyPeriodicCondition : public PeriodicCondition {
                       std::chrono::duration<Rep, Period> recess_period_duration,
                       const std::variant<std::string, PeriodicConditionPolicy>& policy =
                           PeriodicConditionPolicy::kCatchUpMissedTicks,
-                      const std::string& name = "noname_periodic_condition")
+                      const std::string& name = condition_default_name_v<PeriodicCondition>)
       : PeriodicCondition(recess_period_duration) {
     // Update policy
     if (std::holds_alternative<std::string>(policy)) {
@@ -133,7 +134,7 @@ void init_periodic(py::module_& m) {
            "fragment"_a,
            "recess_period"_a,
            "policy"_a = PeriodicConditionPolicy::kCatchUpMissedTicks,
-           "name"_a = "noname_periodic_condition"s)
+           "name"_a = std::string(condition_default_name_v<PeriodicCondition>))
       .def(py::init<std::variant<Fragment*, Subgraph*>,
                     std::chrono::nanoseconds,
                     const std::variant<std::string, PeriodicConditionPolicy>&,
@@ -141,7 +142,7 @@ void init_periodic(py::module_& m) {
            "fragment"_a,
            "recess_period"_a,
            "policy"_a = PeriodicConditionPolicy::kCatchUpMissedTicks,
-           "name"_a = "noname_periodic_condition"s,
+           "name"_a = std::string(condition_default_name_v<PeriodicCondition>),
            doc::PeriodicCondition::doc_PeriodicCondition)
       .def("recess_period",
            static_cast<void (PeriodicCondition::*)(int64_t)>(&PeriodicCondition::recess_period),

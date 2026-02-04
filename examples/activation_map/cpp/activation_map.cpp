@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@
 #include <unistd.h>
 
 #include <climits>
-#include <iostream>
 #include <memory>
 #include <string>
 #include <vector>
@@ -177,9 +176,9 @@ class ActivationMapDemoApp : public holoscan::Application {
     // For model paths, need when debugging
     std::array<char, PATH_MAX> result{};
     ssize_t count = readlink("/proc/self/exe", result.data(), result.size());
-    auto prog_path = std::string(result.data(), (count > 0) ? count : 0);
+    const auto prog_path = std::string(result.data(), (count > 0) ? count : 0);
     size_t pos = prog_path.find_last_of("\\/");
-    auto prog_dir = (std::string::npos == pos) ? "" : prog_path.substr(0, pos);
+    const auto prog_dir = (std::string::npos == pos) ? "" : prog_path.substr(0, pos);
 
     ops::InferenceOp::DataMap model_path_map;
     model_path_map.insert("first", prog_dir + "/../models/dummy_addition_model_1.onnx");

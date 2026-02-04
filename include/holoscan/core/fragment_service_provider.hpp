@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,8 +24,9 @@
 
 namespace holoscan {
 
-// Forward declaration
+// Forward declarations
 class FragmentService;
+class Resource;
 
 /**
  * @brief Interface for classes that can provide access to registered fragment services.
@@ -47,6 +48,14 @@ class FragmentServiceProvider {
    */
   virtual std::shared_ptr<FragmentService> get_service_erased(const std::type_info& service_type,
                                                               std::string_view id) const = 0;
+
+  /**
+   * @brief Retrieve a resource registered as a fragment service by name.
+   *
+   * @param id The service id (name) used during service registration.
+   * @return A shared_ptr to the service resource, or nullptr if not found.
+   */
+  virtual std::shared_ptr<Resource> get_service_resource_by_name(std::string_view id) const = 0;
 };
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -209,7 +209,7 @@ void BayerDemosaicOp::compute(InputContext& op_input, OutputContext& op_output,
           fmt::format("Tensor '{}' not found in message.\n", in_tensor_name_.get()));
     }
     // Tensor in_tensor;
-    auto in_tensor = maybe_tensor;
+    auto in_tensor = std::move(maybe_tensor);
 
     // Get needed information from the tensor
     // cast Holoscan::Tensor to nvidia::gxf::Tensor so attribute access code can remain as-is

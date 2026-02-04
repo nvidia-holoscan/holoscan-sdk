@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@ set(HOLOSCAN_GXF_COMPONENTS
     sample # needed for testing SYSTEM_TEST
 )
 
-find_package(GXF 5.2 CONFIG REQUIRED
+find_package(GXF 5.3 CONFIG REQUIRED
     COMPONENTS ${HOLOSCAN_GXF_COMPONENTS}
 )
 message(STATUS "Found GXF: ${GXF_DIR}")

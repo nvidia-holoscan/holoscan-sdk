@@ -32,19 +32,19 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-igpu
   ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -130,7 +130,7 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 3.10 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 3.11 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -1262,6 +1262,55 @@ Set the following environment variables before executing the application to offl
 export __NV_PRIME_RENDER_OFFLOAD=1
 export __GLX_VENDOR_LIBRARY_NAME=nvidia
 ```
+
+**Q29: How do I fix PyTorch CUDA linalg errors on Jetson Orin / JetPack 6 devices?**
+
+A29: When using PyTorch from the [Jetson AI Labs registry](https://pypi.jetson-ai-lab.io) on bare metal JetPack 6 (IGX Orin or AGX Orin), you may encounter errors like:
+
+```text
+RuntimeError: Error in dlopen: .../torch/lib/libtorch_cuda_linalg.so: undefined symbol: cusolverDnXsyevBatched_bufferSize, version libcusolver.so.11
+```
+
+This occurs because the PyTorch distribution requires a newer version of libcusolver (11.7.1.2) than what is available in the default L4T 36.4 repository (11.6.4.69).
+
+**Solution:**
+
+Install the required libcusolver version manually:
+
+```sh
+# Download and install libcusolver 11.7.1.2 for arm64
+curl -fSL -o libcusolver.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/libcusolver-12-6_11.7.1.2-1_arm64.deb && \
+sudo apt-get install --no-install-recommends -y ./libcusolver.deb && \
+rm libcusolver.deb
+```
+
+After installing the updated libcusolver package, PyTorch CUDA operations (such as `torch.linalg.inv()`) should work correctly.
+
+**Note:** This is a known compatibility issue when using PyTorch from the Jetson AI Labs registry on bare metal Jetpack 6. The Holoscan SDK container images already include this fix. If you are building your own containers or running on bare metal, you will need to apply this workaround.
+
+**Q30: How do I fix segmentation faults when using PyTorch 2.9.x with Holoscan SDK v3.10 CUDA 12?**
+
+A30: When running Holoscan SDK v3.10 with CUDA 12 and PyTorch 2.9.x, you may encounter segmentation faults during application teardown, particularly when running inference tests. The error typically appears as:
+
+```text
+Fatal Python error: Segmentation fault
+
+Current thread 0x00007f07e53d0740 (most recent call first):
+  File ".../test_inference.py", line 177 in test_inference_torch
+  ...
+```
+
+This occurs because Holoscan SDK v3.10 CUDA 12 binaries are built with libtorch 2.8.0, and there is a compatibility issue with PyTorch 2.9.x that affects application deactivation.
+
+**Solution:**
+
+Downgrade to PyTorch 2.8.x, which maintains full compatibility with Holoscan SDK v3.10 CUDA 12:
+
+```sh
+pip install torch==2.8.0
+```
+
+**Note:** This issue specifically affects the CUDA 12 variant of Holoscan SDK v3.10 when used with PyTorch 2.9.x. The compatibility with PyTorch 2.8.x remains intact. Future releases of Holoscan SDK are expected to include updated libtorch binaries to restore PyTorch 2.9.x compatibility.
 
 
 ## Miscellaneous

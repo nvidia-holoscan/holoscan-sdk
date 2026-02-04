@@ -1,3 +1,16 @@
+diff --git a/backends/imgui_impl_vulkan.cpp b/backends/imgui_impl_vulkan.cpp
+index c262096b5..a482c0c4b 100644
+--- a/backends/imgui_impl_vulkan.cpp
++++ b/backends/imgui_impl_vulkan.cpp
+@@ -1074,7 +1074,7 @@ bool    ImGui_ImplVulkan_Init(ImGui_ImplVulkan_InitInfo* info, VkRenderPass rend
+     IM_ASSERT(info->Device != VK_NULL_HANDLE);
+     IM_ASSERT(info->Queue != VK_NULL_HANDLE);
+     IM_ASSERT(info->DescriptorPool != VK_NULL_HANDLE);
+-    IM_ASSERT(info->MinImageCount >= 2);
++    IM_ASSERT(info->MinImageCount >= 1);
+     IM_ASSERT(info->ImageCount >= info->MinImageCount);
+     IM_ASSERT(render_pass != VK_NULL_HANDLE);
+
 diff --git a/imconfig.h b/imconfig.h
 index c854832e..1750d46d 100644
 --- a/imconfig.h

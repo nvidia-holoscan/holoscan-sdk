@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -186,6 +186,19 @@ Parameters
 ----------
 op : holoscan.core.Operator
     The operator to add.
+)doc")
+
+PYDOC(add_subgraph, R"doc(
+Add a subgraph to the fragment.
+
+This method ensures the subgraph is composed and its operators are added to the fragment.
+Use this method when a subgraph has no interface ports and doesn't need to be connected
+to other operators or subgraphs via add_flow.
+
+Parameters
+----------
+subgraph : holoscan.core.Subgraph
+    The subgraph to add.
 )doc")
 
 PYDOC(add_flow_pair, R"doc(

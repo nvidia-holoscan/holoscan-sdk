@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./serialization_buffers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
@@ -45,10 +46,11 @@ class PySerializationBuffer : public SerializationBuffer {
   using SerializationBuffer::SerializationBuffer;
 
   // Define a constructor that fully initializes the object.
-  explicit PySerializationBuffer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                 std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-                                 size_t buffer_size = kDefaultSerializationBufferSize,
-                                 const std::string& name = "serialization_buffer")
+  explicit PySerializationBuffer(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<holoscan::Allocator> allocator = nullptr,
+      size_t buffer_size = kDefaultSerializationBufferSize,
+      const std::string& name = resource_default_name_v<SerializationBuffer>)
       : SerializationBuffer(ArgList{
             Arg{"buffer_size", buffer_size},
         }) {
@@ -65,10 +67,11 @@ class PyUcxSerializationBuffer : public UcxSerializationBuffer {
   using UcxSerializationBuffer::UcxSerializationBuffer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxSerializationBuffer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                    std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-                                    size_t buffer_size = kDefaultSerializationBufferSize,
-                                    const std::string& name = "serialization_buffer")
+  explicit PyUcxSerializationBuffer(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<holoscan::Allocator> allocator = nullptr,
+      size_t buffer_size = kDefaultSerializationBufferSize,
+      const std::string& name = resource_default_name_v<UcxSerializationBuffer>)
       : UcxSerializationBuffer(ArgList{
             Arg{"buffer_size", buffer_size},
         }) {
@@ -92,7 +95,7 @@ void init_serialization_buffers(py::module_& m) {
            "fragment"_a,
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
-           "name"_a = "serialization_buffer"s,
+           "name"_a = std::string(resource_default_name_v<SerializationBuffer>),
            doc::SerializationBuffer::doc_SerializationBuffer);
 
   py::class_<UcxSerializationBuffer,
@@ -107,7 +110,7 @@ void init_serialization_buffers(py::module_& m) {
            "fragment"_a,
            "allocator"_a = py::none(),
            "buffer_size"_a = kDefaultSerializationBufferSize,
-           "name"_a = "serialization_buffer"s,
+           "name"_a = std::string(resource_default_name_v<UcxSerializationBuffer>),
            doc::UcxSerializationBuffer::doc_UcxSerializationBuffer);
 }
 }  // namespace holoscan

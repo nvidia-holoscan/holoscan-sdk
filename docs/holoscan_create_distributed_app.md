@@ -249,7 +249,9 @@ This environment variable is only used when the distributed application is launc
 
 - **HOLOSCAN_STOP_ON_DEADLOCK** : can be used in combination with `HOLOSCAN_DISTRIBUTED_APP_SCHEDULER` to control whether or not the application will automatically stop on deadlock. Values of "True", "1" or "ON" will be interpreted as true (enable stop on deadlock). It is "true" if unspecified. This environment variable is only used when `HOLOSCAN_DISTRIBUTED_APP_SCHEDULER` is explicitly set.
 
-- **HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT** : controls the delay (in ms) without activity required before an application is considered to be in deadlock. It must be an integer value (units are ms).
+- **HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT** : controls the delay (in ms) without activity required before an application is considered to be in deadlock. It must be an integer value (units are ms). The default for distributed applications is 2000 ms (2 seconds).
+
+- **HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT** : controls the timeout (in ms) used during the initial UCX network connection establishment phase. During this phase, the scheduler uses this longer timeout instead of `HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT` to prevent false deadlock detection while connections are being established. Once all connections are ready, the scheduler switches to using the shorter `HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT` value. It must be an integer value (units are ms). This parameter has no effect on single fragment (non-distributed) applications. The default is 5000ms (5 seconds).
 
 - **HOLOSCAN_MAX_DURATION_MS** : sets the application to automatically terminate after the requested maximum duration (in ms) has elapsed. It must be an integer value (units are ms). This environment variable is only used when `HOLOSCAN_DISTRIBUTED_APP_SCHEDULER` is explicitly set.
 

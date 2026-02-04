@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,18 +31,41 @@
 
 #include "yaml-cpp/yaml.h"
 
-#include "concurrentqueue.h"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 #include "holoscan/core/domain/tensor_map.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
+#include "holoscan/core/resources/data_logger_queue.hpp"
 #include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 
 class MetadataDictionary;  // forward declaration
+
+/**
+ * @brief Global flag indicating that an async logger shutdown is in progress.
+ *
+ * This flag is used in the Python bindings to prevent Python GIL deadlock during shutdown.
+ * When the main thread holds the GIL and waits for worker threads to join, worker threads must not
+ * try to acquire the GIL (e.g., for Python object serialization) or deadlock will occur.
+ *
+ * This is a C++17 inline variable ensuring a single instance across all translation units.
+ * The accessor function provides a clean interface for reading/writing the flag.
+ *
+ * @note The flag is set at the start of stop_worker_threads() and reset at the start
+ * of start_worker_threads().
+ */
+inline std::atomic<bool> g_async_logger_shutdown_in_progress{false};
+
+/**
+ * @brief Get reference to the global async logger shutdown flag.
+ * @return Reference to the global atomic flag
+ */
+inline std::atomic<bool>& async_logger_shutdown_in_progress() {
+  return g_async_logger_shutdown_in_progress;
+}
 
 /**
  * @brief Policy for handling queue overflow in async data loggers
@@ -351,11 +374,12 @@ class AsyncDataLoggerResource : public DataLoggerResource {
   Parameter<bool>
       enable_large_data_queue_;  // Default: true (enable separate queue for large data processing)
   Parameter<int64_t> shutdown_wait_period_ms_;  // Default: -1 (wait indefinitely)
+  Parameter<DataLoggerQueueType> queue_type_;  // Default: LockFree
 
  private:
-  // Lock-free queues
-  std::unique_ptr<moodycamel::ConcurrentQueue<DataEntry>> data_queue_;
-  std::unique_ptr<moodycamel::ConcurrentQueue<DataEntry>> large_data_queue_;
+  // Polymorphic queues (allows different queue implementations)
+  std::unique_ptr<DataLoggerQueue<DataEntry>> data_queue_;
+  std::unique_ptr<DataLoggerQueue<DataEntry>> large_data_queue_;
 
   // Worker threads
   std::thread data_worker_;

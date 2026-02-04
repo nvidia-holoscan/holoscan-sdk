@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 #include "../core/component_util.hpp"
 #include "./boolean_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/boolean.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -55,7 +56,7 @@ class PyBooleanCondition : public BooleanCondition {
   // Define a constructor that fully initializes the object.
   explicit PyBooleanCondition(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                               bool enable_tick = true,
-                              const std::string& name = "noname_boolean_condition")
+                              const std::string& name = condition_default_name_v<BooleanCondition>)
       : BooleanCondition(Arg{"enable_tick", enable_tick}) {
     init_component_base(this, fragment_or_subgraph, name, "condition");
   }
@@ -70,7 +71,7 @@ void init_boolean(py::module_& m) {
       .def(py::init<std::variant<Fragment*, Subgraph*>, bool, const std::string&>(),
            "fragment"_a,
            "enable_tick"_a = true,
-           "name"_a = "noname_boolean_condition"s,
+           "name"_a = std::string(condition_default_name_v<BooleanCondition>),
            doc::BooleanCondition::doc_BooleanCondition)
       .def("enable_tick", &BooleanCondition::enable_tick, doc::BooleanCondition::doc_enable_tick)
       .def("disable_tick", &BooleanCondition::disable_tick, doc::BooleanCondition::doc_disable_tick)

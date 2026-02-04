@@ -59,6 +59,8 @@ void SwapChain::init(VkDevice device, VkPhysicalDevice physicalDevice, VkQueue q
 bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
                        VkExtent2D* dimensions) {
   m_changeID++;
+  m_acquired = false;
+  m_presented = false;
   m_presentMode = presentMode;
 
   VkSwapchainKHR oldSwapchain = m_swapchain;
@@ -66,22 +68,39 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   if (NVVK_CHECK(waitIdle()))
     return false;
 
+  VkPhysicalDeviceSurfaceInfo2KHR surfaceInfo = {
+      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SURFACE_INFO_2_KHR};
+  surfaceInfo.surface = m_surface;
+
   // Check the surface capabilities and formats
-  VkSurfaceCapabilitiesKHR surfCapabilities;
-  if (NVVK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-          m_physicalDevice, m_surface, &surfCapabilities)))
+  VkSurfaceCapabilities2KHR surfCapabilities = {VK_STRUCTURE_TYPE_SURFACE_CAPABILITIES_2_KHR};
+  if (NVVK_CHECK(vkGetPhysicalDeviceSurfaceCapabilities2KHR(
+          m_physicalDevice, &surfaceInfo, &surfCapabilities))) {
     return false;
+  }
+
+  VkImageUsageFlags imageUsage = m_imageUsage;
+  VkBaseOutStructure* next = reinterpret_cast<VkBaseOutStructure*>(surfCapabilities.pNext);
+  while (next != nullptr) {
+    if (next->sType == VK_STRUCTURE_TYPE_SHARED_PRESENT_SURFACE_CAPABILITIES_KHR) {
+      VkSharedPresentSurfaceCapabilitiesKHR* sharedPresentSurfaceCapabilities =
+          reinterpret_cast<VkSharedPresentSurfaceCapabilitiesKHR*>(next);
+      imageUsage &= sharedPresentSurfaceCapabilities->sharedPresentSupportedUsageFlags;
+      break;
+    }
+    next = next->pNext;
+  }
 
   VkExtent2D swapchainExtent;
   // width and height are either both -1, or both not -1.
-  if (surfCapabilities.currentExtent.width == (uint32_t)-1) {
+  if (surfCapabilities.surfaceCapabilities.currentExtent.width == (uint32_t)-1) {
     // If the surface size is undefined, the size is set to
     // the size of the images requested.
     swapchainExtent.width = width;
     swapchainExtent.height = height;
   } else {
     // If the surface size is defined, the swap chain size must match
-    swapchainExtent = surfCapabilities.currentExtent;
+    swapchainExtent = surfCapabilities.surfaceCapabilities.currentExtent;
   }
 
   // test against valid size, typically hit when windows are minimized, the app must
@@ -91,18 +110,24 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   // Determine the number of VkImage's to use in the swap chain (we desire to
   // own only 1 image at a time, besides the images being displayed and
   // queued for display):
-  uint32_t desiredNumberOfSwapchainImages = surfCapabilities.minImageCount;
-  if ((surfCapabilities.maxImageCount > 0) &&
-      (desiredNumberOfSwapchainImages > surfCapabilities.maxImageCount)) {
+  uint32_t desiredNumberOfSwapchainImages = surfCapabilities.surfaceCapabilities.minImageCount;
+  if ((surfCapabilities.surfaceCapabilities.maxImageCount > 0) &&
+      (desiredNumberOfSwapchainImages > surfCapabilities.surfaceCapabilities.maxImageCount)) {
     // Application must settle for fewer images than desired:
-    desiredNumberOfSwapchainImages = surfCapabilities.maxImageCount;
+    desiredNumberOfSwapchainImages = surfCapabilities.surfaceCapabilities.maxImageCount;
+  }
+
+  if ((presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR) ||
+      (presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)) {
+    desiredNumberOfSwapchainImages = 1;
   }
 
   VkSurfaceTransformFlagBitsKHR preTransform;
-  if (surfCapabilities.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
+  if (surfCapabilities.surfaceCapabilities.supportedTransforms &
+      VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR) {
     preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
   } else {
-    preTransform = surfCapabilities.currentTransform;
+    preTransform = surfCapabilities.surfaceCapabilities.currentTransform;
   }
 
   VkSwapchainCreateInfoKHR swapchain = {VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR};
@@ -111,7 +136,7 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   swapchain.imageFormat = m_surfaceFormat;
   swapchain.imageColorSpace = m_surfaceColor;
   swapchain.imageExtent = swapchainExtent;
-  swapchain.imageUsage = m_imageUsage;
+  swapchain.imageUsage = imageUsage;
   swapchain.preTransform = preTransform;
   swapchain.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   swapchain.imageArrayLayers = 1;
@@ -122,8 +147,9 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
   swapchain.oldSwapchain = oldSwapchain;
   swapchain.clipped = true;
 
-  if (NVVK_CHECK(vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain)))
+  if (NVVK_CHECK(vkCreateSwapchainKHR(m_device, &swapchain, nullptr, &m_swapchain))) {
     return false;
+  }
 
   nvvk::DebugUtil debugUtil(m_device);
 
@@ -198,7 +224,12 @@ bool SwapChain::update(int width, int height, VkPresentModeKHR presentMode,
     memBarrier.dstAccessMask = 0;
     memBarrier.srcAccessMask = 0;
     memBarrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    memBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    if ((m_presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR) ||
+        (m_presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)) {
+      memBarrier.newLayout = VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR;
+    } else {
+      memBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    }
     memBarrier.image = entry.image;
     memBarrier.subresourceRange = range;
 
@@ -285,11 +316,24 @@ bool SwapChain::acquireCustom(VkSemaphore argSemaphore, int width, int height, b
     *pRecreated = didRecreate;
   }
 
+  if ((m_presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR) ||
+      (m_presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)) {
+    if (m_acquired) {
+      if (pOut != nullptr) {
+        pOut->image = getActiveImage();
+        pOut->view = getActiveImageView();
+        pOut->index = getActiveImageIndex();
+        pOut->waitSem = getActiveReadSemaphore();
+        pOut->signalSem = getActiveWrittenSemaphore();
+      }
+      return true;
+    }
+  }
+
   // try recreation a few times
   for (int i = 0; i < 2; i++) {
     VkSemaphore semaphore = argSemaphore ? argSemaphore : getActiveReadSemaphore();
-    VkResult result;
-    result = vkAcquireNextImageKHR(
+    VkResult result = vkAcquireNextImageKHR(
         m_device, m_swapchain, UINT64_MAX, semaphore, (VkFence)VK_NULL_HANDLE, &m_currentImage);
 
     if (result == VK_SUCCESS) {
@@ -300,11 +344,13 @@ bool SwapChain::acquireCustom(VkSemaphore argSemaphore, int width, int height, b
         pOut->waitSem = getActiveReadSemaphore();
         pOut->signalSem = getActiveWrittenSemaphore();
       }
+      m_acquired = true;
       return true;
     } else if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
       deinitResources();
       update(width, height, m_presentMode);
     } else {
+      nvvk::checkResult(result, __FILE__, __LINE__);
       return false;
     }
   }
@@ -335,8 +381,17 @@ VkImage SwapChain::getImage(uint32_t i) const {
 }
 
 void SwapChain::present(VkQueue queue) {
+  // if the swap chain is in shared demand refresh or shared continuous refresh mode, the image
+  // has already been presented, so we don't need to present it again
+  if ((m_presentMode == VK_PRESENT_MODE_SHARED_DEMAND_REFRESH_KHR) ||
+      (m_presentMode == VK_PRESENT_MODE_SHARED_CONTINUOUS_REFRESH_KHR)) {
+    if (m_presented) {
+      return;
+    }
+  }
+
   VkResult result;
-  VkPresentInfoKHR presentInfo;
+  VkPresentInfoKHR presentInfo = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
 
   presentCustom(presentInfo);
 
@@ -348,22 +403,24 @@ void SwapChain::present(VkQueue queue) {
   }
 
   result = vkQueuePresentKHR(queue, &presentInfo);
-  if ((result == VK_SUCCESS) && m_has_present_id_extension) {
-    m_current_present_id++;
+  if (result == VK_SUCCESS) {
+    m_presented = true;
+    if (m_has_present_id_extension) {
+      m_current_present_id++;
+    }
   }
   // assert(result == VK_SUCCESS); // can fail on application exit
 }
 
 void SwapChain::presentCustom(VkPresentInfoKHR& presentInfo) {
-  VkSemaphore& written = m_entries[(m_currentSemaphore % m_imageCount)].writtenSemaphore;
-
-  presentInfo = {VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
+  if (m_imageCount > 1) {
+    VkSemaphore& written = m_entries[(m_currentSemaphore % m_imageCount)].writtenSemaphore;
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = &written;
+  }
   presentInfo.swapchainCount = 1;
-  presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores = &written;
   presentInfo.pSwapchains = &m_swapchain;
   presentInfo.pImageIndices = &m_currentImage;
-
   m_currentSemaphore++;
 }
 

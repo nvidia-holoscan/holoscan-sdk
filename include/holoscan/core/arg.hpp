@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -404,7 +404,7 @@ class Arg {
         for (auto& value_item : value) {
           auto component = std::dynamic_pointer_cast<
               base_type_t<typename holoscan::type_info<ArgT>::derived_type>>(value_item);
-          components.push_back(component);
+          components.push_back(std::move(component));
         }
         value_ = components;
       }

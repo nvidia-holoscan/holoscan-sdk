@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,11 +33,13 @@
 #include "../../core/gil_guarded_pyobject.hpp"
 #include "holoscan/core/arg.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/parameter.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/async_data_logger.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
+#include "holoscan/core/subgraph.hpp"
 #include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
 #include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
 
@@ -55,9 +57,10 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
 
   // Define a constructor that fully initializes the object.
   PyAsyncConsoleLogger(
-      Fragment* fragment, std::shared_ptr<SimpleTextSerializer> serializer = nullptr,
-      bool log_inputs = true, bool log_outputs = true, bool log_metadata = true,
-      bool log_tensor_data_content = true, bool use_scheduler_clock = false,
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<SimpleTextSerializer> serializer = nullptr, bool log_inputs = true,
+      bool log_outputs = true, bool log_metadata = true, bool log_tensor_data_content = true,
+      bool use_scheduler_clock = false,
       std::optional<std::shared_ptr<Resource>> clock = std::nullopt,
       const std::vector<std::string>& allowlist_patterns = {},
       const std::vector<std::string>& denylist_patterns = {}, size_t max_queue_size = 50000,
@@ -69,7 +72,8 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
       std::variant<AsyncQueuePolicy, std::string> large_data_queue_policy =
           AsyncQueuePolicy::kReject,
       bool enable_large_data_queue = true, int64_t shutdown_wait_period_ms = -1,
-      const std::string& name = "async_console_logger")
+      std::variant<DataLoggerQueueType, std::string> queue_type = DataLoggerQueueType::LockFree,
+      const std::string& name = resource_default_name_v<AsyncConsoleLogger>)
       : AsyncConsoleLogger(
             ArgList{Arg{"log_inputs", log_inputs},
                     Arg{"log_outputs", log_outputs},
@@ -104,7 +108,13 @@ class PyAsyncConsoleLogger : public AsyncConsoleLogger {
       this->add_arg(Arg("large_data_queue_policy",
                         std::get<holoscan::AsyncQueuePolicy>(large_data_queue_policy)));
     }
-    init_component_base(this, fragment, name);
+    if (std::holds_alternative<std::string>(queue_type)) {
+      // C++ layer supports YAML::Node -> enum conversion via the registered argument setter.
+      this->add_arg(Arg("queue_type", YAML::Node(std::get<std::string>(queue_type))));
+    } else {
+      this->add_arg(Arg("queue_type", std::get<holoscan::DataLoggerQueueType>(queue_type)));
+    }
+    init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
 /* The python module */
@@ -122,7 +132,7 @@ PYBIND11_MODULE(_async_console_logger, m) {
              DataLoggerResource,
              std::shared_ptr<AsyncConsoleLogger>>(
       m, "AsyncConsoleLogger", doc::AsyncConsoleLogger::doc_AsyncConsoleLogger)
-      .def(py::init<Fragment*,
+      .def(py::init<const std::variant<Fragment*, Subgraph*>&,
                     std::shared_ptr<SimpleTextSerializer>,
                     bool,
                     bool,
@@ -140,6 +150,7 @@ PYBIND11_MODULE(_async_console_logger, m) {
                     std::variant<AsyncQueuePolicy, std::string>,
                     bool,
                     int64_t,
+                    std::variant<DataLoggerQueueType, std::string>,
                     const std::string&>(),
            "fragment"_a,
            "serializer"_a = py::none(),
@@ -159,7 +170,8 @@ PYBIND11_MODULE(_async_console_logger, m) {
            "large_data_queue_policy"_a = AsyncQueuePolicy::kReject,
            "enable_large_data_queue"_a = true,
            "shutdown_wait_period_ms"_a = -1,
-           "name"_a = "async_console_logger"s,
+           "queue_type"_a = DataLoggerQueueType::LockFree,
+           "name"_a = std::string(resource_default_name_v<AsyncConsoleLogger>),
            doc::AsyncConsoleLogger::doc_AsyncConsoleLogger);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::data_loggers

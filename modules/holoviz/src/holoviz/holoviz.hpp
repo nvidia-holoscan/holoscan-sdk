@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,6 +101,7 @@ viz::Shutdown();
 #include "holoviz/init_flags.hpp"
 #include "holoviz/present_mode.hpp"
 #include "holoviz/primitive_topology.hpp"
+#include "holoviz/render_flags.hpp"
 #include "holoviz/surface_format.hpp"
 
 // forward declaration of external types
@@ -366,11 +367,19 @@ void Shutdown(InstanceHandle instance = nullptr);
 
 /**
  * Start recording layer definitions.
+ *
+ * This will start a new render pass and clear the color and depth buffers unless
+ * RenderFlags::DONT_CLEAR_COLOR or RenderFlags::DONT_CLEAR_DEPTH is set in the render flags.
+ *
+ * @param render_flags render flags to control the render pass
  */
-void Begin();
+void Begin(RenderFlags render_flags = RenderFlags::NONE);
 
 /**
  * End recording and output the composited layers.
+ *
+ * Calling this function will present the render buffer if not rendering offscreen and unless
+ * RenderFlags::DONT_SWAP_BUFFERS is set in the render flags passed to Begin().
  */
 void End();
 

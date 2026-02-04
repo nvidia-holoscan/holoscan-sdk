@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -37,6 +37,7 @@
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/resources/async_data_logger.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
+#include "holoscan/core/resources/data_logger_queue.hpp"
 #include "kwarg_handling.hpp"
 #include "data_logger_pydoc.hpp"
 
@@ -63,6 +64,15 @@ void init_data_logger(py::module_& m) {
   py::enum_<AsyncQueuePolicy>(m, "AsyncQueuePolicy", "Policy for handling queue overflow")
       .value("REJECT", AsyncQueuePolicy::kReject, "Reject new items when queue is full")
       .value("RAISE", AsyncQueuePolicy::kRaise, "Raise exception when queue is full")
+      .export_values();
+
+  py::enum_<DataLoggerQueueType>(m, "DataLoggerQueueType", "Queue type for AsyncDataLoggerResource")
+      .value("LOCK_FREE",
+             DataLoggerQueueType::LockFree,
+             "Lock-free queue (highest performance, per-producer FIFO only)")
+      .value("ORDERED",
+             DataLoggerQueueType::Ordered,
+             "Mutex-based queue (strict global FIFO order, lower throughput)")
       .export_values();
 
   // AsyncDataLoggerResource implementation

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+#include <utility>
 
 #include "./resource.hpp"
 
@@ -71,12 +72,14 @@ class Clock : public Resource {
   Clock() = default;
 
   /// @brief Constructor that takes a clock implementation
-  explicit Clock(std::shared_ptr<ClockInterface> clock_impl) : clock_impl_(clock_impl) {}
+  explicit Clock(std::shared_ptr<ClockInterface> clock_impl) : clock_impl_(std::move(clock_impl)) {}
 
   ~Clock() override = default;
 
   /// @brief Set the clock implementation
-  void set_clock_impl(std::shared_ptr<ClockInterface> clock_impl) { clock_impl_ = clock_impl; }
+  void set_clock_impl(std::shared_ptr<ClockInterface> clock_impl) {
+    clock_impl_ = std::move(clock_impl);
+  }
 
   /// @brief Get the clock implementation
   std::shared_ptr<ClockInterface> clock_impl() const { return clock_impl_; }

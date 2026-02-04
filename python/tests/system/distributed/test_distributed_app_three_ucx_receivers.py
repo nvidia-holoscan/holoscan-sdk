@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -184,8 +184,10 @@ def launch_app(use_new_receivers=True, data_flow_tracking=False, logfile=None):
         # set the max duration to 10s to have enough time to run the test
         # (connection time takes ~5 seconds)
         ("HOLOSCAN_MAX_DURATION_MS", "10000"),
-        # set the stop on deadlock timeout to 10s to have enough time to run the test
-        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "10000"),
+        # Increase network connection timeout to 10s for this test (default is 5s)
+        ("HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT", "10000"),
+        # network_connection_timeout handles connection setup, so shorter deadlock timeout is safe
+        ("HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT", "1000"),
     }
 
     with env_var_context(env_var_settings):
@@ -252,8 +254,12 @@ def test_distributed_app_three_ucx_receivers(use_new_receivers, data_flow_tracki
     if data_flow_tracking:
         # assert that the data flow tracking messages were printed
         assert captured.out.count("Data Flow Tracking Results:") == 2
-        # three paths: rectangle, replayer and triangle all connect to HolovizOp
-        assert captured.out.count("Total paths: 3") >= 1
+        # Three paths expected: rectangle, replayer and triangle all connect to HolovizOp.
+        # Sometimes a 4th internal forwarding path (forward_holoviz_receivers:0 -> holoviz)
+        # is registered due to timing; it has no messages tracked and doesn't affect correctness.
+        assert (
+            captured.out.count("Total paths: 3") >= 1 or captured.out.count("Total paths: 4") >= 1
+        ), "Expected 3 or 4 total paths in data flow tracking output"
         # the above is observed one time, as we no longer print a path if the data is both sent and
         # received by operators. previously, we used to track a path even when the data is not
         # received by an operator. this does not mean that data flow is not tracked. data flow is

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include "../../core/component_util.hpp"
@@ -70,7 +71,7 @@ class PyGXFCodeletOp : public GXFCodeletOp {
     auto [frag_ptr, qualified_name] =
         get_fragment_ptr_name_pair(fragment_or_subgraph, name, "operator");
     fragment_ = frag_ptr;
-    name_ = qualified_name;
+    name_ = std::move(qualified_name);
   }
 
   void initialize() override {
@@ -114,7 +115,7 @@ PYBIND11_MODULE(_gxf_codelet, m) {
            "op"_a,
            "fragment"_a,
            "gxf_typename"_a,
-           "name"_a = "gxf_codelet"s,
+           "name"_a = std::string(operator_default_name_v<ops::GXFCodeletOp>),
            doc::GXFCodeletOp::doc_GXFCodeletOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

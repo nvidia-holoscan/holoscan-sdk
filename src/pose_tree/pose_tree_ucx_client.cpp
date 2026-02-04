@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,6 +103,10 @@ struct PoseTreeUCXClient::ClientImpl {
   // Store callback IDs for cleanup
   holoscan::PoseTree::uid_t create_frame_callback_id = 0;
   holoscan::PoseTree::uid_t set_edge_callback_id = 0;
+
+  // Track pending async requests and their buffers to prevent premature deallocation.
+  // The pair holds the request and the buffer that must remain valid until request completion.
+  std::vector<std::pair<std::shared_ptr<ucxx::Request>, std::shared_ptr<void>>> pending_requests;
 };
 
 void waitSingleRequest(std::shared_ptr<ucxx::Worker> worker, std::shared_ptr<ucxx::Request> request,
@@ -247,16 +251,31 @@ void PoseTreeUCXClient::run() {
               switch (delta_msg.delta_type) {
                 case DELTA_FRAME_CREATED: {
                   is_external_pose_tree_update_ = true;
-                  auto result = impl_->pose_tree->create_frame_with_id(
-                      delta_msg.data.frame_data.frame_id, delta_msg.data.frame_data.name);
-                  if (result) {
+                  const auto remote_frame_id = delta_msg.data.frame_data.frame_id;
+                  const std::string_view frame_name = delta_msg.data.frame_data.name;
+
+                  // Avoid PoseTree logging errors for "already exists" by checking first.
+                  auto local_frame_id = impl_->pose_tree->find_frame(frame_name);
+                  if (!local_frame_id) {
+                    auto create_result =
+                        impl_->pose_tree->create_frame_with_id(remote_frame_id, frame_name);
+                    if (!create_result &&
+                        create_result.error() == PoseTree::Error::kAlreadyExists) {
+                      // Another thread may have created it between find_frame() and create().
+                      local_frame_id = impl_->pose_tree->find_frame(frame_name);
+                    } else {
+                      local_frame_id = create_result;
+                    }
+                  }
+
+                  if (local_frame_id) {
                     std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
-                    impl_->remote_to_local_frame_id[delta_msg.data.frame_data.frame_id] =
-                        result.value();
+                    impl_->remote_to_local_frame_id[remote_frame_id] = local_frame_id.value();
                   } else {
-                    HOLOSCAN_LOG_ERROR("Could not create frame '{}'' with id {}",
-                                       delta_msg.data.frame_data.name,
-                                       delta_msg.data.frame_data.frame_id);
+                    HOLOSCAN_LOG_ERROR("Could not create/match frame '{}' with id {}: {}",
+                                       frame_name,
+                                       remote_frame_id,
+                                       PoseTree::error_to_str(local_frame_id.error()));
                   }
                   is_external_pose_tree_update_ = false;
                   break;
@@ -315,44 +334,79 @@ void PoseTreeUCXClient::run() {
                                frames.size());
             is_external_pose_tree_update_ = true;
 
-            {
-              std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
-              impl_->remote_to_local_frame_id.clear();
-            }
+            // Build a fresh mapping for this snapshot without clearing the shared map upfront.
+            // Snapshot and delta messages can interleave; if some frames were already created from
+            // deltas before the snapshot arrives, create_frame_with_id() would fail and we'd end up
+            // with an incomplete mapping (breaking subsequent edge updates).
+            std::unordered_map<holoscan::PoseTree::frame_t, holoscan::PoseTree::frame_t>
+                snapshot_frame_id_map;
+            snapshot_frame_id_map.reserve(frames.size());
 
             for (const auto& frame : frames) {
-              auto result = impl_->pose_tree->create_frame_with_id(frame.frame_id, frame.name);
-              if (result) {
-                std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
-                impl_->remote_to_local_frame_id[frame.frame_id] = result.value();
+              const auto remote_frame_id = frame.frame_id;
+              const std::string_view frame_name = frame.name;
+
+              // Avoid PoseTree logging errors for "already exists" by checking first.
+              auto local_frame_id = impl_->pose_tree->find_frame(frame_name);
+              if (!local_frame_id) {
+                auto create_result =
+                    impl_->pose_tree->create_frame_with_id(remote_frame_id, frame_name);
+                if (!create_result && create_result.error() == PoseTree::Error::kAlreadyExists) {
+                  // Another thread may have created it between find_frame() and create().
+                  local_frame_id = impl_->pose_tree->find_frame(frame_name);
+                } else {
+                  local_frame_id = create_result;
+                }
+              }
+
+              if (local_frame_id) {
+                snapshot_frame_id_map[remote_frame_id] = local_frame_id.value();
               } else {
-                HOLOSCAN_LOG_ERROR(
-                    "Could not create frame '{}'' with id {}", frame.name, frame.frame_id);
+                HOLOSCAN_LOG_ERROR("Could not create/match frame '{}' with id {}: {}",
+                                   frame_name,
+                                   remote_frame_id,
+                                   PoseTree::error_to_str(local_frame_id.error()));
               }
             }
             for (const auto& edge : edges) {
               holoscan::Pose3d pose = deserialize_pose3d(edge);
 
               holoscan::PoseTree::frame_t local_lhs, local_rhs;
-              {
-                std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
-                auto lhs_it = impl_->remote_to_local_frame_id.find(edge.lhs_frame);
-                auto rhs_it = impl_->remote_to_local_frame_id.find(edge.rhs_frame);
+              auto lhs_it = snapshot_frame_id_map.find(edge.lhs_frame);
+              auto rhs_it = snapshot_frame_id_map.find(edge.rhs_frame);
 
-                if (lhs_it == impl_->remote_to_local_frame_id.end() ||
-                    rhs_it == impl_->remote_to_local_frame_id.end()) {
-                  HOLOSCAN_LOG_WARN(
-                      "PoseTreeUCXClient: Could not find mapping for edge frames {} -> {} in "
-                      "snapshot",
-                      edge.lhs_frame,
-                      edge.rhs_frame);
-                  continue;
-                }
-                local_lhs = lhs_it->second;
-                local_rhs = rhs_it->second;
+              if (lhs_it == snapshot_frame_id_map.end() || rhs_it == snapshot_frame_id_map.end()) {
+                HOLOSCAN_LOG_WARN(
+                    "PoseTreeUCXClient: Could not find mapping for edge frames {} -> {} in "
+                    "snapshot",
+                    edge.lhs_frame,
+                    edge.rhs_frame);
+                continue;
               }
+              local_lhs = lhs_it->second;
+              local_rhs = rhs_it->second;
               impl_->pose_tree->set(local_lhs, local_rhs, edge.time, pose);
             }
+
+            // Publish the snapshot mapping in one shot.
+            {
+              std::lock_guard<std::mutex> lock(impl_->frame_id_map_mutex);
+              impl_->remote_to_local_frame_id = std::move(snapshot_frame_id_map);
+            }
+
+            // Inform the server that the snapshot has been fully applied so it can safely start
+            // broadcasting deltas to this client.
+            // Use heap-allocated buffer to ensure it outlives the async send operation.
+            auto ack_buffer = std::make_shared<SnapshotAckMessage>();
+            ack_buffer->snapshot_applied = 1;
+            ucxx::AmReceiverCallbackInfo ack_info("AMServer", MSG_SNAPSHOT_ACK);
+            // Do not block inside the AM receive callback. The returned request is tracked by ucxx
+            // as an inflight request; we intentionally do not wait here. The shared_ptr prevents
+            // the buffer from being freed until ucxx completes or drops the request.
+            auto ack_request = impl_->endpoint->amSend(
+                ack_buffer.get(), sizeof(SnapshotAckMessage), UCS_MEMORY_TYPE_HOST, ack_info);
+            // Keep the buffer alive by storing a strong reference alongside the request.
+            impl_->pending_requests.emplace_back(std::move(ack_request), ack_buffer);
             is_external_pose_tree_update_ = false;
           } catch (const std::exception& e) {
             HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Error in snapshot callback: {}", e.what());
@@ -484,6 +538,26 @@ void PoseTreeUCXClient::run() {
                           config_.request_poll_sleep_us);
       }
       impl_->worker->progress();  // always keep UCX moving
+
+      // Prune completed async requests to release associated buffers.
+      if (!impl_->pending_requests.empty()) {
+        auto it = impl_->pending_requests.begin();
+        while (it != impl_->pending_requests.end()) {
+          auto& request = it->first;
+          if (!request || request->isCompleted()) {
+            if (request) {
+              try {
+                request->checkError();
+              } catch (const std::exception& e) {
+                HOLOSCAN_LOG_WARN("PoseTreeUCXClient: Pending request error: {}", e.what());
+              }
+            }
+            it = impl_->pending_requests.erase(it);
+          } else {
+            ++it;
+          }
+        }
+      }
     }
   } catch (const std::exception& e) {
     if (running_) {

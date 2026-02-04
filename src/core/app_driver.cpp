@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -174,19 +174,23 @@ AppDriver::AppDriver(Application* app) : app_(app) {
 }
 
 AppDriver::~AppDriver() {
-  // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
-  if (shutdown_complete_) {
-    shutdown_complete_->store(true);
-  }
-
-  // Unregister signal handlers to prevent dangling 'this' pointer issues
-  // if signals are raised after this AppDriver is destroyed
-  if (app_) {
-    void* context = app_->executor().context();
-    if (context) {
-      SignalHandler::unregister_signal_handler(context, SIGINT);
-      SignalHandler::unregister_signal_handler(context, SIGTERM);
+  try {
+    // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
+    if (shutdown_complete_) {
+      shutdown_complete_->store(true);
     }
+
+    // Unregister signal handlers to prevent dangling 'this' pointer issues
+    // if signals are raised after this AppDriver is destroyed
+    if (app_) {
+      void* context = app_->executor().context();
+      if (context) {
+        SignalHandler::unregister_signal_handler(context, SIGINT);
+        SignalHandler::unregister_signal_handler(context, SIGTERM);
+      }
+    }
+  } catch (...) {
+    // Destructors must not throw - silently ignore any exceptions
   }
 }
 
@@ -750,8 +754,8 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
           index_to_ip_map_[port_index] = frag_name;
 
           // Add the connection item to the connection map
-          connection_map_[prev_frag].push_back(source_connection_item);
-          connection_map_[frag].push_back(target_connection_item);
+          connection_map_[prev_frag].push_back(std::move(source_connection_item));
+          connection_map_[frag].push_back(std::move(target_connection_item));
 
           // Increment the port index
           ++port_index;
@@ -1187,7 +1191,7 @@ void AppDriver::check_fragment_schedule(const std::string& worker_address) {
 
       for (const auto& fragment_name : fragment_names) {
         auto fragment = fragment_graph.find_node(fragment_name);
-        fragment_vector.push_back(fragment);
+        fragment_vector.push_back(std::move(fragment));
       }
 
       auto& worker_client = driver_server_->connect_to_worker(worker_id);
@@ -1454,7 +1458,8 @@ std::future<void> AppDriver::launch_fragments_async(
 
   // Set scheduler for each fragment
   // Should be called before GXFExecutor::initialize_gxf_graph()
-  Application::set_scheduler_for_fragments(target_fragments);
+  // Pass the application's scheduler so it can be propagated to fragments that don't have their own
+  Application::set_scheduler_for_fragments(target_fragments, app_->scheduler_);
 
   // Initialize fragment services for distributed execution
   if (!handle_driver_start("127.0.0.1")) {  // Local server for local execution
@@ -1697,7 +1702,7 @@ void AppDriver::setup_signal_handlers() {
       // Capture shutdown_complete_ by value (shared_ptr) so it remains valid after AppDriver
       // destruction
       auto shutdown_flag = shutdown_complete_;
-      std::thread([shutdown_flag, signum]() {
+      std::thread([shutdown_flag = std::move(shutdown_flag), signum]() {
         // Wait for a reasonable time for clean shutdown
         std::this_thread::sleep_for(std::chrono::seconds(kDriverShutdownTimeoutSeconds));
 

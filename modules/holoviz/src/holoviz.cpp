@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -184,8 +184,8 @@ void Shutdown(InstanceHandle instance) {
   delete reinterpret_cast<Context*>(instance);
 }
 
-void Begin() {
-  Context::get().begin();
+void Begin(RenderFlags render_flags) {
+  Context::get().begin(render_flags);
 }
 
 void End() {

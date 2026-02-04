@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,8 @@ InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations
     return InferStatus(holoinfer_code::H_ERROR,
                        "Process Manager, Holoscan out data core: Memory allocation error");
   }
-  return infer_data_->initialize(process_operations, custom_kernels, use_cuda_graphs, config_path);
+  return infer_data_->initialize(
+      process_operations, custom_kernels, use_cuda_graphs, std::move(config_path));
 }
 
 InferStatus ManagerProcessor::process_multi_tensor_operation(
@@ -69,17 +70,17 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
         return status;
       }
       void* input_data = inferred_result_map.at(tensor)->host_buffer_->data();
-      const std::vector<int> dimensions = dimension_map.at(tensor);
+      std::vector<int> dimensions = dimension_map.at(tensor);
       all_tensor_data[tensor] = input_data;
-      all_tensor_dims[tensor] = dimensions;
+      all_tensor_dims[tensor] = std::move(dimensions);
     }
 
     last_result = infer_data_->process_transform(operation_name,
-                                                  tensor_name,
-                                                  all_tensor_data,
-                                                  all_tensor_dims,
-                                                  processed_data_map_,
-                                                  processed_dims_map_);
+                                                 tensor_name,
+                                                 all_tensor_data,
+                                                 all_tensor_dims,
+                                                 processed_data_map_,
+                                                 processed_dims_map_);
 
     if (last_result.get_code() != holoinfer_code::H_SUCCESS) {
       return last_result;  // Return immediately on error
@@ -271,7 +272,7 @@ InferStatus ProcessorContext::initialize(const MultiMappings& process_operations
                                          const Mappings& custom_kernels, bool use_cuda_graphs,
                                          const std::string config_path = {}) {
   return process_manager_->initialize(
-      process_operations, custom_kernels, use_cuda_graphs, config_path);
+      process_operations, custom_kernels, use_cuda_graphs, std::move(config_path));
 }
 
 }  // namespace inference

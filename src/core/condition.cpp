@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,8 @@
 #include <vector>
 
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/fragment.hpp"
+#include "holoscan/core/gxf/gxf_utils.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"
 
@@ -107,7 +109,7 @@ void Condition::set_parameters() {
         std::string error_msg = fmt::format("Parameter '{}': {}", key, e.what());
         HOLOSCAN_LOG_ERROR(
             "Condition '{}': failed to set default parameter - {}", name_, error_msg);
-        errors.push_back(error_msg);
+        errors.push_back(std::move(error_msg));
       }
     }
 
@@ -152,6 +154,22 @@ int64_t Condition::wrapper_cid() const {
         "instead for GXFConditions.");
   }
   return wrapper_cid_;
+}
+
+bool Condition::notify_scheduler() {
+  if (fragment_ == nullptr) {
+    HOLOSCAN_LOG_ERROR("Cannot notify scheduler: condition '{}' is not associated with a fragment",
+                       name_);
+    return false;
+  }
+
+  // Dispatch to the GXF-specific utility function
+  void* context = fragment_->executor().context();
+  bool success = gxf::notify_entity_event(context, wrapper_cid_);
+  if (!success) {
+    HOLOSCAN_LOG_ERROR("Failed to notify scheduler for condition '{}'", name_);
+  }
+  return success;
 }
 
 }  // namespace holoscan

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,12 +21,13 @@
 #include <fmt/format.h>
 
 #include <memory>
+#include <optional>
+#include <set>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
-#include <set>
 #include <utility>
-#include <type_traits>
 #include <vector>
 
 #include "io_spec.hpp"
@@ -34,12 +35,18 @@
 namespace holoscan {
 
 // Forward declarations
+class Config;
+class DataLogger;
 class Fragment;
 class Operator;
 class OperatorSpec;
 
 /**
- * @brief Interface port that maps external subgraph port name to an internal operator port
+ * @brief Interface port that maps external subgraph port name to internal operator port(s)
+ *
+ * For most ports, there is a single mapping. However, input interface ports can have
+ * multiple mappings, allowing a single external interface port to broadcast to multiple
+ * internal operators.
  */
 struct InterfacePort {
   /**
@@ -50,10 +57,28 @@ struct InterfacePort {
     kExecution  ///< Execution control port (for control flow)
   };
 
-  std::shared_ptr<Operator> internal_operator;  ///< Internal operator that owns the port
-  std::string internal_port_name;               ///< Port name on the internal operator
-  bool is_input;                                ///< Whether this is an input port (vs output)
-  PortType port_type = PortType::kData;         ///< Port type (data or execution)
+  /**
+   * @brief A single mapping from external interface port to internal operator port
+   */
+  struct Mapping {
+    std::shared_ptr<Operator> internal_operator;  ///< Internal operator that owns the port
+    std::string internal_port_name;               ///< Port name on the internal operator
+  };
+
+  std::vector<Mapping> mappings;         ///< List of internal operator/port mappings
+  bool is_input;                         ///< Whether this is an input port (vs output)
+  PortType port_type = PortType::kData;  ///< Port type (data or execution)
+
+  /// @brief Get number of mappings
+  size_t size() const { return mappings.size(); }
+
+  /// @brief Check if empty
+  bool empty() const { return mappings.empty(); }
+
+  /// @brief Add a mapping
+  void add_mapping(std::shared_ptr<Operator> op, std::string port_name) {
+    mappings.push_back({std::move(op), std::move(port_name)});
+  }
 };
 
 /**
@@ -71,9 +96,9 @@ struct InterfacePort {
  *       : Subgraph(fragment, name) {}
  *
  *   void compose() override {
- *     auto source = make_operator<V4L2VideoOp>("source", from_kwargs("v4l2"));
+ *     auto source = make_operator<V4L2VideoOp>("source", from_config("v4l2"));
  *     auto converter = make_operator<FormatConverterOp>("converter",
- *                                                        from_kwargs("format_converter"));
+ *                                                        from_config("format_converter"));
  *
  *     add_flow(source, converter);  // Directly added to Fragment's main graph
  *
@@ -89,7 +114,7 @@ struct InterfacePort {
  * // "camera1_source", "camera2_source", "camera1_converter", "camera2_converter".
  * auto camera1 = make_subgraph<CameraSubgraph>("camera1");
  * auto camera2 = make_subgraph<CameraSubgraph>("camera2");
- * auto visualizer = make_operator<HolovizOp>("visualizer", from_kwargs("holoviz"));
+ * auto visualizer = make_operator<HolovizOp>("visualizer", from_config("holoviz"));
  *
  * // Direct connection to other operators (or subgraphs) via interface ports
  * add_flow(camera1, visualizer, {{"video_out", "receivers"}});
@@ -102,8 +127,11 @@ class Subgraph {
    * @brief Construct Subgraph with target Fragment
    * @param fragment Target Fragment to populate with operators
    * @param name Unique instance name for operator qualification
+   * @param config_file Optional path to a YAML configuration file for this subgraph.
+   *        If provided, the configuration is loaded before compose() is called,
+   *        making from_config() available during composition.
    */
-  Subgraph(Fragment* fragment, const std::string& name);
+  Subgraph(Fragment* fragment, const std::string& name, const std::string& config_file = "");
 
   virtual ~Subgraph() = default;
 
@@ -207,6 +235,21 @@ class Subgraph {
   std::shared_ptr<ResourceT> make_resource(ArgsT&&... args);
 
   /**
+   * @brief Register an existing service instance with the fragment.
+   *
+   * Registers an already created service instance with the fragment.
+   * This allows the service to be retrieved later using Fragment::service().
+   *
+   * @tparam ServiceT The type of the service (must inherit from Resource or FragmentService).
+   * @param svc The shared pointer to the service instance to register.
+   * @param id The identifier for the service registration. If empty, uses the service type or
+   *           resource name as identifier.
+   * @return true if the service was successfully registered, false otherwise.
+   */
+  template <typename ServiceT>
+  bool register_service(const std::shared_ptr<ServiceT>& svc, std::string_view id = "");
+
+  /**
    * @brief Create a nested subgraph within this subgraph
    *
    * This enables hierarchical Subgraph composition. The nested Subgraph will use
@@ -258,7 +301,18 @@ class Subgraph {
    * This directly calls fragment_->add_operator() with a qualified name,
    * eliminating the need for intermediate graph storage.
    */
-  void add_operator(std::shared_ptr<Operator> op);
+  void add_operator(const std::shared_ptr<Operator>& op);
+
+  /**
+   * @brief Add a subgraph to the Fragment
+   *
+   * This method ensures the subgraph is composed and its operators are added to the fragment.
+   * Use this method when a nested subgraph has no interface ports and doesn't need to be
+   * connected to other operators or subgraphs via add_flow.
+   *
+   * @param subgraph The subgraph to be added.
+   */
+  void add_subgraph(const std::shared_ptr<Subgraph>& subgraph);
 
   /**
    * @brief Add a flow between two operators directly in the Fragment's main graph
@@ -391,19 +445,32 @@ class Subgraph {
       const std::function<void(const std::shared_ptr<Operator>&)>& dynamic_flow_func);
 
   /**
+   * @brief Add a data logger to the fragment.
+   *
+   * This method dispatches to the fragment's add_data_logger method.
+   *
+   * @param logger The data logger to add.
+   */
+  void add_data_logger(const std::shared_ptr<DataLogger>& logger);
+
+  /**
    * @brief Add an interface port that can be connected from external Subgraphs/Operators
    *
-   * Validates that the internal operator has the specified port and that the port type
-   * matches the expected input/output direction.
+   * Validates that the internal operator has the specified port. If is_input is not specified,
+   * the method automatically detects whether the port is an input or output. If the port name
+   * exists in both inputs and outputs, a runtime_error is thrown requiring explicit specification.
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_op The internal operator that owns the actual port
-   * @param internal_port The port name on the internal operator
-   * @param is_input Whether this is an input port (true) or output port (false)
+   * @param internal_port The port name on the internal operator (defaults to external_name if not
+   *                      specified)
+   * @param is_input Whether this is an input port (true) or output port (false). If not specified,
+   *                 the port direction is auto-detected from the operator's port definitions.
    */
   void add_interface_port(const std::string& external_name,
                           const std::shared_ptr<Operator>& internal_op,
-                          const std::string& internal_port, bool is_input);
+                          std::optional<std::string> internal_port = std::nullopt,
+                          std::optional<bool> is_input = std::nullopt);
 
   /**
    * @brief Add an input interface port (convenience method)
@@ -411,11 +478,12 @@ class Subgraph {
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_op The internal operator that owns the actual port
-   * @param internal_port The port name on the internal operator
+   * @param internal_port The port name on the internal operator (defaults to external_name if not
+   *                      specified)
    */
   void add_input_interface_port(const std::string& external_name,
                                 const std::shared_ptr<Operator>& internal_op,
-                                const std::string& internal_port);
+                                std::optional<std::string> internal_port = std::nullopt);
 
   /**
    * @brief Add an output interface port (convenience method)
@@ -423,11 +491,12 @@ class Subgraph {
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_op The internal operator that owns the actual port
-   * @param internal_port The port name on the internal operator
+   * @param internal_port The port name on the internal operator (defaults to external_name if not
+   *                      specified)
    */
   void add_output_interface_port(const std::string& external_name,
                                  const std::shared_ptr<Operator>& internal_op,
-                                 const std::string& internal_port);
+                                 std::optional<std::string> internal_port = std::nullopt);
 
   /**
    * @brief Add an interface port that exposes a nested subgraph's interface port
@@ -437,36 +506,44 @@ class Subgraph {
    * The nested subgraph's interface port is resolved to find the underlying operator
    * and port, which are then registered as the current subgraph's interface port.
    *
+   * If is_input is not specified, the port direction is auto-detected from the nested
+   * subgraph's interface port definition.
+   *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_subgraph The nested subgraph whose interface port to expose
-   * @param internal_interface_port The interface port name on the nested subgraph
-   * @param is_input Whether this is an input port (true) or output port (false)
+   * @param internal_interface_port The interface port name on the nested subgraph (defaults to
+   *                                external_name if not specified)
+   * @param is_input Whether this is an input port (true) or output port (false). If not specified,
+   *                 the port direction is auto-detected from the nested subgraph's interface port.
    */
   void add_interface_port(const std::string& external_name,
                           const std::shared_ptr<Subgraph>& internal_subgraph,
-                          const std::string& internal_interface_port, bool is_input);
+                          std::optional<std::string> internal_interface_port = std::nullopt,
+                          std::optional<bool> is_input = std::nullopt);
 
   /**
    * @brief Add an input interface port from a nested subgraph (convenience method)
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_subgraph The nested subgraph whose interface port to expose
-   * @param internal_interface_port The interface port name on the nested subgraph
+   * @param internal_interface_port The interface port name on the nested subgraph (defaults to
+   *                                external_name if not specified)
    */
   void add_input_interface_port(const std::string& external_name,
                                 const std::shared_ptr<Subgraph>& internal_subgraph,
-                                const std::string& internal_interface_port);
+                                std::optional<std::string> internal_interface_port = std::nullopt);
 
   /**
    * @brief Add an output interface port from a nested subgraph (convenience method)
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_subgraph The nested subgraph whose interface port to expose
-   * @param internal_interface_port The interface port name on the nested subgraph
+   * @param internal_interface_port The interface port name on the nested subgraph (defaults to
+   *                                external_name if not specified)
    */
   void add_output_interface_port(const std::string& external_name,
                                  const std::shared_ptr<Subgraph>& internal_subgraph,
-                                 const std::string& internal_interface_port);
+                                 std::optional<std::string> internal_interface_port = std::nullopt);
 
   // ========== Execution Interface Port Methods ==========
 
@@ -502,11 +579,12 @@ class Subgraph {
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_subgraph The nested subgraph whose exec interface port to expose
-   * @param internal_interface_port The exec interface port name on the nested subgraph
+   * @param internal_interface_port The exec interface port name on the nested subgraph (defaults to
+   *                                external_name if not specified)
    */
-  void add_input_exec_interface_port(const std::string& external_name,
-                                     const std::shared_ptr<Subgraph>& internal_subgraph,
-                                     const std::string& internal_interface_port);
+  void add_input_exec_interface_port(
+      const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+      std::optional<std::string> internal_interface_port = std::nullopt);
 
   /**
    * @brief Add an output execution interface port from a nested subgraph
@@ -516,14 +594,18 @@ class Subgraph {
    *
    * @param external_name The name of the interface port (used in add_flow calls)
    * @param internal_subgraph The nested subgraph whose exec interface port to expose
-   * @param internal_interface_port The exec interface port name on the nested subgraph
+   * @param internal_interface_port The exec interface port name on the nested subgraph (defaults to
+   *                                external_name if not specified)
    */
-  void add_output_exec_interface_port(const std::string& external_name,
-                                      const std::shared_ptr<Subgraph>& internal_subgraph,
-                                      const std::string& internal_interface_port);
+  void add_output_exec_interface_port(
+      const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+      std::optional<std::string> internal_interface_port = std::nullopt);
 
   /**
    * @brief Get data interface ports
+   *
+   * Returns a map of interface port names to InterfacePort objects.
+   * Each InterfacePort can contain multiple mappings for broadcast input ports.
    */
   const std::unordered_map<std::string, InterfacePort>& interface_ports() const {
     return interface_ports_;
@@ -537,10 +619,14 @@ class Subgraph {
   }
 
   /**
-   * @brief Get the operator/port for a data interface port name
+   * @brief Get the first operator/port for a data interface port name
    *
    * This method first checks local interface ports, then recursively checks
    * nested subgraphs for hierarchical port resolution.
+   *
+   * For broadcast input ports that have multiple mappings, this returns
+   * only the first mapping. Access the InterfacePort directly via interface_ports()
+   * to get all mappings.
    *
    * @param port_name The interface port name
    * @return Pair of (operator, actual_port_name) or (nullptr, "") if not found
@@ -570,6 +656,81 @@ class Subgraph {
    */
   void set_composed(bool composed) { is_composed_ = composed; }
 
+  /**
+   * @brief Get all operators belonging to this subgraph and its nested subgraphs.
+   *
+   * This method returns all operators whose names are prefixed with this subgraph's
+   * name followed by an underscore. This includes operators from nested subgraphs
+   * since their names are also prefixed with the parent subgraph's name.
+   *
+   * @return Vector of shared pointers to the operators.
+   */
+  std::vector<std::shared_ptr<Operator>> operators() const;
+
+  // ========== Configuration Methods (Getters) ==========
+
+  /**
+   * @brief Get the configuration of the subgraph.
+   *
+   * @return The reference to the configuration of the subgraph (`Config` object.)
+   */
+  Config& config();
+
+  /**
+   * @brief Get the shared pointer to the configuration of the subgraph.
+   *
+   * @return The shared pointer to the configuration of the subgraph.
+   */
+  std::shared_ptr<Config> config_shared();
+
+  /**
+   * @brief Get the value of a configuration key as an ArgList.
+   *
+   * This method retrieves the value from the subgraph's configuration for the given key.
+   * You can use '.' (dot) to access nested fields. The returned ArgList can be passed
+   * directly to make_operator() or other methods that accept configuration arguments.
+   *
+   * Example usage:
+   * @code
+   *   auto op = make_operator<MyOp>("my_op", from_config("my_op"));
+   * @endcode
+   *
+   * @param key The key of the configuration.
+   * @return The argument list of the configuration for the key.
+   */
+  ArgList from_config(const std::string& key);
+
+  /**
+   * @brief Determine the set of keys present in the subgraph's config.
+   *
+   * @return The set of valid keys.
+   */
+  std::unordered_set<std::string> config_keys();
+
+ protected:
+  // ========== Configuration Methods (Setters - Protected) ==========
+  // These setters are protected because config must be set before compose() runs.
+  // Pass config_file to the Subgraph constructor instead of calling these methods directly.
+
+  /**
+   * @brief Set the configuration of the subgraph from a file.
+   *
+   * The configuration file is a YAML file that contains parameter values that can be
+   * accessed via from_config(). This is useful when a subgraph needs its own configuration
+   * separate from the main application configuration.
+   *
+   * @note This method is protected because configuration must be set before compose() runs.
+   * Pass the config_file to the Subgraph constructor instead.
+   *
+   * @note Loading GXF extensions is not supported from the subgraph config file. GXF extensions
+   * should be loaded via the application-level configuration only.
+   *
+   * @param config_file The path to the configuration file.
+   * @param prefix The prefix string that is prepended to the key of the configuration.
+   * @throws RuntimeError if the config_file is non-empty and the file doesn't exist.
+   */
+  void config(const std::string& config_file, const std::string& prefix = "");
+
  private:
   std::unordered_map<std::string, InterfacePort> interface_ports_;  ///< Data interface ports
   std::unordered_map<std::string, InterfacePort>
@@ -579,8 +740,9 @@ class Subgraph {
   std::unordered_set<std::string>
       nested_subgraph_names_;  ///< Track nested child names to detect duplicates
   bool is_composed_ = false;
-  Fragment* fragment_;      ///< Target fragment for direct operator/flow addition
-  const std::string name_;  ///< Name for this subgraph
+  Fragment* fragment_;              ///< Target fragment for direct operator/flow addition
+  const std::string name_;          ///< Name for this subgraph
+  std::shared_ptr<Config> config_;  ///< Subgraph-specific configuration
 
   /**
    * @brief Efficiently format a port list for error messages
@@ -602,7 +764,7 @@ class Subgraph {
    * @param expect_input Whether we expect this to be an input port (true) or output port (false)
    * @return true if the port exists and has the correct type, false otherwise
    */
-  bool validate_operator_port(std::shared_ptr<Operator> op, const std::string& port_name,
+  bool validate_operator_port(const std::shared_ptr<Operator>& op, const std::string& port_name,
                               bool expect_input);
 
   /**
@@ -614,7 +776,7 @@ class Subgraph {
    * @param op The operator to validate
    * @return true if the operator can be used for execution control flow, false otherwise
    */
-  bool validate_operator_exec_port(std::shared_ptr<Operator> op);
+  bool validate_operator_exec_port(const std::shared_ptr<Operator>& op);
 
   /**
    * @brief Check if an exec interface port name is already in use

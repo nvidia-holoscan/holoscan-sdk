@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,9 +40,11 @@ namespace holoscan {
  * ==Parameters==
  *
  * - **worker_thread_number** (int64_t): The number of (CPU) worker threads to use for executing
- * operators. Defaults to 1.
- * - **pin_cores** (list of int, optional): CPU core IDs to pin the worker threads to (empty means
- * no core pinning).
+ * operators. Defaults to 1. This creates a default thread pool. Operators not explicitly assigned
+ * to a user-defined thread pool (via make_thread_pool) will use this default pool.
+ * - **pin_cores** (list of int, optional): CPU core IDs to pin the default thread pool's worker
+ * threads to (empty means no core pinning). Note: This only affects the default pool; to control
+ * CPU affinity for user-defined thread pools, use the pin_cores parameter in ThreadPool::add().
  * - **stop_on_deadlock** (bool): If True, the application will terminate if a deadlock state is
  * reached. Defaults to true.
  * - **stop_on_deadlock_timeout** (int64_t): The amount of time (in ms) before an application is
@@ -66,6 +68,7 @@ class EventBasedScheduler : public gxf::GXFScheduler {
   int64_t worker_thread_number() { return worker_thread_number_; }
   bool stop_on_deadlock() { return stop_on_deadlock_; }
   int64_t stop_on_deadlock_timeout() { return stop_on_deadlock_timeout_; }
+  int64_t network_connection_timeout() { return network_connection_timeout_; }
   // could return std::optional<int64_t>, but just using int64_t simplifies the Python bindings
   int64_t max_duration_ms() { return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1; }
   std::vector<uint32_t> pin_cores() {
@@ -79,8 +82,9 @@ class EventBasedScheduler : public gxf::GXFScheduler {
   Parameter<int64_t> worker_thread_number_;
   Parameter<bool> stop_on_deadlock_;
   Parameter<int64_t> max_duration_ms_;
-  Parameter<int64_t> stop_on_deadlock_timeout_;  // in ms
-  Parameter<std::vector<uint32_t>> pin_cores_;   // CPU core IDs to pin the worker threads to
+  Parameter<int64_t> stop_on_deadlock_timeout_;    // in ms
+  Parameter<int64_t> network_connection_timeout_;  // in ms
+  Parameter<std::vector<uint32_t>> pin_cores_;     // CPU core IDs to pin the worker threads to
   // The following parameter needs to wait on ThreadPool support
   // Parameter<bool> thread_pool_allocation_auto_;
 

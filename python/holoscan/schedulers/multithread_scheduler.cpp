@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include "../core/component_util.hpp"
 #include "./multithread_scheduler_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_component.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
@@ -54,17 +55,18 @@ class PyMultiThreadScheduler : public MultiThreadScheduler {
   using MultiThreadScheduler::MultiThreadScheduler;
 
   // Define a constructor that fully initializes the object.
-  explicit PyMultiThreadScheduler(Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
-                                  int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
-                                  double check_recession_period_ms = 5.0,
-                                  int64_t max_duration_ms = -1LL,
-                                  int64_t stop_on_deadlock_timeout = 0LL,
-                                  bool strict_job_thread_pinning = false,
-                                  const std::string& name = "multithread_scheduler")
+  explicit PyMultiThreadScheduler(
+      Fragment* fragment, std::shared_ptr<gxf::Clock> clock = nullptr,
+      int64_t worker_thread_number = 1LL, bool stop_on_deadlock = true,
+      double check_recession_period_ms = 5.0, int64_t max_duration_ms = -1LL,
+      int64_t stop_on_deadlock_timeout = 0LL, int64_t network_connection_timeout = 5000LL,
+      bool strict_job_thread_pinning = false,
+      const std::string& name = scheduler_default_name_v<MultiThreadScheduler>)
       : MultiThreadScheduler(ArgList{Arg{"worker_thread_number", worker_thread_number},
                                      Arg{"stop_on_deadlock", stop_on_deadlock},
                                      Arg{"check_recession_period_ms", check_recession_period_ms},
                                      Arg{"stop_on_deadlock_timeout", stop_on_deadlock_timeout},
+                                     Arg{"network_connection_timeout", network_connection_timeout},
                                      Arg{"strict_job_thread_pinning", strict_job_thread_pinning}}) {
     // max_duration_ms is an optional argument in GXF. We use a negative value in this constructor
     // to indicate that the argument should not be set.
@@ -98,6 +100,7 @@ void init_multithread_scheduler(py::module_& m) {
                     double,
                     int64_t,
                     int64_t,
+                    int64_t,
                     bool,
                     const std::string&>(),
            "fragment"_a,
@@ -108,8 +111,9 @@ void init_multithread_scheduler(py::module_& m) {
            "check_recession_period_ms"_a = 5.0,
            "max_duration_ms"_a = -1LL,
            "stop_on_deadlock_timeout"_a = 0LL,
+           "network_connection_timeout"_a = 5000LL,
            "strict_job_thread_pinning"_a = false,
-           "name"_a = "multithread_scheduler"s,
+           "name"_a = std::string(scheduler_default_name_v<MultiThreadScheduler>),
            doc::MultiThreadScheduler::doc_MultiThreadScheduler)
       .def_property_readonly("clock", &MultiThreadScheduler::clock)
       .def_property_readonly("worker_thread_number", &MultiThreadScheduler::worker_thread_number)
@@ -118,6 +122,8 @@ void init_multithread_scheduler(py::module_& m) {
       .def_property_readonly("check_recession_period_ms",
                              &MultiThreadScheduler::check_recession_period_ms)
       .def_property_readonly("stop_on_deadlock_timeout",
-                             &MultiThreadScheduler::stop_on_deadlock_timeout);
+                             &MultiThreadScheduler::stop_on_deadlock_timeout)
+      .def_property_readonly("network_connection_timeout",
+                             &MultiThreadScheduler::network_connection_timeout);
 }  // PYBIND11_MODULE
 }  // namespace holoscan

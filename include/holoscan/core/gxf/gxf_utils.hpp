@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -313,6 +313,18 @@ std::optional<int32_t> gxf_device_id(gxf_context_t context, gxf_uid_t eid);
 std::string gxf_entity_group_name(gxf_context_t context, gxf_uid_t eid);
 
 gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid);
+
+/**
+ * @brief Notify the GXF scheduler that an entity's condition has changed.
+ *
+ * This function is used by event-based conditions to signal to the scheduler
+ * that an asynchronous event has completed and the entity should be re-evaluated.
+ *
+ * @param context The GXF context.
+ * @param component_cid The component ID of the scheduling term (condition wrapper).
+ * @return true if the notification was successful, false otherwise.
+ */
+bool notify_entity_event(gxf_context_t context, gxf_uid_t component_cid);
 
 }  // namespace holoscan::gxf
 

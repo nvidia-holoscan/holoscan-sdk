@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -61,19 +61,23 @@ AppWorker::AppWorker(Application* app) : app_(app) {
 }
 
 AppWorker::~AppWorker() {
-  // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
-  if (shutdown_complete_) {
-    shutdown_complete_->store(true);
-  }
-
-  // Unregister signal handlers to prevent dangling 'this' pointer issues
-  // if signals are raised after this AppWorker is destroyed
-  if (app_) {
-    void* context = app_->executor().context();
-    if (context) {
-      SignalHandler::unregister_signal_handler(context, SIGINT);
-      SignalHandler::unregister_signal_handler(context, SIGTERM);
+  try {
+    // Signal watchdog thread to cancel (if running) since we're shutting down cleanly
+    if (shutdown_complete_) {
+      shutdown_complete_->store(true);
     }
+
+    // Unregister signal handlers to prevent dangling 'this' pointer issues
+    // if signals are raised after this AppWorker is destroyed
+    if (app_) {
+      void* context = app_->executor().context();
+      if (context) {
+        SignalHandler::unregister_signal_handler(context, SIGINT);
+        SignalHandler::unregister_signal_handler(context, SIGTERM);
+      }
+    }
+  } catch (...) {
+    // Destructors must not throw - silently ignore any exceptions
   }
 }
 
@@ -186,7 +190,8 @@ bool AppWorker::execute_fragments(
 
   // Set scheduler for each fragment
   // Should be called before GXFExecutor::initialize_gxf_graph()
-  Application::set_scheduler_for_fragments(scheduled_fragments);
+  // Pass the application's scheduler so it can be propagated to fragments that don't have their own
+  Application::set_scheduler_for_fragments(scheduled_fragments, app_->scheduler_);
 
   // Initialize fragment graphs
   for (auto& fragment : scheduled_fragments) {
@@ -220,7 +225,7 @@ bool AppWorker::execute_fragments(
 
     // Store in both places
     fragment_futures_[fragment->name()] = shared_future;
-    futures.push_back(shared_future);
+    futures.push_back(std::move(shared_future));
   }
 
   // Capture notify_flag by pointer (not reference) so we can safely check it even if there's
@@ -272,7 +277,7 @@ void AppWorker::submit_message(WorkerMessage&& message) {
 }
 
 void AppWorker::process_message_queue() {
-  std::lock_guard<std::mutex> lock(message_mutex_);
+  std::unique_lock<std::mutex> lock(message_mutex_);
   while (!message_queue_.empty()) {
     auto message = std::move(message_queue_.front());
     message_queue_.pop();
@@ -308,14 +313,17 @@ void AppWorker::process_message_queue() {
         } catch (const std::bad_any_cast& e) {
           HOLOSCAN_LOG_ERROR("Failed to cast message data to termination code: {}", e.what());
         }
-        terminate_scheduled_fragments();
         // Set the flag to false because the app driver already knows the worker has been
         // terminated. Use atomic store to synchronize with the async executor task.
         need_notify_execution_finished_.store(false);
+        // Release lock before calling terminate_scheduled_fragments() which may block/sleep
+        lock.unlock();
+        terminate_scheduled_fragments();
         if (worker_server_) {
           worker_server_->stop();
           // Do not call 'worker_server_->wait()' as current thread is the worker server thread
         }
+        return;  // Lock released, exit function
       } break;
       default:
         HOLOSCAN_LOG_WARN("Unknown message code: {}", static_cast<int>(message_code));
@@ -587,7 +595,7 @@ std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentGraph& fra
       auto fragment =
           fragment_graph.find_node([&target](const auto& node) { return node->name() == target; });
       if (fragment) {
-        target_fragments.push_back(fragment);
+        target_fragments.push_back(std::move(fragment));
       } else {
         HOLOSCAN_LOG_ERROR("Cannot find fragment: {}", target);
       }
@@ -742,7 +750,7 @@ void AppWorker::setup_signal_handlers() {
       // destruction
       auto shutdown_flag = shutdown_complete_;
       auto timeout_ms = worker_shutdown_timeout_ms_;
-      std::thread([shutdown_flag, timeout_ms, signum]() {
+      std::thread([shutdown_flag = std::move(shutdown_flag), timeout_ms, signum]() {
         // Wait for a reasonable time for clean shutdown
         std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms));
 

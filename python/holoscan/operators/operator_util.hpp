@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/condition.hpp"
@@ -165,7 +166,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
         for (const auto& inner_item : item) {
           vv.push_back(inner_item.cast<T>());
         }
-        v.push_back(vv);
+        v.push_back(std::move(vv));
       }
       out = v;
     } else {

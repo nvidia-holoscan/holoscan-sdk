@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -178,10 +179,10 @@ class GeometrySourceOp : public Operator {
     spec.tensor_name_ = "dynamic_text";
     spec.type_ = HolovizOp::InputType::TEXT;
     spec.text_.push_back(std::string("Frame ") + std::to_string(count_));
-    specs.push_back(spec);
+    specs.push_back(std::move(spec));
 
     // emit the output specs
-    op_output.emit(specs, "output_specs");
+    op_output.emit(std::move(specs), "output_specs");
 
     count_++;
   }

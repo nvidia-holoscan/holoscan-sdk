@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./receivers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/async_buffer_receiver.hpp"
@@ -47,9 +48,10 @@ class PyDoubleBufferReceiver : public DoubleBufferReceiver {
   using DoubleBufferReceiver::DoubleBufferReceiver;
 
   // Define a constructor that fully initializes the object.
-  explicit PyDoubleBufferReceiver(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                  uint64_t capacity = 1UL, uint64_t policy = 2UL,
-                                  const std::string& name = "double_buffer_receiver")
+  explicit PyDoubleBufferReceiver(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, uint64_t capacity = 1UL,
+      uint64_t policy = 2UL,
+      const std::string& name = resource_default_name_v<DoubleBufferReceiver>)
       : DoubleBufferReceiver(ArgList{Arg{"capacity", capacity}, Arg{"policy", policy}}) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -65,7 +67,8 @@ class PyUcxReceiver : public UcxReceiver {
                          std::shared_ptr<UcxSerializationBuffer> buffer = nullptr,
                          uint64_t capacity = 1UL, uint64_t policy = 2UL,
                          const std::string& address = std::string("0.0.0.0"),
-                         uint32_t port = kDefaultUcxPort, const std::string& name = "ucx_receiver")
+                         uint32_t port = kDefaultUcxPort,
+                         const std::string& name = resource_default_name_v<UcxReceiver>)
       : UcxReceiver(ArgList{Arg{"capacity", capacity},
                             Arg{"policy", policy},
                             Arg{"address", address},
@@ -83,8 +86,9 @@ class PyAsyncBufferReceiver : public AsyncBufferReceiver {
   using AsyncBufferReceiver::AsyncBufferReceiver;
 
   // Define a constructor that fully initializes the object.
-  explicit PyAsyncBufferReceiver(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                 const std::string& name = "async_buffer_receiver")
+  explicit PyAsyncBufferReceiver(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      const std::string& name = resource_default_name_v<AsyncBufferReceiver>)
       : AsyncBufferReceiver() {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -107,7 +111,7 @@ void init_receivers(py::module_& m) {
            "fragment"_a,
            "capacity"_a = 1UL,
            "policy"_a = 2UL,
-           "name"_a = "double_buffer_receiver"s,
+           "name"_a = std::string(resource_default_name_v<DoubleBufferReceiver>),
            doc::DoubleBufferReceiver::doc_DoubleBufferReceiver);
 
   py::class_<AsyncBufferReceiver,
@@ -117,7 +121,7 @@ void init_receivers(py::module_& m) {
       m, "AsyncBufferReceiver", doc::AsyncBufferReceiver::doc_AsyncBufferReceiver)
       .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
-           "name"_a = "async_buffer_receiver"s,
+           "name"_a = std::string(resource_default_name_v<AsyncBufferReceiver>),
            doc::AsyncBufferReceiver::doc_AsyncBufferReceiver);
 
   py::class_<UcxReceiver, PyUcxReceiver, Receiver, std::shared_ptr<UcxReceiver>>(
@@ -135,7 +139,7 @@ void init_receivers(py::module_& m) {
            "policy"_a = 2UL,
            "address"_a = std::string("0.0.0.0"),
            "port"_a = kDefaultUcxPort,
-           "name"_a = "ucx_receiver"s,
+           "name"_a = std::string(resource_default_name_v<UcxReceiver>),
            doc::UcxReceiver::doc_UcxReceiver);
 }
 }  // namespace holoscan

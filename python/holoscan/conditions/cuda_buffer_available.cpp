@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,6 +27,7 @@
 #include "../core/component_util.hpp"
 #include "./cuda_buffer_available_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/cuda_buffer_available.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -59,7 +60,7 @@ class PyCudaBufferAvailableCondition : public CudaBufferAvailableCondition {
   explicit PyCudaBufferAvailableCondition(
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       std::optional<const std::string> receiver = std::nullopt,
-      const std::string& name = "noname_cuda_buffer_available_condition") {
+      const std::string& name = condition_default_name_v<CudaBufferAvailableCondition>) {
     init_component_base(this, fragment_or_subgraph, name, "condition");
   }
 };
@@ -77,7 +78,7 @@ void init_cuda_buffer_available(py::module_& m) {
                     const std::string&>(),
            "fragment"_a,
            "receiver"_a = py::none(),
-           "name"_a = "noname_cuda_buffer_available_condition"s,
+           "name"_a = std::string(condition_default_name_v<CudaBufferAvailableCondition>),
            doc::CudaBufferAvailableCondition::doc_CudaBufferAvailableCondition)
       .def_property(
           "receiver",

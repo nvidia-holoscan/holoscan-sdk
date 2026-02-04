@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -687,10 +687,9 @@ void init_io_context(py::module_& m) {
 
   m.def(
       "registry",
-      []() { return EmitterReceiverRegistry::get_instance(); },
+      []() -> EmitterReceiverRegistry& { return EmitterReceiverRegistry::get_instance(); },
       py::return_value_policy::reference);
 
-  auto registry = EmitterReceiverRegistry::get_instance();
   py::class_<PyRegistryContext, std::shared_ptr<PyRegistryContext>>(
       m, "PyRegistryContext", "PyRegistryContext class")
       .def(py::init<>())

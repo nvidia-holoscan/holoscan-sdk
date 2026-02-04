@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,7 +77,7 @@ class UcxContext : public gxf::GXFNetworkContext {
   /**
    * @brief Initiates graceful shutdown of UCX connections.
    *
-   * Sets the shutting_down_ flag and signals TX/RX threads to exit.
+   * Signals the underlying GXF UcxContext TX/RX threads to exit.
    * This allows pending operations to complete within the shutdown timeout
    * rather than blocking indefinitely.
    *
@@ -89,7 +89,7 @@ class UcxContext : public gxf::GXFNetworkContext {
 
   /**
    * @brief Check if shutdown has been initiated.
-   * @return true if shutdown is in progress
+   * @return true if shutdown is in progress, false otherwise or if context not initialized
    */
   bool is_shutting_down() const;
 
@@ -103,8 +103,6 @@ class UcxContext : public gxf::GXFNetworkContext {
 
   // TODO(unknown): support GPUDevice nvidia::gxf::Resource
   // nvidia::gxf::Resource<nvidia::gxf::Handle<nvidia::gxf::GPUDevice>> gpu_device_;
-
-  bool shutting_down_ = false;  ///< Flag to track if shutdown has been initiated
 };
 
 }  // namespace holoscan

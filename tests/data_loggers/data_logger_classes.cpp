@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,8 +41,8 @@ namespace holoscan {
 using DataLoggerResourceClassesWithGXFContext = TestWithGXFContext;
 using ResourceClassesWithGXFContext = TestWithGXFContext;
 
-TEST_F(DataLoggerResourceClassesWithGXFContext, TestAsyncConsoleLogger) {
-  const std::string name{"async-console-logger"};
+TEST_F(DataLoggerResourceClassesWithGXFContext, TestAsyncConsoleLoggerLockFreeQueue) {
+  const std::string name{"async-console-logger-lockfree"};
   ArgList arglist{Arg{"log_inputs", true},
                   Arg{"log_outputs", true},
                   Arg{"log_metadata", true},
@@ -56,7 +56,31 @@ TEST_F(DataLoggerResourceClassesWithGXFContext, TestAsyncConsoleLogger) {
                   Arg{"large_data_worker_sleep_time", static_cast<int64_t>(50000)},
                   Arg{"large_data_queue_policy", AsyncQueuePolicy::kReject},
                   Arg{"enable_large_data_queue", true},
-                  Arg{"shutdown_wait_period_ms", static_cast<int64_t>(5000)}};
+                  Arg{"shutdown_wait_period_ms", static_cast<int64_t>(5000)},
+                  Arg{"queue_type", DataLoggerQueueType::LockFree}};
+  auto resource = F.make_resource<data_loggers::AsyncConsoleLogger>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<data_loggers::AsyncConsoleLogger>(arglist)));
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(DataLoggerResourceClassesWithGXFContext, TestAsyncConsoleLoggerOrderedQueue) {
+  const std::string name{"async-console-logger-ordered"};
+  ArgList arglist{Arg{"log_inputs", true},
+                  Arg{"log_outputs", true},
+                  Arg{"log_metadata", true},
+                  Arg{"log_tensor_data_contents", true},
+                  Arg{"allowlist_patterns", std::vector<std::string>{}},
+                  Arg{"denylist_patterns", std::vector<std::string>{".*op3.*", ".*op5.*"}},
+                  Arg{"max_queue_size", static_cast<size_t>(500)},
+                  Arg{"worker_sleep_time", static_cast<int64_t>(50000)},
+                  Arg{"queue_policy", AsyncQueuePolicy::kReject},
+                  Arg{"large_data_max_queue_size", static_cast<int64_t>(50)},
+                  Arg{"large_data_worker_sleep_time", static_cast<int64_t>(50000)},
+                  Arg{"large_data_queue_policy", AsyncQueuePolicy::kReject},
+                  Arg{"enable_large_data_queue", true},
+                  Arg{"shutdown_wait_period_ms", static_cast<int64_t>(5000)},
+                  Arg{"queue_type", DataLoggerQueueType::Ordered}};
   auto resource = F.make_resource<data_loggers::AsyncConsoleLogger>(name, arglist);
   EXPECT_EQ(resource->name(), name);
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<data_loggers::AsyncConsoleLogger>(arglist)));
@@ -103,7 +127,7 @@ TEST_F(DataLoggerResourceClassesWithGXFContext, TestBasicConsoleLoggerDefaultCon
   auto resource = F.make_resource<data_loggers::BasicConsoleLogger>();
 }
 
-TEST_F(ResourceClassesWithGXFContext, TestSimpleTextSerializer) {
+TEST_F(DataLoggerResourceClassesWithGXFContext, TestSimpleTextSerializer) {
   const std::string name{"text-serializer"};
   ArgList arglist{Arg{"max_elements", static_cast<int64_t>(10)},
                   Arg{"max_metadata_items", static_cast<int64_t>(10)},
@@ -115,7 +139,20 @@ TEST_F(ResourceClassesWithGXFContext, TestSimpleTextSerializer) {
   EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
 }
 
-TEST_F(ResourceClassesWithGXFContext, TestSimpleTextSerializerDefaultConstructor) {
+TEST_F(DataLoggerResourceClassesWithGXFContext, TestSimpleTextSerializerDefaultConstructor) {
   auto resource = F.make_resource<data_loggers::SimpleTextSerializer>();
 }
+
+TEST_F(DataLoggerResourceClassesWithGXFContext, TestDataLoggerResourceUniqueDefaultNames) {
+  // Create resources without specifying names
+  auto basic_console_logger = F.make_resource<data_loggers::BasicConsoleLogger>();
+  auto gxf_basic_console_logger = F.make_resource<data_loggers::GXFConsoleLogger>();
+  auto async_console_logger = F.make_resource<data_loggers::AsyncConsoleLogger>();
+
+  // Verify each data logger resource has the expected default name
+  EXPECT_EQ(basic_console_logger->name(), "basic_console_logger");
+  EXPECT_EQ(gxf_basic_console_logger->name(), "gxf_basic_console_logger");
+  EXPECT_EQ(async_console_logger->name(), "async_console_logger");
+}
+
 }  // namespace holoscan

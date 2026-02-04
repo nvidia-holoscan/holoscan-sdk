@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -82,7 +82,9 @@ class TensorSource : public holoscan::Operator {
         throw std::runtime_error(
             "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
       }
-      auto out_tensor = std::make_shared<holoscan::Tensor>(maybe_dl_ctx.value());
+      auto dl_ctx = maybe_dl_ctx.value();
+      auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+      auto out_tensor = std::make_shared<holoscan::Tensor>(dl_ctx, mem_buf_ptr);
       out_tensormap.insert({"tensor", out_tensor});
       op_output.emit(out_tensormap, "out_tensor");
     } else {
@@ -92,7 +94,9 @@ class TensorSource : public holoscan::Operator {
         throw std::runtime_error(
             "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
       }
-      auto out_tensor = std::make_shared<holoscan::Tensor>(maybe_dl_ctx.value());
+      auto dl_ctx = maybe_dl_ctx.value();
+      auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+      auto out_tensor = std::make_shared<holoscan::Tensor>(dl_ctx, mem_buf_ptr);
       // out_message.insert({"tensor", out_tensor});
       // op_output.emit(out_message, "out_tensor");
       op_output.emit(std::move(out_tensor), "out_tensor");

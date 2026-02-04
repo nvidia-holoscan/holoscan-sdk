@@ -228,6 +228,11 @@ class SwapChain {
   uint32_t m_updateHeight{0};
   VkPresentModeKHR m_presentMode = VkPresentModeKHR::VK_PRESENT_MODE_FIFO_KHR;
 
+  // true if the swap chain image has been acquired at least once
+  bool m_acquired{false};
+  // true if the swap chain image has been presented at least once
+  bool m_presented{false};
+
   VkImageUsageFlags m_imageUsage{};
 
   VkResult waitIdle() {

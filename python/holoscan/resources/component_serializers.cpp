@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "../core/component_util.hpp"
 #include "./component_serializers_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/std_component_serializer.hpp"
@@ -46,8 +47,9 @@ class PyStdComponentSerializer : public StdComponentSerializer {
   using StdComponentSerializer::StdComponentSerializer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyStdComponentSerializer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                    const std::string& name = "std_component_serializer") {
+  explicit PyStdComponentSerializer(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      const std::string& name = resource_default_name_v<StdComponentSerializer>) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
 };
@@ -58,9 +60,10 @@ class PyUcxComponentSerializer : public UcxComponentSerializer {
   using UcxComponentSerializer::UcxComponentSerializer;
 
   // Define a constructor that fully initializes the object.
-  explicit PyUcxComponentSerializer(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                                    std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-                                    const std::string& name = "ucx_component_serializer") {
+  explicit PyUcxComponentSerializer(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
+      std::shared_ptr<holoscan::Allocator> allocator = nullptr,
+      const std::string& name = resource_default_name_v<UcxComponentSerializer>) {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
@@ -77,7 +80,7 @@ class PyUcxHoloscanComponentSerializer : public UcxHoloscanComponentSerializer {
   explicit PyUcxHoloscanComponentSerializer(
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
       std::shared_ptr<holoscan::Allocator> allocator = nullptr,
-      const std::string& name = "ucx_holoscan_component_serializer") {
+      const std::string& name = resource_default_name_v<UcxHoloscanComponentSerializer>) {
     if (allocator) {
       this->add_arg(Arg{"allocator", allocator});
     }
@@ -93,7 +96,7 @@ void init_component_serializers(py::module_& m) {
       m, "StdComponentSerializer", doc::StdComponentSerializer::doc_StdComponentSerializer)
       .def(py::init<std::variant<Fragment*, Subgraph*>, const std::string&>(),
            "fragment"_a,
-           "name"_a = "standard_component_serializer"s,
+           "name"_a = std::string(resource_default_name_v<StdComponentSerializer>),
            doc::StdComponentSerializer::doc_StdComponentSerializer)
       .def("initialize",
            &StdComponentSerializer::initialize,
@@ -109,7 +112,7 @@ void init_component_serializers(py::module_& m) {
                     const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
-           "name"_a = "ucx_component_serializer"s,
+           "name"_a = std::string(resource_default_name_v<UcxComponentSerializer>),
            doc::UcxComponentSerializer::doc_UcxComponentSerializer);
 
   py::class_<UcxHoloscanComponentSerializer,
@@ -124,7 +127,7 @@ void init_component_serializers(py::module_& m) {
                     const std::string&>(),
            "fragment"_a,
            "allocator"_a = py::none(),
-           "name"_a = "ucx_component_serializer"s,
+           "name"_a = std::string(resource_default_name_v<UcxHoloscanComponentSerializer>),
            doc::UcxHoloscanComponentSerializer::doc_UcxHoloscanComponentSerializer_python);
 }
 }  // namespace holoscan

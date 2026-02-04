@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -912,7 +912,7 @@ class Operator : public ComponentBase {
    * @param m The new MessageLabel that will be set for the input port
    */
   void update_input_message_label(std::string input_name, MessageLabel m) {
-    input_message_labels[input_name] = m;
+    input_message_labels[std::move(input_name)] = std::move(m);
   }
 
   /**
@@ -920,7 +920,7 @@ class Operator : public ComponentBase {
    *
    * @param input_name The input port name for which the MessageLabel is deleted
    */
-  void delete_input_message_label(std::string input_name) {
+  void delete_input_message_label(const std::string& input_name) {
     input_message_labels.erase(input_name);
   }
 
@@ -1002,8 +1002,8 @@ class Operator : public ComponentBase {
 
   /// List of restricted substrings that cannot be used in operator names.
   static inline const std::vector<std::string> kRestrictedSubstrings = {
-      ".",      // Reserved for port name separation
-      "_old",   // Reserved suffix for asynchronous buffer's old message handling
+      ".",     // Reserved for port name separation
+      "_old",  // Reserved suffix for asynchronous buffer's old message handling
   };
 
   ///  Set the operator codelet or any other backend codebase.

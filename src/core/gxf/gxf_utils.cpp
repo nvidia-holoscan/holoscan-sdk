@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -213,6 +213,36 @@ gxf_uid_t gxf_entity_group_id(gxf_context_t context, gxf_uid_t eid) {
   gxf_uid_t gid;
   HOLOSCAN_GXF_CALL_FATAL(GxfEntityGroupId(context, eid, &gid));
   return gid;
+}
+
+bool notify_entity_event(gxf_context_t context, gxf_uid_t component_cid) {
+  if (context == nullptr) {
+    HOLOSCAN_LOG_ERROR("Cannot notify entity event: GXF context is null");
+    return false;
+  }
+
+  // Get the entity ID from the component ID (non-fatal to be callback-safe)
+  gxf_uid_t eid = 0;
+  gxf_result_t result = GxfComponentEntity(context, component_cid, &eid);
+  if (result != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("Cannot notify entity event: GxfComponentEntity failed for component {}: {}",
+                       component_cid,
+                       GxfResultStr(result));
+    return false;
+  }
+  if (eid == 0) {
+    HOLOSCAN_LOG_ERROR("Cannot notify entity event: got null entity ID for component {}",
+                       component_cid);
+    return false;
+  }
+
+  result = GxfEntityEventNotify(context, eid);
+  if (result != GXF_SUCCESS) {
+    HOLOSCAN_LOG_ERROR("GxfEntityEventNotify failed for entity {}: {}", eid, GxfResultStr(result));
+    return false;
+  }
+
+  return true;
 }
 
 }  // namespace holoscan::gxf

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -264,13 +264,17 @@ class PingTxTensorMapMetadataOp : public Operator {
       HOLOSCAN_LOG_ERROR(
           "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
     }
-    std::shared_ptr<Tensor> holoscan_tensor1 = std::make_shared<Tensor>(maybe_dl_ctx1.value());
+    auto dl_ctx1 = maybe_dl_ctx1.value();
+    auto* mem_buf_ptr1 = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx1->memory_ref.get());
+    std::shared_ptr<Tensor> holoscan_tensor1 = std::make_shared<Tensor>(dl_ctx1, mem_buf_ptr1);
     auto maybe_dl_ctx2 = (*gxf_tensor2).toDLManagedTensorContext();
     if (!maybe_dl_ctx2) {
       HOLOSCAN_LOG_ERROR(
           "failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
     }
-    std::shared_ptr<Tensor> holoscan_tensor2 = std::make_shared<Tensor>(maybe_dl_ctx2.value());
+    auto dl_ctx2 = maybe_dl_ctx2.value();
+    auto* mem_buf_ptr2 = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx2->memory_ref.get());
+    std::shared_ptr<Tensor> holoscan_tensor2 = std::make_shared<Tensor>(dl_ctx2, mem_buf_ptr2);
 
     // populate TensorMap output with the Holoscan Tensors
     holoscan::TensorMap out_tensors;

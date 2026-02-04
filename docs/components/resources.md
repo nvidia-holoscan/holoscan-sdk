@@ -21,20 +21,57 @@ This is a memory pool which provides a user-specified number of equally sized bl
 - The `num_blocks` parameter controls the total number of blocks that are allocated in the memory pool.
 - The `dev_id` parameter is an optional parameter that can be used to specify the CUDA ID of the device on which the memory pool will be created.
 
-### RMMAllocator
+### StreamOrderedAllocator
 
-This allocator provides a pair of memory pools (one is a CUDA device memory pool and the other corresponds to pinned host memory). The underlying implementation is based on the [RAPIDS memory manager](https://github.com/rapidsai/rmm) (RMM) and uses a pair of `rmm::mr::pool_memory_resource` resource types (The device memory pool is a `rmm::mr::cuda_memory_resource` and the host pool is a `rmm::mr::pinned_memory_resource`) . Unlike `BlockMemoryPool`, this allocator can be used with operators like `VideoStreamReplayerOp` that require an allocator capable of allocating both host and device memory. Rather than fixed block sizes, it uses just an initial memory size to allocate and a maximum size that the pool can expand to.
+This allocator uses CUDA's [Stream-Ordered Memory Allocator](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/stream-ordered-memory-allocation.html#stream-ordered-memory-allocator) (`cudaMallocAsync`/`cudaFreeAsync`) to dynamically allocate CUDA device memory. Stream-ordered allocation enables memory operations to be tied to specific CUDA streams, allowing allocation and deallocation without blocking the host or other streams.
+
+This allocator **only supports CUDA device memory**. If host memory is also needed, use `RMMAllocator` instead (see {ref}`choosing between allocators <choosing-allocators>` below).
 
 - The `device_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
-- The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool in MiB. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
-- The `host_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool in MiB. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
-- The `host_memory_max_size` parameter  specifies the maximum size of the device (GPU) memory pool in MiB. This is an optional parameter that defaults to twice the value of `host_memory_initial_size`. See note below on the format used to specify the value.
+- The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
+- The `release_threshold` parameter specifies the amount of reserved memory to hold onto before trying to release memory back to the OS. This is an optional parameter that defaults to "4MB". See note below on the format used to specify the value.
+- The `dev_id` parameter is an optional parameter that can be used to specify the GPU device ID (as an integer) on which the memory pool will be created.
+
+### RMMAllocator
+
+This allocator provides a pair of memory pools (one is a CUDA device memory pool and the other corresponds to pinned host memory). The underlying implementation is based on the [RAPIDS memory manager](https://github.com/rapidsai/rmm) (RMM) and uses a pair of `rmm::mr::pool_memory_resource` resource types (The device memory pool is a `rmm::mr::cuda_memory_resource` and the host pool is a `rmm::mr::pinned_memory_resource`). Unlike `BlockMemoryPool`, this allocator can be used with operators like `VideoStreamReplayerOp` that require an allocator capable of allocating both host and device memory. Rather than fixed block sizes, it uses just an initial memory size to allocate and a maximum size that the pool can expand to.
+
+- The `device_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
+- The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
+- The `host_memory_initial_size` parameter specifies the initial size of the host (pinned) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
+- The `host_memory_max_size` parameter specifies the maximum size of the host (pinned) memory pool. This is an optional parameter that defaults to twice the value of `host_memory_initial_size`. See note below on the format used to specify the value.
 - The `dev_id` parameter is an optional parameter that can be used to specify the GPU device ID (as an integer) on which the memory pool will be created.
 
 :::{note}
 The values for the memory parameters, such as `device_memory_initial_size` must be specified in the form of a string containing a non-negative integer value followed by a suffix representing the units. Supported units are B, KB, MB, GB and TB where the values are powers of 1024 bytes
 (e.g. MB = 1024 * 1024 bytes). Examples of valid units are "512MB", "256 KB", "1 GB". If a floating point number is specified that decimal portion will be truncated (i.e. the value is rounded down to the nearest integer).
 :::
+
+(choosing-allocators)=
+
+### Choosing Between Device Allocators
+
+Holoscan provides several allocator types with different characteristics:
+
+| Feature | UnboundedAllocator | BlockMemoryPool | StreamOrderedAllocator | RMMAllocator |
+|---------|-------------------|-----------------|------------------------|--------------|
+| **Device memory** | Yes | Yes | Yes | Yes |
+| **Pinned host memory** | Yes | Yes | No | Yes |
+| **System memory** | Yes | Yes | No | No |
+| **Async allocation**\* | No | No | Yes | Yes |
+| **Mechanism** | Dynamic (`cudaMalloc`/`new`) | Fixed-size blocks | Pool (CUDA stream-ordered) | Pool (RMM) |
+
+\* "Async allocation" means the allocator uses stream-ordered APIs (e.g., `cudaMallocAsync`) or async memory pools (e.g., RMM). These APIs can still block the host if the pool needs to grow or release memory back to the OS.
+
+**When to use each allocator:**
+
+- **`UnboundedAllocator`**: Good for initial prototyping. Uses dynamic allocation on each call without memory reuse. Supports all memory types including system memory (C++ `new`).
+
+- **`BlockMemoryPool`**: Best for predictable workloads with known memory requirements. Pre-allocates fixed-size blocks that are reused across `compute` calls, avoiding allocation overhead. Requires specifying `block_size` and `num_blocks` upfront.
+
+- **`StreamOrderedAllocator`**: Device memory only. Uses CUDA's native stream-ordered allocator which integrates with stream semantics for efficient memory reuse. Inherits from `CudaAllocator`, providing `allocate_async`/`free_async` methods for stream-ordered allocation.
+
+- **`RMMAllocator`**: Provides both device and pinned host memory pools. Required for operators like `VideoStreamReplayerOp` that need both memory types. Inherits from `CudaAllocator`, providing `allocate_async`/`free_async` methods.
 
 ### CudaStreamPool
 
@@ -170,6 +207,15 @@ The AsyncDataLoggerResource inherits all of the parameters from DataLoggerResour
 - The `large_data_queue_policy` parameter controls how large data queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
 - The `enable_large_data_queue` parameter controls whether to enable the large data queue and worker thread for processing full tensor content.
 - The `shutdown_timeout` parameter specifies the maximum time in nanoseconds to wait for worker threads to shutdown gracefully.
+- The `queue_type` parameter specifies the queue implementation to use. Can be `LockFree` (default) for higher throughput with per-producer FIFO ordering only, or `Ordered` for strict global FIFO ordering across all producers at the cost of lower throughput. In the YAML configuration for this parameter, you can use string values "lockfree", "lock_free", or "ordered" (case-insensitive).
+
+#### Ensuring FIFO Ordering Per Operator
+
+When using the `LockFree` queue type (default), the AsyncDataLoggerResource maintains FIFO order per-producer thread, but not globally across all producers. Since multiple operators may run on different threads, messages from different operators can be interleaved in any order.
+
+To ensure that messages from a specific operator maintain strict FIFO order in the logs, you can use a `ThreadPool` resource to pin the operator to a specific worker thread. This ensures the operator's `compute()` method is always called by the same thread, guaranteeing that all messages from that operator come from the same producer thread and preserving FIFO order for that operator's messages. See {ref}`configuring thread pools <configuring-app-thread-pools>` for details on how to create thread pools and pin operators to them.
+
+If strict global FIFO ordering across all operators is required (based on enqueue timestamps), use the `Ordered` queue type instead, though this will result in lower throughput due to mutex contention.
 
 
 ## CUDA Green Context Resources

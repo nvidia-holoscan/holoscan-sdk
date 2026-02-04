@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,7 +64,7 @@ class PyVideoStreamReplayerOp : public VideoStreamReplayerOp {
       bool repeat = false, uint64_t count = 0UL,
       std::optional<std::shared_ptr<holoscan::Allocator>> allocator = std::nullopt,
       std::optional<std::shared_ptr<holoscan::Resource>> entity_serializer = std::nullopt,
-      const std::string& name = "video_stream_replayer")
+      const std::string& name = operator_default_name_v<ops::VideoStreamReplayerOp>)
       : VideoStreamReplayerOp(ArgList{Arg{"directory", directory},
                                       Arg{"basename", basename},
                                       Arg{"batch_size", batch_size},
@@ -122,7 +122,7 @@ PYBIND11_MODULE(_video_stream_replayer, m) {
            "count"_a = 0UL,
            "allocator"_a = py::none(),
            "entity_serializer"_a = py::none(),
-           "name"_a = "video_stream_replayer"s,
+           "name"_a = std::string(operator_default_name_v<ops::VideoStreamReplayerOp>),
            doc::VideoStreamReplayerOp::doc_VideoStreamReplayerOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

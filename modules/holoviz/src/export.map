@@ -21,9 +21,9 @@
             "holoscan::viz::SetCurrent(void*)";
             "holoscan::viz::GetCurrent()";
 
-            "holoscan::viz::Init(GLFWwindow*, holoscan::viz::InitFlags)";
-            "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::InitFlags, char const*)";
-            "holoscan::viz::Init(char const*, unsigned int, unsigned int, unsigned int, holoscan::viz::InitFlags)";
+            "holoscan::viz::Init(GLFWwindow*, holoscan::viz::init_flags::InitFlags)";
+            "holoscan::viz::Init(unsigned int, unsigned int, char const*, holoscan::viz::init_flags::InitFlags, char const*)";
+            "holoscan::viz::Init(char const*, unsigned int, unsigned int, unsigned int, holoscan::viz::init_flags::InitFlags)";
 
             "holoscan::viz::g_im_gui_context";
 
@@ -52,7 +52,7 @@
 
             "holoscan::viz::Shutdown(void*)";
 
-            "holoscan::viz::Begin()";
+            "holoscan::viz::Begin(holoscan::viz::render_flags::RenderFlags)";
             "holoscan::viz::End()";
 
             "holoscan::viz::BeginImageLayer()";

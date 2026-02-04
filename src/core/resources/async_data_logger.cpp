@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include "holoscan/core/resources/async_data_logger.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <future>
@@ -82,7 +83,7 @@ AsyncDataLoggerResource::~AsyncDataLoggerResource() {
     stop_worker_threads();
   } catch (const std::exception& e) {
     try {
-      HOLOSCAN_LOG_ERROR("Excedtion raised in stop_worker_threads(): {}", e.what());
+      HOLOSCAN_LOG_ERROR("Exception raised in stop_worker_threads(): {}", e.what());
     } catch (...) {
       // discard any exception from fmt::format
     }
@@ -145,11 +146,20 @@ void AsyncDataLoggerResource::setup(ComponentSpec& spec) {
              "Use -1 to wait indefinitely (default), 0 to not wait, or a positive value "
              "for a specific timeout in milliseconds.",
              static_cast<int64_t>(-1));
+
+  spec.param(queue_type_,
+             "queue_type",
+             "Queue Type",
+             "Type of queue implementation: "
+             "'LockFree' (fast, no global ordering) or "
+             "'Ordered' (preserves timestamp order).",
+             DataLoggerQueueType::LockFree);
 }
 
 void AsyncDataLoggerResource::initialize() {
-  // register argument setter for custom enum before calling parent class initialize
+  // register argument setters for custom enums before calling parent class initialize
   register_converter<AsyncQueuePolicy>();
+  register_converter<DataLoggerQueueType>();
 
   // Allow environment variable override for shutdown_wait_period_ms.
   // Note: add_arg appends to args_, and the last arg with a given name takes precedence
@@ -173,14 +183,18 @@ void AsyncDataLoggerResource::initialize() {
   // calling parent initialize will set all parameters from the provided arguments
   DataLoggerResource::initialize();
 
-  // Create the lock-free queues
-  data_queue_ = std::make_unique<moodycamel::ConcurrentQueue<DataEntry>>(max_queue_size_.get());
+  // Create queues using factory function based on configured queue type
+  data_queue_ = create_data_logger_queue<DataEntry>(queue_type_.get(), max_queue_size_.get());
 
   // Conditionally create large data queue
   if (enable_large_data_queue_.get()) {
-    large_data_queue_ =
-        std::make_unique<moodycamel::ConcurrentQueue<DataEntry>>(large_data_max_queue_size_.get());
+    large_data_queue_ = create_data_logger_queue<DataEntry>(
+        queue_type_.get(), large_data_max_queue_size_.get());
   }
+
+  // Log which queue type is being used
+  HOLOSCAN_LOG_INFO("AsyncDataLoggerResource: Using {} queue type",
+                    magic_enum::enum_name(queue_type_.get()));
 
   // Start the worker threads
   if (!start_worker_threads()) {
@@ -258,8 +272,13 @@ bool AsyncDataLoggerResource::log_tensor_data(const std::shared_ptr<Tensor>& ten
   // 3. Large data enqueue failed
   if (!large_data_enabled || !should_log_content || !success) {
     try {
-      DataEntry data_entry(
-          tensor, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy, stream);
+      DataEntry data_entry(tensor,
+                           unique_id,
+                           acquisition_timestamp,
+                           emit_timestamp,
+                           io_type,
+                           std::move(metadata_copy),
+                           stream);
 
       success = enqueue_data_entry(std::move(data_entry));
     } catch (const std::exception& e) {
@@ -300,8 +319,13 @@ bool AsyncDataLoggerResource::log_data(const std::any& data, const std::string& 
 
   // Log generic data (always goes to data queue)
   try {
-    DataEntry data_entry(
-        data, unique_id, acquisition_timestamp, emit_timestamp, io_type, metadata_copy, stream);
+    DataEntry data_entry(data,
+                         unique_id,
+                         acquisition_timestamp,
+                         emit_timestamp,
+                         io_type,
+                         std::move(metadata_copy),
+                         stream);
 
     return enqueue_data_entry(std::move(data_entry));
   } catch (const std::exception& e) {
@@ -378,7 +402,7 @@ bool AsyncDataLoggerResource::log_tensormap_data(
                            acquisition_timestamp,
                            emit_timestamp,
                            io_type,
-                           metadata_copy,
+                           std::move(metadata_copy),
                            stream);
 
       success = enqueue_data_entry(std::move(data_entry));
@@ -469,6 +493,10 @@ bool AsyncDataLoggerResource::start_worker_threads() {
     return true;  // Already running successfully
   }
 
+  // Reset global shutdown flag since we're starting (or restarting) workers.
+  // This allows Python object serialization to work for this logger instance.
+  async_logger_shutdown_in_progress().store(false, std::memory_order_release);
+
   // Initialize backend before starting any worker threads
   if (backend_) {
     HOLOSCAN_LOG_DEBUG("AsyncDataLoggerResource: Initializing backend");
@@ -507,11 +535,27 @@ void AsyncDataLoggerResource::stop_worker_threads() {
     return;  // Threads not running
   }
 
+  // Set global shutdown flag to prevent Python GIL acquisition in worker threads.
+  // This must be set BEFORE we start waiting for threads to join, otherwise
+  // worker threads may block on Python GIL acquisition while main thread holds the GIL.
+  async_logger_shutdown_in_progress().store(true, std::memory_order_release);
+
   HOLOSCAN_LOG_DEBUG("AsyncDataLoggerResource: Requesting worker threads shutdown");
   shutdown_requested_.store(true);
 
   // Wait for queues to drain with configurable timeout
   int64_t wait_period_ms = shutdown_wait_period_ms_.get();
+
+  // When a timeout is configured, add a brief delay after setting the shutdown flag
+  // to give worker threads time to observe the flag before we block on join().
+  // This reduces the race window where a worker checks the flag, then we set it,
+  // then we block on join() while the worker blocks on GIL acquisition.
+  // Use 10% of the configured timeout (min 50ms, max 500ms) for the delay.
+  if (wait_period_ms > 0) {
+    int64_t delay_ms = std::max(static_cast<int64_t>(50),
+                                std::min(static_cast<int64_t>(500), wait_period_ms / 10));
+    std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
+  }
   if (wait_period_ms >= 0) {
     auto start_time = std::chrono::steady_clock::now();
     auto timeout = std::chrono::milliseconds(wait_period_ms);

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,19 @@ import importlib
 
 import pytest
 
+from ..utils import requires_torch_cuda
+
 
 def _import_torch_or_skip():
     """Import torch, skipping only when it is not installed."""
     try:
         return importlib.import_module("torch")
     except ModuleNotFoundError:
-        pytest.skip("torch not installed")
+        pytest.skip("torch not installed", allow_module_level=True)
 
 
 # Could not use pytest.importorskip() here because it would skip the test on ImportError
-# which we want to catch.
+# which we want to catch to verify whether torch dependencies are missing.
 torch = _import_torch_or_skip()
 
 
@@ -37,7 +39,7 @@ def test_torch_imports_without_cuda():
     assert hasattr(torch, "__version__")
 
 
-@pytest.mark.skipif(not torch.cuda.is_available(), reason="Requires CUDA device.")
+@requires_torch_cuda
 def test_pytorch_cuda_inverse_sanity_check():
     """Compute a small CUDA inverse to sanity-check CUDA execution."""
     a = torch.eye(2, dtype=torch.float32, device="cuda")

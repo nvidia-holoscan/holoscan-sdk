@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -299,8 +299,8 @@ class DataFlowTracker {
   std::mutex source_messages_mutex_;  ///< The mutex for the source_messages_.
 
   std::map<std::string, std::shared_ptr<holoscan::PathMetrics>>
-      all_path_metrics_;               ///< The map of path names to the path metrics.
-  std::mutex all_path_metrics_mutex_;  ///< The mutex for the all_path_metrics_.
+      all_path_metrics_;                       ///< The map of path names to the path metrics.
+  mutable std::mutex all_path_metrics_mutex_;  ///< The mutex for the all_path_metrics_.
 
   /// Simple per-operator frame counters for generation
   std::map<std::string, uint64_t> operator_counters_;

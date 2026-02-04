@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,11 +24,13 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include "../core/component_util.hpp"
 #include "./expiring_message_pydoc.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/conditions/gxf/expiring_message.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
@@ -63,7 +65,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int64_t max_batch_size,
       int64_t max_delay_ns, std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
-      const std::string& name = "noname_expiring_message_available_condition")
+      const std::string& name = condition_default_name_v<ExpiringMessageAvailableCondition>)
       : ExpiringMessageAvailableCondition(max_batch_size, max_delay_ns) {
     auto [frag_ptr, qualified_name] =
         get_fragment_ptr_name_pair(fragment_or_subgraph, name, "condition");
@@ -76,7 +78,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
       this->add_arg(Arg("receiver", receiver.value()));
     }
     fragment_ = frag_ptr;
-    name_ = qualified_name;
+    name_ = std::move(qualified_name);
     spec_ = std::make_shared<ComponentSpec>(fragment_);
     setup(*spec_);
   }
@@ -87,7 +89,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
       std::chrono::duration<Rep, Period> recess_period_duration,
       std::shared_ptr<gxf::Clock> clock = nullptr,
       std::optional<const std::string> receiver = std::nullopt,
-      const std::string& name = "noname_expiring_message_available_condition")
+      const std::string& name = condition_default_name_v<ExpiringMessageAvailableCondition>)
       : ExpiringMessageAvailableCondition(max_batch_size, recess_period_duration) {
     auto [frag_ptr, qualified_name] =
         get_fragment_ptr_name_pair(fragment_or_subgraph, name, "condition");
@@ -101,7 +103,7 @@ class PyExpiringMessageAvailableCondition : public ExpiringMessageAvailableCondi
     }
     // Note "receiver" parameter is set automatically from GXFExecutor
     fragment_ = frag_ptr;
-    name_ = qualified_name;
+    name_ = std::move(qualified_name);
     spec_ = std::make_shared<ComponentSpec>(fragment_);
     setup(*spec_);
   }
@@ -129,7 +131,7 @@ void init_expiring_message_available(py::module_& m) {
            "max_delay_ns"_a,
            "clock"_a = py::none(),
            "receiver"_a = py::none(),
-           "name"_a = "noname_expiring_message_available_condition"s)
+           "name"_a = std::string(condition_default_name_v<ExpiringMessageAvailableCondition>))
       .def(py::init<std::variant<Fragment*, Subgraph*>,
                     int64_t,
                     std::chrono::nanoseconds,
@@ -141,7 +143,7 @@ void init_expiring_message_available(py::module_& m) {
            "max_delay_ns"_a,
            "clock"_a = py::none(),
            "receiver"_a = py::none(),
-           "name"_a = "noname_expiring_message_available_condition"s,
+           "name"_a = std::string(condition_default_name_v<ExpiringMessageAvailableCondition>),
            doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
       .def_property("receiver",
                     py::overload_cast<>(&ExpiringMessageAvailableCondition::receiver),

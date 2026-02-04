@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,9 +30,14 @@ typedef struct CUstream_st* cudaStream_t;
 #include "./common.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
-#include "./io_context.hpp"
 #include "./operator_status.hpp"
 #include "holoscan/profiler/profiler.hpp"
+
+namespace holoscan {
+// Forward declarations to break circular dependency with io_context.hpp
+class InputContext;
+class OutputContext;
+}  // namespace holoscan
 
 // ExecutionContext CUDA stream profiling events (use same green color for consistency)
 PROF_DEFINE_EVENT(event_allocate_cuda_stream, "allocate_cuda_stream", 0x99, 0xFF, 0x00);
@@ -76,21 +81,53 @@ class ExecutionContext {
    */
   void* context() const { return context_; }
 
-  /// @brief allocate a new GXF CudaStream object and return the contained cudaStream_t
+  /**
+   * @brief Allocate a CUDA stream from the operator's CudaStreamPool.
+   *
+   * Streams are cached by name — calling with the same name returns the same stream on subsequent
+   * calls within the same operator. This is useful for root operators that need to allocate a
+   * stream (rather than receiving one from upstream).
+   *
+   * Streams allocated this way are **not** automatically emitted on output ports. Call
+   * `OutputContext::set_cuda_stream()` before `emit()` if you need to propagate the stream.
+   *
+   * @param stream_name A name for the stream. The same name returns the same stream on subsequent
+   * calls. Defaults to an empty string.
+   * @returns The allocated cudaStream_t, or an error if no CudaStreamPool is available.
+   */
   virtual expected<cudaStream_t, RuntimeError> allocate_cuda_stream(
       [[maybe_unused]] const std::string& stream_name = "") {
     return make_unexpected(RuntimeError(
         ErrorCode::kFailure, "allocate_cuda_stream not implemented in base ExecutionContext"));
   }
 
-  /// @brief synchronize all of the streams in cuda_streams with target_cuda_stream
+  /**
+   * @brief Synchronize multiple CUDA streams to a target stream (non-blocking).
+   *
+   * Uses `cudaEventRecord` and `cudaStreamWaitEvent` to create GPU-side dependencies without
+   * blocking the CPU. This is the same mechanism used internally by `receive_cuda_stream`.
+   *
+   * When using `receive_cuda_stream`, synchronization is handled automatically and this method
+   * is not needed. It is provided for advanced manual stream handling use cases.
+   *
+   * @param cuda_streams Vector of streams to synchronize. `std::nullopt` elements are skipped.
+   * @param target_cuda_stream The stream that will wait for all other streams to complete.
+   */
   virtual void synchronize_streams(
       [[maybe_unused]] const std::vector<std::optional<cudaStream_t>>& cuda_streams,
       [[maybe_unused]] cudaStream_t target_cuda_stream) {
     HOLOSCAN_LOG_ERROR("synchronize_streams not implemented in base ExecutionContext");
   }
 
-  /// @brief determine the CUDA device corresponding to the given stream
+  /**
+   * @brief Get the CUDA device ID for a given stream.
+   *
+   * Only works with Holoscan-managed streams (those returned by `receive_cuda_stream`,
+   * `receive_cuda_streams`, or `allocate_cuda_stream`).
+   *
+   * @param stream The CUDA stream to query.
+   * @returns The device ID, or an error if the stream is not managed by Holoscan.
+   */
   virtual expected<int, RuntimeError> device_from_stream([[maybe_unused]] cudaStream_t stream) {
     return make_unexpected(RuntimeError(
         ErrorCode::kFailure, "device_from_stream not implemented in base ExecutionContext"));

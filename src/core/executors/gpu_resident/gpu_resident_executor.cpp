@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <memory>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "holoscan/core/app_driver.hpp"
@@ -111,8 +112,8 @@ void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph
 
     // For one-to-one connection, get the first key-value pair
     auto port_connection = port_map_val->begin();
-    auto source_port = port_connection->first;  // source port name (key)
-    auto destination_port =
+    const auto& source_port = port_connection->first;  // source port name (key)
+    const auto& destination_port =
         *(port_connection->second.begin());  // destination port name (first element from set)
 
     // Get memory block size from the source operator's output spec
@@ -122,7 +123,7 @@ void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph
     // we know one to one connection
     allocate_io_device_buffer(
         current_op, next_op, source_port, destination_port, memory_block_size);
-    current_op = next_op;
+    current_op = std::move(next_op);
   }
 }
 
@@ -154,7 +155,7 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> do
   }
 
   io_device_buffers_[source_port_unique_id] = device_buffer;
-  io_device_buffers_[target_port_unique_id] = device_buffer;
+  io_device_buffers_[target_port_unique_id] = std::move(device_buffer);
 }
 
 void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
@@ -290,14 +291,14 @@ bool GPUResidentExecutor::initialize_fragment() {
 
   if (data_ready_handler_fragment_) {
     auto drh_fragment_graph = data_ready_handler_fragment_->graph_shared();
-    if (!verify_graph_topology(drh_fragment_graph, topo_ordered_drh_operators_)) {
+    if (!verify_graph_topology(std::move(drh_fragment_graph), topo_ordered_drh_operators_)) {
       throw std::runtime_error(
           "Data ready handler graph topology is not valid for GPU-resident execution.");
     }
   }
 
   auto main_fragment_graph = fragment_->graph_shared();
-  if (!verify_graph_topology(main_fragment_graph, topo_ordered_main_operators_)) {
+  if (!verify_graph_topology(std::move(main_fragment_graph), topo_ordered_main_operators_)) {
     throw std::runtime_error("Application graph topology is not valid for GPU-resident execution.");
   }
 
@@ -629,7 +630,7 @@ void GPUResidentExecutor::data_ready_handler(std::shared_ptr<Fragment> fragment)
         "There is already a data ready handler fragment registered. Overwriting it with the new "
         "one.");
   }
-  data_ready_handler_fragment_ = fragment;
+  data_ready_handler_fragment_ = std::move(fragment);
   // Set the executor for the data ready handler fragment so that operators in that fragment
   // can access the same GPU resident executor
   if (data_ready_handler_fragment_) {

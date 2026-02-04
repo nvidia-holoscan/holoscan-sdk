@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -400,10 +400,14 @@ struct BufferInfo;
  *
  * When `render_buffer_output` or `depth_buffer_output` are enabled, this operator may launch CUDA
  * kernels that execute asynchronously on a CUDA stream. As a result, the `compute` method may
- * return before all GPU work has completed. Downstream operators that receive data from this
- * operator should call `op_input.receive_cuda_stream(<port_name>)` to synchronize the CUDA stream
- * with the downstream operator's dedicated internal stream. This ensures proper synchronization
- * before accessing the data. For more details on CUDA stream handling in Holoscan, see:
+ * return before all GPU work has completed.
+ * Downstream operators that receive data from this operator should either:
+ *   - Call `op_input.receive_cuda_stream(<port_name>)` (after calling `receive` for that port) to
+ *     synchronize the CUDA stream with the downstream operator's dedicated internal stream before
+ *     accessing the data.
+ *   - Add a `CudaStreamCondition` to delay scheduling until upstream GPU work has completed.
+ *
+ * For more details on CUDA stream handling in Holoscan, see:
  * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
  */
 class HolovizOp : public Operator {
@@ -1523,15 +1527,17 @@ struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
  *
  * @tparam TYPE
  */
-#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                         \
-  template <>                                                                                \
-  struct YAML::convert<TYPE> {                                                               \
-    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */         \
-    static Node encode(TYPE&) { throw std::runtime_error(#TYPE " is unsupported in YAML"); } \
-    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */         \
-    static bool decode(const Node&, TYPE&) {                                                 \
-      throw std::runtime_error(#TYPE " is unsupported in YAML");                             \
-    }                                                                                        \
+#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                 \
+  template <>                                                                        \
+  struct YAML::convert<TYPE> {                                                       \
+    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */ \
+    static Node encode(TYPE&) {                                                      \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
+    }                                                                                \
+    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */ \
+    static bool decode(const Node&, TYPE&) {                                         \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
+    }                                                                                \
   };
 
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);

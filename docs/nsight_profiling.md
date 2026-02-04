@@ -101,7 +101,7 @@ The following images visualize the profiling results for the `Endoscopy Tool Tra
 
 :::{figure-md} fig-frame-nvtx-endoscopy-nsys-profile
 :align: center
-:scale: 43%
+:width: 43%
 
 ![](images/frame_nvtx_endoscopy.png)
 
@@ -113,7 +113,7 @@ Sample profile of the `Endoscopy Tool Tracking` Application
 
 :::{figure-md} fig-frame-nvtx-ping-multiport-nsys-profile
 :align: center
-:scale: 43%
+:width: 43%
 
 ![](images/frame_nvtx_multi_port.png)
 

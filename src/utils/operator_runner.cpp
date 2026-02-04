@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -290,7 +290,10 @@ bool OperatorRunner::populate_tensor_map(const holoscan::gxf::Entity& gxf_entity
           "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
       return false;
     }
-    auto holoscan_tensor = std::make_shared<Tensor>(maybe_dl_ctx.value());
+    auto dl_ctx = maybe_dl_ctx.value();
+    // Get MemoryBuffer pointer for stream-aware deallocation support
+    auto* mem_buf_ptr = static_cast<nvidia::gxf::MemoryBuffer*>(dl_ctx->memory_ref.get());
+    auto holoscan_tensor = std::make_shared<Tensor>(dl_ctx, mem_buf_ptr);
     tensor_map.insert({gxf_tensor->name(), holoscan_tensor});
   }
   return true;

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,18 +49,19 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
   set_tests_properties(python-api-system-tests PROPERTIES
-                       ENVIRONMENT "PYTHONUNBUFFERED=1")
+                       ENVIRONMENT "PYTHONUNBUFFERED=1"
+                       TIMEOUT 1000)
 
-  add_test(NAME python-api-system-distributed-tests
+  add_test(NAME python-api-system-distributed-ebs-tests
     COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
 
-  # rerun distributed tests but with the event-based scheduler
-  # (omit serialization tests on this second run to keep overall time down)
-  add_test(NAME python-api-system-distributed-ebs-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -k "not test_ucx_object_serialization"
+  # rerun distributed tests but with the older MultiThreadScheduler
+  # (omit UCX object serialization tests on this second run to keep overall time down)
+  add_test(NAME python-api-system-distributed-mts-tests
+    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -k "not ucx"
     # either have to run from this working directory or set PYTHONPATH
     WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
   )
@@ -69,68 +70,71 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(python-api-system-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
-  set_tests_properties(python-api-system-distributed-tests PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
-
   set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES
                        FAIL_REGULAR_EXPRESSION "Fatal Python error")
 
+  set_tests_properties(python-api-system-distributed-mts-tests PROPERTIES
+                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
+
 # set environment variables used by distributed applications in the tests
-# - UCX_TCP_CM_REUSEADDR=y : Reuse port for UCX
-#   (see https://github.com/openucx/ucx/issues/8585 and https://github.com/rapidsai/ucxx#c-1)
-# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=2500    : Set deadlock timeout for distributed app
-# - HOLOSCAN_MAX_DURATION_MS=2500             : Set max duration for distributed app
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
   set(CMAKE_DISTRIBUTED_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=6000;\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=6000\
 "
   )
 else()
   set(CMAKE_DISTRIBUTED_TEST_FLAGS
 "\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000;\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=3000\
 "
   )
 endif()
 
-  set_tests_properties(python-api-system-distributed-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread PYTHONUNBUFFERED=1"
-  )
   set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES ENVIRONMENT
     "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based PYTHONUNBUFFERED=1"
   )
+  # repeat tests for older MultiThreadScheduler (omitting UCX serialization tests to save time)
+  set_tests_properties(python-api-system-distributed-mts-tests PROPERTIES ENVIRONMENT
+    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread PYTHONUNBUFFERED=1"
+  )
 
   # tracing tests
-  add_test(NAME python-api-tracing-profile
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py profile
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-  set_tests_properties(python-api-tracing-profile PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12"
-                       ENVIRONMENT "PYTHONUNBUFFERED=1")
+  # Holoscan SDK tracing is not yet fully implemented for Python 3.12 and above.
+  # Tracking reference: 5144233
+  if(Python3_VERSION VERSION_LESS "3.12")
+    add_test(NAME python-api-tracing-profile
+      COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py profile
+      # either have to run from this working directory or set PYTHONPATH
+      WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
+    )
+    set_tests_properties(python-api-tracing-profile PROPERTIES
+                         FAIL_REGULAR_EXPRESSION "AssertionError"
+                         SKIP_RETURN_CODE "12"
+                         ENVIRONMENT "PYTHONUNBUFFERED=1")
 
-  add_test(NAME python-api-tracing-trace
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py trace
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-  set_tests_properties(python-api-tracing-trace PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12"
-                       ENVIRONMENT "PYTHONUNBUFFERED=1")
+    add_test(NAME python-api-tracing-trace
+      COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py trace
+      # either have to run from this working directory or set PYTHONPATH
+      WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
+    )
+    set_tests_properties(python-api-tracing-trace PROPERTIES
+                         FAIL_REGULAR_EXPRESSION "AssertionError"
+                         SKIP_RETURN_CODE "12"
+                         ENVIRONMENT "PYTHONUNBUFFERED=1")
 
-  add_test(NAME python-api-tracing-coverage
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py coverage
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-  set_tests_properties(python-api-tracing-coverage PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "AssertionError"
-                       SKIP_RETURN_CODE "12"
-                       ENVIRONMENT "PYTHONUNBUFFERED=1")
+    add_test(NAME python-api-tracing-coverage
+      COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_PYTHON_WORKING_DIR}/tests/system/test_pytracing.py coverage
+      # either have to run from this working directory or set PYTHONPATH
+      WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
+    )
+    set_tests_properties(python-api-tracing-coverage PROPERTIES
+                         FAIL_REGULAR_EXPRESSION "AssertionError"
+                         SKIP_RETURN_CODE "12"
+                         ENVIRONMENT "PYTHONUNBUFFERED=1")
+  endif()
 endif()

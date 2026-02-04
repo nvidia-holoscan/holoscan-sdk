@@ -581,23 +581,62 @@ Control how frames are presented to the screen:
 
 ```mermaid
 graph TB
-    Auto[PresentMode::AUTO] --> |Default| Mailbox
-    Mailbox[MAILBOX<br/>Triple Buffering<br/>Low Latency]
-    Fifo[FIFO<br/>VSync On<br/>No Tearing]
-    Immediate[IMMEDIATE<br/>No VSync<br/>Max FPS]
-
+    Auto[PresentMode::AUTO] --> |Selection Priority| Priority
+    Priority --> |1st| Mailbox[MAILBOX]
+    Priority --> |2nd| Immediate[IMMEDIATE]
+    Priority --> |3rd| Fifo[FIFO]
+    
+    Standard[Standard Modes]
+    Standard --> Mailbox
+    Standard --> Fifo
+    Standard --> Immediate
+    Standard --> FifoRelaxed[FIFO_RELAXED]
+    Standard --> FifoLatest[FIFO_LATEST_READY]
+    
+    Exclusive[Exclusive Mode Only]
+    Exclusive --> SharedDemand[SHARED_DEMAND_REFRESH]
+    Exclusive --> SharedCont[SHARED_CONTINUOUS_REFRESH]
+    
     style Mailbox fill:#90EE90
     style Fifo fill:#87CEEB
     style Immediate fill:#FFB6C1
+    style FifoRelaxed fill:#DDA0DD
+    style FifoLatest fill:#B0C4DE
+    style SharedDemand fill:#FFE4B5
+    style SharedCont fill:#FFE4B5
 ```
 
-- **AUTO**: Automatically selects the best available mode (default)
-- **MAILBOX**: Preferred mode - low latency, tear-free with triple buffering
-- **FIFO**: VSync enabled, guaranteed tear-free (always supported)
-- **IMMEDIATE**: Maximum frame rate, no VSync, possible tearing
+#### Standard Present Modes
+
+- **AUTO** (default): Automatically selects the best available mode with priority:
+  1. MAILBOX
+  2. IMMEDIATE
+  3. FIFO
+
+- **MAILBOX**: Low latency, tear-free presentation. Uses a single-entry queue - new frames replace old ones if not yet presented. Best for interactive applications.
+
+- **FIFO**: Traditional VSync. Frames are queued and presented in order at each vertical blanking period. Tear-free but may have higher latency. Always supported by Vulkan.
+
+- **IMMEDIATE**: No VSync, presents immediately. May result in visible tearing but provides maximum frame rate and lowest latency.
+
+- **FIFO_RELAXED**: Adaptive VSync. Normally waits for vertical blanking like FIFO, but if a frame arrives late (after VBlank), it presents immediately. Reduces stutter when frame timing is occasionally missed.
+
+- **FIFO_LATEST_READY**: Enhanced FIFO mode. At each vertical blanking period, dequeues all ready frames and presents the latest one. Reduces latency compared to standard FIFO.
+
+#### Exclusive Display Modes
+
+These modes are only available when using exclusive display mode (direct display access without a window manager):
+
+- **SHARED_DEMAND_REFRESH**: Single shared presentable image with on-demand updates. The presentation engine only updates when explicitly requested. Concurrent access may cause tearing. Useful for static content that updates infrequently.
+
+- **SHARED_CONTINUOUS_REFRESH**: Single shared presentable image with automatic refresh. After the initial presentation request, the engine continuously updates on its refresh cycle. Application renders directly to the displayed image - requires careful timing to avoid tearing.
 
 ```cpp
+// Set present mode
 viz::SetPresentMode(viz::PresentMode::MAILBOX);
+
+// For exclusive display with on-demand refresh
+viz::SetPresentMode(viz::PresentMode::SHARED_DEMAND_REFRESH);
 ```
 
 ### Camera Control

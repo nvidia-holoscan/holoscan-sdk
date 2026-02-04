@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,13 +28,20 @@
 namespace holoscan {
 
 /**
- * @brief
+ * @brief CUDA device memory allocator using stream-ordered allocation.
  *
- * StreamOrderedAllocator uses `cudaMallocFromPoolAsync`/`cudaFreeAsync` dynamically without a
- * pool.
+ * StreamOrderedAllocator uses CUDA's stream-ordered memory allocator
+ * (`cudaMallocAsync`/`cudaFreeAsync`) to dynamically allocate device memory. Stream-ordered
+ * allocation enables memory operations to be tied to specific CUDA streams, allowing allocation
+ * and deallocation without blocking the host or other streams.
+ *
+ * See the CUDA Programming Guide section on
+ * [Stream-Ordered Memory
+ * Allocator](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/stream-ordered-memory-allocation.html#stream-ordered-memory-allocator)
+ * for details on the underlying CUDA feature.
  *
  * This allocator only supports CUDA device memory. If host memory is also needed, see
- * `RMMAllocator`. This allocator does not provide bounded execution times.
+ * `RMMAllocator` which provides both device and pinned host memory pools.
  *
  * Because it is a CudaAllocator it supports both synchronous (`allocate`, `free`) and
  * asynchronous (`allocate_async`, `free_async`) APIs for memory allocation.

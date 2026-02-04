@@ -266,7 +266,7 @@ The following table gives a rough categorization of the available condition type
 | BooleanCondition                       | execution-driven           | operator as a whole            |
 | AsynchronousCondition                  | execution-driven           | operator as a whole            |
 | MemoryAvailableCondition               | other                      | single holoscan::Allocator     |
-| CudaStreamCondition                    | message-driven (CUDA sync) | single input port              |
+| CudaStreamCondition                    | message-driven (CUDA sync) | one or more input ports        |
 | CudaEventCondition                     | message-driven (CUDA sync) | single input port              |
 | CudaBufferAvailableCondition           | message-driven (CUDA sync) | single input port              |
 
@@ -392,7 +392,7 @@ The `PeriodicConditionPolicy` enum defines three different policies for handling
 - If multiple ticks were missed, it will try to execute them in rapid succession
 - For example, if a tick at 100ms was missed and the time at next tick was 250ms, it will still set the next target time as 200ms resulting in possible immediate rescheduling of the operator since we are already at time 250 ms (i.e. next tick is shown at 255 ms in the example below). After this tick at 255 ms, the target time is then 300 ms.
 
-```bash 
+```bash
 // eg. assume recess period of 100ms:
  tick 0 at 0ms -> next_target_ = 100ms
  tick 1 at 250ms -> next_target_ = 200ms (next_target_ < timestamp)
@@ -417,8 +417,8 @@ The `PeriodicConditionPolicy` enum defines three different policies for handling
 - Simply continues with the regular schedule without trying to catch up
 - If ticks are missed, they stay missed and scheduling continues from current time
 - For example, if at 250ms and period is 100ms, next tick will be at 300ms (rounds up to next period boundary)
-      
-```bash 
+
+```bash
 // eg. assume recess period of 100ms:
 // tick 0 at 0ms -> next_target_ = 100ms
 // tick 1 at 250ms -> next_target_ = 300ms (single tick before 300ms)
@@ -431,13 +431,13 @@ For operators that have an associated `Allocator` ({cpp:class}`C++ <holoscan::Al
 
 For the `BlockMemoryPool`, the user can optionally specify the condition in terms of the minimum number of memory blocks instead of in terms of raw bytes.
 
-This condition can be used with `BlockMemoryPool` or `StreamOrderedAllocator` classes to prevent operators using one of those allocator types from executing if there is not sufficient memory available. 
+This condition can be used with `BlockMemoryPool` or `StreamOrderedAllocator` classes to prevent operators using one of those allocator types from executing if there is not sufficient memory available.
 
 :::{note}
 This condition type will have no effect if it is used with an `UnboundedAllocator` as there is no associated memory limit for that allocator type. It also currently does **not** have any affect when applied with an `RMMAllocator` because that allocator supports dual (host and device) memory pools and does not meet the API assumptions of this condition.
 :::
 
-Example code for how the condition would be configured from an application's `compose` method is shown below. 
+Example code for how the condition would be configured from an application's `compose` method is shown below.
 
 ````{tab-set-code}
 ```{code-block} c++
@@ -535,13 +535,64 @@ Please refer to the [Asynchronous Operator Execution Control Example](https://gi
 
 ## CudaStreamCondition
 
-This condition can be used to require work on an input stream to complete before an operator is ready to schedule. When a message is sent to the port to which a `CudaStreamCondition` has been assigned, this condition sets an internal host callback function on the CUDA stream found on this input port. The callback function will set the operator's status to READY once other work on the stream has completed. This will then allow the scheduler to execute the operator.
+`CudaStreamCondition` ({cpp:class}`C++ <holoscan::CudaStreamCondition>`/{py:class}`Python <holoscan.conditions.CudaStreamCondition>`) can be used to require work on an input stream to complete before an operator is ready to schedule. When a message is sent to the port to which a `CudaStreamCondition` has been assigned, this condition sets an internal host callback function on the CUDA stream found on this input port. The callback function will set the operator's status to READY once other work on the stream has completed. This will then allow the scheduler to execute the operator.
 
-A limitation of `CudaStreamCondition` is that it only looks for a stream on the first message in the input port's queue. It does not currently support handling ports with multiple different input stream components within the same message (entity) or across multiple messages in the queue. The behavior of `CudaStreamCondition` is sufficient for Holoscan's default queue size of one and for use with `receive_cuda_stream` which places just a single CUDA stream component in an upstream operator's outgoing messages. Cases where it is not appropriate are:
-  - The input port's {ref}`queue size was explicitly set <configuring-queue-size>` with capacity greater than one and it is not known that all messages in the queue correspond to the same CUDA stream.
-  - The input port is a multi-receiver port (i.e. `IOSpec::kAnySize`) that any number of upstream operators could connect to.
+This condition supports:
 
-In cases where no stream is found in the input message, this condition will allow execution of the operator.
+- **Multiple input ports**: A single condition can monitor multiple input ports (both regular and multi-receiver ports like `IOSpec::kAnySize`).
+- **All messages in queue**: By default, it checks CUDA streams on all messages in the queue, not just the first message.
+- **Multiple streams per entity**: Handles messages containing multiple `CudaStreamId` components.
+
+The condition uses `cudaLaunchHostFunc` to register callbacks on each CUDA stream found. An atomic counter tracks pending callbacks, and the operator becomes READY only after all callbacks have fired. In cases where no stream is found in the input message, this condition will allow execution of the operator.
+
+**Parameters:**
+- `receivers`: A single port name (string) or list of port names to monitor. For multi-receiver ports (`IOSpec::kAnySize`), specify the base name (e.g., `"receivers"`) and the condition will automatically discover all indexed ports (`receivers:0`, `receivers:1`, etc.).
+- `check_all_messages`: Boolean (default `true`). When `true`, checks streams on all messages in each receiver's queue. When `false`, only checks the first message.
+
+:::{warning}
+**Deprecated Parameter**
+
+The `receiver` parameter (singular) is deprecated and should not be used for new code. Use `receivers` instead. The `receiver` parameter only supports a single input port and does not support specifying multiple ports or multi-receiver ports (`IOSpec::kAnySize`). When the `receiver` parameter is used, a deprecation warning will be logged.
+
+Legacy usage with `receiver` (deprecated):
+```cpp
+// DEPRECATED - use "receivers" instead
+auto stream_cond = make_condition<CudaStreamCondition>("stream_cond",
+    Arg("receiver", "in"));
+```
+:::
+
+Example usage:
+
+````{tab-set-code}
+```{code-block} c++
+// Monitor a single input port
+auto stream_cond = make_condition<CudaStreamCondition>("stream_cond",
+    Arg("receivers", std::string("in")));
+
+// Monitor a multi-receiver port (kAnySize)
+auto stream_cond = make_condition<CudaStreamCondition>("stream_cond",
+    Arg("receivers", std::string("receivers")));  // discovers receivers:0, receivers:1, etc.
+
+// Monitor multiple input ports
+auto stream_cond = make_condition<CudaStreamCondition>("stream_cond",
+    Arg("receivers", std::vector<std::string>{"in1", "in2"}));
+
+auto my_op = make_operator<MyOperator>("my_op", stream_cond, other_args);
+```
+```{code-block} python
+# Monitor a single input port
+stream_cond = CudaStreamCondition(self, receivers="in", name="stream_cond")
+
+# Monitor a multi-receiver port (kAnySize)
+stream_cond = CudaStreamCondition(self, receivers="receivers", name="stream_cond")
+
+# Monitor multiple input ports
+stream_cond = CudaStreamCondition(self, receivers=["in1", "in2"], name="stream_cond")
+
+my_op = MyOperator(self, stream_cond, name="my_op", **kwargs)
+```
+````
 
 ## CudaEventCondition
 

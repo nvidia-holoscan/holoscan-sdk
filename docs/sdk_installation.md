@@ -94,15 +94,15 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.10.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -235,7 +235,7 @@ See [PyPI][pypi] for details and troubleshooting.
 Install via `conda`:
 
 ```bash
-conda install holoscan cuda-version=12.6 -c conda-forge
+conda install -c rapidsai -c conda-forge holoscan=3.11.0 rmm cuda-version=12.6
 ```
 
 :::{note}
@@ -258,7 +258,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
   - standard inconvenience that exist when using Docker, such as more complex run instructions for proper configuration.
 - If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are on Ubuntu 22.04 or Ubuntu 24.04.
 - If you are not interested in the C++ API but just need to work in Python, you can use the [**Holoscan python wheels**][pypi] on PyPI. While they are the easiest solution to install the SDK, it might require the most work to setup your environment with extra dependencies based on your needs. Finally, they are only formally supported on Ubuntu 22.04 and Ubuntu 24.04, though should support other linux distributions with glibc 2.35 or above.
-- If you are developing in both C++ and Python, the **Holoscan Conda package** should provide all capabilities needed to use the Holoscan SDK.
+- If you are developing in Python, the **Holoscan Conda package** should provide capabilities needed to use the Holoscan SDK.
 
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
@@ -293,7 +293,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
 [^4]: TensorRT 10.3+ needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^5]: Vulkan 1.3.204+ loader needed for the HoloViz operator (+ libegl1 for headless rendering). Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
-[^7]: Torchscript support tested with LibTorch 2.8.0 (CUDA 12) or LibTorch 2.9.0 (CUDA 13).
+[^7]: Torchscript support tested with LibTorch 2.9.1.
 [^8]: To install LibTorch on baremetal, either build it from source, or point to a PyTorch wheel installation. See instructions in the [Inference](./inference.md#libtorch-installation) section.
 [^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
 [^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,8 +90,22 @@ class GXFExecutor : public holoscan::Executor {
    * @brief Interrupt the execution.
    *
    * This method calls GxfGraphInterrupt() to interrupt the execution.
+   *
+   * @return true if the interrupt was successful (graph was running), false if the graph
+   *         was not running (already stopped or not started).
    */
-  void interrupt() override;
+  bool interrupt() override;
+
+  /**
+   * @brief Wait for the execution to complete.
+   *
+   * This method calls GxfGraphWait() to wait for the graph execution to complete.
+   * Should be called after interrupt() to ensure the scheduler has fully stopped.
+   *
+   * @note Only call this if interrupt() returned true. Calling wait() when the graph
+   *       is not running can cause issues with concurrent cleanup.
+   */
+  void wait() override;
 
   /**
    * @brief Reset execution state to allow for multiple runs
@@ -487,12 +501,16 @@ class GXFExecutor : public holoscan::Executor {
       std::optional<int32_t> device_id = std::nullopt);
 
   // Static flags for signal handling
-  static std::atomic<bool> interrupt_requested_;
-  static std::atomic<bool> force_exit_countdown_started_;
-  static std::atomic<int64_t> first_interrupt_time_ms_;  // Timestamp of first interrupt signal
-  static std::shared_ptr<std::atomic<bool>>
-      active_countdown_flag_;               // Flag to cancel countdown thread
-  static std::mutex countdown_flag_mutex_;  // Protects active_countdown_flag_ access
+  inline static std::atomic<bool> interrupt_requested_{false};
+  inline static std::atomic<bool> force_exit_countdown_started_{false};
+  inline static std::atomic<int64_t> first_interrupt_time_ms_{
+      0};  // Timestamp of first interrupt signal
+  inline static std::shared_ptr<std::atomic<bool>> active_countdown_flag_{
+      nullptr};                                      // Flag to cancel countdown thread
+  inline static std::mutex countdown_flag_mutex_{};  // Protects active_countdown_flag_ access
+
+  // Guard against concurrent wait() calls (which can cause hangs)
+  std::atomic<bool> wait_in_progress_{false};
 };
 
 }  // namespace holoscan::gxf

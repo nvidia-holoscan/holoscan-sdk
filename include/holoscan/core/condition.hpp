@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -364,6 +364,31 @@ class Condition : public Component {
    * @return The unique GXF component id for this condition.
    */
   int64_t wrapper_cid() const;
+
+  /**
+   * @brief Notify the scheduler that an asynchronous event has completed.
+   *
+   * This method is used by event-based conditions (those returning `kWaitEvent` from `check()`)
+   * to signal to the scheduler that the condition is now ready to be re-evaluated.
+   *
+   * This method can be called from any thread (e.g., a CUDA host callback or a worker thread).
+   * It is thread-safe.
+   *
+   * @return true if the notification was successful, false otherwise.
+   *
+   * Example usage:
+   * ```cpp
+   * // In a CUDA host callback or worker thread
+   * void my_callback(void* user_data) {
+   *     auto* condition = static_cast<MyCondition*>(user_data);
+   *     condition->state_.store(State::EVENT_COMPLETE);
+   *     condition->notify_scheduler();
+   * }
+   * ```
+   *
+   * @see SchedulingStatusType::kWaitEvent
+   */
+  bool notify_scheduler();
 
   /// Set the parameters based on defaults (sets GXF parameters for GXF components)
   void set_parameters() override;

@@ -2,18 +2,344 @@
 
 # CUDA Stream Handling in Holoscan Applications
 
-CUDA provides the concept of streams to allow for asynchronous concurrent execution on the GPU. Each stream is a sequence of commands that execute in order, but work launched on separate streams can potentially operate concurrently. Examples are running multiple kernels in separate streams or overlapping data transfers and kernel execution. See the [Asynchronous Concurrent Execution](https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#asynchronous-concurrent-execution) section of the CUDA programming guide.
+CUDA provides the concept of streams to allow for asynchronous concurrent execution on the GPU. Each stream is a sequence of commands that execute in order, but work launched on separate streams can potentially operate concurrently. Examples are running multiple kernels in separate streams or overlapping data transfers and kernel execution. See the [Asynchronous Concurrent Execution](https://docs.nvidia.com/cuda/cuda-programming-guide/02-basics/asynchronous-execution.html) section of the CUDA programming guide.
 
-The `CudaStreamPool` class ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:class}`Python <holoscan.resources.CudaStreamPool>`) is a resource that provides a mechanism for allocating CUDA streams from a pool of streams whose lifetime is managed by Holoscan. As of Holoscan v2.8, new APIs are provided to make use of dedicated CUDA streams easier for application authors. These APIs are intended as a replacement of the legacy `CudaStreamHandler` utility described in the note below.
+Holoscan provides automatic CUDA stream management to enable fully asynchronous GPU pipelines without explicit synchronization. This section covers the recommended usage patterns and provides a motivating example before diving into advanced configuration options.
 
-The `CudaGreenContextPool` and `CudaGreenContext` classes provide advanced resource management for CUDA streams in Holoscan applications.
-`CudaGreenContextPool` class ({cpp:class}`C++ <holoscan::CudaGreenContextPool>`/{py:class}`Python <holoscan.resources.CudaGreenContextPool>`) is a resource that provides a mechanism to partition GPU resources (SMs) into a pool of "green" CUDA contexts, which are lightweight CUDA contexts partitioned for efficient concurrent execution for different operators or applications for improved isolation and concurrency.
+## Quick Start: The Recommended Pattern
 
-`CudaGreenContext` class ({cpp:class}`C++ <holoscan::CudaGreenContext>`/{py:class}`Python <holoscan.resources.CudaGreenContext>`) is a resource retrieved through "index" from a `CudaGreenContextPool`.  `CudaStreamPool` created for an operator can be associated with a `CudaGreenContext`. This ensures the CUDA streams for different operators are running on dedicated and isolated GPU resources.
+For most operators that perform GPU work, the recommended pattern is to use `receive_cuda_stream` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_stream>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_stream>`):
 
-The `CudaGreenContextPool` and `CudaGreenContext` classes are intended for advanced users who need fine-grained control over CUDA context partitioning and stream management. In most cases, using a `CudaStreamPool` is sufficient, but for applications requiring explicit context partitioning, `CudaGreenContextPool` and `CudaGreenContext` provide the necessary APIs.
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void MyOperator::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    // 1. Receive input data (records stream IDs found on upstream port "input")
+    auto in_tensor = op_input.receive<Tensor>("input").value();
 
-Typical usage involves creating a `CudaGreenContextPool` in the application or fragment, then assigning a `CudaGreenContext` from the pool to each operator that requires a dedicated context partition. The SDK manages the lifetime and initialization of these resources, so users do not need to interact directly with low-level CUDA context APIs.
+    // 2. Get the operator's internal stream (synchronizes upstream work)
+    cudaStream_t op_stream = op_input.receive_cuda_stream("input");
+
+    // allocation of out_tensor omitted here for simplicity
+
+    // 3. Use the stream for GPU work
+    float* in_data = static_cast<float*>(in_tensor->data());
+    my_kernel<<<grid, block, 0, op_stream>>>(in_data, out_data, ...);
+
+    // 4. Emit output (stream ID automatically attached)
+    op_output.emit(out_tensor, "output");
+}
+```
+````
+````{tab-item} Python
+```python
+def compute(self, op_input, op_output, context):
+    # 1. Receive input data (records stream IDs from upstream)
+    in_tensor = op_input.receive("input")
+
+    # 2. Get the operator's internal stream (synchronizes upstream work)
+    stream_ptr = op_input.receive_cuda_stream("input")
+
+    # 3. Use the stream for GPU work (e.g., with CuPy)
+    with cp.cuda.ExternalStream(stream_ptr):
+        # GPU operations here
+        out_tensor = 4 * in_tensor
+        pass
+
+    # 4. Emit output (stream ID automatically attached)
+    op_output.emit(out_tensor, "output")
+```
+````
+`````
+
+### What `receive_cuda_stream` Does
+
+1. **Allocates an internal stream**: Once per operator, reused across all `compute` calls
+2. **Synchronizes upstream streams**: Uses CUDA events to ensure upstream GPU work completes before this operator's work begins
+3. **Sets the CUDA device**: Ensures the correct GPU is active for subsequent CUDA calls
+4. **Configures output ports**: Automatically attaches the internal stream ID to all emitted messages
+5. **Returns the internal `cudaStream_t`**: Use this for all GPU kernels and async memory operations
+
+### Non-Blocking Synchronization
+
+The synchronization between upstream and internal streams is **fully asynchronous**; no CPU blocking occurs:
+
+```text
+CPU:  [cudaEventRecord] [cudaStreamWaitEvent] [queues kernels] [returns from compute]
+         |                      |                   |
+         V                      V                   V
+GPU upstream:  ===[work]=======[event fires]
+                                    |
+GPU internal:  ====================X====[waits]====[runs kernels]====>
+```
+
+Holoscan uses `cudaEventRecord()` and `cudaStreamWaitEvent()` which both return immediately. The CPU queues all work and returns; the GPU scheduler handles the actual ordering. This avoids blocking calls like `cudaStreamSynchronize()`, `cudaEventSynchronize()`, or `cudaDeviceSynchronize()`.
+
+:::{note}
+**Why Stream Handling Matters**
+
+Because CUDA kernels are launched asynchronously, an operator's `compute()` method can return before the GPU work actually completes. When data is passed to a downstream operator, that downstream operator needs to know which stream the data was produced on so it can ensure the upstream work is complete before accessing the data. This is why stream IDs are attached to messages and why `receive_cuda_stream` performs synchronization.
+:::
+
+:::{warning}
+**Benchmarking Caveat**
+
+Since `compute()` can return while GPU work is still in progress, timing tools like {ref}`Data Flow Tracking <holoscan-flow-tracking>` or {ref}`GXF JobStatistics <gxf-job-statistics>` may report misleadingly short durations for operators that launch async GPU work. The actual kernel execution time may be attributed to a downstream operator that triggers synchronization (e.g., for a device-to-host copy). For accurate GPU timing, use {ref}`Nsight Systems <nsight-profiling>`. See {ref}`Common Pitfalls <cuda-stream-common-pitfalls>` at the end of this page for more details.
+:::
+
+## Concrete Example: Diamond Pattern
+
+This example illustrates the intended stream API usage patterns with advice on how to maximize parallelism while avoiding race conditions. It also explains why `receive_cuda_stream` returns the operator's own internal stream (rather than the upstream stream).
+
+Consider a pipeline with parallel branches that converge:
+- **Operator A** (root): has one output port "out" connected to both B and D
+- **Operator B** (branch 1): has input port "in" and output port "out"
+- **Operator D** (branch 2): has input port "in" and output port "out"
+- **Operator C** (leaf): has two input ports "in_b" (from B) and "in_d" (from D)
+
+```text
+                       +------------+
+                 +---->| Operator B |----+
+                 |     +------------+    |
++------------+   |                       |    +------------+
+| Operator A |-->+                       +--->| Operator C |
+|   (root)   |   |                       |    |   (leaf)   |
++------------+   |     +------------+    |    +------------+
+                 +---->| Operator D |----+
+                       +------------+
+```
+
+### Operator A (Root)
+
+Root operators that generate data (rather than receiving it from upstream) use `allocate_cuda_stream` and `set_cuda_stream`:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void OperatorA::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    // Allocate a stream for this operator's GPU work
+    cudaStream_t stream_A = context.allocate_cuda_stream("stream_A").value();
+
+    // Perform GPU work on stream_A
+    my_kernel<<<grid, block, 0, stream_A>>>(data);
+
+    // Call set_cuda_stream to attach stream_A's ID to outgoing messages
+    op_output.set_cuda_stream(stream_A, "out");
+
+    // Emit output - both B and D will receive this message with stream_A's ID
+    op_output.emit(tensor, "out");
+}
+```
+````
+````{tab-item} Python
+```python
+def compute(self, op_input, op_output, context):
+    # Allocate a stream for this operator's GPU work
+    stream_A = context.allocate_cuda_stream("stream_A")
+
+    # Perform GPU work on stream_A (e.g., with CuPy)
+    with cp.cuda.ExternalStream(stream_A):
+        # GPU operations here
+        pass
+
+    # Call set_cuda_stream to attach stream_A's ID to outgoing messages
+    op_output.set_cuda_stream(stream_A, "out")
+
+    # Emit output - both B and D will receive this message with stream_A's ID
+    op_output.emit(tensor, "out")
+```
+````
+`````
+
+**What happens:**
+1. `allocate_cuda_stream("stream_A")` allocates a dedicated stream for operator A
+2. GPU kernel is launched asynchronously on `stream_A`; control returns to CPU immediately
+3. `set_cuda_stream()` configures the output port to include `stream_A`'s ID as a component in the message
+4. `emit()` sends the tensor along with the stream ID to downstream operators B and D
+5. The kernel may still be running on the GPU when `compute()` returns
+
+:::{warning}
+**Zero-Copy and Race Conditions**
+
+When a `Tensor` is emitted, it is transmitted as a `shared_ptr<Tensor>`; this is a **zero-copy** operation. Both operators B and D receive pointers to the **same underlying memory**. If either B or D modifies the input tensor in-place, it will create a **race condition** with the other operator. To avoid this:
+- Treat input tensors as **read-only** when the same data is sent to multiple downstream operators
+- If modification is needed, allocate new output tensors rather than modifying inputs in-place
+:::
+
+### Operator B (Branch 1)
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void OperatorB::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    // Receive input data - this captures stream_A's ID from the message
+    auto tensor = op_input.receive<TensorMap>("in").value();
+
+    // Get operator B's INTERNAL stream with GPU-side synchronization to stream_A
+    // (This does NOT block the CPU - it uses cudaEventRecord/cudaStreamWaitEvent)
+    cudaStream_t stream_B = op_input.receive_cuda_stream("in");
+
+    // Perform GPU work on stream_B (guaranteed to run after stream_A's work completes)
+    transform_B<<<grid, block, 0, stream_B>>>(tensor);
+
+    // emit() automatically attaches stream_B's ID (configured by receive_cuda_stream)
+    op_output.emit(result_b, "out");
+}
+```
+````
+````{tab-item} Python
+```python
+def compute(self, op_input, op_output, context):
+    # Receive input data - this captures stream_A's ID from the message on "in"
+    tensor = op_input.receive("in")
+
+    # Get operator B's INTERNAL stream with GPU-side synchronization to stream_A
+    # (This does NOT block the CPU - it uses cudaEventRecord/cudaStreamWaitEvent)
+    stream_B = op_input.receive_cuda_stream("in")
+
+    # Perform GPU work on stream_B
+    with cp.cuda.ExternalStream(stream_B):
+        # GPU operations here - guaranteed to run after stream_A's work completes
+        pass
+
+    # emit() automatically attaches stream_B's ID (configured by receive_cuda_stream)
+    op_output.emit(result_b, "out")
+```
+````
+`````
+
+**What happens:**
+1. `receive()` receives the tensor and internally notes that `stream_A`'s ID was attached
+2. `receive_cuda_stream("in")` performs several operations:
+   - Calls `cudaEventRecord(event, stream_A)`: schedules an event to fire when `stream_A`'s work completes
+   - Calls `cudaStreamWaitEvent(stream_B, event)`: tells `stream_B` to wait for that event
+   - **Both calls return immediately**: the CPU is not blocked; dependency is enforced on the GPU side
+   - Returns `stream_B` for use by this operator
+   - Configures the "out" port to automatically emit `stream_B`'s ID
+3. Kernel is launched on `stream_B`: the GPU scheduler ensures it only executes after `stream_A`'s work completes
+4. `emit()` sends the result with `stream_B`'s ID attached
+
+### Operator D (Branch 2)
+
+Operator D follows the same pattern as Operator B. Both receive the same `stream_A` ID from operator A, but each allocates its **own internal stream**. This is critical for enabling GPU parallelism:
+
+```text
+If B and D both reused stream_A:
+GPU stream_A:  ===[A's kernel]===[B's kernel]===[D's kernel]===>  (sequential!)
+
+With separate internal streams:
+GPU stream_A:  ===[A's kernel]================================>
+                        |
+                        +--event--> stream_B: [B's kernel]====>  } Can run
+                        |                                        } in parallel!
+                        +--event--> stream_D: [D's kernel]====>  }
+```
+
+By using independent streams, the GPU scheduler can potentially execute B's and D's kernels **concurrently** (if resources allow), maximizing GPU utilization.
+
+:::{note}
+**Parallel Execution is Not Guaranteed**
+
+Using separate CUDA streams *enables* parallel execution but does not *guarantee* it. If one kernel fully occupies the GPU's resources (e.g., uses all available SMs or saturates memory bandwidth), the other kernel will be delayed until resources become available. The actual degree of parallelism depends on:
+- Kernel resource requirements (registers, shared memory, thread blocks)
+- GPU hardware capabilities (number of SMs, memory bandwidth)
+- Current GPU utilization from other work
+
+For scenarios requiring **guaranteed SM partitioning** between operators, Holoscan provides the `CudaGreenContext` APIs which wrap CUDA's [Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) feature. See {ref}`configuring-a-cuda-green-context` for details.
+:::
+
+### Operator C (Leaf with Multiple Inputs)
+
+When an operator receives from multiple input ports, call `receive_cuda_stream` for **each** port:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void OperatorC::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    // Receive data from BOTH upstream operators
+    auto tensor_b = op_input.receive<TensorMap>("in_b").value();  // captures stream_B's ID
+    auto tensor_d = op_input.receive<TensorMap>("in_d").value();  // captures stream_D's ID
+
+    // IMPORTANT: Call receive_cuda_stream for BOTH input ports!
+    // First call allocates stream_C and synchronizes stream_B to it
+    cudaStream_t stream_C = op_input.receive_cuda_stream("in_b");
+
+    // Second call synchronizes stream_D to the SAME stream_C
+    // (returns the same stream_C that was already allocated)
+    cudaStream_t same_stream = op_input.receive_cuda_stream("in_d");
+    assert(stream_C == same_stream);  // same internal stream
+
+    // Perform GPU work on stream_C - guaranteed to run after BOTH B and D complete
+    combine_and_process<<<grid, block, 0, stream_C>>>(tensor_b, tensor_d);
+}
+```
+````
+````{tab-item} Python
+```python
+def compute(self, op_input, op_output, context):
+    # Receive data from BOTH upstream operators
+    tensor_b = op_input.receive("in_b")  # captures stream_B's ID
+    tensor_d = op_input.receive("in_d")  # captures stream_D's ID
+
+    # IMPORTANT: Call receive_cuda_stream for BOTH input ports!
+    # First call allocates stream_C and synchronizes stream_B to it
+    stream_C = op_input.receive_cuda_stream("in_b")
+
+    # Second call synchronizes stream_D to the SAME stream_C
+    stream_C_again = op_input.receive_cuda_stream("in_d")
+    assert stream_C == stream_C_again  # same internal stream
+
+    # Perform GPU work on stream_C - guaranteed to run after BOTH B and D complete
+    with cp.cuda.ExternalStream(stream_C):
+        # combine_and_process operations here
+        pass
+```
+````
+`````
+
+**What happens:**
+1. Both `receive()` calls capture their respective upstream stream IDs (`stream_B` and `stream_D`)
+2. First `receive_cuda_stream("in_b")` allocates `stream_C` and synchronizes `stream_B` to it
+3. Second `receive_cuda_stream("in_d")` reuses `stream_C` and synchronizes `stream_D` to it
+4. After both calls, `stream_C` will wait for **both** upstream streams before executing any work
+
+### End-to-End Timeline
+
+```text
+CPU:    [A: emit]--[B: receive, emit]--[D: receive, emit]--[C: receive both]--[return]
+           |              |                    |                   |
+           V              V                    V                   V
+GPU:    ===[stream_A: kernel]========================================>
+                    |
+                    +--event-->[stream_B: waits]===[kernel]=========>
+                    |                                     |
+                    |                                     +--event--+
+                    |                                               V
+                    +--event-->[stream_D: waits]===[kernel]==========X==>
+                                                          |          |
+                                                          +--event-->[stream_C: waits for both]===[kernel]===>
+```
+
+**Key observations:**
+- All CPU-side `compute()` calls return quickly without waiting for GPU work
+- GPU work is properly ordered via event-based dependencies (no CPU blocking)
+- B and D can run in parallel on the GPU since they use independent streams
+- C's stream waits for both upstream streams before executing
+- Stream IDs propagate through the pipeline via message components
+
+## Best Practices
+
+1. **Always call `receive()` before `receive_cuda_stream()`**: receiving is what captures stream IDs from incoming messages
+2. **Use the returned stream for all GPU work**: ensures proper ordering with upstream operators
+3. **Don't explicitly synchronize**: let the framework handle synchronization via events
+4. **One stream per operator**: simplifies reasoning about dependencies
+5. **Call `receive_cuda_stream()` for each input port**: ensures all upstream work is synchronized
+
+## Resource Overview
+
+The `CudaStreamPool` class ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:class}`Python <holoscan.resources.CudaStreamPool>`) provides a mechanism for allocating CUDA streams from a pool whose lifetime is managed by Holoscan.
+
+For advanced use cases requiring guaranteed GPU resource isolation, the `CudaGreenContextPool` ({cpp:class}`C++ <holoscan::CudaGreenContextPool>`/{py:class}`Python <holoscan.resources.CudaGreenContextPool>`) and `CudaGreenContext` ({cpp:class}`C++ <holoscan::CudaGreenContext>`/{py:class}`Python <holoscan.resources.CudaGreenContext>`) classes wrap CUDA's [Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) feature, allowing partitioning of GPU SMs into isolated contexts for different operators.
 
 :::{note}
 There is a legacy `CudaStreamHandler` utility class (provided via `#include "holoscan/utils/cuda_stream_handler.hpp"`) that made it possible to write a C++ operator that could make use of a `CudaStreamPool`. This class had some limitations:
@@ -28,22 +354,20 @@ This existing utility is still provided for backwards compatibility and operator
 
 ## Configuring a CUDA stream pool for an operator's internal use
 
-:::{note}
-Starting from Holoscan v2.9, a default `CudaStreamPool` is added to all operators if the user did not otherwise provide one. This means that in most cases, it will not be necessary for the user to explicitly add a strea pool. The default stream pool has unbounded size, no flags set and a priority value of 0. In cases when the user wants to allocate streams with different flags or priority, the section below can be followed to add a customized stream pool to the operator.
+A default `CudaStreamPool` is added to all operators if the user did not otherwise provide one. This means that in most cases, it will not be necessary for the user to explicitly add a stream pool. The default stream pool has unbounded size, no flags set and a priority value of 0. In cases when the user wants to allocate streams with different flags or priority, the section below can be followed to add a customized stream pool to the operator.
 
 The only case when a default stream pool would not be added is if the application (fragment) is running on a node without any CUDA-capable devices. In that case, since use of CUDA is not possible a default stream pool would not be added.
-:::
 
 To enable an operator to allocate a CUDA stream, the user can pass a `CudaStreamPool` as in the following examples. The general pattern used for stream handling in Holoscan SDK is to have each Operator that wants to use a non-default stream have a `CudaStreamPool` assigned. That operator will then reserve a dedicated stream from the stream pool for use by any kernels launched by it. Multiple operators are allowed to use the same stream pool, with "max_size" of the shared pool equal to at least the number of Operators that are sharing it.
 
-Note that the `CudaStreamPool` will manage the lifetimes of any CUDA streams used by the SDK. The user does not need typically need to explicitly call any CUDA APIs to create or destroy streams. Note that all streams from a single `CudaStreamPool` are on a single device (with CUDA id as passed to the "dev_id" argument). If the workflow involves operators that run on separate CUDA devices, those operators must use separate stream pools configured for the corresponding device.
+Note that the `CudaStreamPool` will manage the lifetimes of any CUDA streams used by the SDK. The user does not typically need to explicitly call any CUDA APIs to create or destroy streams. Note that all streams from a single `CudaStreamPool` are on a single device (with CUDA id as passed to the "dev_id" argument). If the workflow involves operators that run on separate CUDA devices, those operators must use separate stream pools configured for the corresponding device.
 
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
 // The code below would appear within `Application::compose` (or `Fragment::compose`)
 
-// Create a stream pool with a 5 streams capacity (5 operators could share the same pool)
+// Create a stream pool with a capacity of 5 streams (5 operators could share the same pool)
 const auto cuda_stream_pool = make_resource<CudaStreamPool>("stream_pool",
                                                             Arg("dev_id", 0),
                                                             Arg("stream_flags", 0u),
@@ -58,7 +382,7 @@ auto my_op = make_operator<MyOperator>("my_op", cuda_stream_pool, arg_list);
 // my_op->add_arg(cuda_stream_pool);
 ```
 
-Note that the the legacy `CudaStreamHandler` utility did not support passing the stream pool in
+Note that the legacy `CudaStreamHandler` utility did not support passing the stream pool in
 this way, but instead required that the user explicitly add a parameter to the operator's private
 data members.
 
@@ -115,7 +439,19 @@ visualizer = HolovizOp(
 
 ## Configuring a CUDA Green Context for an operator
 
-To enable an operator to use a dedicated CUDA Green Context, the user can create a `CudaGreenContextPool` resource with SMs partition table and assign a `CudaGreenContext` from the pool to the operator. A `CudaStreamPool` can be created using this `CudaGreenContext` through its API.
+A [Green Context](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) is a lightweight CUDA context associated with a specific set of GPU resources. When creating a green context, users can partition GPU resources, currently streaming multiprocessors (SMs) and work queues, so that GPU work targeting a green context can only use its provisioned resources. This can be beneficial for:
+
+- **Reducing interference**: Ensuring latency-sensitive operators always have SMs available to start executing immediately
+- **Resource isolation**: Preventing one operator's heavy GPU workload from starving another operator
+- **Controlled concurrency**: Provisioning work queues to avoid false dependencies between independent streams
+
+Using green contexts does not require any GPU kernel code changes; just small host-side changes to create the green context and associate streams with it. See the [CUDA Programming Guide section on Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) for more details on the underlying CUDA feature.
+
+:::{note}
+Even when different SM resources and work queues are provisioned per green context, concurrent execution of independent GPU work is not guaranteed. Green contexts help *reduce* interference but do not eliminate all factors that can affect scheduling. Think of green contexts as a best-effort mechanism for resource isolation.
+:::
+
+To enable an operator to use a dedicated CUDA Green Context in Holoscan, create a `CudaGreenContextPool` resource with an SM partition table and assign a `CudaGreenContext` from the pool to the operator. A `CudaStreamPool` can then be created using this `CudaGreenContext`.
 
 Below is an example of how to configure a `CudaGreenContextPool` and assign a `CudaGreenContext` to an operator in C++ and Python.
 
@@ -127,7 +463,7 @@ Below is an example of how to configure a `CudaGreenContextPool` and assign a `C
 // Create a green context pool with 2 partitions, and each uses 8 SMs. The default green context is the last partition from the green context pool. If the total SMs is bigger than 16, then an additional
 // green context will be created and can be used as default green context partition.
 std::vector<uint32_t> partitions = std::vector<uint32_t>{8, 8};
-const audo cuda_green_context_pool =
+const auto cuda_green_context_pool =
     make_resource<CudaGreenContextPool>("cuda_green_context_pool",
                                         Arg("dev_id", 0),
                                         Arg("num_partitions", (uint32_t)partitions.size()),
@@ -180,8 +516,8 @@ stream_pool = CudaStreamPool(
 ````
 `````
 
-Note that For CudaGreenContextPool, the default green context partition can also be specified using `default_context_index` if one of the partitions is to be used.
-For CudaGreenContext, argument `index` is optional, if not specified, the pool default green context is used.
+Note that for `CudaGreenContextPool`, the default green context partition can also be specified using `default_context_index` if one of the partitions is to be used.
+For `CudaGreenContext`, argument `index` is optional, if not specified, the pool default green context is used.
 
 The following code demonstrates operators that need to use the default green context only.
 
@@ -190,8 +526,7 @@ auto operator_tx =
     make_operator<ops::PingTxOp>("tx", cuda_green_context_pool);
 ```
 
-A default `CudaGreenContextPool` can also be added to a fragment or an application. In this case, operators that do not need a dedicated CUDA context partition can use the following method to
-use the default fragment level default `CudaGreenContextPool`.
+A default `CudaGreenContextPool` can also be added to a fragment or an application. In this case, operators that do not need a dedicated CUDA context partition can use the following method to use the default fragment level default `CudaGreenContextPool`.
 
 ```cpp
 // Create a green context pool which will be used as the default green context pool for the current fragment
@@ -199,28 +534,32 @@ const auto cuda_green_context_pool = add_default_green_context_pool(0, partition
 auto operator_tx = make_operator<ops::PingTxOp>("tx", cuda_green_context_pool);
 ```
 
-## Sending stream information between operators
+## How Stream Information Propagates Between Operators
 
-Because CUDA kernels are launched asynchronously by the host (CPU), it is possible for the `compute` method to return before the underlying computation on the GPU is complete (see a related warning regarding benchmarking in this scenario below). In this scenario, information about the stream that was used must be sent along with the data so that a downstream operator can handle any stream synchronization that is needed. For example, if an upstream kernel emitted a `Tensor` object immediately after launching a CUDA kernel, the downstream operator needs to be sure the kernel has completed before accessing the tensor's data.
+Behind the scenes, `CudaStreamPool` ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:class}`Python <holoscan.resources.CudaStreamPool>`) allocates `nvidia::gxf::CudaStream` objects (an RAII wrapper around a `cudaStream_t`). These exist as components in the underlying GXF entity-component system. When a message is emitted, a `nvidia::gxf::CudaStreamId` struct (containing the stream's "component ID") is attached to the message. This is how downstream operators know which stream was used by upstream operators.
 
-The `CudaStreamPool` ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:class}`Python <holoscan.resources.CudaStreamPool>`) class allocates `nvidia::gxf::CudaStream` objects behind the scenes. These stream objects exist as components in the entity-component system of the underlying GXF library. GXF defines an `nvidia::gxf::CudaStreamId` struct which contains the "component ID" corresponding to the stream. It is this `CudaStreamId` struct that actually gets transmitted along with each message emitted from an output port. The Holoscan application author is not expected to need to interact with either the `CudaStream` or `CudaStreamId` classes directly, but instead use the standard CUDA Runtime API `cudaStream_t` type that is returned by Holoscan's public stream handling methods described in the sections below. Methods like `receive_cuda_stream` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_stream>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_stream>`) or `allocate_cuda_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::allocate_cuda_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.allocate_cuda_stream>`) return a `cudaStream_t` that corresponds to an underlying `CudaStream` object. Similarly methods like `set_cuda_stream` ({cpp:func}`C++ <holoscan::OutputContext::set_cuda_stream>`/{py:func}`Python <holoscan.core.OutputContext.set_cuda_stream>`) and `device_from_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::device_from_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.device_from_stream>`) take a `cudaStream_t` as input, but only accept a `cudaStream_t` that corresponds to underlying `CudaStream` objects whose lifetime can be managed by the SDK.
+:::{note}
+**One Stream Per Message**
 
-The SDK provides several publicly accessible methods for working with streams that can be called from the `compute` method of an operator. These are described in detail below.
+Each emitted message (Entity) is associated with at most **one** CUDA stream. If no stream handling APIs are used by the operator, the message will have no stream attached (equivalent to the default stream). When an operator uses `receive_cuda_stream` and then emits data, its internal stream ID is automatically attached to the outgoing message. If an operator receives a message and forwards the same Entity to the output (rather than creating a new one), the stream ID in that Entity is updated to reflect the operator's internal stream.
+:::
 
-## Simplified CUDA streams handling via `receive_cuda_stream`
+Application authors do not need to interact with `CudaStream` or `CudaStreamId` directly. Instead, use the standard CUDA Runtime API `cudaStream_t` type returned by Holoscan's stream handling methods. The SDK provides several methods for working with streams from an operator's `compute` method, described in detail below.
 
-In many cases, users will only need to use the `receive_cuda_stream` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_stream>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_stream>`) method provided by `InputContext` in their `compute` method. This is because the method automatically manages multiple aspects of stream handling:
-1. It automatically synchronizes any streams found on the named input port to the operator's internal CUDA stream
-  - The first time `compute` is called, an operator's internal CUDA stream would be allocated from the assigned `CudaStreamPool`. The same stream is then reused on all subsequent `compute` calls.
-  - There is a boolean flag which can also force synchronization to the default stream (false by default)
-2. It returns the `cudaStream_t` corresponding to the operator's internal stream.
-  - The user should use this returned stream for any kernels or memory copy operations to be run on a non-default stream.
-3. It sets the CUDA device corresponding to the stream returned in step 2 as the active CUDA device
-4. This method automatically configures all output ports to emit the stream returned by step 2 as a component in each message sent.
-  - This ID will allow downstream operators to know what stream was used for any data received in this message.
+## Detailed `receive_cuda_stream` API Reference
+
+As covered in the {ref}`Quick Start section <holoscan-cuda-stream-handling>`, `receive_cuda_stream` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_stream>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_stream>`) is the recommended method for stream handling. This section provides additional details on its parameters and edge cases.
 
 :::{attention}
-Please insure that, for a given input port, `receive` is always called **before** `receive_cuda_stream`. This is necessary because the `receive` call is what actually receives the messages and allows the operator to know about any stream IDs found in messages on the input port. That `receive` method only records information internally about any streams that were found. The subsequent `receive_cuda_stream` call is needed to perform synchronization and return the `cudaStream_t` to which any input streams were synchronized.
+For a given input port, `receive` must always be called **before** `receive_cuda_stream`. The `receive` call captures stream IDs from incoming messages; the subsequent `receive_cuda_stream` call performs synchronization and returns the operator's internal stream.
+:::
+
+:::{note}
+**Stream Extraction from Messages**
+
+When `receive` is called, Holoscan extracts the **first** `CudaStreamId` component found in each received Entity. For standard input ports, this is one stream per message. For multi-receiver ports (`IOSpec::kAnySize`), each connected upstream operator sends a separate Entity, so streams from all upstream operators are captured — one stream per Entity (message), not multiple streams within a single Entity.
+
+The `receive_cuda_stream` call then synchronizes all captured streams to the operator's internal stream.
 :::
 
 Here is an example of the typical usage of this method from the built-in `BayerDemosaicOp`
@@ -278,7 +617,7 @@ The above description of `receive_cuda_stream` is accurate when a `CudaStreamPoo
 
 ### Avoiding additional synchronization from Python's CUDA Array Interface
 
-Python applications converting between Holoscan's Tensor and 3rd party tensor objects often use the [CUDA Array Interface](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html). This interface by default performs its own explicit synchronization (described [here](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html#synchronization-in-numba)). This may be unnecessary when using `receive_cuda_stream` which already synchronizes streams found on the input with the operator's internal stream. The environment variable `CUPY_CUDA_ARARAY_INTERFACE_SYNC` can be set to 0 to disable an additional synchronization by CuPy when creating a CUDA array from a holoscan Tensor via the array interface. Similarly, `HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC` can be set to 0 to disable synchronization by the array interface on the Holoscan side when creating a Holoscan tensor from a 3rd party tensor.
+Python applications converting between Holoscan's Tensor and 3rd party tensor objects often use the [CUDA Array Interface](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html). This interface by default performs its own explicit synchronization (described [here](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html#synchronization-in-numba)). This may be unnecessary when using `receive_cuda_stream` which already synchronizes streams found on the input with the operator's internal stream. The environment variable `CUPY_CUDA_ARRAY_INTERFACE_SYNC` can be set to 0 to disable an additional synchronization by CuPy when creating a CUDA array from a holoscan Tensor via the array interface. Similarly, `HOLOSCAN_CUDA_ARRAY_INTERFACE_SYNC` can be set to 0 to disable synchronization by the array interface on the Holoscan side when creating a Holoscan tensor from a 3rd party tensor.
 
 ### Using `receive_cuda_stream` without a stream pool available
 
@@ -286,9 +625,13 @@ This section describes the behavior of `receive_cuda_stream` in the case where n
 
 In the case that there is no `CudaStreamPool` and there is no stream found for the input port (or by any prior `receive_cuda_stream` calls for another port), then `receive_cuda_stream` will return the default stream (`cudaStreamDefault`). No stream would be emitted on the output ports in this case.
 
-## InputContext: additional stream handling methods
+## Advanced Stream Handling APIs
 
-The `receive_cuda_streams` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_streams>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_streams>`) method is designed for advanced use cases where the application author needs to manually manage all aspects of stream synchronization, allocation, and emission of CUDA streams. Unlike `receive_cuda_stream`, this method does not perform synchronization, does not automatically allocate an internal CUDA stream, does not update the active CUDA device, and does not configure any stream to be emitted on output ports. Instead, it simply returns a `std::vector<std::optional<cudaStream_t>>`, which is a vector of size equal to the number of messages on the input port. Each value in the vector corresponds to the `cudaStream_t` specified by the message (or `std::nullopt` if no stream ID is found).
+The following methods are provided for advanced use cases requiring manual stream management.
+
+### `receive_cuda_streams` (InputContext)
+
+The `receive_cuda_streams` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda_streams>`/{py:func}`Python <holoscan.core.InputContext.receive_cuda_streams>`) method is for cases where manual stream management is needed. Unlike `receive_cuda_stream`, this method does **not** perform synchronization, allocate an internal stream, update the CUDA device, or configure output ports. It simply returns a `std::vector<std::optional<cudaStream_t>>` containing the stream from each message on the input port (or `std::nullopt` if no stream ID was found).
 
 Note that as for `receive_cuda_stream`, it is important that any `receive_cuda_streams` call for a port is **after** the corresponding `receive` call for that same port. An example is given below
 
@@ -300,13 +643,14 @@ Note that as for `receive_cuda_stream`, it is important that any `receive_cuda_s
 
 // Process a "receivers" port (e.g. one having IOSpec::kAnySize) that may
 // have an arbitrary number of connections, each of which may have sent a
-// TensorMap.
+// TensorMap. Here we will assume there is just one tensor per connection
+// and receive as std::vector<Tensor> for simplicity.
 auto maybe_tensors = op_input.receive<std::vector<Tensor>>("receivers");
 if (!maybe_tensors) { throw std::runtime_error("No message available"); }
 auto tensormaps = maybe_tensors.value();
 
-// Get a length two vector of std::option<CudaStream_t> containing any streams
-// found by the any of the above receive calls.
+// Get a vector of std::optional<cudaStream_t> containing any streams
+// found by the above receive call.
 auto cuda_streams = op_input.receive_cuda_streams("receivers");
 ```
 ````
@@ -314,7 +658,7 @@ auto cuda_streams = op_input.receive_cuda_streams("receivers");
 ```python
 # The code below would appear within `Operator.compute`
 
-auto tensors = op_input.receive("receivers")
+tensors = op_input.receive("receivers")
 if tensors is None:
     raise RuntimeError("No message available on 'receivers' input")
 
@@ -325,9 +669,9 @@ cuda_stream_ptrs = op_input.receive_cuda_streams("receivers")
 
 (execution-context-stream-methods)=
 
-## ExecutionContext: additional stream handling methods
+### `allocate_cuda_stream` (ExecutionContext)
 
-The `allocate_cuda_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::allocate_cuda_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.allocate_cuda_stream>`) method can be used to allocate additional CUDA streams from the Operator's `CudaStreamPool`. An `unexpected` (or `None` in Python) will be returned if there is no stream pool associated with the operator or if all streams in the stream pool were already in used. A user-provided stream name is given for the allocation so that for a given name, a new stream is only allocated the first time the method is called. The same stream is then reused on on any subsequent calls using the same name. Streams allocated in this way are not automatically emitted on the output ports. If this is needed, the user must specifically emit the stream IDs by calling `set_cuda_stream` for the output port **prior** to the call to `emit` for that port.
+The `allocate_cuda_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::allocate_cuda_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.allocate_cuda_stream>`) method allocates additional CUDA streams from the operator's `CudaStreamPool`. Returns `unexpected` (or `None` in Python) if no stream pool is available or all streams are in use. Streams are cached by name; the same name returns the same stream on subsequent calls. Streams allocated this way are **not** automatically emitted; use `set_cuda_stream` before `emit` if needed.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -357,7 +701,7 @@ op_output.set_cuda_stream(my_stream, "out");
 ```python
 # The code below would appear within `Operator.compute`
 
-my_stream_ptr = context.allocate_cuda_stream("my_stream")
+my_stream = context.allocate_cuda_stream("my_stream")
 
 # some custom code using the CUDA stream here
 
@@ -367,26 +711,40 @@ op_output.set_cuda_stream(my_stream, "out")
 ````
 `````
 
-The `synchronize_streams` ({cpp:func}`C++ <holoscan::ExecutionContext::synchronize_streams>`/{py:func}`Python <holoscan.core.ExecutionContext.synchronize_streams>`) method takes a vector of (optional) `cudaStream_t` values and synchronizes all of these streams to the specified `target_cuda_stream`. It is okay for the target stream to also appear in the vector of streams to synchronize (synchronization will be skipped for any element in the vector that is the same as the target stream). If the application author is using the `receive_cuda_stream` API described above, that will typically take care of any needed synchronization and this method does not need to be called. It is provided for manual stream handling use cases.
+### `synchronize_streams` (ExecutionContext)
 
-The `device_from_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::device_from_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.device_from_stream>`) method takes a `cudaStream_t` value and returns the integer CUDA device id corresponding to that stream. This method only supports querying the device in this way for streams managed by Holoscan SDK (i.e. it only supports streams that were returned by `receive_cuda_stream`, `receive_cuda_streams` or `allocate_cuda_stream`).
+The `synchronize_streams` ({cpp:func}`C++ <holoscan::ExecutionContext::synchronize_streams>`/{py:func}`Python <holoscan.core.ExecutionContext.synchronize_streams>`) method synchronizes a vector of streams to a target stream using the same non-blocking event-based mechanism as `receive_cuda_stream` (`cudaEventRecord` / `cudaStreamWaitEvent`). When using `receive_cuda_stream`, synchronization is handled automatically; this method is for manual stream handling use cases.
 
-## OutputContext: stream handling methods
+### `device_from_stream` (ExecutionContext)
 
-The `set_cuda_stream` ({cpp:func}`C++ <holoscan::OutputContext::set_cuda_stream>`/{py:func}`Python <holoscan.core.OutputContext.set_cuda_stream>`) method is used to indicate that the stream ID corresponding to a specific `cudaStream_t` should be emitted on the specified CUDA output port. This typically does not need to be explicitly called when using `receive_cuda_stream` as that method would have already configured the stream ID returned to be output on all ports. It is needed for cases where the user has allocated some additional stream via `allocate_cuda_stream` or is doing manual stream handling with `receive_cuda_streams`. An example of usage was given in the {ref}`section above <execution-context-stream-methods>` on `allocate_cuda_stream`.
+The `device_from_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::device_from_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.device_from_stream>`) method returns the CUDA device ID for a given stream. This method only works with streams managed by Holoscan SDK (those returned by `receive_cuda_stream`, `receive_cuda_streams`, or `allocate_cuda_stream`).
 
-## Using CudaStreamCondition to require stream work to complete before an operator executes
 
-It is mentioned above that `receive_cuda_stream` automatically handles synchronization of streams found on an input port. If work on the stream was not already complete and the `compute` method is going to perform an operation which requires synchronization such as device->host memory copy, then some time will be spent waiting for work launched on an input stream by an upstream operator to complete. It may be beneficial to explicitly specify that work on the stream found on a given input port must be complete **before** the scheduler would execute the operator (call its `compute` method).
+### `set_cuda_stream` (OutputContext)
 
-To require work on an input stream to complete before an operator is ready to schedule, a `CudaStreamCondition` ({cpp:class}`C++ <holoscan::CudaStreamCondition>`/{py:class}`Python <holoscan.conditions.CudaStreamCondition>`) can be added to the operator.
-When a message is sent to the port to which a `CudaStreamCondition` has been assigned, this condition sets an internal host callback function on the CUDA stream found on this input port. The callback function will set the operator's status to READY once other work on the stream has completed. This will then allow the scheduler to execute the operator.
+The `set_cuda_stream` ({cpp:func}`C++ <holoscan::OutputContext::set_cuda_stream>`/{py:func}`Python <holoscan.core.OutputContext.set_cuda_stream>`) method configures a specific stream to be emitted on an output port. Not needed when using `receive_cuda_stream` (which auto-configures output ports), but required when using `allocate_cuda_stream` or manual stream handling. See the {ref}`allocate_cuda_stream example <execution-context-stream-methods>` above.
 
-One limitation of `CudaStreamCondition` is that it only looks for a stream on the first message in the input port's queue. It does not currently support handling ports with multiple different input stream components within the same message (entity) or across multiple messages in the queue. The behavior of `CudaStreamCondition` is sufficient for Holoscan's default queue size of one and for use with `receive_cuda_stream` which places just a single CUDA stream component in an upstream operator's outgoing messages. Cases where it is not appropriate are:
-  - The input port's {ref}`queue size was explicitly set <configuring-queue-size>` with capacity greater than one and it is not known that all messages in the queue correspond to the same CUDA stream.
-  - The input port is a multi-receiver port (i.e. `IOSpec::kAnySize`) that any number of upstream operators could connect to.
+:::{note}
+**Single Stream Per Output Port**
 
-In cases where no stream is found in the input message, this condition will allow execution of the operator.
+Only **one** stream can be configured per output port. If `set_cuda_stream` is called multiple times for the same output port within a single `compute` call, the **last** call takes effect (replacing any previously configured stream for that port). This is consistent with the design that each emitted message carries at most one CUDA stream ID.
+:::
+
+## Pre-Scheduling Synchronization with CudaStreamCondition
+
+By default, `receive_cuda_stream` synchronizes streams **inside** `compute()`. The operator is scheduled immediately when a message arrives, even if upstream GPU work is still in progress. For operators that need data to be immediately available (e.g., device-to-host copies, CPU processing), it may be beneficial to delay scheduling until upstream GPU work completes.
+
+`CudaStreamCondition` ({cpp:class}`C++ <holoscan::CudaStreamCondition>`/{py:class}`Python <holoscan.conditions.CudaStreamCondition>`) provides this capability. When a message arrives, it registers host callbacks (via `cudaLaunchHostFunc`) on the input streams. The operator is only marked READY after all callbacks fire, indicating GPU work is complete.
+
+**Features:**
+- **Multiple input ports**: Monitor multiple ports simultaneously, including multi-receiver ports (`IOSpec::kAnySize`)
+- **All messages in queue**: Checks streams on all messages, not just the first
+
+:::{note}
+`CudaStreamCondition` internally uses `findAll` to discover all `CudaStreamId` components in each Entity, which allows it to handle edge cases where multiple stream IDs might exist. However, the standard Holoscan stream APIs (`set_cuda_stream`, `receive_cuda_stream`, `receive_cuda_streams`) are designed around a **single stream per Entity** model. There is currently no public API to intentionally emit or receive multiple streams within the same Entity.
+:::
+
+If no stream is found in an input message, execution is allowed.
 
 Example usage is as follows
 
@@ -395,26 +753,39 @@ Example usage is as follows
 ```cpp
 // The code below would appear within `Application::compose` (or `Fragment::compose`)
 
-// assuming the Operator has a port named "in", we can create the condition
+// Monitor a single input port named "in"
 auto stream_cond = make_condition<CudaStreamCondition>("stream_sync",
-                                                       Arg("receiver", std::string{"in"}));
+    Arg("receivers", std::string("in")));
 
-// it can then be passed as an argument to `make_operator`
+// Monitor multiple input ports
+auto stream_cond = make_condition<CudaStreamCondition>("stream_sync",
+    Arg("receivers", std::vector<std::string>{"in1", "in2"}));
+
+// Monitor a multi-receiver port (kAnySize) - discovers receivers:0, receivers:1, etc.
+auto stream_cond = make_condition<CudaStreamCondition>("stream_sync",
+    Arg("receivers", std::string("receivers")));
+
+// Pass the condition as an argument to `make_operator`
 auto my_op = make_operator<ops::MyOperator>("my_op",
                                             stream_cond,
                                             from_config("my_operator"));
-)
 ```
 ````
 ````{tab-item} Python
 ```python
 # The code below would appear within `Application.compose` (or `Fragment.compose`)
 
-# assuming the Operator has a port named "in", we can create the condition
-stream_cond = CudaStreamCondition(self, receiver="in", name="stream_sync")
+# Monitor a single input port named "in"
+stream_cond = CudaStreamCondition(self, receivers="in", name="stream_sync")
 
-# the condition is then passed as a positional argument to an Operator's constructor
-visualizer = MyOperator(
+# Monitor multiple input ports
+stream_cond = CudaStreamCondition(self, receivers=["in1", "in2"], name="stream_sync")
+
+# Monitor a multi-receiver port (kAnySize) - discovers receivers:0, receivers:1, etc.
+stream_cond = CudaStreamCondition(self, receivers="receivers", name="stream_sync")
+
+# Pass the condition as a positional argument to an Operator's constructor
+my_op = MyOperator(
     self,
     stream_cond,
     **my_kwargs,
@@ -424,16 +795,155 @@ visualizer = MyOperator(
 ````
 `````
 
-## Sharp edges related to Operators launching asynchronous work
+(cuda-stream-common-pitfalls)=
 
-This section describes a couple of scenarios where application authors may encounter surprising behavior when using operators that launch kernels asynchronously. As mentioned above, once a CUDA kernel has launched, control immediately returns to the host and the `compute` method may exit before all work on the GPU has completed. This is desirable for application performance, but raises some additional considerations that application authors should be aware of.
+## Common Pitfalls with Asynchronous GPU Work
+
+Since CUDA kernels launch asynchronously, `compute()` may exit before GPU work completes. This is desirable for performance, but has some implications:
 
 :::{tip}
-Tools like the built-in `{ref}Data Flow Tracking<holoscan-flow-tracking>` or `{ref}GXF JobStatistics<gxf-job-satistics>` measures report the times spent in the `compute` method for operators. This can be misleadingly short when the actual GPU kernels complete at some later time after the `compute` call has ended. A concrete example is when an upstream operator launches a CUDA kernel asynchronously and then a downstream operator needs to do a device->host transfer (which requires synchronization). In that scenario the downstream operator will need to wait for the kernel launched by the upstream operator to complete, so the time for that upstream kernel would be reflected in the downstream operator's `compute` duration (assuming no `CudaStreamCondition` was used to force the upstream kernel to have completed before the downstream `compute` method was called).
+Tools like the built-in {ref}`Data Flow Tracking <holoscan-flow-tracking>` or {ref}`GXF JobStatistics <gxf-job-statistics>` measure the time spent in the `compute` method for operators. This can be misleadingly short when the actual GPU kernels complete at some later time after the `compute` call has ended. A concrete example is when an upstream operator launches a CUDA kernel asynchronously and then a downstream operator needs to do a device->host transfer (which requires synchronization). In that scenario the downstream operator will need to wait for the kernel launched by the upstream operator to complete, so the time for that upstream kernel would be reflected in the downstream operator's `compute` duration (assuming no `CudaStreamCondition` was used to force the upstream kernel to have completed before the downstream `compute` method was called).
 
 In such scenarios it is recommended to perform profiling with {ref}`Nsight Systems <nsight-profiling>` to get a more detailed view of the application timing. The Nsight Systems UI will have per-stream traces of CUDA calls as well as separate traces for any scheduler worker threads that show the durations of Operator `compute` calls.
 :::
 
 :::{tip}
 When an operator uses an `Allocator` (e.g. `UnboundedAllocator`, `BlockMemoryPool`, `RMMAllocator` or `StreamOrderedAllocator`) to dynamically allocate memory on each `compute` call, it is possible that more memory will be required than initially estimated. For example, if a kernel is launched but `compute` returns while computation is still being done on a tensor, an upstream operator is then free to be scheduled again. If that upstream operator was using an `Allocator`, the memory from the prior compute call would still be in use. Thus the operator needs space to allocate a second tensor on top of the original one. This means the author has to set a larger number of required bytes (or blocks) than they would have otherwise estimated (e.g. 2x as many).
+:::
+
+(cuda-stream-sink-operators)=
+
+## Sink Operators and Stream-Aware Deallocation
+
+Sink operators (operators that consume data but don't emit it) require special handling when using pool-based allocators (`BlockMemoryPool`, `StreamOrderedAllocator`, `RMMAllocator`) and asynchronous GPU work. This section explains why and provides guidance for operator authors.
+
+### The Problem
+
+For operators that emit data, the deallocation stream is automatically set on output tensors during `emit()`. However, **sink operators don't call `emit()`**, which means the input tensors retain whatever stream was set by the upstream operator. This can cause a race condition:
+
+1. Upstream operator emits tensor on **stream A**
+2. Sink operator receives tensor and launches GPU work on **stream B** (its internal stream)
+3. Sink operator's `compute()` returns (GPU work still running on stream B)
+4. Input tensor's reference count drops to zero, triggering deallocation
+5. Allocator sees stream A on the tensor and may reuse memory before stream B completes
+6. **Race condition**: New data overwrites memory while GPU is still reading it
+
+### When This Matters
+
+This issue only affects sink operators that meet **all** of these criteria:
+
+1. **Use a pool-based allocator**: `BlockMemoryPool`, `StreamOrderedAllocator`, or `RMMAllocator`. The `UnboundedAllocator` does not pool memory so is unaffected.
+2. **Launch async GPU work**: CPU-only operators don't have this issue
+3. **Return before GPU work completes**: If the operator synchronizes (e.g., `cudaStreamSynchronize()`) before returning, memory is safe to reuse
+
+### Solution: Set the Deallocation Stream
+
+Sink operators should inform the allocator which stream last accessed the tensor's memory. There are two approaches depending on how you receive data:
+
+#### For C++ Operators Using GXF Entities
+
+If your operator receives data as `holoscan::gxf::Entity` and accesses `nvidia::gxf::Tensor` or `nvidia::gxf::VideoBuffer` components directly, call `setStream()` on the memory buffer:
+
+```cpp
+void MySinkOp::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    auto in_message = op_input.receive<holoscan::gxf::Entity>("input").value();
+    cudaStream_t cuda_stream = op_input.receive_cuda_stream("input");
+
+    // Set deallocation stream on all tensors
+    void* stream_ptr = static_cast<void*>(cuda_stream);
+    auto tensors = in_message.findAll<nvidia::gxf::Tensor>();
+    if (tensors) {
+        for (auto&& tensor : tensors.value()) {
+            tensor.value()->memory_buffer().setStream(stream_ptr);
+        }
+    }
+
+    // Set deallocation stream on all video buffers
+    auto video_buffers = in_message.findAllHeap<nvidia::gxf::VideoBuffer>();
+    if (video_buffers) {
+        for (auto&& video_buffer : video_buffers.value()) {
+            video_buffer.value()->memory_buffer().setStream(stream_ptr);
+        }
+    }
+
+    // Launch async GPU work on cuda_stream
+    my_kernel<<<grid, block, 0, cuda_stream>>>(tensor_data, ...);
+    // compute() returns while GPU work is still running - memory is safe
+}
+```
+
+#### For C++ Operators Using holoscan::Tensor
+
+If your operator receives data as `std::shared_ptr<holoscan::Tensor>` or `holoscan::TensorMap`, use the `set_deallocation_stream()` method:
+
+```cpp
+void MySinkOp::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    auto tensor = op_input.receive<std::shared_ptr<holoscan::Tensor>>("input").value();
+    cudaStream_t cuda_stream = op_input.receive_cuda_stream("input");
+
+    // Set deallocation stream on the tensor
+    tensor->set_deallocation_stream(cuda_stream);
+
+    // Launch async GPU work
+    my_kernel<<<grid, block, 0, cuda_stream>>>(tensor->data(), ...);
+}
+```
+
+For `TensorMap`:
+
+```cpp
+void MySinkOp::compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) {
+    auto tensor_map = op_input.receive<holoscan::TensorMap>("input").value();
+    cudaStream_t cuda_stream = op_input.receive_cuda_stream("input");
+
+    // Set deallocation stream on all tensors in the map
+    for (auto& [name, tensor] : tensor_map) {
+        tensor->set_deallocation_stream(cuda_stream);
+    }
+
+    // Launch async GPU work
+    // ...
+}
+```
+
+:::{note}
+`set_deallocation_stream()` only works for tensors whose memory is managed by a Holoscan/GXF allocator. For tensors created from external sources (e.g., CuPy or PyTorch arrays via the DLPack interface), the method returns `false` and has no effect since memory lifetime is managed externally.
+:::
+
+#### For Python Operators
+
+Python operators can use the `set_deallocation_stream()` method on `holoscan.Tensor`:
+
+```python
+def compute(self, op_input, op_output, context):
+    tensor = op_input.receive("input")
+    cuda_stream = op_input.receive_cuda_stream("input")
+
+    # Set deallocation stream
+    if hasattr(tensor, 'set_deallocation_stream'):
+        tensor.set_deallocation_stream(cuda_stream)
+
+    # Use tensor with CuPy on the stream
+    with cp.cuda.ExternalStream(cuda_stream):
+        # GPU operations here
+        pass
+```
+
+### Built-in Operators
+
+The built-in `HolovizOp` already handles this correctly by setting the deallocation stream on all input tensors and video buffers before launching GPU rendering work.
+
+## Multi-GPU Considerations
+
+The stream handling model is designed primarily for single-GPU pipelines. However, operators on separate GPUs can interoperate:
+
+- Each operator can have its own `CudaStreamPool` configured for a different GPU (`dev_id` parameter)
+- CUDA's `cudaStreamWaitEvent()` supports cross-device synchronization
+- `receive_cuda_stream()` sets the active CUDA device to match the stream's device
+- CUDA's "current device" is thread-local state, so parallel operators on different scheduler threads can safely target different GPUs
+
+:::{note}
+**Data Locality Limitation**
+
+Tensors emitted via `shared_ptr<Tensor>` are zero-copy, referencing device memory on a specific GPU. Device memory on GPU0 is not directly accessible from GPU1 (unless using CUDA P2P, Unified Memory, or NVLink). Operators on different GPUs must explicitly handle data transfer.
 :::

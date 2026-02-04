@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,22 +17,10 @@ limitations under the License.
 
 from holoscan.conditions import CountCondition, PeriodicCondition
 from holoscan.core import Application, ConditionType, Operator, OperatorSpec
+from holoscan.operators import PingTxOp
 
 
-class QueueSizeWarningTxOp(Operator):
-    def __init__(self, fragment, *args, **kwargs):
-        self.index = 0
-        super().__init__(fragment, *args, **kwargs)
-
-    def setup(self, spec: OperatorSpec):
-        spec.output("out")
-
-    def compute(self, op_input, op_output, context):
-        op_output.emit(self.index, "out")
-        self.index += 1
-
-
-class QueueSizeWarningDefaultRxOp(Operator):
+class DefaultMinSizeRxOp(Operator):
     def setup(self, spec: OperatorSpec):
         # size > 1 with no explicit condition triggers the warning and uses min_size=size.
         spec.input("in", size=2)
@@ -42,7 +30,7 @@ class QueueSizeWarningDefaultRxOp(Operator):
         assert len(values) == 2
 
 
-class QueueSizeWarningExplicitMinSizeRxOp(Operator):
+class ExplicitMinSizeRxOp(Operator):
     def setup(self, spec: OperatorSpec):
         # size=2 (buffering) but min_size=1 (no batching)
         spec.input("in", size=2).condition(
@@ -60,25 +48,25 @@ class QueueSizeWarningExplicitMinSizeRxOp(Operator):
 
 class QueueSizeWarningDefaultApp(Application):
     def compose(self):
-        tx = QueueSizeWarningTxOp(
+        tx = PingTxOp(
             self,
             CountCondition(self, 2),
             PeriodicCondition(self, 10_000_000),
             name="tx",
         )
-        rx = QueueSizeWarningDefaultRxOp(self, name="rx")
+        rx = DefaultMinSizeRxOp(self, name="rx")
         self.add_flow(tx, rx)
 
 
 class QueueSizeWarningExplicitMinSizeApp(Application):
     def compose(self):
-        tx = QueueSizeWarningTxOp(
+        tx = PingTxOp(
             self,
             CountCondition(self, 2),
             PeriodicCondition(self, 10_000_000),
             name="tx",
         )
-        rx = QueueSizeWarningExplicitMinSizeRxOp(self, name="rx")
+        rx = ExplicitMinSizeRxOp(self, name="rx")
         self.add_flow(tx, rx)
 
 

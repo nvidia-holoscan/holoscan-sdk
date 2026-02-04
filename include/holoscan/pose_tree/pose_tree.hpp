@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -773,8 +773,8 @@ class PoseTree {
       if (!history.value()->connected()) {
         continue;
       }
-      auto lhs_name = get_frame_name(key.value().first);
-      auto rhs_name = get_frame_name(key.value().second);
+      auto lhs_name = get_frame_name_unlocked(key.value().first);
+      auto rhs_name = get_frame_name_unlocked(key.value().second);
       if (!lhs_name || !rhs_name) {
         continue;
       }
@@ -874,6 +874,9 @@ class PoseTree {
   static const char* error_to_str(Error error);
 
  private:
+  /// @brief Internal version of get_frame_name that assumes the lock is already held.
+  expected_t<std::string_view> get_frame_name_unlocked(frame_t uid) const;
+
   /**
    * @brief Helper structure that stores the information about a frame.
    */
@@ -924,6 +927,8 @@ class PoseTree {
   expected_t<Pose3d> get_dfs_impl(frame_t lhs, frame_t rhs, double time,
                                   PoseTreeEdgeHistory::AccessMethod method,
                                   version_t version) const;
+  // Implementation of get_latest that assumes the lock is already held.
+  expected_t<std::pair<Pose3d, double>> get_latest_impl(frame_t lhs, frame_t rhs) const;
 
   /// Lock to protect access to the parameter below.
   mutable std::shared_timed_mutex mutex_;

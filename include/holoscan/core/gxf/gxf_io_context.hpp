@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -90,7 +90,7 @@ class GXFInputContext : public InputContext {
   cudaStream_t receive_cuda_stream(const char* input_port_name = nullptr, bool allocate = true,
                                    bool sync_to_default = false) override;
 
-  /** @brief Retrieve the CUDA streams found an input port.
+  /** @brief Retrieve the CUDA streams found on an input port.
    *
    * This method is intended for advanced use cases where it is the users responsibility to
    * manage any necessary stream synchronization. In most cases, it is recommended to use
@@ -98,9 +98,10 @@ class GXFInputContext : public InputContext {
    *
    * @param input_port_name The name of the input port. Can be omitted if the operator only has a
    * single input port.
-   * @returns Vector of (optional) cudaStream_t. The length of the vector will match the number of
-   * messages on the input port. Any messages that do not contain a stream will have value of
-   * std::nullopt.
+   * @returns Vector of (optional) cudaStream_t. In normal operation, the length of the vector
+   * matches the number of messages on the input port, with `std::nullopt` for messages without a
+   * stream. If stream handling is unavailable (e.g., CudaObjectHandler not initialized), an empty
+   * vector is returned.
    */
   std::vector<std::optional<cudaStream_t>> receive_cuda_streams(
       const char* input_port_name = nullptr) override;
@@ -170,14 +171,16 @@ class GXFOutputContext : public OutputContext {
 
  protected:
   void emit_impl(std::any data, const char* name = nullptr, OutputType out_type = OutputType::kAny,
-                 const int64_t acq_timestamp = -1, bool omit_data_logging = false) override;
+                 const int64_t acq_timestamp = -1, bool omit_data_logging = false,
+                 bool skip_stream_propagation = false) override;
 
   std::shared_ptr<gxf::CudaObjectHandler> gxf_cuda_object_handler() {
     return std::dynamic_pointer_cast<gxf::CudaObjectHandler>(cuda_object_handler_);
   }
 
  private:
-  void populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata);
+  void populate_output_metadata(nvidia::gxf::Handle<MetadataDictionary> metadata,
+                                const std::string& output_name);
 };
 
 }  // namespace holoscan::gxf

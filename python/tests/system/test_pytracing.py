@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -407,7 +407,9 @@ if __name__ == "__main__":
     import argparse  # noqa: PLC0415
     import platform  # noqa: PLC0415
 
-    # Check Python version and exit with code 12 if version is 3.12 or above
+    # Holoscan SDK tracing is not yet fully implemented for Python 3.12 and above.
+    # Check Python version and exit with code 12 if version is 3.12 or above.
+    # Tracking reference: 5144233
     python_version = platform.python_version_tuple()
     if int(python_version[0]) >= 3 and int(python_version[1]) >= 12:
         print(f"Skipping test on Python {platform.python_version()}")

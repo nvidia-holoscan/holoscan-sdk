@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014-2024, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2014-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,19 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2014-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2014-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
-
 #include "shadermodulemanager_vk.hpp"
-#include <algorithm>
 #include <assert.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <sstream>
-#include <stdarg.h>
-#include <stdio.h>
+#include <utility>
 
 #include <nvh/fileoperations.hpp>
 #include <nvh/nvprint.hpp>
@@ -434,7 +434,7 @@ ShaderModuleID ShaderModuleManager::createShaderModule(const Definition& definit
     }
   }
 
-  m_shadermodules.push_back(module);
+  m_shadermodules.push_back(std::move(module));
   return m_shadermodules.size() - 1;
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,16 @@ void EventBasedScheduler::setup(ComponentSpec& spec) {
              "deadlock and should stop. It will reset if a job comes in during the wait. A "
              "negative value means not stop on deadlock. This parameter only applies when  "
              "stop_on_deadlock=true",
-             0L);
+             int64_t(0));
+  spec.param(network_connection_timeout_,
+             "network_connection_timeout",
+             "Timeout for network connection establishment (in ms)",
+             "During the initial phase when network connections are being established, this longer "
+             "timeout is used instead of stop_on_deadlock_timeout. This allows sufficient time for "
+             "UCX connections to be established without triggering false deadlock detection. "
+             "This parameter has no effect on single fragment (non-distributed) applications. "
+             "Defaults to 5000ms (5 seconds).",
+             int64_t(5000));
   spec.param(pin_cores_,
              "pin_cores",
              "Pin Cores",

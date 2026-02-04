@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,11 @@ stop_on_deadlock_timeout : int, optional
     The scheduler will wait this amount of time before determining that it is in deadlock
     and should stop. It will reset if a job comes in during the wait. A negative value means not
     stop on deadlock. This parameter only applies when `stop_on_deadlock=true`",
+network_connection_timeout : int, optional
+    During the initial phase when network connections are being established, this longer timeout
+    (in ms) is used instead of stop_on_deadlock_timeout. This allows sufficient time for UCX
+    connections to be established without triggering false deadlock detection. "This parameter has
+    no effect on single fragment (non-distributed) applications. "Defaults to 5000 ms (5 seconds).
 name : str, optional
     The name of the scheduler.
 )doc")

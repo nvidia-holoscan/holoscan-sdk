@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@ https://www.sphinx-doc.org/en/master/usage/configuration.html
 import os
 import textwrap
 import warnings
+from datetime import date
 
 import sphinx_rtd_theme
 
@@ -36,7 +37,7 @@ exhale_dir = os.getenv("EXHALEDIR")
 # -- Project information -----------------------------------------------------
 
 project = "Holoscan SDK"
-copyright = "2022-2025, NVIDIA"  # noqa: A001
+copyright = f"2022-{date.today().year}, NVIDIA"  # noqa: A001
 author = "NVIDIA"
 
 # The full version, including alpha/beta/rc tags

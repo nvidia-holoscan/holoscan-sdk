@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,8 +75,23 @@ class Executor {
 
   /**
    * @brief Interrupt the execution.
+   *
+   * @return true if the interrupt was successful (graph was running), false if the graph
+   *         was not running (already stopped or not started).
    */
-  virtual void interrupt() {}
+  virtual bool interrupt() { return false; }
+
+  /**
+   * @brief Wait for the execution to complete.
+   *
+   * This method blocks until the graph execution (started by run_async or interrupted by
+   * interrupt()) completes. Should be called after interrupt() to ensure the scheduler
+   * has fully stopped before performing cleanup operations.
+   *
+   * @note Only call this if interrupt() returned true. Calling wait() when the graph
+   *       is not running can cause issues with concurrent cleanup.
+   */
+  virtual void wait() {}
 
   /**
    * @brief Set the pointer to the fragment of the executor.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -418,6 +418,7 @@ class Application : public Fragment {
   static expected<SchedulerType, ErrorCode> get_distributed_app_scheduler_env();
   static expected<bool, ErrorCode> get_stop_on_deadlock_env();
   static expected<int64_t, ErrorCode> get_stop_on_deadlock_timeout_env();
+  static expected<int64_t, ErrorCode> get_ucx_network_connection_timeout_env();
   static expected<int64_t, ErrorCode> get_max_duration_ms_env();
   static expected<double, ErrorCode> get_check_recession_period_ms_env();
 
@@ -446,8 +447,12 @@ class Application : public Fragment {
    * - op2.out -> op3.in2
    *
    * @param target_fragments The fragments to set the scheduler.
+   * @param app_scheduler Optional scheduler set on the Application. If provided and a fragment
+   *        doesn't have its own scheduler set, this scheduler will be used for that fragment.
    */
-  static void set_scheduler_for_fragments(std::vector<FragmentNodeType>& target_fragments);
+  static void set_scheduler_for_fragments(
+      std::vector<FragmentNodeType>& target_fragments,
+      const std::shared_ptr<Scheduler>& app_scheduler = nullptr);
 
   std::string app_description_{};     ///< The description of the application.
   std::string app_version_{"0.0.0"};  ///< The version of the application.

@@ -688,6 +688,18 @@ app->run();
 
 Note that an explicit static cast to the `int64_t` type of the underlying `Parameter<int64_t> worker_thread_number_` is shown here for "worker_thread_number". As of Holoscan v3.9, this explicit static cast is no longer required and any integer type would be automatically cast to the required parameter type (as long as the value is within the representable range).
 
+The `EventBasedScheduler` also supports a `pin_cores` parameter that restricts the **default thread pool** threads to specific CPU cores:
+
+```{code-block} cpp
+:name: holoscan-config-scheduler-with-pin-cores-cpp
+
+auto scheduler = app->make_scheduler<holoscan::EventBasedScheduler>(
+  "myscheduler",
+  Arg("worker_thread_number", static_cast<int64_t>(4)),
+  Arg("pin_cores", std::vector<uint32_t>{0, 1, 2, 3}),  // Restrict default pool to cores 0-3
+  Arg("stop_on_deadlock", true)
+);
+```
 ````
 
 ````{tab-item} Python
@@ -708,6 +720,21 @@ scheduler = holoscan.schedulers.EventBasedScheduler(
 app.scheduler(scheduler)
 app.run()
 ```
+
+The `EventBasedScheduler` also supports a `pin_cores` parameter that restricts the **default thread pool** threads to specific CPU cores:
+
+```{code-block} python
+:name: holoscan-config-scheduler-with-pin-cores-python
+
+scheduler = holoscan.schedulers.EventBasedScheduler(
+    app,
+    name="myscheduler",
+    worker_thread_number=4,
+    pin_cores=[0, 1, 2, 3],  # Restrict default pool to cores 0-3
+    stop_on_deadlock=True,
+)
+```
+
 ````
 `````
 
@@ -715,17 +742,45 @@ app.run()
 This is also illustrated in the [multithread](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multithread) example.
 :::
 
+:::{important}
+**CPU Core Pinning with EventBasedScheduler Only**
+
+The `pin_cores` parameter for CPU core affinity is only supported with `EventBasedScheduler`. The `MultiThreadScheduler` does not support core pinning for either the default or user-defined thread pools. The ways to set CPU affinity are as follows:
+
+- For the default thread pool (size determined by `worker_thread_number`): Use the scheduler's `pin_cores` parameter.
+- For user-defined thread pools: Use the `pin_cores` parameter via `ThreadPool`'s `add()` or `add_realtime()` method.
+
+See {ref}`Configuring worker thread pools<configuring-app-thread-pools>` below for details.
+:::
 
 (configuring-app-thread-pools)=
 ### Configuring worker thread pools
 
-Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal worker thread pool by default. In some scenarios, it may be desirable for users to instead assign operators to specific user-defined thread pools. This also allows optionally pinning operators to a specific thread.
+Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal **default thread pool** with a number of worker threads determined by the `worker_thread_number` parameter. In some scenarios, it may be desirable for users to assign operators to specific **user-defined thread pools**.
+
+#### Understanding default and user-defined thread pools
+
+The scheduler's `worker_thread_number` parameter creates a **default thread pool** with that many worker threads. Any operators not explicitly assigned to a user-defined thread pool will use this default pool. When you create user-defined thread pools via `make_thread_pool()`, these create **additional** worker threads beyond those in the default pool.
+
+For example:
+- Scheduler configured with `worker_thread_number=4` → **4 default threads**
+- User creates `make_thread_pool("pool1", 2)` → **2 additional threads**
+- User creates `make_thread_pool("pool2", 3)` → **3 additional threads**
+- **Total threads**: 4 (default) + 2 (pool1) + 3 (pool2) = **9 worker threads**
+
+Operators assigned to user-defined thread pools execute on those pools' threads. Operators not assigned to any user-defined thread pool execute on the default pool's threads.
+
+#### Creating and using thread pools
 
 Assume I have three operators, `op1`, `op2` and `op3`, that I want to assign to a thread pool. I would also like to pin `op2` and `op3` to specific threads within the pool. The example below shows the code for configuring thread pools to achieve this from the Fragment `compose` method.
 
 `````{tab-set}
 ````{tab-item} C++
-We create thread pools via calls to the {cpp:func}`~holoscan::Fragment::make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the number of threads initially in the thread pool. This `make_thread_pool` method returns a shared pointer to a {cpp:class}`~holoscan::ThreadPool` object. The {cpp:func}`~holoscan::ThreadPool::add` method of that object can then be used to add a single operator or a vector of operators to the thread pool. The second argument to the `add` function is a boolean indicating whether the given operators should be pinned to always run on a specific thread within the thread pool.
+We create thread pools via calls to the {cpp:func}`~holoscan::Fragment::make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the number of threads initially in the thread pool. This `make_thread_pool` method returns a shared pointer to a {cpp:class}`~holoscan::ThreadPool` object. The {cpp:func}`~holoscan::ThreadPool::add` method of that object can then be used to add a single operator or a vector of operators to the thread pool.
+
+The `add` method has the following parameters:
+- `pin_operator` (bool): Whether the operator should be pinned to always run on a specific thread within the thread pool
+- `pin_cores` (optional vector of uint32_t): CPU core IDs to restrict the thread's execution. If omitted or empty, the thread can migrate between any CPU cores
 
 ```{code-block} cpp
 :name: holoscan-thread-pool-example-cpp
@@ -733,36 +788,79 @@ We create thread pools via calls to the {cpp:func}`~holoscan::Fragment::make_thr
     // The following code would be within `Fragment::compose` after operators have been defined
     // Assume op1, op2 and op3 are `shared_ptr<OperatorType>` as returned by `make_operator`
 
-    // create a thread pool with a three threads
+    // create a thread pool with three threads
     auto pool1 = make_thread_pool("pool1", 3);
     // assign a single operator to the thread pool (unpinned)
     pool1->add(op1, false);
-    // assign multiple operators to this thread pool (pinned)
+    // assign multiple operators to this thread pool (pinned to dedicated threads)
     pool1->add({op2, op3}, true);
 
 ```
 
+The `add` method also accepts an optional third parameter, `pin_cores`, to specify CPU core affinity:
+
+```{code-block} cpp
+:name: holoscan-thread-pool-cpu-affinity-example-cpp
+
+    // Alternative: Pin op2 to a dedicated thread that can only run on CPU cores 0 and 1
+    pool1->add(op2, true, {0, 1});
+
+    // Alternative: Pin op3 to a dedicated thread that can only run on CPU cores 2 and 3
+    pool1->add(op3, true, {2, 3});
+
+```
+
+Note that this example demonstrates a 1:1 mapping where each operator has its own dedicated thread with exclusive CPU core affinity, rather than a shared pool of cores across multiple operators.
+
+This provides both entity-to-thread pinning (operator always runs on the same thread) and CPU core affinity (thread is restricted to specific CPU cores). If `pin_cores` is omitted or empty, the thread can migrate between any CPU cores as determined by the OS scheduler.
+
+:::{note}
+CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. If using MultiThreadScheduler, the `pin_cores` parameter will be ignored.
+:::
+
 ````
 
 ````{tab-item} Python
-We create thread pools via calls to the {py:func}`~holoscan.core.Fragment.make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the initial size of the thread pool. It is not necessary to modify this as the size will be incremented as needed automatically. This `make_thread_pool` method returns a shared pointer to a {py:class}`~holoscan.resources.ThreadPool` object. The {py:func}`~holoscan.resources.ThreadPool.add` method of that object can then be used to add a single operator or a vector of operators to the thread pool. The second argument to the `add` function is a boolean indicating whether the given operators should be pinned to always run on a specific thread within the thread pool.
+We create thread pools via calls to the {py:func}`~holoscan.core.Fragment.make_thread_pool` method. The first argument is a user-defined name for the thread pool while the second is the initial size of the thread pool. It is not necessary to modify this as the size will be incremented as needed automatically. This `make_thread_pool` method returns a {py:class}`~holoscan.resources.ThreadPool` object. The {py:func}`~holoscan.resources.ThreadPool.add` method of that object can then be used to add a single operator or a vector of operators to the thread pool.
+
+The `add` method has the following parameters:
+- `pin_operator` (bool): Whether the operator should be pinned to always run on a specific thread within the thread pool
+- `pin_cores` (optional list of int): CPU core IDs to restrict the thread's execution. If omitted or empty, the thread can migrate between any CPU cores
 
 ```{code-block} python
 :name: holoscan-thread-pool-example-python
     # The following code would be within `Fragment::compose` after operators have been defined
-    # Assume op1, op2 and op3 are `shared_ptr<OperatorType>` as returned by `make_operator`
+    # Assume op1, op2 and op3 are operators as returned by `make_operator`
 
-    # create a thread pool with a single thread
-    pool1 = self.make_thread_pool("pool1", 1);
+    # create a thread pool with three threads
+    pool1 = self.make_thread_pool("pool1", 3)
     # assign a single operator to the thread pool (unpinned)
-    pool1.add(op1, True);
-    # assign multiple operators to this thread pool (pinned)
-    pool1.add([op2, op3], True);
+    pool1.add(op1, pin_operator=False)
+    # assign multiple operators to this thread pool (pinned to dedicated threads)
+    pool1.add([op2, op3], pin_operator=True)
 ```
+
+You can also specify CPU core affinity using the `pin_cores` parameter:
+
+```{code-block} python
+:name: holoscan-thread-pool-cpu-affinity-example-python
+    # Pin op2 to a dedicated thread that can only run on CPU cores 0 and 1
+    pool1.add(op2, pin_operator=True, pin_cores=[0, 1])
+
+    # Pin op3 to a dedicated thread that can only run on CPU cores 2 and 3
+    pool1.add(op3, pin_operator=True, pin_cores=[2, 3])
+```
+
+This provides both entity-to-thread pinning (operator always runs on the same thread) and CPU core affinity (thread is restricted to specific CPU cores). If `pin_cores` is omitted or empty, the thread can migrate between any CPU cores as determined by the OS scheduler.
+
+:::{note}
+CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. If using MultiThreadScheduler, the `pin_cores` parameter will be ignored.
+:::
+
 ````
 `````
 :::{note}
-It is not necessary to define a thread pool for Holoscan applications. There is a default thread pool that gets used for any operators the user did not explicitly assign to a thread pool. The use of thread pools provides a way to explicitly indicate that threads should be pinned.
+It is not necessary to define user-defined thread pools for Holoscan applications. The scheduler automatically creates a default thread pool with `worker_thread_number` threads (as specified when configuring the scheduler). Any operators not explicitly assigned to a user-defined thread pool will use this default pool. User-defined thread pools provide explicit control over thread pinning and CPU affinity for specific operators.
 
 One case where separate thread pools **must** be used is in order to support pinning of operators involving separate GPU devices. Only a single GPU device should be used from any given thread pool. Operators associated with a GPU device resource are those using one of the CUDA-based allocators like
 `BlockMemoryPool`, `CudaStreamPool`, `RMMAllocator` or `StreamOrderedAllocator`.
@@ -781,7 +879,11 @@ If a thread pool is configured by the single-thread `GreedyScheduler` is used a 
 (configuring-app-thread-pools-realtime)=
 #### Linux real-time scheduling with thread pools
 
-The `EventBasedScheduler` offers additional features to pin an operator to a dedicated worker thread scheduled by real-time scheduling policies supported in the Linux kernel. The configuration can be done by using the `add_realtime()` method (in contrast to the `add()` method) in `ThreadPool` to assign an operator with a real-time scheduling policy along with the parameters required for the selected scheduling policy. The supported real-time scheduling policies are:
+The `EventBasedScheduler` offers additional features to pin an operator to a dedicated worker thread scheduled by real-time scheduling policies supported in the Linux kernel. The configuration can be done by using the `add_realtime()` method (in contrast to the `add()` method) in `ThreadPool` to assign an operator with a real-time scheduling policy along with the parameters required for the selected scheduling policy.
+
+The `add_realtime()` method includes the same `pin_cores` parameter as the regular `add()` method, allowing you to restrict the dedicated thread to specific CPU cores in addition to configuring real-time scheduling policies.
+
+The supported real-time scheduling policies are:
 
 - **SCHED_FIFO** (`SchedulingPolicy::kFirstInFirstOut`): First-in-first-out scheduling policy that provides priority execution. Operators with this policy will run until completion or until preempted by a higher priority Linux process or thread. Operators with the same priority under `SCHED_FIFO` are scheduled in a first-in-first-out fashion.
 - **SCHED_RR** (`SchedulingPolicy::kRoundRobin`): Round-robin scheduling policy that provides execution with CPU time sharing for operators with the same priority level in a round-robin fashion.
@@ -1175,7 +1277,7 @@ class PingTxSubgraph : public holoscan::Subgraph {
 - The constructor takes a `Fragment*` and `name` which are passed to the base class
 - Operators created with `make_operator` are automatically qualified with the subgraph name. Specifically, the operator added to the fragment via a subgraph will have a name that is the subgraph `name` followed by an underscore and then the operator name provided within `Subgraph::compose`.
 - `add_flow` defines internal connections between operators (and/or nested subgraphs)
-- `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
+- `add_interface_port`, `add_output_interface_port`, and `add_input_interface_port` expose ports for external connections
 
 ````
 
@@ -1206,7 +1308,7 @@ class PingTxSubgraph(Subgraph):
 - The `__init__` method receives `fragment` and `name` and passes them to the base class
 - Operators are created with the subgraph (`self`) as their fragment. An operator added to the fragment via a subgraph will have a name that is the subgraph `name` followed by an underscore and then the operator name provided within `Subgraph.compose`.
 - `add_flow` defines internal connections between operators (and/or nested subgraphs)
-- `add_output_interface_port` and `add_input_interface_port` expose ports for external connections
+- `add_interface_port`, `add_output_interface_port`, and `add_input_interface_port` expose ports for external connections
 
 ````
 `````
@@ -1220,8 +1322,44 @@ Subgraphs are a convenience for graph composition but do not affect operator sch
 
 Interface ports define the external API of a subgraph. They map external port names to internal operator ports, allowing external components to connect to the subgraph without knowing its internal structure.
 
-- **Input interface ports** (`add_input_interface_port`): Allow data to flow into the subgraph
-- **Output interface ports** (`add_output_interface_port`): Allow data to flow out of the subgraph
+There are three methods for adding interface ports:
+
+- **`add_interface_port`**: General method that auto-detects port direction. If the internal port name uniquely identifies an input or output, the direction is inferred automatically. You can also explicitly specify the direction via the `is_input` parameter if needed.
+- **`add_input_interface_port`**: Convenience method for input ports (data flows into the subgraph)
+- **`add_output_interface_port`**: Convenience method for output ports (data flows out of the subgraph)
+
+In most cases, `add_interface_port` with auto-detection is sufficient since port names are typically unique to either inputs or outputs. Use the explicit convenience methods when you need to be certain about direction or when the port name exists as both input and output on the operator.
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+// Auto-detect: direction inferred from operator's port definition
+add_interface_port("data_out", forwarding_op, "out");
+
+// Equivalent explicit methods
+add_output_interface_port("data_out", forwarding_op, "out");
+add_input_interface_port("data_in", receiver_op, "in");
+
+// Internal port name can be omitted when it matches external name
+add_interface_port("out", forwarding_op);  // uses "out" for both names
+add_output_interface_port("out", forwarding_op);  // same as above
+```
+````
+````{tab-item} Python
+```python
+# Auto-detect: direction inferred from operator's port definition
+self.add_interface_port("data_out", forwarding_op, "out")
+
+# Equivalent explicit methods
+self.add_output_interface_port("data_out", forwarding_op, "out")
+self.add_input_interface_port("data_in", receiver_op, "in")
+
+# Internal port name can be omitted when it matches external name
+self.add_interface_port("out", forwarding_op)  # uses "out" for both names
+self.add_output_interface_port("out", forwarding_op)  # same as above
+```
+````
+`````
 
 Interface ports support both single-receiver and multi-receiver patterns, depending on the underlying operator's port configuration. Because interface ports map to an existing operator port, the conditions or other properties defined for the operator port automatically apply to the interface port.
 
@@ -1297,7 +1435,7 @@ For example, if `PingTxSubgraph` contains a `"transmitter"` operator:
 
 This naming scheme extends to nested subgraphs, creating hierarchical names like `"parent_child_operator"`.
 
-Note that it is the qualified name that will show up in tools such as {ref}`NSight Systems traces <nsight-profiling>`, {ref}`data flow tracking <holoscan-flow-tracking>` output, {ref}`GXF JobStatistics <gxf-job-satistics>` reports, and {ref}`DataLogger <holoscan-data-logging>` topic names. This ensures that it is possible to uniquely distinguish which instance of an operator any given log message or measurement corresponds to.
+Note that it is the qualified name that will show up in tools such as {ref}`NSight Systems traces <nsight-profiling>`, {ref}`data flow tracking <holoscan-flow-tracking>` output, {ref}`GXF JobStatistics <gxf-job-statistics>` reports, and {ref}`DataLogger <holoscan-data-logging>` topic names. This ensures that it is possible to uniquely distinguish which instance of an operator any given log message or measurement corresponds to.
 
 :::{warning}
 For the Python API, it is important while in `Subgraph.compose()`, to pass `self` and **not** `self.fragment` as the first argument to any operator constructors. The later would bypass the qualified naming logic and may lead to composition errors due to duplicate node names if there is more than one instance of the subgraph.
@@ -1467,6 +1605,242 @@ self.add_flow(tx_subgraph3, rx_subgraph, {("data_out", "data_in")})
 Complete working examples demonstrating subgraph functionality are available in the [subgraph examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/subgraph) directory, including the `ping_multi_receiver` example that showcases reusable subgraphs, interface ports, qualified naming, and multi-receiver patterns.
 :::
 
+#### Subgraph Configuration
+
+Subgraphs can have their own configuration files, separate from the main application configuration. This enables self-contained, reusable subgraphs that carry their own default settings.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-config-cpp
+
+class ConfigurableSubgraph : public holoscan::Subgraph {
+ public:
+  ConfigurableSubgraph(holoscan::Fragment* fragment, const std::string& name,
+                       const std::string& config_file = "")
+      : holoscan::Subgraph(fragment, name, config_file) {}
+
+  void compose() override {
+    // Access configuration using from_config()
+    auto tx_op = make_operator<ops::PingTxOp>("tx", from_config("transmitter"));
+
+    // Get all available config keys
+    auto keys = config_keys();
+
+    add_output_interface_port("out", tx_op);
+  }
+};
+
+// Usage in application compose()
+auto subgraph = make_subgraph<ConfigurableSubgraph>("my_subgraph", "subgraph_config.yaml");
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-config-python
+
+class ConfigurableSubgraph(Subgraph):
+    def __init__(self, fragment, name, *, config=None):
+        super().__init__(fragment, name, config=config)
+
+    def compose(self):
+        # Access configuration using kwargs() for Python dict unpacking
+        tx_op = PingTxOp(self, name="tx", **self.kwargs("transmitter"))
+
+        # Get all available config keys
+        keys = self.config_keys()
+
+        self.add_output_interface_port("out", tx_op)
+
+# Usage in application compose()
+subgraph = ConfigurableSubgraph(self, "my_subgraph", config="subgraph_config.yaml")
+```
+
+````
+`````
+
+:::{note}
+Subgraph configuration files support the same YAML format as application configuration, but GXF extension loading is not supported from subgraph configs—extensions should be loaded from the main application configuration only.
+:::
+
+#### Broadcast to Multiple Internal Operators
+
+Input interface ports can broadcast incoming data to multiple internal operators. This is useful when the same input data needs to be processed by different operators within the subgraph. Unlike the multi-receiver pattern (which allows multiple external sources to connect to one port), broadcast sends data from one external source to multiple internal destinations.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-broadcast-cpp
+
+void compose() override {
+  auto processor1 = make_operator<ops::ProcessorOp>("processor1");
+  auto processor2 = make_operator<ops::ProcessorOp>("processor2");
+  auto processor3 = make_operator<ops::ProcessorOp>("processor3");
+
+  // Single input interface port broadcasts to multiple internal operators
+  add_input_interface_port("data_in", processor1, "in");
+  add_input_interface_port("data_in", processor2, "in");
+  add_input_interface_port("data_in", processor3, "in");
+}
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-broadcast-python
+
+def compose(self):
+    processor1 = ProcessorOp(self, name="processor1")
+    processor2 = ProcessorOp(self, name="processor2")
+    processor3 = ProcessorOp(self, name="processor3")
+
+    # Single input interface port broadcasts to multiple internal operators
+    self.add_input_interface_port("data_in", processor1, "in")
+    self.add_input_interface_port("data_in", processor2, "in")
+    self.add_input_interface_port("data_in", processor3, "in")
+```
+
+````
+`````
+
+When data flows into the `"data_in"` interface port, it is delivered to all three processor operators.
+
+#### Subgraphs Without Interface Ports
+
+Some subgraphs may not need external connections. Use `add_subgraph` to add such subgraphs to the application without using `add_flow`.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-no-ports-cpp
+
+class SelfContainedSubgraph : public holoscan::Subgraph {
+ public:
+  SelfContainedSubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
+
+  void compose() override {
+    auto source = make_operator<ops::SourceOp>("source");
+    auto sink = make_operator<ops::SinkOp>("sink");
+    add_flow(source, sink);
+    // No interface ports exposed
+  }
+};
+
+// In application compose()
+void compose() override {
+  auto self_contained = make_subgraph<SelfContainedSubgraph>("standalone");
+  add_subgraph(self_contained);  // Add without add_flow
+}
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-no-ports-python
+
+class SelfContainedSubgraph(Subgraph):
+    def __init__(self, fragment, name):
+        super().__init__(fragment, name)
+
+    def compose(self):
+        source = SourceOp(self, name="source")
+        sink = SinkOp(self, name="sink")
+        self.add_flow(source, sink)
+        # No interface ports exposed
+
+# In application compose()
+def compose(self):
+    self_contained = SelfContainedSubgraph(self, "standalone")
+    self.add_subgraph(self_contained)  # Add without add_flow
+```
+
+````
+`````
+
+#### Accessing Subgraph Operators
+
+The `operators()` method returns all operators within a subgraph, including those in nested subgraphs. This is useful for inspection, debugging, or programmatic access to operators after composition.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-operators-cpp
+
+auto subgraph = make_subgraph<MySubgraph>("my_sg");
+
+// Get all operators in the subgraph
+auto ops = subgraph->operators();
+for (const auto& op : ops) {
+  HOLOSCAN_LOG_INFO("Operator: {}", op->name());
+}
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-operators-python
+
+subgraph = MySubgraph(self, "my_sg")
+
+# Get all operators in the subgraph
+for op in subgraph.operators():
+    print(f"Operator: {op.name}")
+```
+
+````
+`````
+
+#### Additional Convenience Methods
+
+Subgraphs expose `add_data_logger` and `register_service` methods as shortcuts that delegate to the parent fragment. These methods are equivalent to calling `fragment()->add_data_logger()` (C++) or `self.fragment.add_data_logger()` (Python) directly. The registered loggers and services apply to the fragment as a whole, not just the subgraph.
+
+`````{tab-set}
+````{tab-item} C++
+
+```cpp
+void compose() override {
+  // These are equivalent - both register with the parent fragment
+  add_data_logger(logger);              // shorthand
+  // fragment()->add_data_logger(logger);  // explicit
+
+  register_service(service, "my_service");              // shorthand
+  // fragment()->register_service(service, "my_service");  // explicit
+}
+```
+
+````
+
+````{tab-item} Python
+
+```python
+def compose(self):
+    # These are equivalent - both register with the parent fragment
+    self.add_data_logger(logger)          # shorthand
+    # self.fragment.add_data_logger(logger)  # explicit
+
+    self.register_service(service, "my_service")          # shorthand
+    # self.fragment.register_service(service, "my_service")  # explicit
+```
+
+````
+`````
+
+See the {ref}`Data Logging <holoscan-data-logging>` section for details on configuring data loggers. For service registration, see {cpp:func}`Fragment::register_service <holoscan::Fragment::register_service>` (C++) or {py:func}`Fragment.register_service <holoscan.core.Fragment.register_service>` (Python).
+
 ### Dynamic Flow Control for Complex Workflows
 
 As of Holoscan v3.0, the dynamic flow control feature is available, enabling operators to modify their connections with other operators at runtime. This allows for the creation of complex workflows with conditional branching, loops, and dynamic routing patterns.
@@ -1549,6 +1923,143 @@ For a complete example of how to use these methods to implement advanced monitor
 1. A source operator that runs for a limited number of iterations
 2. A monitor operator that independently tracks the status of other operators
 3. Automatic application shutdown when all processing operators have completed
+
+(fragment-services)=
+
+## Fragment Services
+
+:::{note}
+The Fragment Service feature is marked as **experimental**. The API may change in future releases.
+:::
+
+Fragment services provide a mechanism to share resources and functionality across operators within a fragment or application. They are useful for managing shared state, configuration, or services that multiple operators need to access.
+
+### Registering a Service
+
+Services are registered with the fragment in the `compose()` method using `register_service`:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void compose() override {
+  // Create and register a service
+  auto my_service = std::make_shared<MyService>(42);
+  register_service(my_service);
+
+  // Create operators that will use the service
+  auto op = make_operator<MyOp>("my_op");
+  add_operator(op);
+}
+```
+````
+````{tab-item} Python
+```python
+def compose(self):
+    # Create and register a service
+    my_service = MyService(42)
+    self.register_service(my_service)
+
+    # Create operators that will use the service
+    op = MyOp(self, name="my_op")
+    self.add_operator(op)
+```
+````
+`````
+
+### Retrieving a Service
+
+Operators can retrieve registered services using the `service()` method:
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) override {
+  // Retrieve by type (when no ID was specified during registration)
+  auto my_service = service<MyService>();
+
+  // Or retrieve by type and ID
+  auto my_service = service<MyService>("my_service_id");
+
+  // Use the service
+  int value = my_service->value();
+}
+```
+````
+````{tab-item} Python
+```python
+def compute(self, op_input, op_output, context):
+    # Retrieve by type (when no ID was specified during registration)
+    my_service = self.service(MyService)
+
+    # Or retrieve by type and ID
+    my_service = self.service(MyService, "my_service_id")
+
+    # Use the service
+    value = my_service.value()
+```
+````
+`````
+
+### Best Practices for Cross-Language Service Lookup
+
+When implementing custom fragment services that will be used in applications with both C++ and Python operators, **implement the service in C++ and provide Python bindings**.
+
+**Why?** When a fragment service is implemented purely in Python (by subclassing `DefaultFragmentService` or `Resource`), the service type information is not preserved during registration. This causes `service<MyService>()` lookups from C++ operators to fail because the C++ runtime cannot find the service by its expected type.
+
+**Recommended approach**: Implement your service class in C++ and expose it to Python via pybind11 bindings:
+
+`````{tab-set}
+````{tab-item} C++ Service Implementation
+```cpp
+// my_service.hpp
+class MyService : public holoscan::DefaultFragmentService {
+ public:
+  explicit MyService(int value) : value_(value) {}
+  int value() const { return value_; }
+ private:
+  int value_;
+};
+```
+````
+````{tab-item} Python Binding
+```cpp
+// my_service_pybind.cpp
+#include <pybind11/pybind11.h>
+#include "my_service.hpp"
+
+namespace py = pybind11;
+
+PYBIND11_MODULE(_my_service, m) {
+  py::class_<MyService, holoscan::DefaultFragmentService, std::shared_ptr<MyService>>(
+      m, "MyService")
+      .def(py::init<int>(), py::arg("value"))
+      .def("value", &MyService::value);
+}
+```
+````
+`````
+
+:::{important}
+**Multiple Inheritance**: If your service class uses multiple inheritance (e.g., inherits from both `Resource` and `DistributedAppService`), you **must** add `py::multiple_inheritance()` to the binding:
+
+```cpp
+py::class_<MyMultiService, Resource, DistributedAppService, std::shared_ptr<MyMultiService>>(
+    m, "MyMultiService", py::multiple_inheritance())
+    // ...
+```
+
+Without this flag, pybind11 cannot properly handle runtime casts to non-primary base classes. This can cause silent failures where a service intended to be registered as a `FragmentService` gets registered only as a `Resource`, breaking distributed application behavior.
+:::
+
+With this approach, the service can be instantiated and registered in Python, and retrieved by type from both Python and C++ operators.
+
+**When pure Python services are acceptable**: If your application only uses Python operators to access the service, a pure Python implementation is sufficient.
+
+:::{seealso}
+- {cpp:func}`Fragment::register_service <holoscan::Fragment::register_service>` (C++) / {py:func}`Fragment.register_service <holoscan.core.Fragment.register_service>` (Python) for registration API details
+- [Fragment Service Examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/fragment_service) for complete working examples
+- [PoseTreeManager C++ class](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/pose_tree/pose_tree_manager.hpp) and its [Python binding](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/pose_tree/pose_tree.cpp) for a production example of a C++ service with multiple inheritance
+:::
 
 (building-and-running-your-application)=
 
@@ -1642,7 +2153,7 @@ app->run();
 ```
 ````
 ````{tab-item} Python
-```cpp
+```python
 app = MyApplication()
 
 # Disable metadata feature before calling app.run() or app.run_async()
@@ -1658,7 +2169,19 @@ Note that the `enable_metadata` method exists on the Application, Fragment and O
 
 ### Understanding Metadata Flow
 
-Each operator in the workflow has an associated {cpp:class}`~holoscan::MetadataDictionary` object. At the start of each operator's {cpp:func}`~holoscan::Operator::compute` call this metadata dictionary will be empty (i.e. metadata does not persist from previous compute calls). When any call to {cpp:func}`~holoscan::InputContext::receive` data is made, any metadata also found in the input message will be merged into the operator's local metadata dictionary. The operator's compute method can then read, append to or remove metadata as explained in the next section. Whenever the operator emits data via a call to {cpp:func}`~holoscan::OutputContext::emit` the current status of the operator's metadata dictionary will be transmitted on that port alonside the data passed via the first argument to the emit call. Any downstream operators will then receive this metadata via their input ports.
+Each operator in the workflow has an associated `MetadataDictionary` ({cpp:class}`C++ <holoscan::MetadataDictionary>`/{py:class}`Python <holoscan.core.MetadataDictionary>`) object. The metadata lifecycle within a single `compute()` call is as follows:
+
+1. **Clear**: At the start of each operator's `compute()` ({cpp:func}`C++ <holoscan::Operator::compute>`/{py:func}`Python <holoscan.core.Operator.compute>`) call, this metadata dictionary is automatically cleared (i.e., metadata does not persist from previous compute calls).
+
+2. **Receive**: When any call to `receive()` ({cpp:func}`C++ <holoscan::InputContext::receive>`/{py:func}`Python <holoscan.core.InputContext.receive>`) is made, any metadata found in the input message will be merged into the operator's local metadata dictionary according to the operator's `MetadataPolicy` ({cpp:enum}`C++ <holoscan::MetadataPolicy>`/{py:class}`Python <holoscan.core.MetadataPolicy>`).
+
+3. **Modify**: The operator's compute method can read, append to, or remove metadata as explained in the next section.
+
+4. **Emit**: Whenever the operator emits data via a call to `emit()` ({cpp:func}`C++ <holoscan::OutputContext::emit>`/{py:func}`Python <holoscan.core.OutputContext.emit>`), the current state of the operator's metadata dictionary will be transmitted on that port alongside the data passed via the first argument to the emit call. Any downstream operators will then receive this metadata via their input ports.
+
+:::{important}
+Metadata is only populated from upstream messages when `receive()` is called. If an operator does not call `receive()` on an input port, any metadata on that port will not be accessible via `metadata()`.
+:::
 
 ### Working With Metadata from Operator::compute
 
@@ -1674,7 +2197,7 @@ Templated {cpp:func}`~holoscan::MetadataObject::get` and {cpp:func}`~holoscan::M
 // Receiving from a port updates operator metadata with any metadata found on the port
 auto input_tensors = op_input.receive<TensorMap>("in");
 
-// Get a reference to the shared metadata dictionary
+// Get a shared pointer to the operator's metadata dictionary
 auto meta = metadata();
 
 // Retrieve existing values.
@@ -1777,7 +2300,7 @@ del self.metadata["pixel_spacing"]
 self.metadata.set("pixel_spacing", spacing, dtype=np.float32, cast_to_cpp=True)
 
 # Remove a value
-del self["patient name"]
+del self.metadata["patient_name"]
 
 # ... Some processing to produce output `data` could go here ...
 
@@ -1801,6 +2324,72 @@ Pay particular attention to the details of how metadata is set. When working wit
 ````
 `````
 
+#### Deep Copying Metadata
+
+In some cases, you may want to create an independent snapshot of the metadata dictionary, for example to store it in a queue or buffer for later processing. The {cpp:class}`~holoscan::MetadataDictionary` class supports deep copying to create fully independent copies.
+
+`````{tab-set}
+````{tab-item} C++
+Use the {cpp:func}`~holoscan::MetadataDictionary::deep_copy` method to create an independent copy of the metadata dictionary:
+
+```cpp
+// Get the current metadata
+auto meta = metadata();
+
+// Create a deep copy for storing in a queue
+MetadataDictionary snapshot = meta->deep_copy();
+my_queue.push(snapshot);
+
+// Modifications to meta won't affect the snapshot
+meta->set("new_key", 123);
+// snapshot does not contain "new_key"
+```
+
+The deep copy creates independent {cpp:type}`~holoscan::MetadataObject` instances, so modifications to the original or the copy do not affect each other.
+
+:::{note}
+**Important limitation**: When metadata values are stored as `std::shared_ptr<T>` (e.g., `std::shared_ptr<std::vector<int>>`), `deep_copy()` only copies the shared pointer, not the pointed-to data. Both the original and the copy will share the same underlying data. To avoid this, store values by-value (e.g., `std::vector<int>` directly) rather than wrapped in `shared_ptr`. For example:
+
+```cpp
+// Recommended: Store by value for true independence
+std::vector<int> vec{1, 2, 3};
+meta->set("my_vec", vec);  // std::any will copy the vector
+auto snapshot = meta->deep_copy();  // Truly independent
+
+// Not recommended: shared_ptr values remain shared after deep_copy
+auto vec_ptr = std::make_shared<std::vector<int>>(std::vector<int>{1, 2, 3});
+meta->set("my_vec_ptr", vec_ptr);
+auto snapshot2 = meta->deep_copy();  // Still shares the vector data!
+```
+:::
+````
+````{tab-item} Python
+Use Python's standard `copy.deepcopy()` to create an independent copy:
+
+```python
+import copy
+
+# Get the current metadata
+meta = self.metadata
+
+# Create a deep copy for storing in a queue
+snapshot = copy.deepcopy(meta)
+my_queue.append(snapshot)
+
+# Modifications to meta won't affect the snapshot
+meta["new_key"] = 123
+# snapshot does not contain "new_key"
+
+# Deep copying also creates independent copies of mutable Python objects
+meta["my_list"] = [1, 2, 3]
+snapshot = copy.deepcopy(meta)
+meta["my_list"].append(4)  # snapshot["my_list"] remains [1, 2, 3]
+```
+
+For shallow copying, use `copy.copy()` instead. Note that shallow copies share the underlying data until a modification is made.
+````
+`````
+
 #### Metadata Update Policies
 
 `````{tab-set}
@@ -1808,6 +2397,7 @@ Pay particular attention to the details of how metadata is set. When working wit
 
 The operator class also has a {cpp:func}`~holoscan::Operator::metadata_policy` method that can be used to set a {cpp:enum}`~holoscan::MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
 - "update" (`MetadataPolicy::kUpdate`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call.
+- "inplace_update" (`MetadataPolicy::kInplaceUpdate`): Update the value stored within an existing `MetadataObject` in-place if the key already exists (in contrast to `kUpdate` which always replaces the existing `MetadataObject` with a new one).
 - "reject" (`MetadataPolicy::kReject`): Reject the new key/value pair when a key already exists due to a prior `receive` call.
 - "raise" (`MetadataPolicy::kRaise`): Throw a `std::runtime_error` if a duplicate key is encountered. This is the default policy.
 
@@ -1824,9 +2414,10 @@ my_op->metadata_policy(holoscan::MetadataPolicy::kRaise);
 ````{tab-item} Python
 
 The operator class also has a {py:func}`~holoscan.core.Operator.metadata_policy` property that can be used to set a {py:class}`~holoscan.core.MetadataPolicy` to use when handling duplicate metadata keys across multiple input ports of the operator. The available options are:
-- "update" (`MetadataPolicy.UPDATE`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call. This is the default policy.
+- "update" (`MetadataPolicy.UPDATE`): replace any existing key from a prior `receive` call with one present in a subsequent `receive` call.
+- "inplace_update" (`MetadataPolicy.INPLACE_UPDATE`): Update the value stored within an existing `MetadataObject` in-place if the key already exists (in contrast to `MetadataPolicy.UPDATE` which always replaces the existing `MetadataObject` with a new one). Unlike for `MetadataPolicy.UPDATE`, this means that other shallow copies of the dictionary would also have the value updated.
 - "reject" (`MetadataPolicy.REJECT`): Reject the new key/value pair when a key already exists due to a prior `receive` call.
-- "raise" (`MetadataPolicy.RAISE`): Throw an exception if a duplicate key is encountered.
+- "raise" (`MetadataPolicy.RAISE`): Throw an exception if a duplicate key is encountered. This is the default policy.
 
 The metadata policy would typically be set during {py:func}`~holoscan.core.Application.compose` as in the following example:
 
@@ -1847,7 +2438,7 @@ The policy applied as in the example above only applies to the operator on which
 Sending metadata between two fragments of a distributed application is supported, but there are a couple of aspects to be aware of.
 
 1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on {ref}`object serialization<object-serialization>`). The only exception is that {cpp:class}`~holoscan::Tensor` and {cpp:class}`~holoscan::TensorMap` values cannot be sent as metadata values between fragments (this restriction also applies to tensor-like Python objects). Any {ref}`custom codecs<object-serialization>` registered for the SDK will automatically also be available for serialization of metadata values.
-2. There is a practical size limit of several kilobytes in the amount of metadata that can be transmitted between fragments. This is because metadata is currently sent along with other entity header information in the UCX header, which has fixed size limit (the metadata is stored along with other header information within the size limit defined by the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` {ref}`environment variable<holoscan-distributed-env>`).
+2. The UCX serialization buffer defaults to 127 KiB for the entire serialized entity (including metadata and other non-tensor data content). Tensor data buffers are sent separately and do not count against this limit. **If the serialized entity exceeds this buffer size, serialization will fail** and an error will be logged. To accommodate larger metadata, increase the buffer size via the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` {ref}`environment variable<holoscan-distributed-env>`. When using TCP transport, setting `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` will automatically configure `UCX_TCP_TX_SEG_SIZE` and `UCX_TCP_RX_SEG_SIZE` accordingly (unless those variables were explicitly set by the user).
 
 The above restrictions only apply to metadata sent **between** fragments. Within a fragment there is no size limit on metadata (aside from system memory limits) and no serialization or deserialization step is needed.
 
@@ -1855,7 +2446,25 @@ The above restrictions only apply to metadata sent **between** fragments. Within
 
 ### Current limitations
 
-1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in opereators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->enable_metadata(false)` was not set to disable the metadata feature).
+1. The current metadata API is only fully supported for native holoscan Operators and is not currently supported by operators that wrap a GXF codelet (i.e. inheriting from {cpp:class}`~holoscan::GXFOperator` or created via {cpp:class}`~holoscan::ops::GXFCodeletOp`). Aside from `GXFCodeletOp`, the built-in operators provided under the `holoscan::ops` namespace are all native operators, so the feature will work with these. Currently none of these built-in operators add their own metadata, but any metadata received on input ports will automatically be passed on to their output ports (as long as `app->enable_metadata(false)` was not set to disable the metadata feature).
+
+### Troubleshooting Metadata Issues
+
+If metadata is not appearing as expected in downstream operators, check the following:
+
+1. **Verify metadata is enabled**: Ensure `is_metadata_enabled()` returns `true` for all operators in the data path. Check that `enable_metadata(false)` was not called on the application, fragment, or any operator in the chain.
+
+2. **Ensure receive() is called**: Metadata from upstream operators is only merged into the operator's local metadata dictionary when {cpp:func}`~holoscan::InputContext::receive` is called. If an operator does not call `receive()` on its input ports, it will not have access to upstream metadata.
+
+3. **Check emit() is called after setting metadata**: Metadata is attached to messages during the {cpp:func}`~holoscan::OutputContext::emit` call. Any modifications to metadata made after the last `emit()` call will not be transmitted downstream.
+
+4. **Avoid clearing metadata before emit()**: Calling `metadata()->clear()` before `emit()` will result in no metadata being sent. Only clear metadata if you intentionally want to stop propagating it downstream.
+
+5. **Verify operator types**: The metadata API is fully supported only for native Holoscan operators. If using operators that wrap GXF codelets (`GXFCodeletOp`), metadata will not flow through them correctly.
+
+6. **Enable trace logging for debugging**: Set the environment variable `HOLOSCAN_LOG_LEVEL=TRACE` to see detailed logs about metadata handling, including:
+   - `"MetadataDictionary with size N found for input 'X' of operator 'Y'"` - logged when metadata is received
+   - `"MetadataDictionary with size N emitted on output 'X' of operator 'Y'"` - logged when metadata is being emitted
 
 ## CUDA Stream Handling APIs
 

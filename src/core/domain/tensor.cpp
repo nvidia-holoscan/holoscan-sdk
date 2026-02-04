@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "gxf/std/dlpack_utils.hpp"
+#include "gxf/std/memory_buffer.hpp"
 #include "holoscan/core/common.hpp"
 #include "holoscan/core/domain/tensor.hpp"
 
@@ -70,15 +71,14 @@ bool Tensor::is_contiguous() const {
 }
 
 DLManagedTensor* Tensor::to_dlpack() {
-  auto dl_managed_tensor_ctx = new DLManagedTensorContext;
+  auto dl_managed_tensor_ctx = std::make_unique<DLManagedTensorContext>();
   auto& dl_managed_tensor = dl_managed_tensor_ctx->tensor;
 
   dl_managed_tensor_ctx->memory_ref = dl_ctx_->memory_ref;
 
-  dl_managed_tensor.manager_ctx = dl_managed_tensor_ctx;
+  dl_managed_tensor.manager_ctx = dl_managed_tensor_ctx.release();
   dl_managed_tensor.deleter = [](DLManagedTensor* self) {
     auto dl_managed_tensor_ctx = static_cast<DLManagedTensorContext*>(self->manager_ctx);
-    dl_managed_tensor_ctx->memory_ref.reset();
     delete dl_managed_tensor_ctx;
   };
 
@@ -90,7 +90,7 @@ DLManagedTensor* Tensor::to_dlpack() {
 }
 
 DLManagedTensorVersioned* Tensor::to_dlpack_versioned() {
-  auto* dl_managed_tensor_ver = new DLManagedTensorVersioned();
+  auto dl_managed_tensor_ver = std::make_unique<DLManagedTensorVersioned>();
 
   // Set version info
   dl_managed_tensor_ver->version.major = HOLOSCAN_DLPACK_IMPL_VERSION_MAJOR;
@@ -102,14 +102,20 @@ DLManagedTensorVersioned* Tensor::to_dlpack_versioned() {
   // Set flags (default to 0 - not read only, not copied)
   dl_managed_tensor_ver->flags = 0;
 
+  // Create a new context to hold a reference to the memory, ensuring it stays alive
+  // until the consumer (e.g., CuPy or PyTorch) calls the deleter
+  auto dl_managed_tensor_ctx = std::make_unique<DLManagedTensorContext>();
+  dl_managed_tensor_ctx->memory_ref = dl_ctx_->memory_ref;
+
   // Set manager context and deleter
-  dl_managed_tensor_ver->manager_ctx = dl_ctx_.get();
+  dl_managed_tensor_ver->manager_ctx = dl_managed_tensor_ctx.release();
   dl_managed_tensor_ver->deleter = [](DLManagedTensorVersioned* self) {
-    // Don't delete the context here, as it's managed by the shared_ptr in the original tensor
+    auto dl_managed_tensor_ctx = static_cast<DLManagedTensorContext*>(self->manager_ctx);
+    delete dl_managed_tensor_ctx;
     delete self;
   };
 
-  return dl_managed_tensor_ver;
+  return dl_managed_tensor_ver.release();
 }
 
 std::vector<int64_t> Tensor::shape() const {
@@ -183,6 +189,17 @@ const char* numpy_dtype(const DLDataType dtype) {
                     GxfResultStr(maybe_typestr.error())));
   }
   return maybe_typestr.value();
+}
+
+bool Tensor::set_deallocation_stream(cudaStream_t stream) {
+  // Only tensors from GXF allocators have a valid memory_buffer_ptr_.
+  // External DLPack tensors (from CuPy, PyTorch, etc.) have nullptr.
+  if (!memory_buffer_ptr_) {
+    return false;
+  }
+
+  memory_buffer_ptr_->setStream(static_cast<void*>(stream));
+  return true;
 }
 
 }  // namespace holoscan

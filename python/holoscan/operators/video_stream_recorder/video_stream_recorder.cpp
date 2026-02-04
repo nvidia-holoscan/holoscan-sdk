@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -55,10 +55,10 @@ class PyVideoStreamRecorderOp : public VideoStreamRecorderOp {
   using VideoStreamRecorderOp::VideoStreamRecorderOp;
 
   // Define a constructor that fully initializes the object.
-  PyVideoStreamRecorderOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                          const py::args& args, const std::string& directory,
-                          const std::string& basename, bool flush_on_tick_ = false,
-                          const std::string& name = "video_stream_recorder")
+  PyVideoStreamRecorderOp(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      const std::string& directory, const std::string& basename, bool flush_on_tick_ = false,
+      const std::string& name = operator_default_name_v<ops::VideoStreamRecorderOp>)
       : VideoStreamRecorderOp(ArgList{Arg{"directory", directory},
                                       Arg{"basename", basename},
                                       Arg{"flush_on_tick", flush_on_tick_}}) {
@@ -91,7 +91,7 @@ PYBIND11_MODULE(_video_stream_recorder, m) {
            "directory"_a,
            "basename"_a,
            "flush_on_tick"_a = false,
-           "name"_a = "video_stream_recorder"s,
+           "name"_a = std::string(operator_default_name_v<ops::VideoStreamRecorderOp>),
            doc::VideoStreamRecorderOp::doc_VideoStreamRecorderOp);
 }  // PYBIND11_MODULE NOLINT
 }  // namespace holoscan::ops

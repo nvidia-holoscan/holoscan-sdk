@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,6 +32,7 @@ option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_USE_SCCACHE "Use sccache for building Holoscan SDK" OFF)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
+option(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS "Enable clang-tidy header checking (requires HOLOSCAN_ENABLE_CLANG_TIDY)" OFF)
 option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
 option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" ON)
@@ -181,15 +182,33 @@ include(cmake/setup_dependencies.cmake)
 
 # If enabling clang-tidy
 if(HOLOSCAN_ENABLE_CLANG_TIDY)
-  # TODO: move above add_subdirectory(modules) later
-  #   Want to exclude */.cache/* */_deps/* */thirdparty/*
-  #   but negative lookahead assertions are not supported for --header-filter
-  #   and --exclude-header-filter is not available until clang-tidy>=19.0.
-  set(CMAKE_CXX_CLANG_TIDY
-      clang-tidy
-      "--checks='*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-default-arguments-calls,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-readability-magic-numbers,-cppcoreguidelines-avoid-magic-numbers,-altera-unroll-loops,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-altera-id-dependent-backward-branch,-fuchsia-default-arguments-declarations,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument'"
-      "--extra-arg=-std=c++17"
+  # Common clang-tidy checks configuration
+  set(CLANG_TIDY_CHECKS
+      "*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-*,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-cppcoreguidelines-avoid-magic-numbers,-altera-*,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-llvm-header-guard,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-modernize-concat-nested-namespaces,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument,-portability-simd-intrinsics,-misc-include-cleaner"
   )
+
+  if(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS)
+    # Header filter to check project headers while excluding third-party code.
+    # Note: --exclude-header-filter is not available until clang-tidy>=19.0, so we use
+    # a positive regex that explicitly matches the directories we want to check.
+    # For holoviz, we match src/tests/examples subdirectories to exclude thirdparty/.
+    set(CLANG_TIDY_HEADER_FILTER
+        ".*/include/holoscan/.*|.*/python/holoscan/.*|.*/gxf_extensions/.*|.*/modules/holoinfer/.*|.*/modules/holoviz/(src|tests|examples)/.*"
+    )
+    set(CMAKE_CXX_CLANG_TIDY
+        clang-tidy
+        "--header-filter=${CLANG_TIDY_HEADER_FILTER}"
+        "--checks=${CLANG_TIDY_CHECKS}"
+        "--extra-arg=-std=c++17"
+    )
+  else()
+    # Without header filter, only check source files (not included headers)
+    set(CMAKE_CXX_CLANG_TIDY
+        clang-tidy
+        "--checks=${CLANG_TIDY_CHECKS}"
+        "--extra-arg=-std=c++17"
+    )
+  endif()
 endif()
 
 # Suppress the warning: "warning #128: type qualifiers ignored on cast result type"

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <utility>
 #include <variant>
 
 #include "../core/component_util.hpp"
@@ -62,7 +63,7 @@ class PyGXFComponentResource : public GXFComponentResource {
     auto [frag_ptr, qualified_name] =
         get_fragment_ptr_name_pair(fragment_or_subgraph, name, "resource");
     fragment_ = frag_ptr;
-    name_ = qualified_name;
+    name_ = std::move(qualified_name);
   }
 
   void initialize() override {

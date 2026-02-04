@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,7 +122,8 @@ class PingTxSubgraph : public holoscan::Subgraph {
     add_flow(tx_op, forwarding_op);
 
     // Expose the "out" port so external operators can connect to it
-    add_output_interface_port("data_out", forwarding_op, "out");
+    // (allow add_interface_port to auto-detect the port direction)
+    add_interface_port("data_out", forwarding_op, "out");
   }
 };
 
@@ -144,7 +145,8 @@ class MultiPingRxSubgraph : public holoscan::Subgraph {
     add_operator(rx_op);
 
     // Expose the "receivers" port so multiple external operators can connect to it
-    add_input_interface_port("data_in", rx_op, "receivers");
+    // (allow add_interface_port to auto-detect the port direction)
+    add_interface_port("data_in", rx_op, "receivers");
   }
 };
 

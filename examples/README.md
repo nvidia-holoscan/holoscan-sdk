@@ -87,7 +87,7 @@ The following examples illustrate the use of specific resource classes that can 
 
 * [**ThreadPool**](resources/thread_pool): demonstrates pinning of operators to specific CPU threads in a thread pool.
 
-* [**native Resources**](resources/native): demonstrates how a Holoscan native Resource (not wrapping an underlying GXF Component) can be created and used. 
+* [**native Resources**](resources/native): demonstrates how a Holoscan native Resource (not wrapping an underlying GXF Component) can be created and used.
 
 * [**CudaStreamPool** and **CudaStreamCondition**](resources/cuda_stream_pool): demonstrates how Python apps can make use of a `CudaStreamPool` resource and `CudaStreamCondition` condition. Also demonstrates how to use stream-related API from native Python operator `compute` methods and have CuPy calls within `compute` use the desired stream.
 
@@ -110,6 +110,8 @@ The following examples demonstrate how to seamlessly leverage third-party framew
 
 * [**NumPy native**](numpy_native): signal processing on the CPU using numpy arrays
 * [**CuPy native**](cupy_native): basic computation on the GPU using cupy arrays
+* [**PyTorch native**](pytorch_native): basic computation on the GPU (or CPU fallback) using PyTorch tensors
+* [**MatX basic**](matx/matx_basic): basic C++ computation on the GPU using MatX tensors (via DLPack zero-copy interop with `holoscan::Tensor`)
 
 ### Sensors
 

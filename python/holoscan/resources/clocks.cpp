@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +31,7 @@
 #include "./clocks_pydoc.hpp"
 #include "holoscan/core/clock.hpp"
 #include "holoscan/core/component_spec.hpp"
+#include "holoscan/core/component_traits.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_resource.hpp"
 #include "holoscan/core/resources/gxf/clock.hpp"
@@ -88,7 +89,7 @@ class PyRealtimeClock : public RealtimeClock {
   explicit PyRealtimeClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                            double initial_time_offset = 0.0, double initial_time_scale = 1.0,
                            bool use_time_since_epoch = false,
-                           const std::string& name = "realtime_clock") {
+                           const std::string& name = resource_default_name_v<RealtimeClock>) {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_time_offset", initial_time_offset});
     add_arg(Arg{"initial_time_scale", initial_time_scale});
@@ -124,7 +125,7 @@ class PyManualClock : public ManualClock {
   // Define a constructor that fully initializes the object.
   explicit PyManualClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                          int64_t initial_timestamp = 0LL,
-                         const std::string& name = "manual_clock") {
+                         const std::string& name = resource_default_name_v<ManualClock>) {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_timestamp", initial_timestamp});
 
@@ -158,7 +159,7 @@ class PySyntheticClock : public SyntheticClock {
   // Define a constructor that fully initializes the object.
   explicit PySyntheticClock(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
                             int64_t initial_timestamp = 0LL,
-                            const std::string& name = "synthetic_clock") {
+                            const std::string& name = resource_default_name_v<SyntheticClock>) {
     // Add arguments individually to handle virtual inheritance properly
     add_arg(Arg{"initial_timestamp", initial_timestamp});
 
@@ -197,7 +198,7 @@ void init_clocks(py::module_& m) {
            "initial_time_offset"_a = 0.0,
            "initial_time_scale"_a = 1.0,
            "use_time_since_epoch"_a = false,
-           "name"_a = "realtime_clock"s,
+           "name"_a = std::string(resource_default_name_v<RealtimeClock>),
            doc::RealtimeClock::doc_RealtimeClock)
       .def("time", &RealtimeClock::time, doc::Clock::doc_time)
       .def("timestamp", &RealtimeClock::timestamp, doc::Clock::doc_timestamp)
@@ -223,7 +224,7 @@ void init_clocks(py::module_& m) {
       .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_timestamp"_a = 0LL,
-           "name"_a = "manual_clock"s,
+           "name"_a = std::string(resource_default_name_v<ManualClock>),
            doc::ManualClock::doc_ManualClock)
       .def("time", &ManualClock::time, doc::Clock::doc_time)
       .def("timestamp", &ManualClock::timestamp, doc::Clock::doc_timestamp)
@@ -246,7 +247,7 @@ void init_clocks(py::module_& m) {
       .def(py::init<std::variant<Fragment*, Subgraph*>, int64_t, const std::string&>(),
            "fragment"_a,
            "initial_timestamp"_a = 0LL,
-           "name"_a = "synthetic_clock"s,
+           "name"_a = std::string(resource_default_name_v<SyntheticClock>),
            doc::SyntheticClock::doc_SyntheticClock)
       .def("time", &SyntheticClock::time, doc::Clock::doc_time)
       .def("timestamp", &SyntheticClock::timestamp, doc::Clock::doc_timestamp)
