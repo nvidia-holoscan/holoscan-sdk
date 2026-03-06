@@ -20,13 +20,19 @@
 
 #include <fmt/format.h>
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <fstream>
 #include <functional>
 #include <iterator>  // for std::back_inserter
 #include <map>
 #include <memory>
 #include <mutex>  // for std::call_once
+#include <numeric>
 #include <set>
 #include <string>
+#include <thread>
 #include <typeinfo>
 #include <unordered_set>
 #include <utility>
@@ -45,6 +51,7 @@
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/metadata.hpp"
+#include "holoscan/core/network_contexts/gxf/pubsub_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/system_resources.hpp"
 #include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
@@ -276,6 +283,13 @@ std::shared_ptr<NetworkContext> Fragment::network_context() {
   return network_context_;
 }
 
+std::shared_ptr<NetworkContext> Fragment::create_pubsub_network_context() {
+  HOLOSCAN_LOG_WARN(
+      "Fragment::create_pubsub_network_context: No PubSub backend available. "
+      "Override this method to provide a custom PubSubContext subclass.");
+  return make_network_context<PubSubContext>("pubsub_context");
+}
+
 std::unordered_set<std::string> Fragment::config_keys() {
   return config().config_keys();
 }
@@ -477,6 +491,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
     if (op_outputs.size() > 1) {
       std::vector<std::string> output_labels;
+      output_labels.reserve(op_outputs.size());
       for (const auto& [key, _] : op_outputs) {
         output_labels.push_back(key);
       }
@@ -489,6 +504,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     }
     if (op_inputs.size() > 1) {
       std::vector<std::string> input_labels;
+      input_labels.reserve(op_inputs.size());
       for (const auto& [key, _] : op_inputs) {
         input_labels.push_back(key);
       }
@@ -840,44 +856,10 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
   upstream_op->set_self_shared(upstream_op);
   downstream_op->set_self_shared(downstream_op);
-  if (is_gpu_resident_) {
-    if (!verify_gpu_resident_connections(upstream_op, downstream_op, port_map)) {
-      throw RuntimeError(ErrorCode::kInvalidArgument,
-                         fmt::format("Fragment '{}': Input/output memory block size configuration "
-                                     "error for GPU-resident execution.",
-                                     name()));
-    }
-  }
+  // Previous, we verified the input/output memory block size configuration for GPU-resident
+  // connections here. However, operators can lazily initialize these input/output ports. Therefore,
+  // the verification is now moved to GPUResidentExecutor.
   graph().add_flow(upstream_op, downstream_op, port_map);
-}
-
-bool Fragment::verify_gpu_resident_connections(
-    const std::shared_ptr<Operator>& upstream_op, const std::shared_ptr<Operator>& downstream_op,
-    const std::shared_ptr<OperatorEdgeDataElementType> port_map) {
-  auto upstream_op_spec = upstream_op->spec();
-  auto downstream_op_spec = downstream_op->spec();
-  for (const auto& [source_port, target_ports] : *port_map) {
-    // we know one to one connection
-    auto target_port = *(target_ports.begin());
-    auto upstream_memory_block_size = upstream_op_spec->outputs()[source_port]->memory_block_size();
-    auto downstream_memory_block_size =
-        downstream_op_spec->inputs()[target_port]->memory_block_size();
-    if (upstream_memory_block_size == 0 || downstream_memory_block_size == 0 ||
-        (upstream_memory_block_size != downstream_memory_block_size)) {
-      HOLOSCAN_LOG_ERROR(
-          "Memory block sizes between upstream ({}) and downstream ({}) operators are not "
-          "configured properly. Upstream output port: '{}', memory block size: {}, "
-          "downstream input port: '{}', memory block size: {}",
-          upstream_op->name(),
-          downstream_op->name(),
-          source_port,
-          upstream_memory_block_size,
-          target_port,
-          downstream_memory_block_size);
-      return false;
-    }
-  }
-  return true;
 }
 
 void Fragment::set_dynamic_flows(
@@ -995,6 +977,30 @@ FragmentPortMap Fragment::port_info() const {
 }
 
 void Fragment::stop_execution(const std::string& op_name) {
+  if (is_gpu_resident_) {
+    if (!op_name.empty()) {
+      HOLOSCAN_LOG_WARN(
+          "Stopping execution of a single operator in GPU-resident execution mode is not "
+          "supported.");
+    } else {
+      // tear down the GPU-resident CUDA graph
+      gpu_resident().tear_down();
+
+      // wait for 10 seconds to see if it is torn down
+      // otherwise throw error
+      auto start_time = std::chrono::steady_clock::now();
+      while (gpu_resident().is_launched()) {
+        auto elapsed = std::chrono::steady_clock::now() - start_time;
+        if (elapsed >= std::chrono::seconds(10)) {
+          throw std::runtime_error(
+              "Timeout: GPU-resident CUDA graph was not torn down within 10 seconds");
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+      HOLOSCAN_LOG_INFO("GPU-resident fragment has been successfully stopped.");
+    }
+    return;
+  }
   if (!op_name.empty()) {
     // Stop the execution of the operator with the given name
     auto op = graph().find_node(op_name);
@@ -1186,6 +1192,18 @@ std::shared_ptr<Resource> Fragment::get_service_resource_by_name(std::string_vie
   return it->second;
 }
 
+std::vector<std::shared_ptr<FragmentService>> Fragment::get_services_by_id(
+    std::string_view id) const {
+  std::vector<std::shared_ptr<FragmentService>> result;
+  std::shared_lock<std::shared_mutex> lock(fragment_service_registry_mutex_);
+  for (const auto& [key, service] : fragment_services_by_key_) {
+    if (key.id == id) {
+      result.push_back(service);
+    }
+  }
+  return result;
+}
+
 void Fragment::setup_component_internals(ComponentBase* component) {
   if (component) {
     // 'this' (Fragment instance) is both the Fragment and the FragmentServiceProvider
@@ -1243,13 +1261,17 @@ std::shared_ptr<GPUResidentExecutor> Fragment::get_gpu_resident_executor(const c
 
 Fragment::GPUResidentAccessor Fragment::gpu_resident() {
   if (!is_gpu_resident()) {
+    HOLOSCAN_LOG_ERROR(
+        "Fragment '{}' is not recognized as a GPU-resident fragment, have you made sure that you "
+        "called compose_graph() on the fragment?",
+        name());
     auto err_msg = fmt::format(
-        "Fragment '{}': Cannot access GPU-resident functions because the fragment does not have "
+        "Fragment '{}': Cannot access GPU-resident functions because the fragment may not have "
         "GPU-resident operators",
         name());
     throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
   }
-  // C++ will optimize so that explicit copy is not needed unless required.
+  // C++ optimizes the following call to avoid an explicit copy
   return GPUResidentAccessor(this);
 }
 
@@ -1316,6 +1338,125 @@ void Fragment::GPUResidentAccessor::register_data_ready_handler(
 std::shared_ptr<Fragment> Fragment::GPUResidentAccessor::data_ready_handler_fragment() {
   auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
   return gpu_resident_executor->data_ready_handler_fragment();
+}
+
+void Fragment::GPUResidentAccessor::data_not_ready_sleep_interval_us(
+    unsigned int sleep_interval_us) {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  gpu_resident_executor->data_not_ready_sleep_interval_us(sleep_interval_us);
+}
+
+void Fragment::GPUResidentAccessor::sync_with_host(bool enable) {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  gpu_resident_executor->sync_with_host(enable);
+}
+
+void Fragment::GPUResidentAccessor::enable_perf_measurement(unsigned int num_samples) {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  gpu_resident_executor->enable_perf_measurement(num_samples);
+}
+
+void Fragment::GPUResidentAccessor::save_perf_results_as_csv(const std::string& filename) {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  auto [execution_times_us, num_samples] = gpu_resident_executor->execution_times_us();
+  if (!execution_times_us || num_samples == 0) {
+    auto err_msg =
+        fmt::format("Execution times are not available. Cannot save perf as CSV for fragment '{}'",
+                    fragment_->name());
+    throw std::runtime_error(err_msg);
+  }
+  // open the file in writing overwrite mode
+  std::ofstream file(filename, std::ios::out | std::ios::trunc);
+  // check if the file is opened correctly
+  if (!file.is_open()) {
+    auto err_msg = fmt::format("Failed to open file '{}' for writing", filename);
+    throw std::runtime_error(err_msg);
+  }
+  // emit all the values in comma-separated format - no header needed
+  for (unsigned int i = 0; i < num_samples; i++) {
+    file << execution_times_us[i] << ",";
+  }
+  file.close();
+  HOLOSCAN_LOG_INFO("Saved GPU-resident performance results as CSV to file '{}'", filename);
+}
+
+void Fragment::GPUResidentAccessor::print_perf_metrics(unsigned int skip_first,
+                                                       unsigned int skip_last) {
+  auto gpu_resident_executor = fragment_->get_gpu_resident_executor(__func__);
+  auto [execution_times_us, num_samples] = gpu_resident_executor->execution_times_us();
+
+  if (!execution_times_us || num_samples == 0) {
+    auto err_msg = fmt::format(
+        "Execution times are not available. Cannot print perf metrics for fragment '{}'",
+        fragment_->name());
+    throw std::runtime_error(err_msg);
+  }
+
+  // Calculate the effective range after skipping
+  unsigned int total_skip = skip_first + skip_last;
+  if (total_skip >= num_samples) {
+    auto err_msg = fmt::format(
+        "Cannot skip {} samples (skip_first={}, skip_last={}) when only {} samples are available",
+        total_skip,
+        skip_first,
+        skip_last,
+        num_samples);
+    throw std::runtime_error(err_msg);
+  }
+
+  unsigned int start_idx = skip_first;
+  unsigned int end_idx = num_samples - skip_last;
+  unsigned int effective_samples = end_idx - start_idx;
+
+  // Copy data to a vector for easier manipulation
+  std::vector<unsigned int> times(execution_times_us + start_idx, execution_times_us + end_idx);
+
+  // Calculate min and max
+  auto [min_it, max_it] = std::minmax_element(times.begin(), times.end());
+  unsigned int min_time = *min_it;
+  unsigned int max_time = *max_it;
+
+  // Calculate average
+  double sum = std::accumulate(times.begin(), times.end(), 0.0);
+  double avg_time = sum / effective_samples;
+
+  // Calculate standard deviation (sample std dev, using n-1)
+  double sq_sum = 0.0;
+  for (unsigned int t : times) {
+    double diff = static_cast<double>(t) - avg_time;
+    sq_sum += diff * diff;
+  }
+  double std_dev = (effective_samples > 1) ? std::sqrt(sq_sum / (effective_samples - 1)) : 0.0;
+
+  // Calculate jitter (max - min)
+  unsigned int jitter = max_time - min_time;
+
+  // Calculate 99.9th percentile
+  std::vector<unsigned int> sorted_times = times;
+  std::sort(sorted_times.begin(), sorted_times.end());
+  size_t percentile_idx = static_cast<size_t>(std::ceil(0.999 * effective_samples)) - 1;
+  if (percentile_idx >= effective_samples) {
+    percentile_idx = effective_samples - 1;
+  }
+  unsigned int p999_time = sorted_times[percentile_idx];
+
+  // Print the metrics in a pretty-printed format
+  if (!fragment_->name().empty()) {
+    HOLOSCAN_LOG_INFO("GPU Resident Performance Metrics for fragment '{}':", fragment_->name());
+  } else {
+    HOLOSCAN_LOG_INFO("GPU Resident Performance Metrics:");
+  }
+  HOLOSCAN_LOG_INFO("  Average execution time:  {:.2f} us", avg_time);
+  HOLOSCAN_LOG_INFO("  Minimum execution time:  {} us", min_time);
+  HOLOSCAN_LOG_INFO("  Maximum execution time:  {} us", max_time);
+  HOLOSCAN_LOG_INFO("  Std deviation:           {:.2f} us", std_dev);
+  HOLOSCAN_LOG_INFO("  Jitter (max - min):      {} us", jitter);
+  HOLOSCAN_LOG_INFO("  99.9th percentile:       {} us", p999_time);
+  HOLOSCAN_LOG_INFO("  Number of analyzed samples:        {} (skipped first {}, last {})",
+                    effective_samples,
+                    skip_first,
+                    skip_last);
+  HOLOSCAN_LOG_INFO("  Number of collected samples:       {}", num_samples);
 }
 
 // ========== Helper functions for port auto-resolution ==========

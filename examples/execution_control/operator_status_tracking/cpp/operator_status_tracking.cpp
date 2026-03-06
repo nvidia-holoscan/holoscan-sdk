@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -40,20 +40,19 @@ class FiniteSourceOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     if (count_ < max_count_.get()) {
-      std::cout << "[" << name() << "] Emitting data: " << count_ << std::endl;
+      std::cout << "[" << name() << "] Emitting data: " << count_ << '\n';
       op_output.emit(count_, "out");
 
       // Simulate some processing time
       std::this_thread::sleep_for(std::chrono::milliseconds(200));
     } else {
-      std::cout << "[" << name() << "] Additional iterations after completion: " << count_
-                << std::endl;
+      std::cout << "[" << name() << "] Additional iterations after completion: " << count_ << '\n';
     }
 
     count_++;
   }
 
-  void stop() override { std::cout << "[" << name() << "] Stopping operator" << std::endl; }
+  void stop() override { std::cout << "[" << name() << "] Stopping operator\n"; }
 
  private:
   holoscan::Parameter<int> max_count_;
@@ -78,7 +77,7 @@ class ProcessorOp : public holoscan::Operator {
 
     // Process the data
     int result = data * 2;
-    std::cout << "[" << name() << "] Processing data: " << data << " -> " << result << std::endl;
+    std::cout << "[" << name() << "] Processing data: " << data << " -> " << result << '\n';
 
     // Emit the processed data
     op_output.emit(result, "out");
@@ -87,7 +86,7 @@ class ProcessorOp : public holoscan::Operator {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
   }
 
-  void stop() override { std::cout << "[" << name() << "] Stopping operator" << std::endl; }
+  void stop() override { std::cout << "[" << name() << "] Stopping operator\n"; }
 };
 
 // An operator that consumes data
@@ -105,13 +104,13 @@ class ConsumerOp : public holoscan::Operator {
     auto data = op_input.receive<int>("in").value();
 
     // Consume the data
-    std::cout << "[" << name() << "] Consuming data: " << data << std::endl;
+    std::cout << "[" << name() << "] Consuming data: " << data << '\n';
 
     // Simulate some processing time
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
   }
 
-  void stop() override { std::cout << "[" << name() << "] Stopping operator" << std::endl; }
+  void stop() override { std::cout << "[" << name() << "] Stopping operator\n"; }
 };
 
 // A dedicated monitoring operator that runs independently of the main pipeline
@@ -135,7 +134,7 @@ class MonitorOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     static int consecutive_idle_count = 0;
 
-    std::cerr << "[" << name() << "] Operator status summary:" << std::endl;
+    std::cerr << "[" << name() << "] Operator status summary:\n";
 
     bool is_pipeline_idle = true;
     for (const auto& op_name : monitored_operators_.get()) {
@@ -144,7 +143,7 @@ class MonitorOp : public holoscan::Operator {
         throw std::runtime_error(maybe_status.error().what());
       }
       auto status = maybe_status.value();
-      std::cerr << "  - " << op_name << ": " << magic_enum::enum_name(status) << std::endl;
+      std::cerr << "  - " << op_name << ": " << magic_enum::enum_name(status) << '\n';
       if (status != holoscan::OperatorStatus::kIdle) {
         is_pipeline_idle = false;
       }
@@ -163,7 +162,7 @@ class MonitorOp : public holoscan::Operator {
       // A better approach for checking an operator's computed scheduling condition will be
       // available in a future release.
       if (consecutive_idle_count >= 3) {
-        std::cerr << "[" << name() << "] All operators have completed." << std::endl;
+        std::cerr << "[" << name() << "] All operators have completed.\n";
         // Stop the monitor operator which is the only operator keeping the application alive
         stop_execution();  // the application will terminate through a deadlock
       }
@@ -202,13 +201,13 @@ class OperatorStatusTrackingApp : public holoscan::Application {
     add_operator(monitor);
 
     // Print information about the execution context API
-    std::cout << "This example demonstrates the Operator Status Tracking API." << std::endl;
+    std::cout << "This example demonstrates the Operator Status Tracking API.\n";
     std::cout << "The source operator will emit 5 values and then stop executing after 10 "
-              << "iterations." << std::endl;
+              << "iterations.\n";
     std::cout << "The monitor operator runs independently and tracks the status of all operators."
-              << std::endl;
-    std::cout << "When operators complete, the monitor will be terminated." << std::endl;
-    std::cout << "-------------------------------------------------------------------" << std::endl;
+              << '\n';
+    std::cout << "When operators complete, the monitor will be terminated.\n";
+    std::cout << "-------------------------------------------------------------------\n";
   }
 };
 
@@ -218,7 +217,7 @@ int main() {
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>("EBS", scheduler_args));
   app->run();
 
-  std::cout << "-------------------------------------------------------------------" << std::endl;
-  std::cout << "Application completed. All operators have finished processing." << std::endl;
+  std::cout << "-------------------------------------------------------------------\n";
+  std::cout << "Application completed. All operators have finished processing.\n";
   return 0;
 }

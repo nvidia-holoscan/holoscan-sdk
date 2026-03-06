@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,13 +57,21 @@ if(HOLOSCAN_CPP_EXAMPLES)
 
   # Testing
   if(HOLOSCAN_BUILD_TESTS)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
     add_test(NAME EXAMPLE_CPP_GPU_RESIDENT_INPUT_TEST
-             COMMAND gpu_resident_input
-             WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-            )
-    set_tests_properties(EXAMPLE_CPP_GPU_RESIDENT_INPUT_TEST PROPERTIES
-                         PASS_REGULAR_EXPRESSION "verification complete"
-                         FAIL_REGULAR_EXPRESSION "ERROR at index")
+      COMMAND bash -c
+        "${CMAKE_CURRENT_BINARY_DIR}/gpu_resident_input 2>&1 | \
+        ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
+          --pass-pattern 'verification complete' \
+          --pass-pattern 'GPU Resident Performance Metrics' \
+          --pass-pattern 'Average execution time:  [0-9]+\\.[0-9]+ us' \
+          --pass-pattern 'Saved GPU-resident performance results as CSV to file' \
+          --fail-pattern 'ERROR at index' \
+          --fail-pattern 'Execution times are not available' \
+          --fail-pattern 'Failed to open file'"
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+    )
   endif()
 endif()
 

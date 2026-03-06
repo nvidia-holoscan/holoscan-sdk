@@ -14,6 +14,9 @@
 # limitations under the License.
 
 find_package(ucx 1.19.0 REQUIRED)
+# Promote to global so CPM-built ucxx (rapids_find_package(ucx)) can use it without
+# "Attempt to promote imported target ucx::ucp to global scope which is not built in this directory"
+set_target_properties(ucx::ucp PROPERTIES IMPORTED_GLOBAL TRUE)
 
 # Install UCX shared libs under <prefix>/lib/libuc*.so* and libgdrapi*.so*
 # Core UCX libraries: libucp.so, libucs.so, libuct.so, libucm.so, libucs_signal.so
@@ -108,13 +111,21 @@ foreach(ucx_target ucm ucp ucs uct)
   )
 endforeach()
 
+include(CMakePackageConfigHelpers)
+set(UCX_CONFIG_OUT "${CMAKE_CURRENT_BINARY_DIR}/ucx-config.cmake")
+configure_package_config_file(
+  ${CMAKE_CURRENT_LIST_DIR}/configs/ucx-config.cmake.in
+  ${UCX_CONFIG_OUT}
+  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ucx"
+)
+
 install(
   FILES ${ucx_DIR}/ucx-config-version.cmake
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ucx"
   COMPONENT "holoscan-dependencies"
 )
 install(
-  FILES ${CMAKE_CURRENT_LIST_DIR}/configs/ucx-config.cmake.in
+  FILES ${UCX_CONFIG_OUT}
   DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/ucx"
   COMPONENT "holoscan-dependencies"
   RENAME "ucx-config.cmake"

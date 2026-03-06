@@ -18,6 +18,12 @@
 #ifndef HOLOSCAN_CORE_ARGUMENT_SETTER_INL_HPP
 #define HOLOSCAN_CORE_ARGUMENT_SETTER_INL_HPP
 
+// This file intentionally uses platform-dependent integer types (long, unsigned long, long long,
+// unsigned long long) because it handles type dispatching from std::any. Users may pass values
+// of any of these types, and we must check for all of them since int64_t/uint64_t may be
+// typedef'd to different underlying types on different platforms.
+// NOLINTBEGIN(google-runtime-int)
+
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -25,8 +31,10 @@
 #include <utility>
 #include <vector>
 
+// NOLINTBEGIN(misc-header-include-cycle) circular dependencies are intentional for template code
 #include "./condition.hpp"
 #include "./resource.hpp"
+// NOLINTEND(misc-header-include-cycle)
 
 namespace holoscan {
 
@@ -252,9 +260,12 @@ inline bool convert_double_with_check(double arg_value, ParamT& param,
 }
 
 template <typename typeT>
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 void ArgumentSetter::add_argument_setter() {
   function_map_.try_emplace(
-      std::type_index(typeid(typeT)), [](ParameterWrapper& param_wrap, Arg& arg) -> bool {
+      std::type_index(typeid(typeT)),
+      // NOLINTNEXTLINE(readability-function-cognitive-complexity)
+      [](ParameterWrapper& param_wrap, Arg& arg) -> bool {
         HOLOSCAN_LOG_TRACE(
             "add_argument_setter<{}>: setting arg '{}' with element_type={}, container_type={}",
             typeid(typeT).name(),
@@ -302,7 +313,7 @@ void ArgumentSetter::add_argument_setter() {
                                                       float,
                                                       double>) {
                     // Try to cast as int64_t, long, or long long (depending on platform)
-                    int64_t arg_value;
+                    int64_t arg_value = 0;
                     if (any_arg.type() == typeid(int64_t)) {
                       arg_value = std::any_cast<int64_t>(any_arg);
                     } else if (any_arg.type() == typeid(long)) {
@@ -578,7 +589,7 @@ void ArgumentSetter::add_argument_setter() {
                                                       double>) {
                     // Try to cast as uint64_t, unsigned long, or unsigned long long (depending on
                     // platform)
-                    uint64_t arg_value;
+                    uint64_t arg_value = 0;
                     if (any_arg.type() == typeid(uint64_t)) {
                       arg_value = std::any_cast<uint64_t>(any_arg);
                     } else if (any_arg.type() == typeid(unsigned long)) {
@@ -926,7 +937,7 @@ void ArgumentSetter::add_argument_setter() {
           const char* expected = typeid(typeT).name();
           const std::type_info& actual_type = any_arg.type();
           const char* actual = actual_type == typeid(void) ? "<empty>" : actual_type.name();
-          std::string error_message =
+          const std::string error_message =
               fmt::format("Bad any cast while setting argument '{}': expected '{}', got '{}'. {}",
                           arg.name(),
                           expected,
@@ -938,5 +949,7 @@ void ArgumentSetter::add_argument_setter() {
       });
 }
 }  // namespace holoscan
+
+// NOLINTEND(google-runtime-int)
 
 #endif /* HOLOSCAN_CORE_ARGUMENT_SETTER_INL_HPP */

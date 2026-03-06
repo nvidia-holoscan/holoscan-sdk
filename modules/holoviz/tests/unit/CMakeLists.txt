@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,9 @@ set(PROJECT_NAME holoviz_unittests)
 
 add_executable(${PROJECT_NAME})
 add_executable(holoscan::viz::unittests ALIAS ${PROJECT_NAME})
+
+# Disable clang-tidy for test files
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "")
 
 target_sources(${PROJECT_NAME}
     PRIVATE

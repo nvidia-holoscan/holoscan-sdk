@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,7 @@ holoscan_pybind11_module(
     io_context.cpp
     io_spec.cpp
     kwarg_handling.cpp
+    messagelabel.cpp
     metadata.cpp
     network_context.cpp
     operator.cpp

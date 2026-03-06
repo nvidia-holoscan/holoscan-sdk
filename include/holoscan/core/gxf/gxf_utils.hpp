@@ -33,6 +33,17 @@
 #include <gxf/multimedia/video.hpp>
 #include "holoscan/logger/logger.hpp"
 
+namespace holoscan::gxf {
+
+/// Thread-safe check for backtrace printing (caches env var on first call)
+inline bool should_print_backtrace() {
+  // Static initialization is thread-safe in C++11+
+  static const bool enabled = (std::getenv("HOLOSCAN_DISABLE_BACKTRACE") == nullptr);
+  return enabled;
+}
+
+}  // namespace holoscan::gxf
+
 // macro like GXF_ASSERT_SUCCESS, but uses HOLOSCAN_LOG_ERROR and includes line/filename info
 // Note: HOLOSCAN_GXF_CALL depends on GNU C statement expressions ({ })
 //       https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html
@@ -46,7 +57,7 @@
                          __FILE__,                                                    \
                          GxfResultStr(code),                                          \
                          static_cast<int>(code));                                     \
-      if (!std::getenv("HOLOSCAN_DISABLE_BACKTRACE")) {                               \
+      if (holoscan::gxf::should_print_backtrace()) {                                  \
         PrettyPrintBacktrace();                                                       \
       }                                                                               \
     }                                                                                 \

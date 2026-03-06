@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,12 @@ namespace holoscan {
 gxf_result_t AnnotatedDoubleBufferReceiver::receive_abi(gxf_uid_t* uid) {
   gxf_result_t code = nvidia::gxf::DoubleBufferReceiver::receive_abi(uid);
 
-  deannotate_message(uid, context(), op(), name());
+  if (code == GXF_SUCCESS) {
+    deannotate_message(uid, context(), op(), name());
+  } else {
+    // Receive failed. Clear any stale input_message_label.
+    deannotate_message(nullptr, context(), op(), name());
+  }
 
   return code;
 }

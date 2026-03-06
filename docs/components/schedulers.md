@@ -44,3 +44,10 @@ The event-based scheduler is also a multi-thread scheduler, but it is event-base
 - The worker threads in the default thread pool (created based on the `worker_thread_number` parameter) can be pinned to CPU cores via `pin_cores`. The parameter defaults to an empty list representing not to pin the worker threads to any CPU core. If a set of CPU core indices are given, all the worker threads in the default pool are pinned to the same set of specified CPU cores. Note that `pin_cores` only affects the default thread pool; to control CPU affinity for user-defined thread pools, use the `pin_cores` parameter in the `add()` or `add_realtime()` methods when assigning operators to those pools.
 
 For this scheduler, there is no `strict_job_thread_pinning` option (see description for the Multithread Scheduler above). The thread pinning is always strict.
+
+(operator-granularity-scheduling-overhead)=
+## Operator Granularity and Scheduling Overhead
+
+When designing Holoscan applications, it's important to understand the relationship between operator granularity and scheduling overhead. For operators with trivial computations, the scheduling and message-passing overhead can outweigh the actual computation time.
+
+For detailed measurements, benchmarks, and guidance on when to split or combine operators, see {ref}`performance_considerations`.

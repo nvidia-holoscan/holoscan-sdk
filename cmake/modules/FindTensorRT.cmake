@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,7 @@ macro(find_trt_library libname)
     add_library(TensorRT::${libname} SHARED IMPORTED GLOBAL)
     set_target_properties(TensorRT::${libname} PROPERTIES
         IMPORTED_LOCATION "${TensorRT_${libname}_LIBRARY}"
-        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${TensorRT_INCLUDE_DIR}"
+        INTERFACE_INCLUDE_DIRECTORIES "${TensorRT_INCLUDE_DIR}"
     )
   endif()
 endmacro()

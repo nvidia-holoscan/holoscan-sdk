@@ -48,6 +48,8 @@ class DoubleBufferTransmitter;
 class GPUDevice;
 class ManualClock;
 class OrConditionCombiner;
+class PubSubReceiver;
+class PubSubTransmitter;
 class RealtimeClock;
 class RMMAllocator;
 class SerializationBuffer;
@@ -78,6 +80,7 @@ class GreedyScheduler;
 class MultiThreadScheduler;
 
 // Forward declarations for network context types
+class PubSubContext;
 class UcxContext;
 
 // Forward declarations for operator types (in holoscan::ops namespace)
@@ -224,13 +227,11 @@ struct resource_default_name<AsyncBufferTransmitter> {
   static constexpr const char* value = "async_buffer_transmitter";
 };
 
-// Specializations for allocator types
 template <>
 struct resource_default_name<BlockMemoryPool> {
   static constexpr const char* value = "block_memory_pool";
 };
 
-// Specializations for system resource types
 template <>
 struct resource_default_name<CPUThread> {
   static constexpr const char* value = "cpu_thread";
@@ -251,13 +252,11 @@ struct resource_default_name<CudaStreamPool> {
   static constexpr const char* value = "cuda_stream_pool";
 };
 
-// Specializations for receiver types
 template <>
 struct resource_default_name<DoubleBufferReceiver> {
   static constexpr const char* value = "double_buffer_receiver";
 };
 
-// Specializations for transmitter types
 template <>
 struct resource_default_name<DoubleBufferTransmitter> {
   static constexpr const char* value = "double_buffer_transmitter";
@@ -278,7 +277,16 @@ struct resource_default_name<OrConditionCombiner> {
   static constexpr const char* value = "or_condition_combiner";
 };
 
-// Specializations for clock types
+template <>
+struct resource_default_name<PubSubReceiver> {
+  static constexpr const char* value = "pubsub_receiver";
+};
+
+template <>
+struct resource_default_name<PubSubTransmitter> {
+  static constexpr const char* value = "pubsub_transmitter";
+};
+
 template <>
 struct resource_default_name<RealtimeClock> {
   static constexpr const char* value = "realtime_clock";
@@ -289,7 +297,6 @@ struct resource_default_name<RMMAllocator> {
   static constexpr const char* value = "rmm_pool";
 };
 
-// Specializations for serialization types
 template <>
 struct resource_default_name<SerializationBuffer> {
   static constexpr const char* value = "serialization_buffer";
@@ -446,6 +453,11 @@ struct network_context_default_name {
 };
 
 // Specializations for each network context type
+template <>
+struct network_context_default_name<PubSubContext> {
+  static constexpr const char* value = "pubsub_context";
+};
+
 template <>
 struct network_context_default_name<UcxContext> {
   static constexpr const char* value = "ucx_context";

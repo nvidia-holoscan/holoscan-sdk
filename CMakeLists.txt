@@ -22,6 +22,7 @@ set(HOLOSCAN_PACKAGE_NAME holoscan)
 # # Options
 # ##############################################################################
 option(BUILD_SHARED_LIBS "Build Shared Libraries" ON)
+option(HOLOSCAN_BUILD_HOLOLINK "Extend Holoscan SDK build with Holoscan Sensor Bridge targets" OFF)
 option(HOLOSCAN_BUILD_LIBTORCH "Build support for the LibTorch backend" ON)
 option(HOLOSCAN_BUILD_ORT "Build support for the ONNX Runtime backend" ON)
 option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
@@ -35,7 +36,7 @@ option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
 option(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS "Enable clang-tidy header checking (requires HOLOSCAN_ENABLE_CLANG_TIDY)" OFF)
 option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
-option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" ON)
+option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" OFF)
 
 # ##############################################################################
 # # Prerequisite statements
@@ -184,7 +185,7 @@ include(cmake/setup_dependencies.cmake)
 if(HOLOSCAN_ENABLE_CLANG_TIDY)
   # Common clang-tidy checks configuration
   set(CLANG_TIDY_CHECKS
-      "*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-*,-llvmlibc-implementation-in-namespace,-readability-magic-numbers,-readability-identifier-length,-cppcoreguidelines-avoid-magic-numbers,-altera-*,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-llvm-header-guard,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-modernize-concat-nested-namespaces,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument,-portability-simd-intrinsics,-misc-include-cleaner"
+      "*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-*,-llvmlibc-implementation-in-namespace,-llvmlibc-inline-function-decl,-readability-magic-numbers,-readability-identifier-length,-cppcoreguidelines-avoid-magic-numbers,-altera-*,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-llvm-header-guard,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-modernize-concat-nested-namespaces,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument,-portability-simd-intrinsics,-misc-include-cleaner,-performance-enum-size"
   )
 
   if(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS)
@@ -315,7 +316,6 @@ endif()
 # List targets to export/install
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     core
-    eigen3_interface
     gpu_resident_cuda
     holoviz
     holoviz_imgui
@@ -325,18 +325,18 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     logger
     matx
     holoscan_matx
-    nvtx3-c
-    nvtx3-cpp
     data_loggers_async_console_logger
     data_loggers_basic_console_logger
     op_async_ping_rx
     op_async_ping_tx
     op_bayer_demosaic
+    op_bayer_demosaic_gpu_resident
     op_format_converter
     op_gxf_codelet
     op_holoviz
     op_inference
     op_inference_processor
+    op_gpu_resident_inference
     op_ping_rx
     op_ping_tx
     op_ping_tensor_tx
@@ -349,7 +349,6 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     pose_tree
     profiler
     spdlog_logger
-    yaml-cpp
 )
 if(HOLOSCAN_BUILD_LIBTORCH)
   list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_torch)
@@ -359,9 +358,7 @@ if(HOLOSCAN_BUILD_ORT)
 endif()
 list(APPEND HOLOSCAN_INSTALL_TARGETS pybind11_abi_config)
 
-# Copy library files
-# Note: ucxx is handled separately since it's only available in build targets, not install targets
-install(TARGETS ${HOLOSCAN_INSTALL_TARGETS} ucxx
+install(TARGETS ${HOLOSCAN_INSTALL_TARGETS}
     DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}
     EXPORT ${HOLOSCAN_PACKAGE_NAME}-exports
     COMPONENT holoscan-core
@@ -370,36 +367,6 @@ install(TARGETS ${HOLOSCAN_INSTALL_TARGETS} ucxx
 # Copy headers
 install(DIRECTORY include/holoscan/
     DESTINATION include/holoscan
-    COMPONENT holoscan-core
-)
-
-# Copy bundled tl-expected headers
-install(DIRECTORY ${tl-expected_SOURCE_DIR}/include/tl/
-    DESTINATION include/3rdparty/tl
-    COMPONENT holoscan-dependencies
-)
-
-# Copy bundled dlpack headers
-install(DIRECTORY ${dlpack_SOURCE_DIR}/include/dlpack/
-    DESTINATION include/3rdparty/dlpack
-    COMPONENT holoscan-core
-)
-
-# Copy bundled concurrent_queue.h header
-install(FILES ${concurrent_queue_SOURCE_DIR}/concurrentqueue.h
-    DESTINATION include/3rdparty/
-    COMPONENT holoscan-core
-)
-
-# Copy bundled cli11 headers
-install(DIRECTORY ${cli11_SOURCE_DIR}/include/CLI/
-    DESTINATION include/3rdparty/CLI
-    COMPONENT holoscan-core
-)
-
-# Copy bundled spdlog headers
-install(DIRECTORY ${spdlog_SOURCE_DIR}/include/spdlog/
-    DESTINATION include/3rdparty/spdlog
     COMPONENT holoscan-core
 )
 
@@ -417,6 +384,7 @@ install(DIRECTORY
   ${GXF_INCLUDE_DIR}/gxf/cuda
   ${GXF_INCLUDE_DIR}/gxf/logger
   ${GXF_INCLUDE_DIR}/gxf/multimedia
+  ${GXF_INCLUDE_DIR}/gxf/pubsub
   ${GXF_INCLUDE_DIR}/gxf/rmm
   ${GXF_INCLUDE_DIR}/gxf/serialization
   ${GXF_INCLUDE_DIR}/gxf/std
@@ -426,37 +394,6 @@ COMPONENT "holoscan-gxf_libs"
 )
 
 set(HOLOSCAN_GXF_INSTALL_HOOK [=[
-include(CMakeFindDependencyMacro)
-find_dependency(CUDAToolkit)
-
-if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0)
-  set(CCCL_MIN_VERSION 3.0)
-else()
-  set(CCCL_MIN_VERSION 2.5)
-endif()
-
-if(CCCL_FOUND OR TARGET CCCL::CCCL)
-  if(NOT CCCL_VERSION)
-    message(DEBUG "CCCL_VERSION not found, skipping compatibility check")
-  elseif(${CCCL_VERSION} VERSION_LESS ${CCCL_MIN_VERSION})
-    message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${CCCL_MIN_VERSION} for the Holoscan SDK.
-Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
-and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.")
-  else()
-    message(DEBUG "Found CCCL ${CCCL_VERSION} which is compatible with Holoscan SDK")
-  endif()
-else()
-  if(CCCL_MIN_VERSION VERSION_GREATER_EQUAL 3.0)
-    find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
-  else()
-    # Allow compatibility across CCCL major versions
-    find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
-    if(NOT CCCL_FOUND)
-      find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
-    endif()
-  endif()
-endif()
-
 if(NOT TARGET GXF::common)
   add_library(GXF::common INTERFACE IMPORTED)
   set_target_properties(GXF::common PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/gxf")
@@ -492,14 +429,6 @@ endif()"
         endif()
 endforeach()
 
-if(HOLOSCAN_BUILD_PYTHON AND GXF_PYTHON_MODULE_PATH)
-  install(
-    DIRECTORY ${GXF_PYTHON_MODULE_PATH}
-    DESTINATION python/${HOLOSCAN_INSTALL_LIB_DIR}
-    COMPONENT "holoscan-gxf_libs"
-  )
-endif()
-
 # Install CMake scripts to download data from NGC so it can be reused by HoloHub
 install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
@@ -516,10 +445,67 @@ libholoscan: Holoscan SDK C++ API
 set(holoscan_install_hook_code_string
 
 [=[
+include(CMakeFindDependencyMacro)
+find_dependency(CUDAToolkit)
+
+if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0)
+  set(CCCL_MIN_VERSION 3.0)
+else()
+  set(CCCL_MIN_VERSION 2.5)
+endif()
+
+if(CCCL_FOUND OR TARGET CCCL::CCCL)
+  if(NOT CCCL_VERSION)
+    message(DEBUG "CCCL_VERSION not found, skipping compatibility check")
+  elseif(${CCCL_VERSION} VERSION_LESS ${CCCL_MIN_VERSION})
+    message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${CCCL_MIN_VERSION} for the Holoscan SDK.
+Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
+and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.")
+  else()
+    message(DEBUG "Found CCCL ${CCCL_VERSION} which is compatible with Holoscan SDK")
+  endif()
+else()
+  if(CCCL_MIN_VERSION VERSION_GREATER_EQUAL 3.0)
+    find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
+  else()
+    # Allow compatibility across CCCL major versions
+    find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
+    if(NOT CCCL_FOUND)
+      find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
+    endif()
+  endif()
+endif()
+
+find_dependency(yaml-cpp HINTS ${CMAKE_CURRENT_LIST_DIR}/../yaml-cpp)
+# Legacy non-namespaced yaml-cpp linkage required for GXF internal targets
+if(TARGET yaml-cpp::yaml-cpp AND NOT TARGET yaml-cpp)
+  add_library(yaml-cpp ALIAS yaml-cpp::yaml-cpp)
+endif()
+
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR})
+find_dependency(CLI11 HINTS ${CMAKE_CURRENT_LIST_DIR}/../CLI11)
+find_dependency(dlpack HINTS ${CMAKE_CURRENT_LIST_DIR}/../dlpack)
+find_dependency(concurrentqueue HINTS ${CMAKE_CURRENT_LIST_DIR}/../concurrentqueue)
+if(NOT Eigen3_ROOT)
+  set(Eigen3_ROOT "${PACKAGE_PREFIX_DIR}/include/3rdparty/Eigen/include")
+endif()
+find_dependency(Eigen3 3.4)
+find_dependency(fmt HINTS ${CMAKE_CURRENT_LIST_DIR}/../fmt)
+find_dependency(magic_enum HINTS ${CMAKE_CURRENT_LIST_DIR}/../magic_enum)
+find_dependency(nvtx3 HINTS ${CMAKE_CURRENT_LIST_DIR}/../nvtx3)
+find_dependency(spdlog HINTS ${CMAKE_CURRENT_LIST_DIR}/../spdlog)
+find_dependency(tl-expected HINTS ${CMAKE_CURRENT_LIST_DIR}/../tl-expected)
 find_dependency(ucx HINTS ${CMAKE_CURRENT_LIST_DIR}/../ucx)
 
-if(NOT TARGET fmt::fmt-header-only)
-  add_library(fmt::fmt-header-only INTERFACE IMPORTED)
+find_dependency(rapids_logger HINTS ${CMAKE_CURRENT_LIST_DIR}/../rapids_logger)
+find_dependency(rmm HINTS ${CMAKE_CURRENT_LIST_DIR}/../rmm)
+
+# Optional dependency on UCXX for holoscan:pose_tree module
+if(NOT TARGET ucxx::ucxx)
+  if(holoscan_FIND_QUIETLY)
+    set(holoscan_ucxx_FIND_QUIET "QUIET")
+  endif()
+  find_package(ucxx HINTS ${CMAKE_CURRENT_LIST_DIR}/../ucxx ${ucxx_FIND_QUIET})
 endif()
 
 set(_GXF_components @HOLOSCAN_GXF_COMPONENTS@)
@@ -536,60 +522,6 @@ foreach(gxf_component IN LISTS _GXF_components)
 endforeach()
 
 @HOLOSCAN_GXF_INSTALL_HOOK@
-
-if(TARGET GXF::ucx)
-    # GXF UCX classes publicly depend on UCX headers.
-    # Workaround to include those headers without explicitly providing UCX targets.
-    # http://cdash.nvidia.com/viewBuildError.php?buildid=4461
-    set_property(
-        TARGET GXF::ucx
-        APPEND PROPERTY
-            INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucx"
-    )
-endif()
-
-if(NOT TARGET rmm::rmm)
-  add_library(rmm::rmm SHARED IMPORTED)
-  set_target_properties(rmm::rmm PROPERTIES
-    INTERFACE_COMPILE_DEFINITIONS "LIBCUDACXX_ENABLE_EXPERIMENTAL_MEMORY_RESOURCE"
-    IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/librmm.so"
-  )
-endif()
-
-# Find holoscan::ucp that is prerequisite of holoscan::ucxx
-if(NOT TARGET holoscan::ucp)
-  find_package(ucx QUIET)
-  # Create an alias for ucx::ucp to support downstream holoscan::ucxx export set
-  unset(UCP_IMPORTED_LOCATION)
-  if(TARGET ucx::ucp)
-      get_target_property(UCP_IMPORTED_LOCATION ucx::ucp IMPORTED_LOCATION)
-      if(NOT UCP_IMPORTED_LOCATION)
-          get_target_property(UCP_IMPORTED_LOCATION ucx::ucp IMPORTED_LOCATION_${CMAKE_BUILD_TYPE})
-      endif()
-      get_target_property(UCP_INCLUDE_DIRS ucx::ucp INTERFACE_INCLUDE_DIRECTORIES)
-  else()
-    set(UCP_IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/lib/libucp.so")
-    set(UCP_INCLUDE_DIRS "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucx")
-  endif()
-  add_library(holoscan::ucp SHARED IMPORTED)
-  set_target_properties(holoscan::ucp PROPERTIES
-      INTERFACE_INCLUDE_DIRECTORIES "${UCP_INCLUDE_DIRS}"
-      IMPORTED_LOCATION "${UCP_IMPORTED_LOCATION}"
-      IMPORTED_SONAME "libucp.so"
-  )
-endif()
-
-if(NOT TARGET holoscan::ucxx)
-  # Create imported target holoscan::ucxx
-  add_library(holoscan::ucxx SHARED IMPORTED)
-
-  set_target_properties(holoscan::ucxx PROPERTIES
-    INTERFACE_COMPILE_DEFINITIONS "UCXX_ENABLE_RMM;RMM_LOG_ACTIVE_LEVEL=RAPIDS_LOGGER_LEVEL_INFO"
-    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include/3rdparty/ucxx"
-    INTERFACE_LINK_LIBRARIES "GXF::rmm;holoscan::ucp"
-    INTERFACE_POSITION_INDEPENDENT_CODE "ON"
-  )
-endif()
 
 set(GXF_LIB_DIR "${PACKAGE_PREFIX_DIR}/lib")
 set(GXF_EXTENSIONS_DIR "${PACKAGE_PREFIX_DIR}/lib/gxf_extensions")

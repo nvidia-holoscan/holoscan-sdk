@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,8 @@
 #include <nvtx3/nvtx3.hpp>
 
 // Copy of nvtx3::v1::scoped_range_in which checks whether tracing is enabled or not
-namespace nvtx3::v1 {
-
+namespace nvtx3 {
+inline namespace v1 {
 template <class D = domain::global>
 class holoscan_scoped_range_in {
   bool enabled_ = false;
@@ -54,8 +54,8 @@ class holoscan_scoped_range_in {
     }
   }
 };
-
-}  // namespace nvtx3::v1
+}  // namespace v1
+}  // namespace nvtx3
 
 /**
  * Registers an integer ID with a profiler category. Should be called before

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -170,7 +170,7 @@ int main() {
             << "                       'uint8_t', 'uint16_t', 'uint32_t', 'uint64_t',  \n"
             << "                       'float', 'double', 'complex<float>', complex<double>'}.\n"
             << "  --track             If specified, data flow tracking will be enabled.\n"
-            << std::endl;
+            << '\n';
 
   auto app = holoscan::make_application<App>();
 
@@ -205,7 +205,7 @@ int main() {
 
     // print data flow tracking results
     for (const auto& [name, tracker] : trackers) {
-      std::cout << "Fragment: " << name << std::endl;
+      std::cout << "Fragment: " << name << '\n';
       tracker->print();
     }
   } else {

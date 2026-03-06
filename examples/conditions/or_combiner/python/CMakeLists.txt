@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy the sum-of-all application
-add_custom_target(python_multi_port_or_combiner ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/multi_port_or_combiner.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_port_or_combiner.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "multi_port_or_combiner.py"
-  BYPRODUCTS "multi_port_or_combiner.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/multi_port_or_combiner.py"
+  COMMENT "Copying multi_port_or_combiner.py"
+)
+add_custom_target(python_multi_port_or_combiner ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/multi_port_or_combiner.py"
 )
 
 # Install the apps

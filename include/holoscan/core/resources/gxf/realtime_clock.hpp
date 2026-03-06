@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,7 +56,7 @@ class RealtimeClock : public gxf::Clock {
   /// @brief The underlying GXF component's name.
   const char* gxf_typename() const override { return "nvidia::gxf::RealtimeClock"; }
 
-  void setup(ComponentSpec& spec);
+  void setup(ComponentSpec& spec) override;
 
   /// @brief The current time of the clock. Time is measured in seconds.
   double time() const override;

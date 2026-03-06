@@ -1054,7 +1054,7 @@ class OutputContext {
    * @param acq_timestamp The time when the message is acquired. For instance, this would generally
    *                      be the timestamp of the camera when it captures an image.
    */
-  void emit(std::shared_ptr<holoscan::Tensor> data, const char* name = nullptr,
+  void emit(const std::shared_ptr<holoscan::Tensor>& data, const char* name = nullptr,
             const int64_t acq_timestamp = -1);
 
   /**
@@ -1121,13 +1121,16 @@ class OutputContext {
    * @param omit_data_logging If true, data will not be logged via the DataLogger interface.
    * @param skip_stream_propagation If true, skip propagating CUDA stream to entity memory buffers.
    *                                Used when the caller has already set the stream on tensors.
+   * @param is_new_entity If true, the entity was just created (not forwarded), allowing
+   *                      optimizations like skipping checks for existing components.
    */
   virtual void emit_impl([[maybe_unused]] std::any data,
                          [[maybe_unused]] const char* name = nullptr,
                          [[maybe_unused]] OutputType out_type = OutputType::kAny,
                          [[maybe_unused]] const int64_t acq_timestamp = -1,
                          [[maybe_unused]] bool omit_data_logging = false,
-                         [[maybe_unused]] bool skip_stream_propagation = false) {
+                         [[maybe_unused]] bool skip_stream_propagation = false,
+                         [[maybe_unused]] bool is_new_entity = false) {
     HOLOSCAN_LOG_ERROR("emit_impl not implemented in base OutputContext");
   }
 

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@ limitations under the License.
 import datetime
 import sys
 import time
+from enum import Enum
 
 import cupy as cp
 import numpy as np
@@ -519,24 +520,51 @@ def test_my_ping_app2(muliple_add_flow_calls, use_add_arg, capfd):
     assert captured.out.count("received: 11") == 0
 
 
-class PyTensorSourceOp(Operator):
-    """Simple transmitter operator that emits a CuPy array via the holoscan::Tensor emitter.
-
-    It is expected that a wrapped C++ Operator like PingTensorRxOp can receive this tensor.
+class Backend(str, Enum):
+    """
+    Backend for tensor-like objects emitted by tests (used with emitter_name='holoscan::Tensor').
     """
 
-    def __init__(self, fragment, *args, on_device=True, **kwargs):
+    ARRAY = "array"
+    TORCH = "torch"
+
+
+class PyTensorSourceOp(Operator):
+    """Simple transmitter operator that emits a tensor-like object via the holoscan::Tensor emitter.
+
+    This operator is used by multiple interoperability tests:
+    - backend="array": emits a CuPy array when on_device=True, or a NumPy array when on_device=False
+    - backend="torch": emits a PyTorch tensor on CUDA when on_device=True, or on CPU otherwise
+    """
+
+    size = 10000
+
+    def __init__(self, fragment, *args, on_device=True, backend: Backend = Backend.ARRAY, **kwargs):
         self.on_device = on_device
+        self.backend = backend
         super().__init__(fragment, *args, **kwargs)
 
     def setup(self, spec: OperatorSpec):
         spec.output("out")
 
     def compute(self, op_input, op_output, context):
-        if self.on_device:
-            data = cp.arange(10000, dtype=cp.int16)
+        if self.backend == Backend.ARRAY:
+            if self.on_device:
+                # CuPy array on device
+                data = cp.arange(self.size, dtype=cp.int16)
+            else:
+                # NumPy array on host
+                data = np.arange(self.size, dtype=np.int16)
+        elif self.backend == Backend.TORCH:
+            torch = pytest.importorskip("torch")
+            if self.on_device:
+                if not torch.cuda.is_available():
+                    pytest.skip("Requires CUDA device.")
+                data = torch.arange(self.size, dtype=torch.int16, device="cuda")
+            else:
+                data = torch.arange(self.size, dtype=torch.int16, device="cpu")
         else:
-            data = np.arange(10000, dtype=cp.int16)
+            raise ValueError("backend must be one of {Backend.ARRAY, Backend.TORCH}")
 
         # Note: This emitter actually emits a TensorMap with a single tensor, not a plain
         # std::shared_ptr<holoscan::Tensor>. However, for a TensorMap with a single tensor
@@ -555,7 +583,12 @@ class MyPingPythonTensorCppInteropApp(Application):
     count = 10
 
     def compose(self):
-        tx = PyTensorSourceOp(self, CountCondition(self, self.count, name="tx_count"), name="tx")
+        tx = PyTensorSourceOp(
+            self,
+            CountCondition(self, self.count, name="tx_count"),
+            backend=Backend.ARRAY,
+            name="tx",
+        )
         rx = PingTensorRxOp(self, name="rx")
         self.add_flow(tx, rx)
 
@@ -592,12 +625,14 @@ class MyPingPythonCppEmitPythonReceive(Application):
 
     count = 10
     on_device = True
+    backend: Backend = Backend.ARRAY
 
     def compose(self):
         tx = PyTensorSourceOp(
             self,
             CountCondition(self, self.count, name="tx_count"),
             on_device=self.on_device,
+            backend=self.backend,
             name="tx",
         )
         rx = CustomRxOp(self, name="rx")
@@ -605,18 +640,31 @@ class MyPingPythonCppEmitPythonReceive(Application):
 
 
 @pytest.mark.parametrize("on_device", [True, False])
-def test_my_ping_python_cpp_emit_python_receive(on_device, capfd):
-    """Verify that a Python array object emitted with emitter_name="holoscan::Tensor" is received
-    as a CuPy array if it was a device array or a NumPy array if it was a host array.
+@pytest.mark.parametrize("backend", [Backend.ARRAY, Backend.TORCH])
+def test_my_ping_python_cpp_emit_python_receive(on_device: bool, backend: Backend, capfd):
+    """Verify that a tensor-like object emitted with emitter_name="holoscan::Tensor" is received
+    as the expected Python backend type:
+
+    - ARRAY: CuPy for device arrays, NumPy for host arrays
+    - TORCH: torch.Tensor (CPU or CUDA)
     """
+    if backend == Backend.TORCH:
+        torch = pytest.importorskip("torch")
+        if on_device and not torch.cuda.is_available():
+            pytest.skip("Requires CUDA device.")
+
     count = 10
     app = MyPingPythonCppEmitPythonReceive()
     app.count = count
     app.on_device = on_device
+    app.backend = backend
     app.run()
 
     captured = capfd.readouterr()
-    if on_device:
-        assert captured.out.count("type(data) received = <class 'cupy.ndarray'>") == count
+    if backend == Backend.ARRAY:
+        if on_device:
+            assert captured.out.count("type(data) received = <class 'cupy.ndarray'>") == count
+        else:
+            assert captured.out.count("type(data) received = <class 'numpy.ndarray'>") == count
     else:
-        assert captured.out.count("type(data) received = <class 'numpy.ndarray'>") == count
+        assert captured.out.count("type(data) received = <class 'torch.Tensor'>") == count

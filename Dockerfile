@@ -25,14 +25,17 @@ ARG PYTORCH_DGPU_VERSION=2.9.1
 ARG NCCL_VERSION=2.27  # strict compat to match pytorch versions (symbol: ncclCommWindowRegister)
 ARG LIBCUSPARSELT_VERSION=0.8  # strict compat to match pytorch versions
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.3.0_20260130_b825fab47_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.3.0_20260130_b825fab47_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.4.0_20260213_9fe4995d9_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.4.0_20260213_9fe4995d9_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.0.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.13
 ARG UCX_VERSION=1.19.0
 ARG GDRCOPY_VERSION=2.5.1  # MIT license - bundled with UCX for GPU Direct RDMA support
 ARG NSYS_VERSION=2025.3.1  # at least 2025.3 required for CUDA 13.0 support
+ARG OPENSSL_VERSION=3.0.19  # Use latest LTS source version with CVE fixes
+ARG YAML_CPP_VERSION=0.8.0
+ARG NVCOMP_VERSION=5.0.0.6    # Pin to <5.1 for stable CRC32 functionality on arm64 platforms.
 
 ############################################################
 # Generic base image
@@ -734,6 +737,35 @@ RUN cmake --build build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
 RUN cmake --install build --prefix /opt/grpc/${GRPC_VERSION}
 
 ############################################################
+# yaml-cpp libraries
+############################################################
+FROM build-tools AS yaml-cpp-builder
+ARG YAML_CPP_VERSION
+ARG MAX_PROC
+
+WORKDIR /opt/yaml-cpp
+RUN git clone --depth 1 --branch ${YAML_CPP_VERSION} \
+        https://github.com/jbeder/yaml-cpp.git src
+# Apply patch for AddressSanitizer (push_back no_sanitize_address)
+COPY patches/yaml-cpp.patch /opt/yaml-cpp/yaml-cpp.patch
+RUN cd src && git apply /opt/yaml-cpp/yaml-cpp.patch
+WORKDIR /opt/yaml-cpp/src
+# Do not use -fvisibility=hidden: the static lib is linked into shared libs (e.g.
+# libholoscan.so), and hidden visibility causes "relocation against undefined
+# hidden symbol" when resolving std::shared_ptr and other libstdc++ symbols.
+RUN cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+        -DCMAKE_INSTALL_PREFIX=/opt/yaml-cpp/${YAML_CPP_VERSION} \
+        -DYAML_CPP_BUILD_TESTS=OFF \
+        -DYAML_CPP_BUILD_CONTRIB=OFF \
+        -DYAML_CPP_BUILD_TOOLS=OFF \
+        -DYAML_BUILD_SHARED_LIBS=OFF \
+        -DYAML_CPP_INSTALL=ON
+RUN cmake --build build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN cmake --install build --prefix /opt/yaml-cpp/${YAML_CPP_VERSION}
+
+############################################################
 # GXF
 ############################################################
 FROM base AS gxf-downloader
@@ -811,7 +843,7 @@ ARG MAX_PROC
 # Build tools: autoconf, automake
 # RDMA dependencies (see https://openucx.readthedocs.io/en/master/faq.html):
 #   - rdma-core: Core RDMA userspace libraries and utilities
-#   - libibverbs-dev: Required for --with-verbs and --with-mlx5-dv (libuct_ib.so, libuct_ib_mlx5.so)
+#   - libibverbs-dev: Required for --with-verbs and --with-mlx5 (libuct_ib.so, libuct_ib_mlx5.so)
 #   - librdmacm-dev: Required for --with-rdmacm (libuct_rdmacm.so)
 #
 # Note: xpmem and fuse plugins are not included in this release.
@@ -857,7 +889,7 @@ RUN ./autogen.sh && \
     --enable-mt \
     --enable-cma \
     --with-verbs \
-    --with-mlx5-dv \
+    --with-mlx5 \
     --with-rdmacm \
     --with-cuda=/usr/local/cuda \
     --with-gdrcopy=/opt/gdrcopy/install \
@@ -889,7 +921,7 @@ RUN for bin in /opt/ucx/bin/*; do \
     done
 
 # UCX build configuration summary:
-# - RDMA/InfiniBand support enabled (verbs, mlx5-dv, rdmacm)
+# - RDMA/InfiniBand support enabled (verbs, mlx5, rdmacm)
 # - GPU Direct RDMA copy enabled (gdrcopy)
 # - CUDA support enabled
 # - Multi-threading enabled
@@ -1029,6 +1061,12 @@ RUN echo "/opt/ucx/lib" >> /etc/ld.so.conf.d/ucx.conf \
     && echo "/opt/ucx/lib/ucx" >> /etc/ld.so.conf.d/ucx.conf \
     && ldconfig
 
+# Copy yaml-cpp
+ARG YAML_CPP_VERSION
+ENV YAML_CPP=/opt/yaml-cpp/${YAML_CPP_VERSION}
+COPY --from=yaml-cpp-builder ${YAML_CPP} ${YAML_CPP}
+ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${YAML_CPP}"
+
 ############################################################################################
 # GXF CMake build stage
 ############################################################################################
@@ -1037,7 +1075,85 @@ FROM build AS build-gxf-cmake
 # Prevent existing GXF package from being visible in GXF build environment
 RUN rm -rf /opt/nvidia/gxf
 
+############################################################################################
+# OpenSSL build stage (for Holoscan Sensor Bridge)
+############################################################################################
+FROM build-tools AS build-openssl
+
+ARG OPENSSL_VERSION
+WORKDIR /opt/openssl
+RUN git clone --depth 1 --branch openssl-${OPENSSL_VERSION} \
+    https://github.com/openssl/openssl.git src
+WORKDIR /opt/openssl/src
+# --openssldir: config/certs location (same as prefix). -Wl,-rpath,$(LIBRPATH): runtime
+# library search path so the installed openssl binary finds libssl/libcrypto in /opt/openssl
+# (NOTES-UNIX: non-default install locations require explicit rpath)
+RUN ./config --prefix=/opt/openssl --openssldir=/opt/openssl \
+    '-Wl,-rpath,$(LIBRPATH)'
+ARG MAX_PROC
+RUN make -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN make install
+
+############################################################################################
+# Holoscan Sensor Bridge CMake build stage
+############################################################################################
+FROM build AS build-holoscan-sensor-bridge-igpu
+# No-op: Holoscan SDK + Hololink companion build currently supported for dGPU systems only.
+
+FROM build AS build-holoscan-sensor-bridge-dgpu
+
+# Install build dependencies for Holoscan Sensor Bridge
+#  ibverbs* rdma*: needed for ConnectX RDMA support for Holoscan Sensor Bridge operators
+#  libcurl-pp: Holoscan Sensor Bridge tools link dependency
+#  OpenSSL: Holoscan Sensor Bridge tools link dependency
+#  zlib: Holoscan Sensor Bridge emulator link dependency
+#  iproute2: Provides "ip" network tools for Holoscan Sensor Bridge validation
+#  net-tools: Provides "ifconfig" and other legacy network tools for Holoscan Sensor Bridge validation
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install --no-install-recommends -y \
+        ibverbs-providers libibverbs1 librdmacm1 \
+        rdma-core \
+        libibverbs-dev \
+        librdmacm-dev \
+        libcurlpp-dev \
+        zlib1g-dev \
+        net-tools \
+        iproute2
+
+# Install nvCOMP for CRC32 operator.
+ARG NVCOMP_VERSION
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    if [ "${GPU_TYPE}" = "dgpu" ]; then \
+        CUDA_MAJOR=$(echo ${CUDA_VERSION} | cut -d. -f1) \
+        && apt-get update \
+        && apt-get install -y \
+            libnvcomp5-cuda-${CUDA_MAJOR}=${NVCOMP_VERSION}-1 \
+            libnvcomp5-dev-cuda-${CUDA_MAJOR}=${NVCOMP_VERSION}-1 \
+            libnvcomp5-static-cuda-${CUDA_MAJOR}=${NVCOMP_VERSION}-1 \
+            nvcomp-cuda-${CUDA_MAJOR}=${NVCOMP_VERSION}-1 \
+        && apt-mark hold \
+            libnvcomp5-cuda-${CUDA_MAJOR} \
+            libnvcomp5-dev-cuda-${CUDA_MAJOR} \
+            libnvcomp5-static-cuda-${CUDA_MAJOR} \
+            nvcomp-cuda-${CUDA_MAJOR} \
+    ; fi
+
+# Holoscan Sensor Bridge Python runtime dependencies
+RUN --mount=type=bind,from=pytorch-downloader,source=/opt/wheels,target=/opt/wheels \
+    --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
+    CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 --output-delimiter=".") \
+    && python3 -m pip install \
+        cuda-python~=${CUDA_MAJOR_MINOR} \
+        nvtx~=0.2.14
+
+COPY --from=build-openssl /opt/openssl /opt/openssl
+# Prepend OpenSSL so that the custom, latest build is found before the gRPC installation
+ENV CMAKE_PREFIX_PATH="/opt/openssl:${CMAKE_PREFIX_PATH}"
+
 ############################################################
 # Final stage
 ############################################################
-FROM build AS final
+FROM build-holoscan-sensor-bridge-${GPU_TYPE} AS final

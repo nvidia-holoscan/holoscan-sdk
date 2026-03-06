@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,10 +51,14 @@ if(HOLOSCAN_PYTHON_EXAMPLES)
     unset(_rpath)
 
     # custom target to ensure the module's __init__.py file is copied
+    add_custom_command(
+      OUTPUT "${module_binary_dir}/__init__.py"
+      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/__init__.py" "${module_binary_dir}/"
+      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/__init__.py"
+      COMMENT "Copying v4l2_camera_passthrough __init__.py"
+    )
     add_custom_target(v4l2_camera_passthrough_python_init
-        COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/__init__.py" "${module_binary_dir}/"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/__init__.py"
-        BYPRODUCTS "${module_binary_dir}/__init__.py"
+      DEPENDS "${module_binary_dir}/__init__.py"
     )
     add_dependencies(v4l2_camera_passthrough_python v4l2_camera_passthrough_python_init)
 

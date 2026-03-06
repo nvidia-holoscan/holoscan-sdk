@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,7 +123,8 @@ void init_application(py::module_& m) {
           "add_flow",
           py::overload_cast<const std::shared_ptr<Fragment>&,
                             const std::shared_ptr<Fragment>&,
-                            std::set<std::pair<std::string, std::string>>>(&Application::add_flow),
+                            const std::set<std::pair<std::string, std::string>>&>(
+              &Application::add_flow),
           "upstream_frag"_a,
           "downstream_frag"_a,
           "port_pairs"_a)
@@ -402,7 +403,7 @@ void PyApplication::add_flow(const std::shared_ptr<Operator>& upstream_op,
 
 void PyApplication::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                              const std::shared_ptr<Fragment>& downstream_frag,
-                             std::set<std::pair<std::string, std::string>> port_pairs) {
+                             const std::set<std::pair<std::string, std::string>>& port_pairs) {
   /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
   PYBIND11_OVERRIDE(void, Application, add_flow, upstream_frag, downstream_frag, port_pairs);
 }

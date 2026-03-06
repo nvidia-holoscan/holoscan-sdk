@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -129,12 +129,7 @@ add_holoscan_library(profiler
     profiler/profiler.cpp)
 target_link_libraries(profiler
     PUBLIC
-        nvtx3-cpp
-)
-target_include_directories(profiler
-    PUBLIC
-      $<BUILD_INTERFACE:${nvtx3_SOURCE_DIR}/include>
-      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
+        nvtx3::nvtx3-cpp
 )
 
 # ##############################################################################
@@ -148,13 +143,14 @@ add_holoscan_library(pose_tree
     pose_tree/pose_tree_ucx_server.cpp
 )
 
-# Note: holoscan::pose_tree depends on holoscan::core and holoscan::eigen3,
+# Note: holoscan::pose_tree depends on holoscan::core,
 # but we can separate the core pose tree module (which doesn't depend on the Holoscan SDK)
 # into `holoscan::pose_tree_core` later if needed.
 target_link_libraries(pose_tree
     PUBLIC
         holoscan::core
-        holoscan::eigen3
+        Eigen3::Eigen
+        ucxx::ucxx
 )
 
 # ##############################################################################
@@ -172,6 +168,11 @@ set(CORE_PROTO_FILES
 )
 
 grpc_generate_cpp(CORE_GRPC_SRCS CORE_GRPC_HDRS ${CORE_PROTO_FILES})
+
+# Disable clang-tidy for generated protobuf files (requires CMake >= 3.27)
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.27")
+    set_source_files_properties(${CORE_GRPC_SRCS} ${CORE_GRPC_HDRS} PROPERTIES SKIP_LINTING ON)
+endif()
 
 add_holoscan_library(core
     core/analytics/csv_data_exporter.cpp
@@ -246,6 +247,7 @@ add_holoscan_library(core
     core/messagelabel.cpp
     core/metadata.cpp
     core/network_context.cpp
+    core/network_contexts/gxf/pubsub_context.cpp
     core/network_contexts/gxf/ucx_context.cpp
     core/operator.cpp
     core/operator_spec.cpp
@@ -275,6 +277,8 @@ add_holoscan_library(core
     core/resources/gxf/holoscan_ucx_receiver.cpp
     core/resources/gxf/holoscan_ucx_transmitter.cpp
     core/resources/gxf/manual_clock.cpp
+    core/resources/gxf/pubsub_receiver.cpp
+    core/resources/gxf/pubsub_transmitter.cpp
     core/resources/gxf/realtime_clock.cpp
     core/resources/gxf/receiver.cpp
     core/resources/gxf/rmm_allocator.cpp
@@ -316,37 +320,29 @@ target_link_libraries(core
         holoscan::logger
         holoscan::profiler
         holoscan::gpu_resident_cuda
+        CLI11::CLI11
+        concurrentqueue::concurrentqueue
         CUDA::cuda_driver
         CUDA::cudart
+        dlpack::dlpack
+        Eigen3::Eigen
         fmt::fmt-header-only
         GXF::app
         GXF::core
         GXF::cuda
+        GXF::pubsub
         GXF::rmm
         GXF::serialization  # for nvidia::gxf::Endpoint
         GXF::std
         GXF::ucx
-        yaml-cpp
-        holoscan::eigen3
-    INTERFACE
-        ucxx::ucxx
+        magic_enum::magic_enum
+        tl::expected
+        yaml-cpp::yaml-cpp
     PRIVATE
         hwloc
         gRPC::grpc++
         gRPC::grpc++_reflection
         protobuf::libprotobuf
-        ucxx::ucxx
-)
-
-target_include_directories(core
-    PUBLIC
-      $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
-      $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
-      $<BUILD_INTERFACE:${cli11_SOURCE_DIR}/include>
-      $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
-      $<BUILD_INTERFACE:${nlohmann_json_SOURCE_DIR}/single_include>
-      $<BUILD_INTERFACE:${concurrent_queue_SOURCE_DIR}>
-      $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty>
 )
 
 # ##############################################################################

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <memory>
 #include <string>
 #include <vector>
@@ -27,6 +28,21 @@
 #include "holoscan/core/graphs/flow_graph.hpp"
 
 namespace holoscan {
+
+class TestShutdownFragment : public Fragment {
+ public:
+  using Fragment::Fragment;
+
+  void stop_execution(const std::string& op_name = "") override {
+    (void)op_name;
+    ++stop_count_;
+  }
+
+  int stop_count() const { return stop_count_.load(); }
+
+ private:
+  std::atomic<int> stop_count_{0};
+};
 
 TEST(Application, TestAppDescription) {
   auto app = make_application<Application>();
@@ -244,6 +260,31 @@ TEST(Application, TestAddFlowWithDifferentExecutors) {
   // the port pair parameter does not matter, as it should throw error even
   // before checking whether the port pairs are valid.
   EXPECT_THROW(app->add_flow(fragment1, fragment2, {{"op1", "op2"}}), std::runtime_error);
+}
+
+TEST(Application, TestLocalMultiFragmentShutdownStopsInitiatingFragment) {
+  auto app = make_application<Application>();
+
+  auto fragment1_base = app->make_fragment<TestShutdownFragment>("fragment1");
+  auto fragment2_base = app->make_fragment<TestShutdownFragment>("fragment2");
+  auto fragment1 = std::dynamic_pointer_cast<TestShutdownFragment>(fragment1_base);
+  auto fragment2 = std::dynamic_pointer_cast<TestShutdownFragment>(fragment2_base);
+  ASSERT_NE(fragment1, nullptr);
+  ASSERT_NE(fragment2, nullptr);
+
+  app->add_fragment(fragment1_base);
+  app->add_fragment(fragment2_base);
+
+  EXPECT_EQ(fragment1->stop_count(), 0);
+  EXPECT_EQ(fragment2->stop_count(), 0);
+
+  // initiate_local_app_shutdown is private; exercise it via the public routing method.
+  // When app_worker_ is null and the fragment graph is non-empty,
+  // initiate_distributed_app_shutdown() delegates directly to initiate_local_app_shutdown().
+  app->initiate_distributed_app_shutdown(fragment1->name());
+
+  EXPECT_EQ(fragment1->stop_count(), 1);
+  EXPECT_EQ(fragment2->stop_count(), 1);
 }
 
 }  // namespace holoscan

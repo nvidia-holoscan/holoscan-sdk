@@ -429,8 +429,27 @@ A restriction imposed by the use of cloudpickle is that all fragments in a distr
 :::
 
 :::{warning}
-Distributed applications behave differently than single fragment applications when {py:func}`op_output.emit() <holoscan.core.OutputContext.emit>` is called to emit a tensor-like Python object. Specifically, for array-like objects such as a PyTorch tensor, the same Python object will **not** be received by any call to {py:func}`op_input.receive() <holoscan.core.InputContext.receive>` in a downstream Python operator (even if the upstream and downstream operators are part of the same fragment). An object of type `holoscan.Tensor` will be received as a `holoscan.Tensor`. Any other array-like objects with data stored on device (GPU) will be received as a CuPy tensor. Similarly, any array-like object with data stored on the host (CPU) will be received as a NumPy array. The user must convert back to the original array-like type if needed (typically possible in a zero-copy fashion via DLPack or array interfaces).
+Distributed applications behave differently than single fragment applications when {py:func}`op_output.emit() <holoscan.core.OutputContext.emit>` is called to emit a tensor-like Python object. Specifically, for array-like objects, the same Python object will **not** be received by any call to {py:func}`op_input.receive() <holoscan.core.InputContext.receive>` in a downstream Python operator (even if the upstream and downstream operators are part of the same fragment). An object of type `holoscan.Tensor` will be received as a `holoscan.Tensor`. PyTorch tensors will be received as a `torch.Tensor`. Any other array-like objects with data stored on device (GPU) will be received as a CuPy tensor. Similarly, any array-like object with data stored on the host (CPU) will be received as a NumPy array. The user must convert back to the original array-like type if needed (typically possible in a zero-copy fashion via DLPack or array interfaces).
 :::
+
+#### Specifying Explicit C++ Types with emitter_name
+
+When connecting a Python operator to a C++ operator that expects a specific type, or when serializing for distributed applications, Python's dynamic typing can create ambiguity. For example, a Python `int` (which has arbitrary precision) could map to `int8_t`, `int16_t`, `int32_t`, `int64_t`, or unsigned variants. Similarly, a Python `float` could be either `float` or `double` in C++.
+
+To disambiguate, use the `emitter_name` parameter to explicitly specify the target C++ type:
+
+```python
+# Ambiguous - which C++ type should this become?
+op_output.emit(42, "output")
+
+# Explicit - emit as int32_t
+op_output.emit(42, "output", emitter_name="int32_t")
+
+# Explicit - emit as std::vector<float> (not double)
+op_output.emit([1.0, 2.0, 3.0], "output", emitter_name="std::vector<float>")
+```
+
+For the complete list of supported C++ types and their corresponding `emitter_name` strings, see the {ref}`C++ and Python type interoperability table <cpp-python-data-type-interop>`.
 
 
 ### C++

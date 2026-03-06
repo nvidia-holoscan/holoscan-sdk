@@ -1,4 +1,4 @@
-# Welcome to the Holoscan SDK's documentation!
+# Welcome to the Holoscan SDK's Documentation
 
 ```{toctree}
 :maxdepth: 1
@@ -46,6 +46,7 @@ holoscan_create_operator_python_bindings
 holoscan_operators_extensions
 visualization
 inference
+testing
 ```
 
 ```{toctree}
@@ -77,18 +78,9 @@ cli/run_config
 
 ```{toctree}
 :maxdepth: 1
-:caption: Graph Execution Framework
+:caption: Performance
 
-gxf/gxf_core_concepts.md
-gxf/holoscan_and_gxf.md
-gxf/gxf_by_example.md
-gxf/doc/index.md
-```
-
-```{toctree}
-:maxdepth: 1
-:caption: Performance Tools
-
+performance_considerations
 flow_tracking
 gxf_job_statistics
 nsight_profiling
@@ -96,9 +88,9 @@ nsight_profiling
 
 ```{toctree}
 :maxdepth: 1
-:caption: Testing Operators
+:caption: Holohub
 
-testing
+holohub_overview
 ```
 
 ```{toctree}

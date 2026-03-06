@@ -94,15 +94,15 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -235,7 +235,7 @@ See [PyPI][pypi] for details and troubleshooting.
 Install via `conda`:
 
 ```bash
-conda install -c rapidsai -c conda-forge holoscan=3.11.0 rmm cuda-version=12.6
+conda install -c rapidsai -c conda-forge holoscan=4.0.0 rmm cuda-version=12.6
 ```
 
 :::{note}
@@ -275,6 +275,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
 | [Torchscript][torch] support [^7] | **Included** | require manual [^8]<br>installation | require manual [^8]<br>installation |
 | [ONNX Runtime][ort] support [^9] | **Included** | require manual [^10]<br>installation | require manual [^10]<br>installation |
 | [ConnectX][connectx] support [^11] | **User space included** <br>Install kernel drivers on the host | require manual <br>installation | require manual <br>installation |
+| [Holoscan Sensor Bridge][hololink] support [^12] | **User space included** <br>Install kernel drivers on the host | not included | not included |
 | [CLI] support | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) |
 
 [examples]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme
@@ -287,6 +288,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
 [ort]: https://onnxruntime.ai/
 [connectx]: https://www.nvidia.com/en-us/networking/ethernet-adapters/
 [cli]: ./holoscan_packager.md
+[hololink]: https://www.nvidia.com/en-us/technologies/holoscan-sensor-bridge/
 [^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.6.3/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^2]: Debian installation on x86_64 requires the [latest cuda-keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) to automatically install all dependencies.
 [^3]: NPP 12 needed for the FormatConverter and BayerDemosaic operators. Already installed on NVIDIA developer kits with IGX Software and JetPack.
@@ -298,6 +300,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
 [^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
 [^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).
 [^11]: Tested with DOCA 3.0.0.
+[^12]: Tested with Holoscan Sensor Bridge [`2.5.0-PB6`](https://github.com/nvidia-holoscan/holoscan-sensor-bridge/tree/2.5.0-PB6) tag
 
 ### Need more control over the SDK?
 

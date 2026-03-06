@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@ include(FetchContent)
 
 set(EIGEN_PATCH_FILEPATH "${CMAKE_SOURCE_DIR}/cmake/deps/patches/eigen3_urm_neon_memcpy_fix.patch")
 
+# Use the minimized Eigen 3.4.0 source distribution from edge.urm.nvidia.com,
+# which has been reduced to just Eigen header files (no utilities, tests, CMake, etc)
 FetchContent_Declare(
     eigen3
     URL https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/eigen/eigen-3.4.0.tar.gz
@@ -53,39 +55,31 @@ if(_eigen_patch_result GREATER 1)   # 0 = success, 1 = already applied
                         "(exit code ${_eigen_patch_result}).")
 endif()
 
-# Create a regular INTERFACE library for Eigen's properties
-add_library(eigen3_interface INTERFACE)
-
-# Define include directory for the interface library
-# Use generator expressions to handle both build-time and install-time include paths
-target_include_directories(eigen3_interface INTERFACE
-    $<BUILD_INTERFACE:${eigen3_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include/3rdparty>
-)
+# Use FindEigen3.cmake from Eigen project:
+# https://gitlab.com/libeigen/eigen/-/blob/3.4.1/cmake/FindEigen3.cmake
+# CMake rules have been stripped from the Eigen 3.4 source package on edge.urm.nvidia.com,
+# so we instead use the FindEigen3.cmake module to define the Eigen3 import strategy.
+set(Eigen3_ROOT "${eigen3_SOURCE_DIR}/include")
+find_package(Eigen3 3.4 REQUIRED MODULE)
 
 # Set EIGEN_MPL2_ONLY flag to restrict Eigen usage to MPL2-licensed code only
-target_compile_definitions(eigen3_interface INTERFACE
+target_compile_definitions(Eigen3::Eigen INTERFACE
     EIGEN_MPL2_ONLY
 )
 
-# Create an ALIAS target `holoscan::eigen3`
-add_library(holoscan::eigen3 ALIAS eigen3_interface)
+# Create an ALIAS target `holoscan::eigen3` for backwards compatibility
+add_library(holoscan::eigen3 ALIAS Eigen3::Eigen)
 
-# Set the EXPORT_NAME property on the original interface target
-# This name is used when the target is exported as part of a CMake package.
-set_target_properties(eigen3_interface PROPERTIES
-    EXPORT_NAME eigen3  # This will allow it to be found as Holoscan::eigen3
+# Install the Eigen headers and import rules for SDK development.
+# This makes the headers available in the CMAKE_INSTALL_PREFIX.
+install(
+    DIRECTORY "${eigen3_SOURCE_DIR}/include" # Source is the 'Eigen' folder itself
+    DESTINATION include/3rdparty/Eigen                             # Destination path relative to CMAKE_INSTALL_PREFIX
+    COMPONENT "holoscan-dependencies"                              # Matches existing component name
+)
+install(
+    FILES ${holoscan_SOURCE_DIR}/cmake/modules/FindEigen3.cmake
+    DESTINATION ${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan
+    COMPONENT "holoscan-dependencies"
 )
 
-# Install the Eigen headers for SDK development.
-# This makes the headers available in the CMAKE_INSTALL_PREFIX.
-if(IS_DIRECTORY "${eigen3_SOURCE_DIR}/include/Eigen")
-    install(
-        DIRECTORY "${eigen3_SOURCE_DIR}/include/Eigen/" # Source is the 'Eigen' folder itself
-        DESTINATION include/3rdparty/Eigen                             # Destination path relative to CMAKE_INSTALL_PREFIX
-        COMPONENT "holoscan-dependencies"                              # Matches existing component name
-    )
-else()
-    message(FATAL_ERROR "Eigen headers not found in ${eigen3_SOURCE_DIR}/include/Eigen. "
-                        "The downloaded Eigen archive from URM might have an unexpected structure, or the download failed.")
-endif()

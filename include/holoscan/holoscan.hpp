@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,6 +60,7 @@
 #include "./core/conditions/gxf/periodic.hpp"
 
 // NetworkContexts
+#include "./core/network_contexts/gxf/pubsub_context.hpp"
 #include "./core/network_contexts/gxf/ucx_context.hpp"
 
 // Resources
@@ -78,6 +79,8 @@
 #include "./core/resources/gxf/double_buffer_transmitter.hpp"
 #include "./core/resources/gxf/gxf_component_resource.hpp"
 #include "./core/resources/gxf/manual_clock.hpp"
+#include "./core/resources/gxf/pubsub_receiver.hpp"
+#include "./core/resources/gxf/pubsub_transmitter.hpp"
 #include "./core/resources/gxf/realtime_clock.hpp"
 #include "./core/resources/gxf/rmm_allocator.hpp"
 #include "./core/resources/gxf/serialization_buffer.hpp"

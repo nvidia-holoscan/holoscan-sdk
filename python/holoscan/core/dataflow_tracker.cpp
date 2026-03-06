@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,7 +52,7 @@ void init_data_flow_tracker(py::module_& m) {
       // has a docstring specified. For now using the docstring defined for 2-argument
       // version and describe the single argument variant in the Notes section.
       .def("get_metric",
-           py::overload_cast<std::string, DataFlowMetric>(&DataFlowTracker::get_metric),
+           py::overload_cast<const std::string&, DataFlowMetric>(&DataFlowTracker::get_metric),
            "pathstring"_a,
            "metric"_a,
            doc::DataFlowTracker::doc_get_metric_with_pathstring)
@@ -73,7 +73,11 @@ void init_data_flow_tracker(py::module_& m) {
            doc::DataFlowTracker::doc_set_skip_latencies)
       .def("set_skip_starting_messages",
            &DataFlowTracker::set_skip_starting_messages,
-           doc::DataFlowTracker::doc_set_skip_starting_messages);
+           doc::DataFlowTracker::doc_set_skip_starting_messages)
+      .def("add_probe_operator",
+           py::overload_cast<const std::string&>(&DataFlowTracker::add_probe_operator),
+           "operator_name"_a,
+           doc::DataFlowTracker::doc_add_probe_operator);
 }
 
 }  // namespace holoscan

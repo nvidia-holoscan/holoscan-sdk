@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -88,6 +88,17 @@ class PingMxOp : public Operator {
 
     HOLOSCAN_LOG_INFO("Middle message value1: {}", value.data());
 
+    // Get the data flow tracking label for the input port
+    auto message_label = get_data_flow_tracking_label("in");
+
+    // Log information about the message paths
+    HOLOSCAN_LOG_INFO("Input port has data flow tracking label: {}", message_label.to_string());
+
+    for (int i = 0; i < message_label.num_paths(); i++) {
+      HOLOSCAN_LOG_INFO("Path {}: {}", i, message_label.get_path_name(i));
+      HOLOSCAN_LOG_INFO("  Current latency: {} ms", message_label.get_e2e_latency_ms(i));
+    }
+
     // Multiply the values by the multiplier parameter
     value.data(value.data() * multiplier_);
 
@@ -160,6 +171,7 @@ int main() {
   // Skip 2 messages at the start and 3 messages at the end
   auto& tracker = app->track(2, 3, 0);
   tracker.enable_logging();
+  tracker.add_probe_operator("middle1");
   app->run();
 
   // Print all the metrics to the standard output

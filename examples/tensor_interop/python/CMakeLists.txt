@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,25 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator tensor_interop application
-add_custom_target(python_tensor_interop ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tensor_interop.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "tensor_interop.py"
-  BYPRODUCTS "tensor_interop.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.py"
+  COMMENT "Copying tensor_interop.py"
+)
+add_custom_target(python_tensor_interop ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/tensor_interop.py"
 )
 
 # Copy the config file
-add_custom_target(python_tensor_interop_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/tensor_interop.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "tensor_interop.yaml"
-  BYPRODUCTS "tensor_interop.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tensor_interop.yaml"
+  COMMENT "Copying tensor_interop.yaml"
+)
+add_custom_target(python_tensor_interop_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/tensor_interop.yaml"
 )
 add_dependencies(python_tensor_interop python_tensor_interop_yaml racerx_data)
 

@@ -34,6 +34,9 @@ find_package(Vulkan REQUIRED)
 add_executable(${PROJECT_NAME})
 add_executable(holoscan::viz::functionaltests ALIAS ${PROJECT_NAME})
 
+# Disable clang-tidy for test files
+set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "")
+
 target_sources(${PROJECT_NAME}
     PRIVATE
         callback_test.cpp

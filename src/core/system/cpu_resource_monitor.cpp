@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #include <hwloc.h>
 #include <sys/statvfs.h>
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
@@ -29,20 +30,31 @@
 namespace holoscan {
 
 // Static methods
-static void get_proc_stats(uint64_t* stats) {
+static bool get_proc_stats(uint64_t* stats) {
   // Get the total CPU time
-  FILE* file = fopen("/proc/stat", "r");
+  FILE* file = fopen("/proc/stat", "re");
   if (file == nullptr) {
-    HOLOSCAN_LOG_ERROR("CPUResourceMonitor::get_proc_stats() - Failed to open /proc/stat");
-    return;
+    HOLOSCAN_LOG_ERROR(
+        "CPUResourceMonitor::get_proc_stats() - Failed to open /proc/stat: {} (errno={})",
+        strerror(errno),
+        errno);
+    return false;
   }
 
-  // Read the total CPU time
+  // Read the total CPU time (values from kernel are trusted, return value checked)
+  // NOLINTNEXTLINE(cert-err34-c)
   int matched = fscanf(file, "cpu %lu %lu %lu %lu", &stats[0], &stats[1], &stats[2], &stats[3]);
+  (void)fclose(file);
+
   if (matched != 4) {
-    HOLOSCAN_LOG_ERROR("CPUResourceMonitor::get_proc_stats() - Failed to read /proc/stat");
+    HOLOSCAN_LOG_ERROR(
+        "CPUResourceMonitor::get_proc_stats() - Failed to read /proc/stat: expected 4 values, "
+        "matched {}{}",
+        matched,
+        (matched == EOF) ? " (EOF or read error)" : "");
+    return false;
   }
-  fclose(file);
+  return true;
 }
 
 static void get_proc_meminfo(uint64_t* stats) {
@@ -51,7 +63,7 @@ static void get_proc_meminfo(uint64_t* stats) {
   // in std::unique_ptr<FILE>.
   using FileDeleter = int (*)(FILE*);
   // Get the total CPU time
-  std::unique_ptr<FILE, FileDeleter> file(fopen("/proc/meminfo", "r"), &std::fclose);
+  std::unique_ptr<FILE, FileDeleter> file(fopen("/proc/meminfo", "re"), &std::fclose);
   if (file == nullptr) {
     HOLOSCAN_LOG_ERROR("CPUResourceMonitor::get_proc_meminfo() - Failed to open /proc/meminfo");
     return;
@@ -75,6 +87,8 @@ static void get_proc_meminfo(uint64_t* stats) {
     }
 
     int matched = 0;
+    // Values from /proc/meminfo are kernel-produced (trusted), return value checked below
+    // NOLINTBEGIN(cert-err34-c)
     switch (line_count) {
       case 1:
         matched = sscanf(line, "MemTotal: %lu kB", &stats[0]);
@@ -86,6 +100,7 @@ static void get_proc_meminfo(uint64_t* stats) {
         matched = sscanf(line, "MemAvailable: %lu kB", &stats[2]);
         break;
     }
+    // NOLINTEND(cert-err34-c)
     if (matched != 1) {
       HOLOSCAN_LOG_ERROR(
           "CPUResourceMonitor::get_proc_meminfo() - Failed to parse /proc/meminfo line {}: '{}'",
@@ -158,28 +173,31 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
   if (metric_flags & CPUMetricFlag::CPU_USAGE) {
     // If the last total stats are not valid, then just we update the last total stats
     if (!is_last_total_stats_valid_) {
-      get_proc_stats(last_total_stats_);
-      is_last_total_stats_valid_ = true;
+      if (get_proc_stats(last_total_stats_)) {
+        is_last_total_stats_valid_ = true;
+      }
     } else {
       uint64_t current_total_stats[4] = {};
-      get_proc_stats(current_total_stats);
+      if (get_proc_stats(current_total_stats)) {
+        // Calculate the CPU usage
+        uint64_t total_diff = 0;
+        for (int i = 0; i < 3; i++) {
+          // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index) loop bounded, arrays
+          // size 4
+          total_diff += (current_total_stats[i] - last_total_stats_[i]);
+        }
 
-      // Calculate the CPU usage
-      uint64_t total_diff = 0;
-      for (int i = 0; i < 3; i++) {
-        total_diff += (current_total_stats[i] - last_total_stats_[i]);
+        uint64_t idle_diff = current_total_stats[3] - last_total_stats_[3];
+        total_diff += idle_diff;
+        if (idle_diff > 0 && total_diff > 0) {
+          cpu_info.cpu_usage = static_cast<float>(1.0 - (static_cast<double>(idle_diff) /
+                                                         static_cast<double>(total_diff))) *
+                               100.0F;
+        }
+
+        // Update the last total stats
+        memcpy(last_total_stats_, current_total_stats, sizeof(*last_total_stats_) * 4);
       }
-
-      uint64_t idle_diff = current_total_stats[3] - last_total_stats_[3];
-      total_diff += idle_diff;
-      if (idle_diff > 0 && total_diff > 0) {
-        cpu_info.cpu_usage = static_cast<float>(1.0 - (static_cast<double>(idle_diff) /
-                                                       static_cast<double>(total_diff))) *
-                             100.0F;
-      }
-
-      // Update the last total stats
-      memcpy(last_total_stats_, current_total_stats, sizeof(*last_total_stats_) * 4);
     }
   }
 

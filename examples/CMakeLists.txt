@@ -61,11 +61,12 @@ if(HOLOSCAN_CPP_EXAMPLES)
   add_subdirectory(ping_any)
   add_subdirectory(ping_conditional)
   add_subdirectory(ping_cycle)
+  add_subdirectory(gpu_resident_inference_example)
 endif()
 
 # Python Only examples
+
 if(HOLOSCAN_PYTHON_EXAMPLES)
-  add_subdirectory(bring_your_own_model)
   add_subdirectory(cupy_native)
   add_subdirectory(numpy_native)
   add_subdirectory(pytorch_native)
@@ -74,6 +75,7 @@ endif()
 
 # C++ and Python examples
 add_subdirectory(activation_map)
+add_subdirectory(bring_your_own_model)
 add_subdirectory(cli_packager)
 add_subdirectory(conditions)
 add_subdirectory(execution_control)

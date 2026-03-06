@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -131,7 +131,12 @@ uint32_t UcxReceiver::port() {
 
 void UcxReceiver::track() {
   auto receiver_ptr = static_cast<holoscan::HoloscanUcxReceiver*>(gxf_cptr_);
-  receiver_ptr->track();
+  if (receiver_ptr) {
+    receiver_ptr->track();
+  } else {
+    throw std::runtime_error(
+        "gxf_cptr_ not found. Cannot enable data flow tracking for UCX receiver.");
+  }
 }
 
 }  // namespace holoscan

@@ -159,7 +159,12 @@ TEST_F(GPUResidentErrorConditionsTest, TestZeroSizeMemoryBlock) {
 
   // Creating an operator with zero-size memory block should throw std::invalid_argument
   // during setup() when spec.device_output() is called
-  EXPECT_THROW(fragment.make_operator<ZeroSizeMemoryOp>("source"), std::invalid_argument);
+  auto source = fragment.make_operator<ZeroSizeOutputMemoryOp>("source");
+  auto sink = fragment.make_operator<ZeroSizeInputMemoryOp>("sink");
+  fragment.add_flow(source, sink);
+
+  // Running this fragment should throw runtime error because of zero-sized memory blocks
+  EXPECT_THROW(fragment.run_async(), std::runtime_error);
 }
 
 TEST_F(GPUResidentErrorConditionsTest, TestInvalidPortName) {

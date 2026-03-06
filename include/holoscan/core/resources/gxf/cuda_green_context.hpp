@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_CUDA_GREEN_CONTEXT_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_CUDA_GREEN_CONTEXT_HPP
 
+#include <memory>
 #include <string>
 
 #include <gxf/std/cuda_green_context_pool.hpp>
@@ -48,7 +49,7 @@ namespace holoscan {
 class CudaGreenContext : public gxf::GXFResource {
  public:
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaGreenContext, gxf::GXFResource)
-  CudaGreenContext(std::shared_ptr<CudaGreenContextPool> green_context_pool = nullptr,
+  CudaGreenContext(const std::shared_ptr<CudaGreenContextPool>& green_context_pool = nullptr,
                    int32_t index = -1, const std::string& nvtx_identifier = "defaultGreenContext")
       : cuda_green_context_pool_(green_context_pool),
         index_(index),

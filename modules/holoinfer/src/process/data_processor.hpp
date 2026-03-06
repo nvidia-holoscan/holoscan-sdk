@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,7 +89,7 @@ class DataProcessor {
    * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         bool use_cuda_graphs, const std::string config_path);
+                         bool use_cuda_graphs, const std::string& config_path);
 
   /**
    * @brief Executes an operation via function callback.
@@ -227,10 +227,11 @@ class DataProcessor {
   /// Keyword in this map must be used exactly by the user in configuration.
   /// Operation is the key and its related implementation platform as the value.
   /// Operations are defined with fixed number of input and outputs. Currently one for each.
-  inline static const std::map<std::string, holoinfer_data_processor> supported_compute_operations_{
-      {"max_per_channel_scaled", holoinfer_data_processor::h_CUDA_AND_HOST},
-      {"custom_cuda_kernel", holoinfer_data_processor::h_CUDA_AND_HOST},
-      {"scale_intensity_cpu", holoinfer_data_processor::h_HOST}};
+  inline static const std::map<std::string, holoinfer_data_processor>  // NOLINT(cert-err58-cpp)
+      supported_compute_operations_{
+          {"max_per_channel_scaled", holoinfer_data_processor::h_CUDA_AND_HOST},
+          {"custom_cuda_kernel", holoinfer_data_processor::h_CUDA_AND_HOST},
+          {"scale_intensity_cpu", holoinfer_data_processor::h_HOST}};
 
   /// Map defining supported transforms by DataProcessor Class.
   /// Keyword in this map must be used exactly by the user in configuration.
@@ -238,12 +239,13 @@ class DataProcessor {
   /// Transforms are defined with support for multiple input and outputs. Output tensors can be
   /// dynamic and are generated and populated at run time. Transforms need a configuration file for
   /// the setup.
-  inline static const std::map<std::string, holoinfer_data_processor> supported_transforms_{
-      {"generate_boxes", holoinfer_data_processor::h_HOST}};
+  inline static const std::map<std::string, holoinfer_data_processor>  // NOLINT(cert-err58-cpp)
+      supported_transforms_{{"generate_boxes", holoinfer_data_processor::h_HOST}};
 
   // Map with operation name as key, with pointer to its object
   std::map<std::string, std::unique_ptr<TransformBase>> transforms_;
 
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static const std::map<std::string, holoinfer_data_processor> supported_print_operations_{
       {"print", holoinfer_data_processor::h_HOST},
       {"print_int32", holoinfer_data_processor::h_HOST},
@@ -251,8 +253,9 @@ class DataProcessor {
 
   /// Map defining supported formats by DataProcessor Class to export results using Data Exporter
   /// API.
-  inline static const std::map<std::string, holoinfer_data_processor> supported_export_operations_{
-      {"export_binary_classification_to_csv", holoinfer_data_processor::h_HOST}};
+  inline static const std::map<std::string, holoinfer_data_processor>  // NOLINT(cert-err58-cpp)
+      supported_export_operations_{
+          {"export_binary_classification_to_csv", holoinfer_data_processor::h_HOST}};
 
   /// Mapped function call for the function pointer of max_per_channel_scaled
   processor_FP max_per_channel_scaled_fp_ =

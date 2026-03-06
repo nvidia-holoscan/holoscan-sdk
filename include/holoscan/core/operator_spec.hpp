@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,11 +20,13 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <cuda.h>
 #include <iostream>
 #include <list>
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <typeinfo>
 #include <unordered_map>
 #include <utility>
@@ -181,15 +183,56 @@ class OperatorSpec : public ComponentSpec {
   }
 
   /**
-   * @brief Define an input specification for this operator. It is only applicable for GPU-resident
-   * operators.
+   * @brief Define an input specification for this operator with a memory block size.
+   * It is only applicable for GPU-resident operators.
+   *
+   * The executor will allocate a shared device memory buffer of the specified size for this port
+   * and the connected output port. Both ports will map to the same device memory address.
+   * Integer literals (e.g. `0`, `1024`) and `size_t` values resolve to this overload.
    *
    * @param name The name of the input specification.
-   * @param memory_block_size The device memory block size of the input specification.
+   * @param memory_block_size The device memory block size in bytes.
    * @return The reference to the input specification.
    */
   IOSpec& device_input(std::string name, size_t memory_block_size) {
     auto spec = std::make_shared<IOSpec>(this, name, memory_block_size, IOSpec::IOType::kInput);
+    auto [iter, inserted] = inputs_.insert_or_assign(name, std::move(spec));
+    if (!inserted) {
+      // this is not unexpected since device input port's memory size can be calculated later in
+      // the operator's lifetime
+      HOLOSCAN_LOG_WARN("Input port '{}' already existed and was overwritten", name);
+    }
+    return *(iter->second.get());
+  }
+
+  /**
+   * @brief Define an input specification for this operator with an externally managed device memory
+   * pointer. It is only applicable for GPU-resident operators.
+   *
+   * Use this overload when the operator allocates and manages its own device memory (e.g. via
+   * `cudaMalloc`). The executor will use this pointer directly instead of allocating a buffer.
+   * Both this port and the connected output port will map to the supplied device pointer.
+   *
+   * This overload is applied in overload resolution when the second argument is of type
+   * `CUdeviceptr` or `void*`.
+   *
+   * @tparam T The device pointer type (`CUdeviceptr` or `void*`).
+   * @param name The name of the input specification.
+   * @param device_ptr The device pointer for the input specification (must be non-null).
+   * @return The reference to the input specification.
+   */
+  template <typename T>
+  std::enable_if_t<std::is_same_v<std::decay_t<T>, CUdeviceptr> ||
+                       std::is_same_v<std::decay_t<T>, void*>,
+                   IOSpec&>
+  device_input(std::string name, T device_ptr) {
+    void* raw_ptr;
+    if constexpr (std::is_same_v<std::decay_t<T>, void*>) {
+      raw_ptr = device_ptr;
+    } else {
+      raw_ptr = reinterpret_cast<void*>(device_ptr);
+    }
+    auto spec = std::make_shared<IOSpec>(this, name, raw_ptr, IOSpec::IOType::kInput);
     auto [iter, inserted] = inputs_.insert_or_assign(name, std::move(spec));
     if (!inserted) {
       HOLOSCAN_LOG_ERROR("Input port '{}' already existed and was overwritten", name);
@@ -276,15 +319,56 @@ class OperatorSpec : public ComponentSpec {
   }
 
   /**
-   * @brief Define an output specification for this operator. It is only applicable for
-   * GPU-resident operators.
+   * @brief Define an output specification for this operator with a memory block size.
+   * It is only applicable for GPU-resident operators.
+   *
+   * The executor will allocate a shared device memory buffer of the specified size for this port
+   * and the connected input port. Both ports will map to the same device memory address.
+   * Integer literals (e.g. `0`, `1024`) and `size_t` values resolve to this overload.
    *
    * @param name The name of the output specification.
-   * @param memory_block_size The device memory block size of the output specification.
+   * @param memory_block_size The device memory block size in bytes.
    * @return The reference to the output specification.
    */
   IOSpec& device_output(std::string name, size_t memory_block_size) {
     auto spec = std::make_shared<IOSpec>(this, name, memory_block_size, IOSpec::IOType::kOutput);
+    auto [iter, inserted] = outputs_.insert_or_assign(name, std::move(spec));
+    if (!inserted) {
+      // this is not unexpected since device output port's memory size can be calculated later in
+      // the operator's lifetime
+      HOLOSCAN_LOG_WARN("Output port '{}' already existed and was overwritten", name);
+    }
+    return *(iter->second.get());
+  }
+
+  /**
+   * @brief Define an output specification for this operator with an externally managed device
+   * pointer. It is only applicable for GPU-resident operators.
+   *
+   * Use this overload when the operator allocates and manages its own device memory (e.g. via
+   * `cudaMalloc`). The executor will use this pointer directly instead of allocating a buffer.
+   * Both this port and the connected input port will map to the supplied device pointer.
+   *
+   * This overload is applied in overload resolution when the second argument is of type
+   * `CUdeviceptr` or `void*`.
+   *
+   * @tparam T The device pointer type (`CUdeviceptr` or `void*`).
+   * @param name The name of the output specification.
+   * @param device_ptr The device pointer for the output specification (must be non-null).
+   * @return The reference to the output specification.
+   */
+  template <typename T>
+  std::enable_if_t<std::is_same_v<std::decay_t<T>, CUdeviceptr> ||
+                       std::is_same_v<std::decay_t<T>, void*>,
+                   IOSpec&>
+  device_output(std::string name, T device_ptr) {
+    void* raw_ptr;
+    if constexpr (std::is_same_v<std::decay_t<T>, void*>) {
+      raw_ptr = device_ptr;
+    } else {
+      raw_ptr = reinterpret_cast<void*>(device_ptr);
+    }
+    auto spec = std::make_shared<IOSpec>(this, name, raw_ptr, IOSpec::IOType::kOutput);
     auto [iter, inserted] = outputs_.insert_or_assign(name, std::move(spec));
     if (!inserted) {
       HOLOSCAN_LOG_ERROR("Output port '{}' already existed and was overwritten", name);
@@ -438,7 +522,7 @@ class OperatorSpec : public ComponentSpec {
    */
   void param(Parameter<std::vector<holoscan::IOSpec*>>& parameter, const char* key,
              const char* headline, const char* description,
-             std::vector<holoscan::IOSpec*> default_value,
+             const std::vector<holoscan::IOSpec*>& default_value,
              ParameterFlag flag = ParameterFlag::kNone) {
     parameter.default_value_ = default_value;
     param(parameter, key, headline, description, flag);

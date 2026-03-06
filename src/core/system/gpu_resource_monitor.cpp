@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -772,8 +772,8 @@ bool GPUResourceMonitor::init_cuda_runtime() {
   HOLOSCAN_LOG_DEBUG(
       "Unable to use the NVML shared library from '{}'. Trying to use CUDA Runtime API instead.",
       kDefaultNvmlLibraryPath);
-  for (uint32_t i = 0; i < sizeof(kDefaultCudaRuntimeLibraryPaths) / sizeof(char*); ++i) {
-    libcudart_path = kDefaultCudaRuntimeLibraryPaths[i];
+  for (const char* path : kDefaultCudaRuntimeLibraryPaths) {
+    libcudart_path = path;
     cuda_handle_ = dlopen(libcudart_path, RTLD_NOW);
     if (cuda_handle_ != nullptr) {
       break;

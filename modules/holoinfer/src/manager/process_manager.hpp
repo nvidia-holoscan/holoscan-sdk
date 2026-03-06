@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,7 +57,7 @@ class ManagerProcessor {
    * @return InferStatus with appropriate code and message
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         bool use_cuda_graphs, const std::string config_path);
+                         bool use_cuda_graphs, const std::string& config_path);
 
   /*
    * @brief Executes post processing operations and generates the result
@@ -90,7 +90,7 @@ class ManagerProcessor {
    * @return InferStatus with appropriate code and message
    */
   InferStatus process_multi_tensor_operation(
-      const std::string tensor_name, const std::vector<std::string>& tensor_oper_map,
+      const std::string& tensor_name, const std::vector<std::string>& tensor_oper_map,
       DataMap& inferred_result_map, const std::map<std::string, std::vector<int>>& dimension_map);
   /*
    * @brief Get processed data

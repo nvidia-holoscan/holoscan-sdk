@@ -253,6 +253,13 @@ class InferenceOp : public holoscan::Operator {
   /// dimensions.
   std::map<std::string, std::vector<int>> dims_per_tensor_;
 
+  /// @brief Model inputs to be passed to the inference context
+  std::vector<std::string> model_inputs_;
+  /// @brief Model outputs to be passed to the inference context
+  std::vector<std::string> model_outputs_;
+  /// @brief Transmit outputs to be passed to the inference context
+  std::vector<std::string> transmit_outputs_;
+
   /// Operator Identifier, used in reporting.
   const std::string module_{"Inference Operator"};
 

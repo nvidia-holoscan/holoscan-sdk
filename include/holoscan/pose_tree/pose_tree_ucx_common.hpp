@@ -246,7 +246,9 @@ inline DeltaMessage create_pose_tree_frame_delta(uint64_t frame_id, const char* 
   DeltaMessage msg{};  // Zero-initialize
   msg.delta_type = DELTA_FRAME_CREATED;
   msg.data.frame_data.frame_id = frame_id;
-  std::snprintf(msg.data.frame_data.name, sizeof(msg.data.frame_data.name), "%s", name);
+  // snprintf cannot fail: name length is validated above and buffer is sized to fit
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+  (void)std::snprintf(msg.data.frame_data.name, sizeof(msg.data.frame_data.name), "%s", name);
   return msg;
 }
 

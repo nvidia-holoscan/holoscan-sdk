@@ -17,9 +17,14 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdio>
+#include <fstream>
 #include <memory>
+#include <regex>
 #include <set>
 #include <string>
+#include <thread>
 #include <utility>  // for std::pair
 
 #include <holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp>
@@ -260,6 +265,67 @@ TEST_F(GPUResidentFragmentTest, TestSetGPUResidentTimeout) {
   EXPECT_NO_THROW(fragment->gpu_resident().timeout_ms(0));
 }
 
+// Test data_not_ready_sleep_interval_us() API
+TEST_F(GPUResidentFragmentTest, TestSetGPUResidentDataNotReadySleepInterval) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Should not throw when setting sleep interval
+  EXPECT_NO_THROW(fragment->gpu_resident().data_not_ready_sleep_interval_us(100));
+  EXPECT_NO_THROW(fragment->gpu_resident().data_not_ready_sleep_interval_us(500));
+  EXPECT_NO_THROW(fragment->gpu_resident().data_not_ready_sleep_interval_us(1000));
+  EXPECT_NO_THROW(fragment->gpu_resident().data_not_ready_sleep_interval_us(0));
+}
+
+TEST_F(GPUResidentFragmentTest, TestDataNotReadySleepIntervalInRunningGraph) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  fragment.add_operator(source);
+
+  EXPECT_NO_THROW(fragment.gpu_resident().data_not_ready_sleep_interval_us(500));
+
+  // capture the output and look for HOLOSCAN_LOG_ERROR messages
+  testing::internal::CaptureStderr();
+  auto future = fragment.run_async();
+
+  // wait for the graph to be launched (max 5 seconds)
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
+      future.get();
+      FAIL() << "Fragment did not launch within 5 seconds";
+    }
+  }
+
+  // try to set the sleep interval to 100us in a running graph
+  fragment.gpu_resident().data_not_ready_sleep_interval_us(100);
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("data_not_ready_sleep_interval_us cannot be set anymore.") !=
+              std::string::npos)
+      << "Expected error not found in log output:\n"
+      << log_output;
+
+  // Tear down the fragment
+  fragment.gpu_resident().tear_down();
+
+  // wait for the workload to be torn down
+  while (fragment.gpu_resident().is_launched()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  future.get();
+}
+
+// Test data_not_ready_sleep_interval_us on non-GPU-resident fragment (should throw)
+TEST_F(GPUResidentFragmentTest, TestDataNotReadySleepIntervalOnNonGPUResidentFragment) {
+  auto non_gpu_fragment = std::make_shared<Fragment>();
+
+  // Trying to set sleep interval on non-GPU-resident fragment should throw
+  EXPECT_THROW(non_gpu_fragment->gpu_resident().data_not_ready_sleep_interval_us(100),
+               holoscan::RuntimeError);
+}
+
 // Test that Fragment API throws when not using GPU-resident executor
 TEST_F(GPUResidentFragmentTest, TestAPIThrowsWithoutGPUResidentExecutor) {
   auto fragment = std::make_shared<TestGPUResidentFragment>();
@@ -329,6 +395,20 @@ TEST_F(GPUResidentFragmentTest, TestLongChain) {
 
   // Should be able to initialize
   EXPECT_TRUE(executor->initialize_fragment());
+}
+
+// Test data_not_ready_sleep_interval_us through executor directly
+TEST_F(GPUResidentFragmentTest, TestDataNotReadySleepIntervalThroughExecutor) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment->executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  // Should be able to set sleep interval through executor directly
+  EXPECT_NO_THROW(executor->data_not_ready_sleep_interval_us(100));
+  EXPECT_NO_THROW(executor->data_not_ready_sleep_interval_us(500));
+  EXPECT_NO_THROW(executor->data_not_ready_sleep_interval_us(1000));
 }
 
 // ================================================================================================
@@ -412,6 +492,10 @@ TEST_F(GPUResidentFragmentTest, TestTimeoutEmptyWorkloadGraph) {
     std::this_thread::sleep_for(std::chrono::milliseconds(timeout + overhead_ms));
     // see if the graph has been torn down
     EXPECT_FALSE(fragment.gpu_resident().is_launched());
+    if (fragment.gpu_resident().is_launched()) {
+      // fail the test
+      FAIL() << "Fragment is still launched after timeout";
+    }
     future.get();
   }
 }
@@ -484,6 +568,404 @@ TEST_F(GPUResidentFragmentTest, TestTwoOutputsToOneInput_InSingleCall) {
   std::set<std::pair<std::string, std::string>> port_pairs{p1, p2};
 
   EXPECT_THROW(fragment.add_flow(tx, rx, port_pairs), holoscan::RuntimeError);
+}
+
+// ================================================================================================
+// Performance Measurement Tests
+// ================================================================================================
+
+// Test enabling performance measurement with valid sample count
+TEST_F(GPUResidentFragmentTest, TestEnablePerformanceMeasurement) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable performance measurement with 1000 samples - should succeed
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(1000));
+}
+
+// Test enabling performance measurement with zero samples (should throw)
+TEST_F(GPUResidentFragmentTest, TestEnablePerformanceMeasurementZeroSamples) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enabling with 0 samples should throw runtime_error
+  EXPECT_THROW(fragment->gpu_resident().enable_perf_measurement(0), std::runtime_error);
+}
+
+// Test enabling performance measurement with large sample count
+TEST_F(GPUResidentFragmentTest, TestEnablePerformanceMeasurementLargeSampleCount) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable with a very large sample count - should succeed
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(1000000));
+}
+
+// Test enabling performance measurement multiple times (overwrites previous configuration)
+TEST_F(GPUResidentFragmentTest, TestEnablePerformanceMeasurementMultipleTimes) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable multiple times with different sample counts - should all succeed
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(100));
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(500));
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(1000));
+}
+
+// Test print_perf_metrics without enabling performance measurement
+TEST_F(GPUResidentFragmentTest, TestPrintPerfMetricsWithoutEnabling) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Try to print without enabling - should throw because execution_times_us returns (nullptr, 0)
+  EXPECT_THROW(fragment->gpu_resident().print_perf_metrics(0, 0), std::runtime_error);
+}
+
+// Test save_perf_results_as_csv without enabling performance measurement (should throw)
+TEST_F(GPUResidentFragmentTest, TestSavePerfResultsAsCSVWithoutEnabling) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Try to save without enabling - should throw because execution_times_us returns (nullptr, 0)
+  EXPECT_THROW(fragment->gpu_resident().save_perf_results_as_csv(), std::runtime_error);
+}
+
+// Test print_perf_metrics when enabled but no data collected yet
+TEST_F(GPUResidentFragmentTest, TestPrintPerfMetricsNoDataCollected) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable performance measurement
+  fragment->gpu_resident().enable_perf_measurement(100);
+
+  // Try to print metrics before running the graph (no data collected yet)
+  // Should throw because num_samples == 0 (no actual samples collected)
+  EXPECT_THROW(fragment->gpu_resident().print_perf_metrics(0, 0), std::runtime_error);
+}
+
+// Test save_perf_results_as_csv when enabled but no data collected yet (should throw)
+TEST_F(GPUResidentFragmentTest, TestSavePerfResultsAsCSVNoDataCollected) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable performance measurement
+  fragment->gpu_resident().enable_perf_measurement(100);
+
+  // Try to save metrics before running the graph (no data collected yet)
+  // Should throw because num_samples == 0 (no actual samples collected)
+  EXPECT_THROW(fragment->gpu_resident().save_perf_results_as_csv(), std::runtime_error);
+}
+
+// Test save_perf_results_as_csv with custom filename (still throws without data)
+TEST_F(GPUResidentFragmentTest, TestSavePerfResultsAsCSVWithCustomFilename) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  // Enable performance measurement
+  fragment->gpu_resident().enable_perf_measurement(100);
+
+  // Try to save with custom filename but no data collected - should throw
+  std::string custom_filename = "/tmp/test_perf_results.csv";
+  EXPECT_THROW(fragment->gpu_resident().save_perf_results_as_csv(custom_filename),
+               std::runtime_error);
+}
+
+// Test that performance measurement API is accessible through Fragment::gpu_resident()
+TEST_F(GPUResidentFragmentTest, TestPerfMeasurementAccessThroughFragment) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+  fragment->compose();
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment->executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  // Enable through fragment's gpu_resident() interface
+  EXPECT_NO_THROW(fragment->gpu_resident().enable_perf_measurement(100));
+
+  // The API is accessible but throws without data
+  EXPECT_THROW(fragment->gpu_resident().print_perf_metrics(0, 0), std::runtime_error);
+  EXPECT_THROW(fragment->gpu_resident().save_perf_results_as_csv(), std::runtime_error);
+}
+
+// Test enabling performance measurement on non-GPU-resident fragment (should throw)
+TEST_F(GPUResidentFragmentTest, TestEnablePerfMeasurementOnNonGPUResidentFragment) {
+  auto non_gpu_fragment = std::make_shared<Fragment>();
+
+  // Trying to enable perf measurement on non-GPU-resident fragment should throw
+  EXPECT_THROW(non_gpu_fragment->gpu_resident().enable_perf_measurement(100),
+               holoscan::RuntimeError);
+}
+
+// Test enabling performance measurement before fragment is composed (should throw)
+TEST_F(GPUResidentFragmentTest, TestEnablePerfMeasurementBeforeCompose) {
+  auto fragment = std::make_shared<TestGPUResidentFragment>();
+
+  // Fragment is not yet composed, so it's not GPU-resident yet
+  // This should throw when trying to access gpu_resident()
+  EXPECT_THROW(fragment->gpu_resident().enable_perf_measurement(100), holoscan::RuntimeError);
+}
+
+// Test end-to-end with empty graph: no data_ready() called, so no samples collected
+// The perf measurement APIs should throw because no iterations completed
+TEST_F(GPUResidentFragmentTest, TestPerfMeasurementEndToEndEmptyGraph) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  fragment.add_operator(source);
+
+  // Enable performance measurement for 1000 samples
+  EXPECT_NO_THROW(fragment.gpu_resident().enable_perf_measurement(1000));
+
+  auto future = fragment.run_async();
+
+  // Wait for the graph to launch
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
+      future.get();
+      FAIL() << "Fragment did not launch within 5 seconds";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+
+  // Let it run for a bit - but we never call data_ready(), so no iterations complete
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+  // Tear down the fragment
+  fragment.gpu_resident().tear_down();
+  future.get();
+
+  // Wait for the fragment to be torn down
+  while (fragment.gpu_resident().is_launched()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  // No samples were collected because data_ready() was never called
+  // print_perf_metrics and save_perf_results_as_csv should throw
+  EXPECT_THROW(fragment.gpu_resident().print_perf_metrics(0, 0), std::runtime_error);
+  EXPECT_THROW(fragment.gpu_resident().save_perf_results_as_csv(), std::runtime_error);
+}
+
+// Test end-to-end with actual CUDA work: operators perform CUDA kernel execution
+// Trigger multiple iterations by calling data_ready() to collect performance samples
+TEST_F(GPUResidentFragmentTest, TestPerfMeasurementEndToEndWithCudaWork) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto compute = fragment.make_operator<TestCudaWorkGpuOp>("compute");
+  auto sink = fragment.make_operator<TestSinkGpuOp>("sink");
+  fragment.add_flow(source, compute);
+  fragment.add_flow(compute, sink);
+
+  // Enable performance measurement for 1000 samples
+  EXPECT_NO_THROW(fragment.gpu_resident().enable_perf_measurement(1000));
+
+  auto future = fragment.run_async();
+
+  // Wait for the graph to launch
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
+      future.get();
+      FAIL() << "Fragment did not launch within 5 seconds";
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  HOLOSCAN_LOG_INFO("Took {} ms to launch the GPU-resident CUDA graph",
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start_time)
+                        .count());
+
+  // Trigger multiple iterations to collect performance samples
+  // Each data_ready() call triggers one iteration of the GPU-resident graph
+  constexpr int num_iterations = 30;
+  for (int i = 0; i < num_iterations; ++i) {
+    start_time = std::chrono::steady_clock::now();
+    fragment.gpu_resident().data_ready();
+    // Wait for result to be ready before next iteration
+    do {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    } while (!fragment.gpu_resident().result_ready());
+    HOLOSCAN_LOG_INFO("Took {} ms to trigger data_ready() and get result ready",
+                      std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start_time)
+                          .count());
+  }
+
+  start_time = std::chrono::steady_clock::now();
+  // Tear down the fragment
+  fragment.gpu_resident().tear_down();
+  future.get();
+
+  // Wait for the fragment to be torn down
+  while (fragment.gpu_resident().is_launched()) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  HOLOSCAN_LOG_INFO("Took {} ms to tear down the CUDA graph",
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start_time)
+                        .count());
+
+  // Now performance data should be available
+  // Capture the output of print_perf_metrics
+  testing::internal::CaptureStderr();
+  EXPECT_NO_THROW(fragment.gpu_resident().print_perf_metrics(10, 10));
+  std::string perf_output = testing::internal::GetCapturedStderr();
+
+  // Verify the output contains expected performance metrics
+  EXPECT_TRUE(perf_output.find("GPU Resident Performance Metrics") != std::string::npos)
+      << "Expected performance metrics header not found in output";
+  EXPECT_TRUE(perf_output.find("Average execution time:") != std::string::npos)
+      << "Expected 'Average execution time' not found in output";
+  EXPECT_TRUE(perf_output.find("Maximum execution time:") != std::string::npos)
+      << "Expected 'Maximum execution time' not found in output";
+  EXPECT_TRUE(perf_output.find("Minimum execution time:") != std::string::npos)
+      << "Expected 'Minimum execution time' not found in output";
+  EXPECT_TRUE(perf_output.find("us") != std::string::npos)
+      << "Expected 'us' (microseconds) unit not found in output";
+
+  // Verify that numeric values are present (at least one digit followed by space and "us")
+  EXPECT_TRUE(std::regex_search(perf_output, std::regex(R"(\d+\.?\d*\s+us)")))
+      << "Expected numeric performance values not found in output:\n"
+      << perf_output;
+
+  // Save to CSV file
+  std::string csv_filename = "/tmp/gpu_resident_perf_test_cuda_work.csv";
+  EXPECT_NO_THROW(fragment.gpu_resident().save_perf_results_as_csv(csv_filename));
+
+  // Verify the CSV file exists and has content
+  std::ifstream csv_file(csv_filename);
+  ASSERT_TRUE(csv_file.is_open()) << "Failed to open CSV file: " << csv_filename;
+
+  // Read the file content
+  std::string content((std::istreambuf_iterator<char>(csv_file)), std::istreambuf_iterator<char>());
+  csv_file.close();
+
+  // The file should have content (comma-separated values)
+  EXPECT_FALSE(content.empty()) << "CSV file is empty";
+  EXPECT_TRUE(content.find(',') != std::string::npos)
+      << "CSV file doesn't contain comma-separated values";
+
+  // Clean up the CSV file
+  std::remove(csv_filename.c_str());
+}
+
+// ================================================================================================
+// stop_execution() API Tests
+// ================================================================================================
+
+// Test stop_execution with empty operator name (stops entire GPU-resident fragment)
+TEST_F(GPUResidentFragmentTest, TestStopExecutionEntireFragment) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto sink = fragment.make_operator<TestSinkGpuOp>("sink");
+  fragment.add_flow(source, sink);
+
+  // Run the fragment asynchronously
+  auto future = fragment.run_async();
+
+  // Wait for the GPU-resident CUDA graph to be launched
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    auto elapsed = std::chrono::steady_clock::now() - start_time;
+    ASSERT_LT(elapsed, std::chrono::seconds(5))
+        << "Timeout: GPU-resident CUDA graph was not launched within 5 seconds";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  EXPECT_TRUE(fragment.gpu_resident().is_launched());
+
+  // Call stop_execution to tear down the entire fragment
+  auto teardown_start = std::chrono::steady_clock::now();
+  EXPECT_NO_THROW(fragment.stop_execution());
+  auto teardown_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - teardown_start);
+
+  // Verify that the graph is no longer launched
+  EXPECT_FALSE(fragment.gpu_resident().is_launched());
+
+  // Wait for the async future to complete
+  EXPECT_NO_THROW(future.get());
+
+  HOLOSCAN_LOG_INFO("Teardown completed successfully in {} ms", teardown_duration.count());
+}
+
+// Test stop_execution with non-empty operator name (should log warning in GPU-resident mode)
+TEST_F(GPUResidentFragmentTest, TestStopExecutionSingleOperatorWarning) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto sink = fragment.make_operator<TestSinkGpuOp>("sink");
+  fragment.add_flow(source, sink);
+
+  // Set timeout to 0 so the fragment runs indefinitely until torn down
+  fragment.gpu_resident().timeout_ms(0);
+
+  // Run the fragment asynchronously
+  auto future = fragment.run_async();
+
+  // Wait for the GPU-resident CUDA graph to be launched
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    auto elapsed = std::chrono::steady_clock::now() - start_time;
+    ASSERT_LT(elapsed, std::chrono::seconds(5))
+        << "Timeout: GPU-resident CUDA graph was not launched within 5 seconds";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  EXPECT_TRUE(fragment.gpu_resident().is_launched());
+
+  // Capture log output
+  testing::internal::CaptureStderr();
+
+  // Try to stop a single operator - should log a warning and not stop
+  EXPECT_NO_THROW(fragment.stop_execution("source"));
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  // Verify warning message was logged
+  EXPECT_TRUE(log_output.find("Stopping execution of a single operator in GPU-resident execution "
+                              "mode is not supported") != std::string::npos)
+      << "Expected warning message not found in log output";
+
+  // Fragment should still be running
+  EXPECT_TRUE(fragment.gpu_resident().is_launched());
+
+  // Clean up: tear down the fragment properly
+  fragment.stop_execution("");
+  EXPECT_NO_THROW(future.get());
+}
+
+// Test stop_execution completes within timeout
+TEST_F(GPUResidentFragmentTest, TestStopExecutionTimeout) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto compute = fragment.make_operator<TestCudaWorkGpuOp>("compute");
+  auto sink = fragment.make_operator<TestSinkGpuOp>("sink");
+  fragment.add_flow(source, compute);
+  fragment.add_flow(compute, sink);
+
+  // Set timeout to 0 so the fragment runs indefinitely
+  fragment.gpu_resident().timeout_ms(0);
+
+  // Run the fragment asynchronously
+  auto future = fragment.run_async();
+
+  // Wait for launch
+  auto start_time = std::chrono::steady_clock::now();
+  while (!fragment.gpu_resident().is_launched()) {
+    auto elapsed = std::chrono::steady_clock::now() - start_time;
+    ASSERT_LT(elapsed, std::chrono::seconds(5))
+        << "Timeout: GPU-resident CUDA graph was not launched within 5 seconds";
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+
+  // Measure teardown time
+  auto teardown_start = std::chrono::steady_clock::now();
+  EXPECT_NO_THROW(fragment.stop_execution(""));
+  auto teardown_duration = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - teardown_start);
+
+  EXPECT_FALSE(fragment.gpu_resident().is_launched());
+  EXPECT_NO_THROW(future.get());
+
+  HOLOSCAN_LOG_INFO("Teardown completed in {} ms", teardown_duration.count());
 }
 
 }  // namespace holoscan

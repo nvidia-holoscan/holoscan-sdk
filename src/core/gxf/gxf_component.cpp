@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ namespace holoscan::gxf {
 namespace {
 
 nvidia::gxf::Handle<nvidia::gxf::Component> add_component_to_graph_entity(
-    gxf_context_t context, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
+    gxf_context_t context, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity,
     const char* type_name, const char* name, const std::vector<nvidia::gxf::Arg>& arg_list = {}) {
   auto null_component = nvidia::gxf::Handle<nvidia::gxf::Component>::Null();
   gxf_tid_t derived_tid = GxfTidNull();

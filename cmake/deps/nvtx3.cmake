@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,19 +16,16 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(nvtx3 3.3
+set(nvtx_VERSION 3.3)
+rapids_cpm_find(nvtx3 ${nvtx_VERSION}
     GLOBAL_TARGETS nvtx3-c nvtx3-cpp
     CPM_ARGS
-    GITHUB_REPOSITORY NVIDIA/NVTX
-    GIT_TAG v3.3.0-c-cpp
-    GIT_SHALLOW TRUE
-    EXCLUDE_FROM_ALL
-)
+        GITHUB_REPOSITORY NVIDIA/NVTX
+        GIT_TAG v3.3.0-c-cpp
+        GIT_SHALLOW TRUE
+        PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/nvtx3.patch
+        EXCLUDE_FROM_ALL
 
-if(nvtx3_ADDED)
-    # Install the headers needed for development with the SDK
-    install(DIRECTORY ${nvtx3_SOURCE_DIR}/include/nvtx3/
-        DESTINATION include/3rdparty/nvtx3
-        COMPONENT "holoscan-dependencies"
-        )
-endif()
+    OPTIONS
+        NVTX3_INSTALL ON
+)

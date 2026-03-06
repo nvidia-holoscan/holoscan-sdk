@@ -100,7 +100,7 @@ struct YAML::convert<holoscan::AsyncQueuePolicy> {
     if (!node.IsScalar())
       return false;
 
-    const std::string value = node.Scalar();
+    const std::string& value = node.Scalar();
 
     // Support string values (case-insensitive)
     std::string lower_value = value;
@@ -374,7 +374,7 @@ class AsyncDataLoggerResource : public DataLoggerResource {
   Parameter<bool>
       enable_large_data_queue_;  // Default: true (enable separate queue for large data processing)
   Parameter<int64_t> shutdown_wait_period_ms_;  // Default: -1 (wait indefinitely)
-  Parameter<DataLoggerQueueType> queue_type_;  // Default: LockFree
+  Parameter<DataLoggerQueueType> queue_type_;   // Default: LockFree
 
  private:
   // Polymorphic queues (allows different queue implementations)

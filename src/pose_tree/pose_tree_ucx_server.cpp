@@ -582,8 +582,9 @@ void PoseTreeUCXServer::run() {
 
   impl_->listener = impl_->worker->createListener(port_, connection_callback, this);
 
-  auto am_receiver = [this](
-                         std::shared_ptr<ucxx::Request> req, ucp_ep_h sender_ep, uint16_t msg_id) {
+  auto am_receiver = [this](const std::shared_ptr<ucxx::Request>& req,
+                            ucp_ep_h sender_ep,
+                            uint16_t msg_id) {
     if (!running_) {
       return;
     }
@@ -649,19 +650,19 @@ void PoseTreeUCXServer::run() {
   ucxx::AmReceiverCallbackInfo subscribe_callback_info("AMServer", MSG_SUBSCRIBE);
   impl_->worker->registerAmReceiverCallback(
       std::move(subscribe_callback_info),
-      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_SUBSCRIBE); });
+      [am_receiver](const auto& req, auto ep) { am_receiver(req, ep, MSG_SUBSCRIBE); });
   ucxx::AmReceiverCallbackInfo delta_callback_info("AMServer", MSG_DELTA);
   impl_->worker->registerAmReceiverCallback(
       std::move(delta_callback_info),
-      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_DELTA); });
+      [am_receiver](const auto& req, auto ep) { am_receiver(req, ep, MSG_DELTA); });
   ucxx::AmReceiverCallbackInfo close_callback_info("AMServer", MSG_CLOSE);
   impl_->worker->registerAmReceiverCallback(
       std::move(close_callback_info),
-      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_CLOSE); });
+      [am_receiver](const auto& req, auto ep) { am_receiver(req, ep, MSG_CLOSE); });
   ucxx::AmReceiverCallbackInfo snapshot_ack_callback_info("AMServer", MSG_SNAPSHOT_ACK);
   impl_->worker->registerAmReceiverCallback(
       std::move(snapshot_ack_callback_info),
-      [am_receiver](auto req, auto ep) { am_receiver(std::move(req), ep, MSG_SNAPSHOT_ACK); });
+      [am_receiver](const auto& req, auto ep) { am_receiver(req, ep, MSG_SNAPSHOT_ACK); });
 
   {
     std::lock_guard<std::mutex> lk(ready_mutex_);

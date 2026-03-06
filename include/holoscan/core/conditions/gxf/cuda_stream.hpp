@@ -24,6 +24,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gxf/std/receiver.hpp>
@@ -113,13 +114,15 @@ class CudaStreamCondition : public Condition {
   void on_execute(int64_t timestamp) override;
 
   /// Set receiver for this condition (legacy single-port API)
-  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
 
   /// Get the receiver for this condition (nullptr if not set)
   std::shared_ptr<Receiver> receiver() { return receiver_.has_value() ? receiver_.get() : nullptr; }
 
   /// Set receivers for this condition (for all input ports to monitor)
-  void receivers(std::vector<std::shared_ptr<Receiver>> receivers) { receivers_ = receivers; }
+  void receivers(std::vector<std::shared_ptr<Receiver>> receivers) {
+    receivers_ = std::move(receivers);
+  }
 
   /// Get the receivers for this condition (empty vector if not set)
   std::vector<std::shared_ptr<Receiver>> receivers() {

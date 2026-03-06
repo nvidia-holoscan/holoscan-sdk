@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +23,14 @@ target_link_libraries(multi_branch_pipeline
 )
 
 # Copy config file to the build tree
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/multi_branch_pipeline.yaml"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_branch_pipeline.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/multi_branch_pipeline.yaml"
+  COMMENT "Copying multi_branch_pipeline.yaml"
+)
 add_custom_target(multi_branch_pipeline_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_branch_pipeline.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "multi_branch_pipeline.yaml"
-    BYPRODUCTS "multi_branch_pipeline.yaml"
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/multi_branch_pipeline.yaml"
 )
 add_dependencies(multi_branch_pipeline multi_branch_pipeline_yaml)
 

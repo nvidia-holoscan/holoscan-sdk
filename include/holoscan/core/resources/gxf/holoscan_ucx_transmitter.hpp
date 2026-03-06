@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,6 @@
 
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_HOLOSCAN_UCX_TRANSMITTER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_HOLOSCAN_UCX_TRANSMITTER_HPP
-
-#include <string>
 
 #include <gxf/ucx/ucx_transmitter.hpp>
 
@@ -70,9 +68,6 @@ class HoloscanUcxTransmitter : public nvidia::gxf::UcxTransmitter {
  private:
   holoscan::Operator* op_ = nullptr;  ///< The operator that this transmitter is attached to.
   bool tracking_ = false;             ///< Used to decide whether to use data flow tracking or not.
-  /// The concatenated name of the operator and this transmitter.
-  std::string op_transmitter_name_pair_;
-  int is_op_root = -1;  ///< Indicates whether associated op is a root operator.
 };
 
 }  // namespace holoscan

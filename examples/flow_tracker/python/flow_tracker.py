@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -91,6 +91,16 @@ class PingMxOp(Operator):
 
         print(f"Middle message value: {value.data}")
 
+        # Get the data flow tracking label for the input port
+        message_label = self.get_data_flow_tracking_label("in")
+
+        # Log information about the message paths
+        print(f"Input port has data flow tracking label: {message_label.to_string()}")
+
+        for i in range(message_label.num_paths()):
+            print(f"Path {i}: {message_label.get_path_name(i)}")
+            print(f"  Current latency: {message_label.get_e2e_latency_ms(i)} ms")
+
         # Multiply the values by the multiplier parameter
         value.data *= self.multiplier
 
@@ -154,6 +164,7 @@ def main():
     with Tracker(
         app, filename="logger.log", num_start_messages_to_skip=2, num_last_messages_to_discard=3
     ) as tracker:
+        tracker.add_probe_operator("middle1")
         app.run()
         tracker.print()
 

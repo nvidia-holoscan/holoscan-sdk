@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -150,7 +150,8 @@ void process_dlpack_stream(py::object stream_obj) {
     }
     // NOLINTNEXTLINE(cppcoreguidelines-pro-type-reinterpret-cast,performance-no-int-to-ptr)
     if (stream_id > 2) {
-      stream_ptr = reinterpret_cast<cudaStream_t>(stream_id);
+      // NOLINTNEXTLINE(performance-no-int-to-ptr)
+      stream_ptr = reinterpret_cast<cudaStream_t>(static_cast<std::uintptr_t>(stream_id));
     }
   } else {
     throw std::runtime_error(fmt::format("Invalid stream type: should be int type but given '{}'",

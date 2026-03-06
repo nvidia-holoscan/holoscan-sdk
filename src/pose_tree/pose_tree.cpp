@@ -14,6 +14,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+// Array subscript access for frame name copying is intentional.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
+
 #include "holoscan/pose_tree/pose_tree.hpp"
 
 #include <algorithm>
@@ -845,7 +849,7 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
     auto lhs_rhs = edges_map_.get({lhs, rhs});
     // If the history does not exist yet, let's create it
     if (!lhs_rhs) {
-      const auto result = create_edges_impl(
+      auto result = create_edges_impl(
           lhs, rhs, default_history_length_, PoseTreeEdgeHistory::AccessMethod::kDefault);
       // It might fail due to a loop or memory issue.
       if (!result) {
@@ -933,7 +937,7 @@ PoseTree::expected_t<PoseTree::version_t> PoseTree::set(const frame_t lhs, const
 PoseTree::expected_t<std::pair<Pose3d, double>> PoseTree::get_latest_impl(frame_t lhs,
                                                                           frame_t rhs) const {
   if (lhs > rhs) {
-    const auto result = get_latest_impl(rhs, lhs);
+    auto result = get_latest_impl(rhs, lhs);
     if (!result) {
       return result;
     }
@@ -1089,7 +1093,7 @@ PoseTree::expected_t<Pose3d> PoseTree::get_impl(const frame_t lhs, const frame_t
     return Pose3d::identity();
   }
   if (lhs > rhs) {
-    const auto result = get_impl(rhs, lhs, time, method, version);
+    auto result = get_impl(rhs, lhs, time, method, version);
     if (!result) {
       return result;
     }
@@ -1311,3 +1315,5 @@ PoseTree::expected_t<Pose3d> PoseTree::get_dfs_impl(const frame_t lhs, const fra
 }
 
 }  // namespace holoscan
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)

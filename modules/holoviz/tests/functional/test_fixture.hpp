@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -106,7 +106,7 @@ class TestBase : public ::testing::Test {
    *
    * @return false if CRC32 of read back does not match provided CRC32
    */
-  bool CompareColorResultCRC32(const std::vector<uint32_t> crc32);
+  bool CompareColorResultCRC32(const std::vector<uint32_t>& crc32);
 
   /**
    * Read back depth data, generate a CRC32 and compare with the provided CRC32's.
@@ -115,7 +115,7 @@ class TestBase : public ::testing::Test {
    *
    * @return false if CRC32 of read back does not match provided CRC32
    */
-  bool CompareDepthResultCRC32(const std::vector<uint32_t> crc32);
+  bool CompareDepthResultCRC32(const std::vector<uint32_t>& crc32);
 
   uint32_t device_ordinal_ = 0;
 

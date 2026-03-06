@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,26 +16,51 @@
  */
 
 #include <cuda_runtime.h>
-
 #include <cuda/std/atomic>
+#include <cuda/std/chrono>
 
 #include <cstdio>
 
 #include "gr_cuda_controller.cuh"
+
 #include "holoscan/core/executors/gpu_resident/controlcommand.hpp"
 #include "holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh"
 
 extern "C" {
 
-__global__ void while_end_marker(unsigned int* data_ready_device,
-                                 unsigned int* result_ready_device) {
+__device__ unsigned long long gettime_ns() {
+  return cuda::std::chrono::system_clock::now().time_since_epoch().count();
+}
+
+__global__ void while_end_marker(unsigned int* data_ready_device, unsigned int* result_ready_device,
+                                 unsigned int* execution_times_us, unsigned int num_samples,
+                                 unsigned long long* start_time_ns,
+                                 unsigned int* actual_samples_collected, bool sync_with_host) {
+  if (sync_with_host) {
+    __threadfence_system();
+  }
+
+  if (execution_times_us && actual_samples_collected && *actual_samples_collected < num_samples) {
+    // end the perf measurement timer and store the execution time
+    unsigned long long current_time_ns = gettime_ns();
+    unsigned long long execution_time_ns = current_time_ns - *start_time_ns;
+    unsigned int execution_time_us = execution_time_ns / 1000;
+    execution_times_us[*actual_samples_collected] = execution_time_us;
+    // Increment the actual number of samples collected
+    (*actual_samples_collected)++;
+  }
+
   // Mark result as ready and data as not ready using device functions
-  gpu_resident_mark_result_ready_dev(result_ready_device);
   gpu_resident_mark_data_not_ready_dev(data_ready_device);
+  gpu_resident_mark_result_ready_dev(result_ready_device);
+}
+
+__global__ void start_perf_timer(unsigned long long* start_time_ns) {
+  *start_time_ns = gettime_ns();
 }
 
 __global__ void while_controller(unsigned int* data_ready_device, unsigned int* result_ready_device,
-                                 unsigned int* tear_down_device,
+                                 unsigned int* tear_down_device, unsigned int sleep_interval_us,
                                  cudaGraphConditionalHandle while_handle,
                                  cudaGraphConditionalHandle if_handle) {
   // Create cuda::std::atomic_ref for CPU-GPU synchronization
@@ -47,9 +72,10 @@ __global__ void while_controller(unsigned int* data_ready_device, unsigned int* 
   unsigned int tear_down = tear_down_atomic.load(cuda::std::memory_order_acquire);
 
   if (data_ready == static_cast<unsigned int>(holoscan::ControlCommand::DATA_NOT_READY)) {
-    // data is not ready, don't do anything and sleep for 500 us
-    for (int i = 0; i < 500; i++) {
-      unsigned int sleep_duration_ns = 1000000;  // 1 us = 1,000,000 ns
+    // data is not ready, don't do anything and sleep for the specified interval
+    // for loop is used because nanosleep works in max of 1 ms granularity
+    for (unsigned int i = 0; i < sleep_interval_us; i++) {
+      unsigned int sleep_duration_ns = 1000;  // 1 us = 1000 ns
       asm volatile("nanosleep.u32 %0;" ::"r"(sleep_duration_ns));
     }
     cudaGraphSetConditional(if_handle, 0);

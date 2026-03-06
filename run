@@ -795,6 +795,8 @@ build() {
             if [ '${use_sccache}' = 'ON' ]; then
                 sccache --show-stats > ${build_path}/sccache-stats.txt
             fi
+
+            # Install Holoscan SDK and its dependencies
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions
@@ -804,6 +806,43 @@ build() {
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-dependencies
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-python_libs
+            cmake --install ${build_path} --prefix ${install_prefix} --component cli11
+            cmake --install ${build_path} --prefix ${install_prefix} --component concurrentqueue
+            cmake --install ${build_path} --prefix ${install_prefix} --component dlpack
+            cmake --install ${build_path} --prefix ${install_prefix} --component fmt
+            cmake --install ${build_path} --prefix ${install_prefix} --component nvtx3
+            cmake --install ${build_path} --prefix ${install_prefix} --component rapids_logger
+            cmake --install ${build_path} --prefix ${install_prefix} --component rmm
+            cmake --install ${build_path} --prefix ${install_prefix} --component spdlog
+            cmake --install ${build_path} --prefix ${install_prefix} --component tl-expected
+            cmake --install ${build_path} --prefix ${install_prefix} --component ucxx
+
+            # Install Holoscan Sensor Bridge (if enabled)
+            if grep -q "HOLOSCAN_BUILD_HOLOLINK:BOOL=ON" ${build_path}/CMakeCache.txt; then
+                hololink_install_prefix=${install_prefix}/../install-hololink
+                mkdir -p \${hololink_install_prefix}
+                hololink_install_prefix=\$(realpath \${hololink_install_prefix})
+                for component in \
+                    hololink-camera-sensor \
+                    hololink-cmake \
+                    hololink-common \
+                    hololink-core \
+                    hololink-emulation \
+                    hololink-emulation-sensors \
+                    hololink-examples \
+                    hololink-operators \
+                    hololink-python_libs \
+                    hololink-python_tools \
+                    hololink-roce-operators \
+                    hololink-scripts \
+                    hololink-sensors \
+                    hololink-tools
+                do
+                    cmake --install ${build_path} --prefix \${hololink_install_prefix} --component \$component
+                done
+             else
+                echo \"Hololink is not built, skipping installation\"
+            fi
         "
 }
 

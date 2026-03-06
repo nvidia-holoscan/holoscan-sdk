@@ -143,7 +143,7 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.3/LICENSE)
+Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
@@ -160,6 +160,10 @@ Licensed under MIT (https://github.com/pytest-dev/pytest/blob/main/LICENSE)
 python-on-whales (https://github.com/gabrieldemarmiesse/python-on-whales)
 Copyright (c) 2020 Gabriel de Marmiesse de Lussan
 Licensed under MIT (https://github.com/gabrieldemarmiesse/python-on-whales/raw/master/LICENSE)
+
+rdma-core/ibverbs (https://github.com/linux-rdma/rdma-core)
+Refer to individual files for information on the copyright holders.
+Licensed under BSD (MIT variant) (https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT)
 
 RMM (https://github.com/rapidsai/rmm)
 Copyright (c) 2018-2024, NVIDIA CORPORATION.

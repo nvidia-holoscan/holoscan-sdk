@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -100,7 +100,7 @@ bool AppDriverClient::worker_execution_finished(const std::string& worker_ip,
   request.set_worker_ip(worker_ip);
   request.set_worker_port(worker_port);
 
-  holoscan::distributed::Result* worker_termination_status = new holoscan::distributed::Result();
+  auto* worker_termination_status = request.mutable_status();
   switch (code) {
     case AppWorkerTerminationCode::kSuccess:
       worker_termination_status->set_code(holoscan::distributed::ErrorCode::SUCCESS);
@@ -112,7 +112,6 @@ bool AppDriverClient::worker_execution_finished(const std::string& worker_ip,
       worker_termination_status->set_code(holoscan::distributed::ErrorCode::FAILURE);
       break;
   }
-  request.set_allocated_status(worker_termination_status);
 
   // Construct a response.
   holoscan::distributed::WorkerExecutionFinishedResponse response;

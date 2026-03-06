@@ -20,6 +20,7 @@ set(HOLOSCAN_GXF_COMPONENTS
     cuda
     logger
     multimedia
+    pubsub
     rmm
     serialization
     std
@@ -96,16 +97,9 @@ endforeach()
 if(NOT GXF_ROOT)
     cmake_path(GET "${GXF_DIR}" PARENT_PATH PARENT_PATH PARENT_PATH GXF_ROOT)
 endif()
-find_path(GXF_PYTHON_MODULE_PATH
-    NAMES
-        core/__init__.py
-        core/Gxf.py
-    PATHS ${GXF_ROOT}/python/gxf
-)
 
 # Set variables in parent scope for use throughout the Holoscan project
 set(GXF_INCLUDE_DIR ${GXF_INCLUDE_DIR} PARENT_SCOPE)
-set(GXF_PYTHON_MODULE_PATH ${GXF_PYTHON_MODULE_PATH} PARENT_SCOPE)
 set(HOLOSCAN_GXF_LIB_DIR ${HOLOSCAN_GXF_LIB_DIR} PARENT_SCOPE)
 set(HOLOSCAN_GXF_BIN_DIR ${HOLOSCAN_GXF_BIN_DIR} PARENT_SCOPE)
 set(HOLOSCAN_GXF_COMPONENTS ${HOLOSCAN_GXF_COMPONENTS} PARENT_SCOPE)

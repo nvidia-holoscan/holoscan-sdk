@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy Holoviz geometry application
-add_custom_target(python_holoviz_geometry ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "holoviz_geometry.py"
-  BYPRODUCTS "holoviz_geometry.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry.py"
+  COMMENT "Copying holoviz_geometry.py"
+)
+add_custom_target(python_holoviz_geometry ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry.py"
 )
 
 add_dependencies(python_holoviz_geometry racerx_data)
@@ -80,10 +84,14 @@ if(HOLOSCAN_BUILD_TESTS)
 endif()
 
 # Copy Holoviz geometry 3D application
-add_custom_target(python_holoviz_geometry_3d ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry_3d.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry_3d.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "holoviz_geometry_3d.py"
-  BYPRODUCTS "holoviz_geometry_3d.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_geometry_3d.py"
+  COMMENT "Copying holoviz_geometry_3d.py"
+)
+add_custom_target(python_holoviz_geometry_3d ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/holoviz_geometry_3d.py"
 )
 
 add_dependencies(python_holoviz_geometry_3d racerx_data)
@@ -149,10 +157,14 @@ if(HOLOSCAN_BUILD_TESTS)
 endif()
 
 # Copy Holoviz views application
-add_custom_target(python_holoviz_views ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/holoviz_views.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_views.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "holoviz_views.py"
-  BYPRODUCTS "holoviz_views.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/holoviz_views.py"
+  COMMENT "Copying holoviz_views.py"
+)
+add_custom_target(python_holoviz_views ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/holoviz_views.py"
 )
 
 add_dependencies(python_holoviz_views racerx_data)

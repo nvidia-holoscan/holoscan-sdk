@@ -15,4 +15,5 @@ technologies.
 
 aja_setup
 emergent_setup
+holoscan_sensor_bridge
 ```

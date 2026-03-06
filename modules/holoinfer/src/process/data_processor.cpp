@@ -17,6 +17,7 @@
 
 #include "data_processor.hpp"
 
+#include <cmath>
 #include <functional>
 #include <iostream>
 #include <map>
@@ -33,7 +34,7 @@ namespace inference {
 
 InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
                                       const Mappings& custom_kernels, bool use_cuda_graphs,
-                                      const std::string config_path = {}) {
+                                      const std::string& config_path) {
   if (config_path.length() > 0) {
     if (std::filesystem::exists(config_path)) {
       config_path_ = config_path;
@@ -179,6 +180,7 @@ InferStatus DataProcessor::initialize(const MultiMappings& process_operations,
               std::vector<std::string> output_dimensions;
               string_split(output_dimensions_string, output_dimensions, ',');
               std::vector<int> output_dimensions_int;
+              output_dimensions_int.reserve(output_dimensions.size());
               for (auto& dim : output_dimensions) {
                 output_dimensions_int.push_back(std::stoi(dim));
               }
@@ -294,8 +296,8 @@ InferStatus DataProcessor::print_custom_binary_classification(
   auto indata_float = static_cast<const float*>(indata);
 
   if (dsize == 2) {
-    auto first_value = 1.0 / (1 + exp(-indata_float[0]));
-    auto second_value = 1.0 / (1 + exp(-indata_float[1]));
+    auto first_value = 1.0f / (1 + std::exp(-indata_float[0]));
+    auto second_value = 1.0f / (1 + std::exp(-indata_float[1]));
 
     if (first_value > second_value) {
       std::cout << custom_strings[0] << ". Confidence: " << first_value << "\n";
@@ -335,14 +337,14 @@ InferStatus DataProcessor::export_binary_classification_to_csv(
   }
 
   if (!data_exporter_) {
-    const std::string app_name = custom_strings[0];
+    const std::string& app_name = custom_strings[0];
     const std::vector<std::string> columns = {
         custom_strings[1], custom_strings[2], custom_strings[3]};
     data_exporter_ = std::make_unique<CsvDataExporter>(app_name, columns);
   }
 
-  auto first_value = 1.0 / (1 + exp(-indata_float[0]));
-  auto second_value = 1.0 / (1 + exp(-indata_float[1]));
+  auto first_value = 1.0f / (1 + std::exp(-indata_float[0]));
+  auto second_value = 1.0f / (1 + std::exp(-indata_float[1]));
   std::vector<std::string> data;
   if (first_value > second_value) {
     std::ostringstream confidence_score_ss;

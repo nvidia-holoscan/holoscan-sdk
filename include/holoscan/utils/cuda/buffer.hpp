@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,8 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <stdexcept>
+
+#include "holoscan/utils/cuda_macros.hpp"
 
 /// The code is partially copied from modules/holoinfer/src/include/holoinfer_buffer.hpp
 /// When time comes, we will merge these two implementations, so that not only holoinfer, but also
@@ -72,7 +74,10 @@ inline uint32_t get_element_size(BufferDataType data_type) noexcept {
  */
 class CudaAllocator {
  public:
-  bool operator()(void** ptr, size_t size) const { return cudaMalloc(ptr, size) == cudaSuccess; }
+  bool operator()(void** ptr, size_t size) const {
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(ptr, size), "Failed to allocate CUDA memory");
+    return true;
+  }
 };
 
 /**
@@ -82,7 +87,7 @@ class CudaFree {
  public:
   void operator()(void* ptr) const {
     if (ptr) {
-      cudaFree(ptr);
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaFree(ptr), "Failed to free CUDA memory");
     }
   }
 };
@@ -95,7 +100,9 @@ class CudaFree {
 class CudaHostMappedAllocator {
  public:
   bool operator()(void** ptr, size_t size) const {
-    return cudaHostAlloc(ptr, size, cudaHostAllocMapped) == cudaSuccess;
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaHostAlloc(ptr, size, cudaHostAllocMapped),
+                                   "Failed to allocate CUDA host mapped memory");
+    return true;
   }
 };
 
@@ -107,7 +114,7 @@ class CudaHostFree {
  public:
   void operator()(void* ptr) const {
     if (ptr) {
-      cudaFreeHost(ptr);
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaFreeHost(ptr), "Failed to free CUDA host memory");
     }
   }
 };
@@ -211,9 +218,13 @@ class DeviceBuffer : public Buffer {
   void resize(size_t number_of_elements) override;
   ///@}
 
+  /// Copies data from device to host after allocating the host memory
+  void* host_data(cudaStream_t stream = 0);
+
  private:
   size_t size_{0}, capacity_{0};
   void* buffer_ = nullptr;
+  void* host_buffer_ = nullptr;
   CudaAllocator allocator_;
   CudaFree free_;
 };

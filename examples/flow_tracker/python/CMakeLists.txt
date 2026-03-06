@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator ping_multi_port application
-add_custom_target(python_flow_tracker ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/flow_tracker.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/flow_tracker.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "flow_tracker.py"
-  BYPRODUCTS "flow_tracker.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/flow_tracker.py"
+  COMMENT "Copying flow_tracker.py"
+)
+add_custom_target(python_flow_tracker ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/flow_tracker.py"
 )
 
 # Install the app
@@ -45,9 +49,11 @@ if(HOLOSCAN_BUILD_TESTS)
       "${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/flow_tracker.py 2>&1 | \
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py \
         --pass-pattern 'Data Flow Tracking Results' \
-        --pass-pattern 'Path 1: root1,middle1,leaf1' \
-        --pass-pattern 'Path 2: root1,middle1,leaf2' \
-        --pass-pattern 'Path 3: root2,middle2,leaf2'"
+        --pass-pattern 'root1,middle1,leaf1\\s+' \
+        --pass-pattern 'root1,middle1,leaf2\\s+' \
+        --pass-pattern 'root2,middle2,leaf2\\s+' \
+        --pass-pattern 'root1,middle1\\s+' \
+        --pass-pattern 'Current latency: [0-9]+\\.?[0-9]* ms'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 endif()

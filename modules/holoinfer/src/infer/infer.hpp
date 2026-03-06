@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +54,23 @@ class InferBase {
                                    cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference) {
     return InferStatus();
   }
+
+  /**
+   * @brief Does the GPU Resident inference
+   * @param input_buffer Input buffer on GPU
+   * @param output_buffer Output buffer
+   * @param cuda_stream CUDA stream
+   */
+  virtual void do_gr_inference(void* input_buffer, void* output_buffer, cudaStream_t cuda_stream) {
+    return;
+  }
+
+  /**
+   * @brief Initializes the GPU Resident inference
+   * @param input_buffer Input buffer on GPU
+   * @param output_buffer Output buffer
+   */
+  virtual void init_gr_inference(void* input_buffer, void* output_buffer) { return; }
 
   /**
    * @brief Updates the dimensions per tensor in case of dynamic inputs.

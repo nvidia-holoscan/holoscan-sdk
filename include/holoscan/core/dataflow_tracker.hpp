@@ -25,9 +25,11 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "./forward_def.hpp"
@@ -51,6 +53,7 @@ enum class DataFlowMetric {
   kNumDstMessages,
 };
 
+// NOLINTNEXTLINE(cert-err58-cpp)
 static const std::unordered_map<DataFlowMetric, std::string> metricToString = {
     {DataFlowMetric::kMaxE2ELatency, "Max end-to-end Latency (ms)"},
     {DataFlowMetric::kMaxMessageID, "Max Latency Message No"},
@@ -191,7 +194,7 @@ class DataFlowTracker {
    * @param metric The metric to be queried.
    * @return The value of the metric m for the given path.
    */
-  double get_metric(std::string pathstring, holoscan::DataFlowMetric metric);
+  double get_metric(const std::string& pathstring, holoscan::DataFlowMetric metric);
 
   /**
    * @brief Return the value of a metric.
@@ -241,10 +244,22 @@ class DataFlowTracker {
    */
   std::map<std::string, uint64_t> get_port_frame_numbers(const std::string& operator_name) const;
 
+  /**
+   * @brief Add a probe operator by name.
+   *
+   * If the operator name is already registered as a probe operator,
+   * a warning message will be logged.
+   *
+   * @param operator_name The name of the operator to register as a probe operator.
+   */
+  void add_probe_operator(const std::string& operator_name);
+
  protected:
   // Making DFFTCollector friend class to access update_latency,
   // update_source_messages_number, and write_to_logfile.
   friend class DFFTCollector;
+  // Allow GXFExecutor to register root/leaf operators
+  friend class holoscan::gxf::GXFExecutor;
 
   // Making AnnotatedDoubleBufferReceiver friend class to access update_latency and write_to_logfile
   // because the cyclic paths are updated from there, instead of DFFTCollector
@@ -264,7 +279,7 @@ class DataFlowTracker {
    * @param pathstring The path name string for which the latency is being updated.
    * @param current_latency The current latency value.
    */
-  void update_latency(std::string pathstring, double current_latency);
+  void update_latency(const std::string& pathstring, double current_latency);
 
   /**
    * @brief Update the tracker with the number of published messages for a given source
@@ -276,7 +291,7 @@ class DataFlowTracker {
    * @param source The name of the source in the form of [OperatorName->OutputName].
    * @param num The new number of published messages.
    */
-  void update_source_messages_number(std::string source, uint64_t num);
+  void update_source_messages_number(const std::string& source, uint64_t num);
 
   /**
    * @brief Writes to a log file only if file logging is enabled. Otherwise, the
@@ -285,9 +300,40 @@ class DataFlowTracker {
    *
    * @param text The new text to be written to the log file.
    */
-  void write_to_logfile(std::string text);
+  void write_to_logfile(const std::string& text);
+
+  /// The following are internal functions to be used by the GXFExecutor
+  /// to add root/leaf/probe operators to the tracker after the operators are initialized by GXF.
+  void add_root_op(Operator* op);
+  void add_leaf_op(Operator* op);
+  void add_probe_op(Operator* op);
+
+  void finalize_probe();
+
+  // Query helpers by codelet id; return Operator* if present
+  std::optional<Operator*> is_root_codelet(int64_t codelet_cid) const;
+  std::optional<Operator*> is_leaf_codelet(int64_t codelet_cid) const;
+  std::optional<Operator*> is_probe_codelet(int64_t codelet_cid) const;
+
+  /**
+   * @brief Checks if the operator name is added by calling add_probe_operator(std::string).
+   *
+   * @param operator_name The name of the operator to check.
+   * @return true if the operator name was added by calling add_probe_operator(std::string), false
+   * otherwise.
+   */
+  bool check_probe_op_name(const std::string& operator_name) const;
+
+  void remove_probe_op_name(const std::string& operator_name);
 
  private:
+  // Maps of codelet id to Operator* for root/leaf/probe categories
+  std::map<int64_t, Operator*> root_ops_;
+  std::map<int64_t, Operator*> leaf_ops_;
+  std::map<int64_t, Operator*> probe_ops_;
+
+  std::unordered_set<std::string> probe_op_names_;  ///< Set of probe operator names.
+
   bool is_limited_tracking =
       false;  ///< The variable is used to indicate whether tracking is performed only at the root
               ///< and leaf operators, and intermediate operators are not timestamped.

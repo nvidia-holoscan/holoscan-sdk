@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,10 +22,4 @@ target_link_libraries(data_loggers_async_console_logger
     PUBLIC
         holoscan::core
         holoscan::data_loggers::basic_console_logger
-)
-
-# Add concurrent_queue header-only library include directory
-target_include_directories(data_loggers_async_console_logger
-    PRIVATE
-        $<BUILD_INTERFACE:${concurrent_queue_SOURCE_DIR}>
 )

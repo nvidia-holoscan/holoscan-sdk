@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -95,7 +95,7 @@ class PYBIND11_EXPORT PyApplication : public Application {
   // Fragment add_flow overloads
   void add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                 const std::shared_ptr<Fragment>& downstream_frag,
-                std::set<std::pair<std::string, std::string>> port_pairs) override;
+                const std::set<std::pair<std::string, std::string>>& port_pairs) override;
 
   // Subgraph add_flow overloads
   void add_flow(const std::shared_ptr<Operator>& upstream_op,

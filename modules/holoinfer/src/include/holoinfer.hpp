@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,7 +101,7 @@ class _HOLOSCAN_EXTERNAL_API_ ProcessorContext {
    * @return InferStatus with appropriate holoinfer_code and message.
    */
   InferStatus initialize(const MultiMappings& process_operations, const Mappings& custom_kernels,
-                         bool use_cuda_graphs, const std::string config_path);
+                         bool use_cuda_graphs, const std::string& config_path);
 
   /**
    * Process the tensors with operations as initialized.

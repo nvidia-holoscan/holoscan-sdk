@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,14 +34,12 @@
 
 namespace holoscan::gxf {
 
-namespace {
 // Method name to get the GXF extension factory
-constexpr const char* kGxfExtensionFactoryName = "GxfExtensionFactory";
+inline constexpr const char* kGxfExtensionFactoryName = "GxfExtensionFactory";
 // Max size of extensions
-constexpr int kGXFExtensionsMaxSize = 1024;
+inline constexpr int kGXFExtensionsMaxSize = 1024;
 // Method signature for the GXF extension factory
 using GxfExtensionFactory = gxf_result_t(void**);
-}  // namespace
 
 /**
  * @brief Class to manage GXF extensions.
@@ -194,6 +192,8 @@ class GXFExtensionManager : public ExtensionManager {
   /// Storage for the extension TIDs
   gxf_tid_t extension_tid_list_[kGXFExtensionsMaxSize] = {};
   /// request/response structure for the runtime info
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay) GXF C
+  // API
   gxf_runtime_info runtime_info_{nullptr, kGXFExtensionsMaxSize, extension_tid_list_};
 
   // Using ordered containers (std::set/std::map) rather than their unordered counterparts

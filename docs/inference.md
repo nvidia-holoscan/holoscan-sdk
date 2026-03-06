@@ -135,6 +135,12 @@ Required parameters and related features available with the Holoscan Inference M
         - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `"1,1,1"` will be used.
         - Maximum allowed batch size for `tensorRT` backend is 256
 
+- Model dependencies: If one model consumes the output of another, you no longer need separate `InferenceOp` instances. The operator derives a dependency graph from `pre_processor_map` and `inference_map`, builds a topological execution plan, and runs all dependent models inside a single `InferenceOp`.
+    - Inputs: only *external* tensors (consumed but not produced by any model) are ingested and allocated.
+    - Outputs: by default, only *external* outputs (produced but not consumed by any other model) are transmitted. If you set `out_tensor_names`, internal outputs will also be transmitted.
+    - Execution order: models are run respecting dependencies; models in the same level still run in parallel if `parallel_inference=true`.
+    - No extra parameters are required; the dependency map is derived automatically from the existing maps.
+
 - Other features: The table below illustrates other features and supported values in the current release.
 
     | Feature  | Supported values  |
@@ -566,6 +572,37 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
 
     In the sample above, three models are used during the inference. Model 1 uses the trt backend and runs on the GPU with ID 1, model 2 uses the torch backend and runs on the GPU with ID 0, and model 3 uses the torch backend and runs on the GPU with ID 1.
 
+- Single `InferenceOp` with model dependencies
+
+    Dependent models no longer require separate `InferenceOp` instances. Dependencies are derived automatically from `pre_processor_map` and `inference_map`, a topological execution plan is built, and all models run inside one operator. Only external inputs are ingested; internal tensors are passed through in-operator.
+
+    ```yaml
+    inference:
+        backend: "trt"
+        parallel_inference: false   # sequential because decoder depends on encoder
+
+        model_path_map:
+            encoder: "path/to/encoder.onnx"
+            decoder: "path/to/decoder.onnx"
+
+        pre_processor_map:
+            encoder: ["input_image"]
+            decoder: ["enc_out"]          # consumes encoder output
+
+        inference_map:
+            encoder: ["enc_out"]          # produced by encoder
+            decoder: ["dec_out"]          # produced by decoder
+
+        # Optional: if provided, internal outputs will also be transmitted
+        out_tensor_names: ["dec_out", "enc_out"]
+    ```
+
+    Behavior:
+    - Derived dependency map: `decoder -> encoder`; execution runs encoder then decoder inside one `InferenceOp`.
+    - Ingested inputs: only `input_image` (external to the graph).
+    - Transmitted outputs: `dec_out` by default; `enc_out` is also sent if listed in `out_tensor_names`.
+    - Models at the same dependency level still run in parallel when `parallel_inference=true`.
+
 ## Creating an Inference Operator
 
 The Inference operator is the core inference unit in an inference application. The built-in Inference operator (`InferenceOp`) can be used for inference, or you can create your own custom inference operator as explained in this section. In Holoscan SDK, the inference operator can be designed using the Holoscan Inference Module APIs.
@@ -629,3 +666,340 @@ Arguments in the code sections below are referred to as __...__.
 The figure below demonstrates the Inference operator in the Holoscan SDK. All blocks with `blue` color are the API calls from the Holoscan Inference Module.
 
 ![](images/inference_operator.png)
+
+## Common Inference Patterns (Cookbook)
+
+This section provides recipes and patterns for common inference use cases.
+
+### Using Multiple Models
+
+You can use multiple models simultaneously with the Inference Operator by specifying them in the `model_path_map` parameter. Each model is identified by a unique key that is used across the parameter maps.
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "model_1": "path/to/model_1.onnx"
+        "model_2": "path/to/model_2.onnx"
+        "model_3": "path/to/model_3.onnx"
+    pre_processor_map:
+        "model_1": ["input_tensor_1"]
+        "model_2": ["input_tensor_2"]
+        "model_3": ["input_tensor_3"]
+    inference_map:
+        "model_1": ["output_tensor_1"]
+        "model_2": ["output_tensor_2"]
+        "model_3": ["output_tensor_3"]
+```
+
+### Parallel vs Sequential Inference
+
+Parallel inference is enabled by default when using multiple models. This launches all model inferences simultaneously, which can improve throughput if you have sufficient GPU resources.
+
+To disable parallel inference and run models sequentially, set `parallel_inference: false`:
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "model_1": "path/to/model_1.onnx"
+        "model_2": "path/to/model_2.onnx"
+    pre_processor_map:
+        "model_1": ["input_tensor_1"]
+        "model_2": ["input_tensor_2"]
+    inference_map:
+        "model_1": ["output_tensor_1"]
+        "model_2": ["output_tensor_2"]
+    parallel_inference: false
+```
+
+**Note:** When using parallel inference, ensure you have enough GPU memory and compute resources to run all models simultaneously.
+
+### Using Different Backends
+
+You can use different inference backends for different models in the same application using the `backend_map` parameter:
+
+```yaml
+inference:
+    backend_map:
+        "trt_model": "trt"
+        "torch_model_1": "torch"
+        "torch_model_2": "torch"
+        "onnx_model": "onnxrt"
+    model_path_map:
+        "trt_model": "path/to/model.engine"
+        "torch_model_1": "path/to/model1.pt"
+        "torch_model_2": "path/to/model2.pt"
+        "onnx_model": "path/to/model.onnx"
+    pre_processor_map:
+        "trt_model": ["input_1"]
+        "torch_model_1": ["input_2"]
+        "torch_model_2": ["input_3"]
+        "onnx_model": ["input_4"]
+    inference_map:
+        "trt_model": ["output_1"]
+        "torch_model_1": ["output_2"]
+        "torch_model_2": ["output_3"]
+        "onnx_model": ["output_4"]
+```
+
+**Important:** Ensure that the combination of backends supports all other parameters you plan to use. For example, the combination of `onnxrt` and `trt` backends with CPU-based inference is not supported.
+
+### CPU-Based Inference
+
+You can perform inference on the CPU using either the ONNX Runtime or PyTorch backend:
+
+```yaml
+inference:
+    backend: "onnxrt"  # or "torch"
+    model_path_map:
+        "my_model": "path/to/model.onnx"
+    pre_processor_map:
+        "my_model": ["input_tensor"]
+    inference_map:
+        "my_model": ["output_tensor"]
+    infer_on_cpu: true
+```
+
+**Note:** The TensorRT backend (`trt`) does not support CPU-based inference. You must use `onnxrt` or `torch` backends for CPU inference.
+
+### Recipe: Running a PyTorch Model
+
+To use a PyTorch model with the Holoscan Inference Operator, follow these steps:
+
+#### 1. Convert Your Model to TorchScript
+
+The Holoscan SDK's torch backend uses libtorch and requires models in TorchScript format. You cannot use `.pth` files directly.
+
+Convert your PyTorch model to TorchScript:
+
+```python
+import torch
+
+# Load your model
+model = YourModel()
+model.load_state_dict(torch.load('model.pth'))
+model.eval()
+
+# Convert to TorchScript using tracing or scripting
+traced_model = torch.jit.trace(model, example_input)
+# OR
+scripted_model = torch.jit.script(model)
+
+# Save the TorchScript model
+traced_model.save('model.pt')
+```
+
+**Best practices:**
+- Use the same PyTorch version for model conversion as used in the Holoscan SDK container
+- Generate the TorchScript model on the same architecture where it will be executed (e.g., x86_64 to x86_64, aarch64 to aarch64)
+
+#### 2. Create a Model Configuration File
+
+The torch backend requires a companion `model.yaml` configuration file alongside each torchscript model. This YAML file must have the same base name as the model file.
+
+For example, if your model is named `my_model.pt`, create `my_model.yaml`:
+
+```yaml
+inference:
+  input_nodes:
+    input_tensor:
+      dim: "3,224,224"
+      dtype: kFloat32
+  output_nodes:
+    output_tensor:
+      dim: "1000"
+      dtype: kFloat32
+```
+
+For models with complex input/output structures (dictionaries, lists, nested structures), see the [Torch Backend Model Configuration](#torch-backend-model-configuration) section for detailed examples.
+
+#### 3. Configure the Inference Operator
+
+Add the model to your inference configuration:
+
+```yaml
+inference:
+    backend: "torch"
+    model_path_map:
+        "my_pytorch_model": "/path/to/my_model.pt"
+    pre_processor_map:
+        "my_pytorch_model": ["input_tensor"]
+    inference_map:
+        "my_pytorch_model": ["output_tensor"]
+    input_on_cuda: true
+    output_on_cuda: true
+```
+
+#### Alternative: Use TensorRT for Better Performance
+
+For optimal performance, consider converting your model to ONNX and using the TensorRT backend:
+
+```python
+# Export to ONNX
+torch.onnx.export(model, example_input, "model.onnx")
+```
+
+Then configure with TensorRT backend:
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "my_model": "/path/to/model.onnx"
+    pre_processor_map:
+        "my_model": ["input_tensor"]
+    inference_map:
+        "my_model": ["output_tensor"]
+```
+
+The TensorRT backend will automatically convert the ONNX model to a TensorRT engine on first execution, optimizing it for your GPU.
+
+### Controlling Data Location
+
+You can control where input and output data resides (CPU vs GPU memory) using these parameters:
+
+- `input_on_cuda`: Location of data going into inference (`true` = GPU, `false` = CPU)
+- `output_on_cuda`: Location of inferred data after inference (`true` = GPU, `false` = CPU)
+- `transmit_on_cuda`: Location of data transmitted from inference operator (`true` = GPU, `false` = CPU)
+
+Example configuration for host-based data flow:
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "my_model": "path/to/model.onnx"
+    pre_processor_map:
+        "my_model": ["input_tensor"]
+    inference_map:
+        "my_model": ["output_tensor"]
+    input_on_cuda: false
+    output_on_cuda: false
+    transmit_on_cuda: false
+```
+
+## Troubleshooting
+
+This section addresses common issues and errors encountered when using the Inference Module and Inference Operator.
+
+### Input Tensor Rank Limitations
+
+**Problem:** The Inference Operator rejects input shapes for models with 5-dimensional tensors (e.g., CNN-LSTM models with shape `[batch, temporal_dim, channels, width, height]`).
+
+**Cause:** In Holoscan SDK v2.4 and earlier, the InferenceOp supports tensor ranks only between 2 and 4 dimensions.
+
+**Solution:**
+- Reshape your input tensor to fit within the 2-4 dimension constraint
+- For temporal models, consider flattening the temporal dimension into the batch dimension or channels
+- Alternative: Create a custom preprocessing operator that handles the 5D tensor and converts it to a supported format
+
+**Supported tensor dimensions:**
+- ONNX and TensorRT model formats: Maximum 8 dimensions
+- PyTorch (torch) backend: 3 dimensions (CHW) or 4 dimensions (NCHW)
+- InferenceOp input tensors (SDK v2.4 and earlier): 2-4 dimensions only
+
+### PyTorch Model Format Issues
+
+**Problem:** Attempting to use a `.pth` PyTorch model file directly results in errors or the model is not loaded.
+
+**Cause:** The Holoscan SDK torch backend is based on libtorch and requires models in TorchScript format (`.pt`). The `.pth` format contains Python-specific state dictionaries that cannot be loaded by libtorch.
+
+**Solution:** Convert your `.pth` model to TorchScript format. See the [Recipe: Running a PyTorch Model](#recipe-running-a-pytorch-model) section above for detailed instructions.
+
+**Quick conversion example:**
+```python
+import torch
+
+model = YourModel()
+model.load_state_dict(torch.load('model.pth'))
+model.eval()
+
+traced_model = torch.jit.trace(model, example_input)
+traced_model.save('model.pt')
+```
+
+For best performance, consider converting to ONNX and using the TensorRT backend instead.
+
+### Missing model.yaml Configuration
+
+**Problem:** When using the torch backend, you encounter errors about missing input/output specifications or tensor format mismatches.
+
+**Cause:** The torch backend requires a companion `model.yaml` configuration file alongside each TorchScript model file.
+
+**Solution:** Create a YAML configuration file with the same base name as your model file. For example, if your model is `my_model.pt`, create `my_model.yaml`:
+
+```yaml
+inference:
+  input_nodes:
+    input_tensor:
+      dim: "3,224,224"
+      dtype: kFloat32
+  output_nodes:
+    output_tensor:
+      dim: "1000"
+      dtype: kFloat32
+```
+
+The system automatically validates that the YAML configuration matches the actual model schema. See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed examples including complex tensor structures.
+
+### Triton Backend Support
+
+**Problem:** Attempting to use models written as Triton Python backends (like NVIDIA's FoundationPose) with the Inference Operator.
+
+**Cause:** Triton backends are not currently supported by the Holoscan SDK Inference Operator.
+
+**Solution:** The Inference Operator supports only three backends:
+- TensorRT (`trt`)
+- ONNX Runtime (`onnxrt`)
+- PyTorch/libtorch (`torch`)
+
+To use models designed for Triton:
+1. Export the model to one of the supported formats (ONNX, TorchScript, or TensorRT engine)
+2. If the model includes complex preprocessing or postprocessing, implement custom operators to handle these steps
+3. For TensorRT, you can create engine files with specific optimizations using the `trtexec` tool
+
+### PyTorch CUDA Linear Algebra Errors (Jetson/JetPack 6)
+
+**Problem:** When using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6 (IGX Orin or AGX Orin), you encounter errors like:
+
+```
+RuntimeError: Error in dlopen: .../torch/lib/libtorch_cuda_linalg.so: undefined symbol: cusolverDnXsyevBatched_bufferSize, version libcusolver.so.11
+```
+
+**Cause:** The PyTorch distribution requires libcusolver version 11.7.1.2, which is newer than what's available in the default L4T 36.4 repository (11.6.4.69).
+
+**Solution:** Install the required libcusolver version manually:
+
+```bash
+# Download and install libcusolver 11.7.1.2 for arm64
+curl -fSL -o libcusolver.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/libcusolver-12-6_11.7.1.2-1_arm64.deb && \
+sudo apt-get install --no-install-recommends -y ./libcusolver.deb && \
+rm libcusolver.deb
+```
+
+After installing the updated libcusolver package, PyTorch CUDA operations (such as `torch.linalg.inv()`) should work correctly.
+
+**Note:** This is a known compatibility issue when using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6. The Holoscan SDK container images already include this fix.
+
+### PyTorch 2.9.x Segmentation Faults (Holoscan SDK v3.10 CUDA 12)
+
+**Problem:** When running Holoscan SDK v3.10 with CUDA 12 and PyTorch 2.9.x, you encounter segmentation faults during application teardown:
+
+```
+Fatal Python error: Segmentation fault
+
+Current thread 0x00007f07e53d0740 (most recent call first):
+  File ".../test_inference.py", line 177 in test_inference_torch
+  ...
+```
+
+**Cause:** Holoscan SDK v3.10 CUDA 12 binaries are built with libtorch 2.8.0, and there is a compatibility issue with PyTorch 2.9.x that affects application deactivation.
+
+**Solution:** Downgrade to PyTorch 2.8.x, which maintains full compatibility:
+
+```bash
+pip install torch==2.8.0
+```
+
+**Note:** This issue specifically affects the CUDA 12 variant of Holoscan SDK v3.10 when used with PyTorch 2.9.x. Future releases of Holoscan SDK are expected to include updated libtorch binaries to restore PyTorch 2.9.x compatibility.

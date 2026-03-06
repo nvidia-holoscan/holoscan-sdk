@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,7 @@ class GenerateBoxes : public TransformBase {
    * @param input_tensors Input tensors from inference operator
    * @return InferStatus
    */
-  InferStatus initialize(const std::vector<std::string>& input_tensors);
+  InferStatus initialize(const std::vector<std::string>& input_tensors) override;
 
   /**
    * @brief Create a tensor mapping of pre-defined tensors of the class to incoming tensors from
@@ -82,7 +82,7 @@ class GenerateBoxes : public TransformBase {
    * */
   InferStatus execute(const std::map<std::string, void*>& indata,
                       const std::map<std::string, std::vector<int>>& indim, DataMap& processed_data,
-                      DimType& processed_dims);
+                      DimType& processed_dims) override;
 
   /**
    * @brief Ingests input data with tensor names as "scores", "labels" and "masks".

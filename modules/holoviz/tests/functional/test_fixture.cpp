@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,6 +42,7 @@ void Fill(void* data, size_t elements, T or_mask = T(),
           T and_mask = std::numeric_limits<T>::max()) {
   // fill volume with random data
   for (size_t index = 0; index < elements; ++index) {
+    // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - test code, crypto-quality not needed
     reinterpret_cast<T*>(data)[index] = (static_cast<T>(std::rand()) | or_mask) & and_mask;
   }
 }
@@ -50,6 +51,7 @@ template <>
 void Fill(void* data, size_t elements, float min, float max) {
   // fill volume with random data
   for (size_t index = 0; index < elements; ++index) {
+    // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - test code, crypto-quality not needed
     reinterpret_cast<float*>(data)[index] =
         std::max(min, std::min(max, static_cast<float>(std::rand()) / RAND_MAX));
   }
@@ -346,7 +348,7 @@ Compare these images with the `_fail` images. Update or add the CRC values of th
 accordingly.
 )";
 
-bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
+bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t>& crc32) {
   std::vector<uint8_t> read_data;
   ReadColorData(read_data);
 
@@ -371,7 +373,7 @@ bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
     if (std::getenv("HOLOVIZ_TEST_GEN_IMAGES")) {
       image_file_name = BuildFileName("color_ref");
       std::cout << "Test passed and HOLOVIZ_TEST_GEN_IMAGES is set, writing image to "
-                << image_file_name << ". " << std::endl;
+                << image_file_name << ". \n";
     }
     passed = true;
   }
@@ -383,7 +385,7 @@ bool TestBase::CompareColorResultCRC32(const std::vector<uint32_t> crc32) {
   return passed;
 }
 
-bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
+bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t>& crc32) {
   std::vector<float> read_data;
   ReadDepthData(read_data);
 
@@ -409,7 +411,7 @@ bool TestBase::CompareDepthResultCRC32(const std::vector<uint32_t> crc32) {
     if (std::getenv("HOLOVIZ_TEST_GEN_IMAGES")) {
       image_file_name = BuildFileName("depth_ref");
       std::cout << "Test passed and HOLOVIZ_TEST_GEN_IMAGES is set, writing image to "
-                << image_file_name << ". " << std::endl;
+                << image_file_name << ". \n";
     }
     passed = true;
   }

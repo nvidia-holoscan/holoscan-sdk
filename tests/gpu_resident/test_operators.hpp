@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,12 @@
 #ifndef HOLOSCAN_TESTS_GPU_RESIDENT_TEST_OPERATORS_HPP
 #define HOLOSCAN_TESTS_GPU_RESIDENT_TEST_OPERATORS_HPP
 
-#include <holoscan/holoscan.hpp>
+#include <cuda_runtime.h>
+
 #include <holoscan/core/gpu_resident_operator.hpp>
+#include <holoscan/holoscan.hpp>
+
+#include "test_kernels.cuh"
 
 namespace holoscan {
 
@@ -58,6 +62,30 @@ class TestComputeGpuOp : public GPUResidentOperator {
 
   void* in_device_address_ = nullptr;
   void* out_device_address_ = nullptr;
+};
+
+// Test GPU-resident operator that performs actual CUDA compute work
+class TestCudaWorkGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(TestCudaWorkGpuOp, GPUResidentOperator)
+  TestCudaWorkGpuOp() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.device_input("in", sizeof(int) * 128);
+    spec.device_output("out", sizeof(int) * 128);
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    auto* out_addr = device_memory("out");
+
+    // Perform actual CUDA compute work - launch kernel that adds a value to each element
+    if (out_addr != nullptr) {
+      auto stream_ptr = cuda_stream();
+      cudaStream_t stream = *stream_ptr;
+      launch_add_value_kernel(static_cast<int*>(out_addr), 1, 128, stream);
+    }
+  }
 };
 
 // Test GPU-resident operator that only has input port (sink)
@@ -103,15 +131,199 @@ class TestTwoOutGpuOp : public GPUResidentOperator {
                [[maybe_unused]] ExecutionContext& context) override {}
 };
 
-// Test operator with zero-size memory block (for error testing)
-class ZeroSizeMemoryOp : public GPUResidentOperator {
+// GPU-resident operator with a device-pointer output (externally allocated)
+class DevicePtrSourceOp : public GPUResidentOperator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(ZeroSizeMemoryOp, GPUResidentOperator)
-  ZeroSizeMemoryOp() = default;
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(DevicePtrSourceOp, GPUResidentOperator)
+  DevicePtrSourceOp() = default;
+
+  ~DevicePtrSourceOp() override {
+    if (dev_ptr_) {
+      cudaFree(dev_ptr_);
+    }
+  }
 
   void setup(OperatorSpec& spec) override {
-    spec.device_output("out", 0);  // Zero-size memory block - should throw
+    cudaMalloc(&dev_ptr_, alloc_size_);
+    spec.device_output("out", reinterpret_cast<CUdeviceptr>(dev_ptr_));
   }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+  void* dev_ptr() const { return dev_ptr_; }
+
+ private:
+  void* dev_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident operator with a device-pointer input (externally allocated)
+class DevicePtrSinkOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(DevicePtrSinkOp, GPUResidentOperator)
+  DevicePtrSinkOp() = default;
+
+  ~DevicePtrSinkOp() override {
+    if (dev_ptr_) {
+      cudaFree(dev_ptr_);
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    cudaMalloc(&dev_ptr_, alloc_size_);
+    spec.device_input("in", reinterpret_cast<CUdeviceptr>(dev_ptr_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+  void* dev_ptr() const { return dev_ptr_; }
+
+ private:
+  void* dev_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident operator with device-pointer input and device-pointer output
+class DevicePtrComputeOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(DevicePtrComputeOp, GPUResidentOperator)
+  DevicePtrComputeOp() = default;
+
+  ~DevicePtrComputeOp() override {
+    if (in_dev_ptr_) {
+      cudaFree(in_dev_ptr_);
+    }
+    if (out_dev_ptr_) {
+      cudaFree(out_dev_ptr_);
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    cudaMalloc(&in_dev_ptr_, alloc_size_);
+    cudaMalloc(&out_dev_ptr_, alloc_size_);
+    spec.device_input("in", reinterpret_cast<CUdeviceptr>(in_dev_ptr_));
+    spec.device_output("out", reinterpret_cast<CUdeviceptr>(out_dev_ptr_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+  void* in_dev_ptr() const { return in_dev_ptr_; }
+  void* out_dev_ptr() const { return out_dev_ptr_; }
+
+ private:
+  void* in_dev_ptr_ = nullptr;
+  void* out_dev_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident source that uses cudaHostAlloc (pinned host memory) - invalid as device pointer
+class HostAllocSourceOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(HostAllocSourceOp, GPUResidentOperator)
+  HostAllocSourceOp() = default;
+
+  ~HostAllocSourceOp() override {
+    if (host_ptr_) {
+      cudaFreeHost(host_ptr_);
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault);
+    spec.device_output("out", reinterpret_cast<CUdeviceptr>(host_ptr_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+ private:
+  void* host_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident source that uses cudaMallocManaged (unified memory) - invalid as device pointer
+class ManagedAllocSourceOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(ManagedAllocSourceOp, GPUResidentOperator)
+  ManagedAllocSourceOp() = default;
+
+  ~ManagedAllocSourceOp() override {
+    if (managed_ptr_) {
+      cudaFree(managed_ptr_);
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    cudaMallocManaged(&managed_ptr_, alloc_size_);
+    spec.device_output("out", reinterpret_cast<CUdeviceptr>(managed_ptr_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+ private:
+  void* managed_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident sink that uses cudaHostAlloc for input port - invalid as device pointer
+class HostAllocSinkOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(HostAllocSinkOp, GPUResidentOperator)
+  HostAllocSinkOp() = default;
+
+  ~HostAllocSinkOp() override {
+    if (host_ptr_) {
+      cudaFreeHost(host_ptr_);
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault);
+    spec.device_input("in", reinterpret_cast<CUdeviceptr>(host_ptr_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+ private:
+  void* host_ptr_ = nullptr;
+  size_t alloc_size_ = sizeof(int) * 128;
+};
+
+// GPU-resident source with a mismatched memory block size (for error testing)
+class MismatchedSizeSourceOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(MismatchedSizeSourceOp, GPUResidentOperator)
+  MismatchedSizeSourceOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.device_output("out", sizeof(int) * 256); }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+};
+
+// Test operator with zero-size memory block (for error testing)
+class ZeroSizeOutputMemoryOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(ZeroSizeOutputMemoryOp, GPUResidentOperator)
+  ZeroSizeOutputMemoryOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.device_output("out", 0); }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+};
+
+class ZeroSizeInputMemoryOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(ZeroSizeInputMemoryOp, GPUResidentOperator)
+  ZeroSizeInputMemoryOp() = default;
+
+  void setup(OperatorSpec& spec) override { spec.device_input("in", 0); }
 
   void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {}

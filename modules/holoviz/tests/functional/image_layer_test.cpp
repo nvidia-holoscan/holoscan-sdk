@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index) test code
 
 #include <gtest/gtest.h>
 
@@ -493,9 +495,11 @@ TEST_P(ImageLayer, Image) {
   }
 
   if (use_lut != UseLut::DISABLE) {
+    // NOLINTNEXTLINE(cert-msc32-c,cert-msc51-cpp) - intentional for reproducible test results
     std::srand(1);
     lut.resize(lut_size_);
     for (uint32_t index = 0; index < lut_size_; ++index) {
+      // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - test code, crypto-quality not needed
       lut[index] = static_cast<uint32_t>(std::rand()) | 0xFF000000;
     }
 
@@ -1276,3 +1280,5 @@ INSTANTIATE_TEST_SUITE_P(
                                                          viz::ComponentSwizzle::B,
                                                          viz::ComponentSwizzle::G,
                                                          viz::ComponentSwizzle::R}));
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)

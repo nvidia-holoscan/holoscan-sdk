@@ -271,7 +271,7 @@ bool Operator::is_leaf() {
   return fragment()->graph().is_leaf(self_shared());
 }
 
-bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph) {
+bool Operator::is_all_operator_successor_virtual(const OperatorNodeType& op, OperatorGraph& graph) {
   auto next_nodes = graph.get_next_nodes(op);
   for (auto& next_node : next_nodes) {
     if (next_node->operator_type() != Operator::OperatorType::kVirtual) {
@@ -281,7 +281,8 @@ bool Operator::is_all_operator_successor_virtual(OperatorNodeType op, OperatorGr
   return true;
 }
 
-bool Operator::is_all_operator_predecessor_virtual(OperatorNodeType op, OperatorGraph& graph) {
+bool Operator::is_all_operator_predecessor_virtual(const OperatorNodeType& op,
+                                                   OperatorGraph& graph) {
   auto prev_nodes = graph.get_previous_nodes(op);
   for (auto& prev_node : prev_nodes) {
     if (prev_node->operator_type() != Operator::OperatorType::kVirtual) {
@@ -324,11 +325,46 @@ std::pair<std::string, std::string> Operator::parse_operator_port_key(
   return std::make_pair(operator_name, port_name);
 }
 
-void Operator::update_published_messages(std::string output_name) {
-  if (num_published_messages_map_.find(output_name) == num_published_messages_map_.end()) {
-    num_published_messages_map_[output_name] = 0;
+MessageLabel Operator::get_data_flow_tracking_label(const std::string& input_port_name) {
+  if (!is_gxf_compatible_operator_type()) {
+    throw std::runtime_error("Operator backend is not GXF. Cannot get data flow tracking label.");
   }
-  num_published_messages_map_[output_name] += 1;
+  if (!fragment()) {
+    throw std::runtime_error("Operator::get_data_flow_tracking_label(): Fragment is not set");
+  }
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
+  // check if fragment flow tracking is enabled
+  if (!(fragment()->data_flow_tracker())) {
+    throw std::runtime_error(
+        fmt::format("Data flow tracking in the fragment is not enabled. Cannot get data flow "
+                    "tracking label in operator {} "
+                    "of fragment {}",
+                    name_,
+                    fragment()->name()));
+  }
+  // Check if port name is a valid input port
+  if (spec_->inputs().find(input_port_name) == spec_->inputs().end()) {
+    throw std::runtime_error(fmt::format(
+        "Input port '{}' is not a valid input port for operator '{}'", input_port_name, name_));
+  }
+
+  // get the message label in the map
+  if (input_message_labels.find(input_port_name) != input_message_labels.end()) {
+    return input_message_labels.at(input_port_name);
+  } else {
+    HOLOSCAN_LOG_WARN(
+        "Input port '{}' currently does not have a message label for operator '{}'. Returning an "
+        "empty message label.",
+        input_port_name,
+        name_);
+    return MessageLabel();
+  }
+}
+
+void Operator::update_published_messages(const std::string& output_name) {
+  ++num_published_messages_map_[output_name];
 }
 
 holoscan::MessageLabel Operator::get_consolidated_input_label() {
@@ -369,6 +405,9 @@ holoscan::MessageLabel Operator::get_consolidated_input_label() {
     // Just return the current operator timestamp label because
     // there is no input label
     if (op_backend_ptr) {
+      if (!fragment()) {
+        throw std::runtime_error("Operator::get_consolidated_input_label(): Fragment is not set");
+      }
       auto scheduler = fragment()->scheduler();
       auto scheduler_clock = scheduler->clock();
 
@@ -818,6 +857,12 @@ void Operator::set_parameters() {
 }
 
 bool Operator::has_ucx_connector() {
+  // Prefer graph entity (ground truth after initialization).
+  if (graph_entity_) {
+    return graph_entity_->try_get("holoscan::HoloscanUcxReceiver") ||
+           graph_entity_->try_get("holoscan::HoloscanUcxTransmitter");
+  }
+  // Fall back to IOSpec metadata (works before graph entity setup).
   if (!spec_) {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
@@ -834,18 +879,45 @@ bool Operator::has_ucx_connector() {
   return false;
 }
 
+bool Operator::has_pubsub_connector() {
+  // Prefer graph entity (ground truth after initialization).
+  if (graph_entity_) {
+    return graph_entity_->try_get("nvidia::gxf::PubSubReceiver") ||
+           graph_entity_->try_get("nvidia::gxf::PubSubTransmitter");
+  }
+  // Fall back to IOSpec metadata (works before graph entity setup).
+  if (!spec_) {
+    throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
+  }
+  for (const auto& [_, io_spec] : spec_->inputs()) {
+    if (io_spec->connector_type() == IOSpec::ConnectorType::kPubSub) {
+      return true;
+    }
+  }
+  for (const auto& [_, io_spec] : spec_->outputs()) {
+    if (io_spec->connector_type() == IOSpec::ConnectorType::kPubSub) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool Operator::has_network_connector() {
+  return has_ucx_connector() || has_pubsub_connector();
+}
+
 void Operator::reset_backend_objects() {
   if (!spec_) {
     throw std::runtime_error(fmt::format("No operator spec for Operator '{}'", name_));
   }
 
   HOLOSCAN_LOG_TRACE("Operator '{}'::reset_backend_objects", name_);
-  auto reset_resource = [](std::shared_ptr<holoscan::Resource> resource) {
+  auto reset_resource = [](const std::shared_ptr<holoscan::Resource>& resource) {
     if (resource) {
       resource->reset_backend_objects();
     }
   };
-  auto reset_condition = [](std::shared_ptr<holoscan::Condition> condition) {
+  auto reset_condition = [](const std::shared_ptr<holoscan::Condition>& condition) {
     if (condition) {
       condition->reset_backend_objects();
     }

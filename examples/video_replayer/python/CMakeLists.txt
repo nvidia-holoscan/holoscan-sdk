@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,25 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy video_replayer application file
-add_custom_target(python_video_replayer ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/video_replayer.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "video_replayer.py"
-  BYPRODUCTS "video_replayer.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.py"
+  COMMENT "Copying video_replayer.py"
+)
+add_custom_target(python_video_replayer ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/video_replayer.py"
 )
 
 # Copy config file
-add_custom_target(python_video_replayer_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/video_replayer.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "video_replayer.yaml"
-  BYPRODUCTS "video_replayer.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/video_replayer.yaml"
+  COMMENT "Copying video_replayer.yaml"
+)
+add_custom_target(python_video_replayer_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/video_replayer.yaml"
 )
 
 add_dependencies(python_video_replayer python_video_replayer_yaml racerx_data)

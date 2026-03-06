@@ -15,6 +15,11 @@
 
 list(APPEND CMAKE_MESSAGE_CONTEXT "deps")
 
+# Workaround for observed issue where rapids_cpm_find may try to use
+# incomplete ucxx-config.cmake output in build dir from previous configuration
+set(_SAVED_CMAKE_IGNORE_PREFIX_PATH ${CMAKE_IGNORE_PREFIX_PATH})
+list(APPEND CMAKE_IGNORE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
+
 # Disable FetchContent_Populate deprecation warnings for older CPM version
 # See: https://cmake.org/cmake/help/latest/policy/CMP0169.html
 # TODO: Re-enable this warning when we update rapids-cmake
@@ -61,7 +66,13 @@ superbuild_depend(grpc)
 superbuild_depend(hwloc)
 superbuild_depend(magic_enum)
 superbuild_depend(nvtx3)
+
+# populate spdlog, rapids_logger, RMM in transitive dependency order
+# to control fetch, patch, and export behavior
+superbuild_depend(spdlog_rapids)
+superbuild_depend(rapids_logger)
 superbuild_depend(rmm)
+
 superbuild_depend(tensorrt)
 superbuild_depend(threads)
 superbuild_depend(ucx)
@@ -83,8 +94,15 @@ if(HOLOSCAN_BUILD_PYTHON)
     superbuild_depend(pybind11)
 endif()
 
+# Add after pybind11 to avoid conflicting pybind11 fetch procedures
+if(HOLOSCAN_BUILD_HOLOLINK)
+    superbuild_depend(hololink)
+endif()
+
 # Restore clang-tidy for project code
 set(CMAKE_CXX_CLANG_TIDY "${_SAVED_CMAKE_CXX_CLANG_TIDY}")
 unset(_SAVED_CMAKE_CXX_CLANG_TIDY)
+
+set(CMAKE_IGNORE_PREFIX_PATH "${_SAVED_CMAKE_IGNORE_PREFIX_PATH}")
 
 unset(CMAKE_POLICY_DEFAULT_CMP0169)

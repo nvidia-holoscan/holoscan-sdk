@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,7 +31,7 @@ class SimpleOp : public holoscan::Operator {
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
-    std::cout << "I am here - " << name() << std::endl;
+    std::cout << "I am here - " << name() << '\n';
   }
 };
 
@@ -47,7 +47,7 @@ class PingTx : public holoscan::Operator {
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     value_++;
-    std::cout << "Sending value " << value_ << " - " << name() << std::endl;
+    std::cout << "Sending value " << value_ << " - " << name() << '\n';
 
     op_output.emit(value_, "output");
   }
@@ -71,7 +71,7 @@ class PingRx : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto msg = op_input.receive<int>();
     if (msg) {
-      std::cout << "Received value " << *msg << " - " << name() << std::endl;
+      std::cout << "Received value " << *msg << " - " << name() << '\n';
     }
   }
 };

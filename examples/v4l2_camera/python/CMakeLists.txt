@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,25 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy v4l2_camera application file
-add_custom_target(python_v4l2_camera ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "v4l2_camera.py"
-  BYPRODUCTS "v4l2_camera.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.py"
+  COMMENT "Copying v4l2_camera.py"
+)
+add_custom_target(python_v4l2_camera ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.py"
 )
 
 # Copy config file
-add_custom_target(python_v4l2_camera_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "v4l2_camera.yaml"
-  BYPRODUCTS "v4l2_camera.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml"
+  COMMENT "Copying v4l2_camera.yaml"
+)
+add_custom_target(python_v4l2_camera_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.yaml"
 )
 
 add_dependencies(python_v4l2_camera

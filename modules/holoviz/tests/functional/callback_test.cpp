@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -185,6 +185,7 @@ class Callback : public TestWindow {
   void send_scroll_event(int x_offset, int y_offset) {
     // X11 uses button 4 and 5 for y scroll, button 6 and 7 for x scroll (x11 buttons start at 1 and
     // viz::MouseButton at 0, therefore the buttons below are one lower)
+    // NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange) intentional X11 button mapping
     while (y_offset < 0) {
       send_button_event(viz::MouseButton(3), viz::KeyAndButtonAction::PRESS);
       ++y_offset;
@@ -201,6 +202,7 @@ class Callback : public TestWindow {
       send_button_event(viz::MouseButton(6), viz::KeyAndButtonAction::PRESS);
       --x_offset;
     }
+    // NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
   }
 
   /**

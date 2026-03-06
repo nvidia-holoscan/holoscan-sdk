@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,10 +21,12 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "holoscan/core/gxf/gxf_utils.hpp"
@@ -32,7 +34,7 @@
 namespace holoscan::gxf {
 
 // Prefix list to search for the extension
-static const std::vector<std::string> kExtensionSearchPrefixes{"", "gxf_extensions"};
+constexpr std::array<std::string_view, 2> kExtensionSearchPrefixes{"", "gxf_extensions"};
 
 GXFExtensionManager::GXFExtensionManager(gxf_context_t context) : ExtensionManager(context) {
   // Should not call the virtual refresh() method from the constructor.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,7 +42,7 @@ class PingMxOp : public Operator {
       // Multiply the value by the multiplier parameter
       out_value = value.value() * multiplier_;
     }
-    std::cout << "[" << name() << "] Middle message output value: " << out_value << std::endl;
+    std::cout << "[" << name() << "] Middle message output value: " << out_value << '\n';
 
     op_output.emit(out_value);
   };

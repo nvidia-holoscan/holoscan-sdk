@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@ class SimpleOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     value_++;
     int index = metadata()->get<int>("index", -1);
-    std::cout << "I am here - " << name() << " (index: " << index << ")" << std::endl;
+    std::cout << "I am here - " << name() << " (index: " << index << ")\n";
   }
 
   int get_value() const { return value_; }

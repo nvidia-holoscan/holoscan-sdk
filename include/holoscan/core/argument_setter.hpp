@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,10 +64,11 @@ class ArgumentSetter {
   /**
    * @brief Default @ref SetterFunc for Arg.
    */
-  inline static SetterFunc none_argument_setter = [](ParameterWrapper& /*param_wrap*/, Arg& arg) {
-    HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", arg.name());
-    return false;
-  };
+  inline static SetterFunc none_argument_setter =  // NOLINT(cert-err58-cpp)
+      [](ParameterWrapper& /*param_wrap*/, Arg& arg) {
+        HOLOSCAN_LOG_ERROR("Unable to handle parameter: {}", arg.name());
+        return false;
+      };
 
   /**
    * @brief Get the instance object.

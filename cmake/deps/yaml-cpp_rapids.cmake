@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,53 +13,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
-include(${rapids-cmake-dir}/cpm/find.cmake)
-
-# Unfortunately, yaml-cpp project's CMakeLists.txt registers the user package
-# (see below) which creates an item in '~/.cmake/packages/yaml-cpp/' and makes
-# `find_package()` command in CPM try to look at the registered packages for
-# 'yaml-cpp'.
-# If the user configures CMake build twice consecutively without building
-# source, the second configure will use a package in the user package registry
-# (specified by '~/.cmake/packages/yaml-cpp/xxxxx' which refers to
-# '${CMAKE_BINARY_DIR}/_deps/yaml-cpp-build')
-# causing a failure when building the source tree because
-# '_deps/yaml-cpp-build/libyaml-cpp.a', needed by'libholoscan.so' is
-# missing.
-#
-# export(PACKAGE yaml-cpp)
-#
-# To prevent the situation, we set CMAKE_FIND_USE_PACKAGE_REGISTRY to FALSE
-# (https://cmake.org/cmake/help/latest/variable/CMAKE_FIND_USE_PACKAGE_REGISTRY.html#variable:CMAKE_FIND_USE_PACKAGE_REGISTRY)
-set(CMAKE_FIND_USE_PACKAGE_REGISTRY FALSE)
-
-set(patch_command ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/patches/yaml-cpp.patch <SOURCE_DIR> && git apply <SOURCE_DIR>/yaml-cpp.patch)
-
 set(YAML_CPP_VERSION 0.8.0)
+find_package(yaml-cpp ${YAML_CPP_VERSION} REQUIRED)
 
-# https://github.com/cpm-cmake/CPM.cmake/wiki/More-Snippets#yaml-cpp
-rapids_cpm_find(yaml-cpp ${YAML_CPP_VERSION}
-    GLOBAL_TARGETS yaml-cpp
+if(yaml-cpp_FOUND)
+    if(NOT EXISTS ${YAML_CPP_INCLUDE_DIR})
+        message(WARNING "yaml-cpp is marked FOUND but is missing YAML_CPP_INCLUDE_DIR")
+    endif()
+    if(NOT TARGET yaml-cpp::yaml-cpp)
+        message(WARNING "yaml-cpp is marked FOUND but is missing yaml-cpp::yaml-cpp target")
+    endif()
 
-    CPM_ARGS
-    GITHUB_REPOSITORY jbeder/yaml-cpp
-    GIT_TAG ${YAML_CPP_VERSION}
-    PATCH_COMMAND ${patch_command}
-    OPTIONS
-    "YAML_CPP_BUILD_TESTS Off"
-    "YAML_CPP_BUILD_CONTRIB Off"
-    "YAML_CPP_BUILD_TOOLS Off"
-    "YAML_BUILD_SHARED_LIBS Off"
-)
+    # Alias without namespace to meet GXF::core 5.3 INTERFACE_LINK_LIBRARIES requirement
+    if(NOT TARGET yaml-cpp)
+        add_library(yaml-cpp ALIAS yaml-cpp::yaml-cpp)
+    endif()
 
-if(yaml-cpp_ADDED)
-    set_target_properties(yaml-cpp PROPERTIES POSITION_INDEPENDENT_CODE ON)
-
-    # Install the headers needed for development with the SDK
-    install(DIRECTORY ${yaml-cpp_SOURCE_DIR}/include/yaml-cpp
-        DESTINATION "include"
+    # Pass yaml-cpp installation through to custom "3rdparty" paths in Holoscan SDK installation
+    install(DIRECTORY ${YAML_CPP_INCLUDE_DIR}/yaml-cpp
+        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/3rdparty/yaml-cpp"
         COMPONENT "holoscan-dependencies"
+    )
+
+    # Manually install the yaml-cpp static library to the output library folder
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _cmake_build_type_upper)
+    get_target_property(YAML_CPP_LIB_PATH yaml-cpp::yaml-cpp IMPORTED_LOCATION_${_cmake_build_type_upper})
+    if(NOT EXISTS "${YAML_CPP_LIB_PATH}")
+        get_target_property(YAML_CPP_LIB_PATH yaml-cpp::yaml-cpp IMPORTED_LOCATION_RELEASE)
+    endif()
+    if(NOT EXISTS "${YAML_CPP_LIB_PATH}")
+        get_target_property(YAML_CPP_LIB_PATH yaml-cpp::yaml-cpp IMPORTED_LOCATION)
+    endif()
+    if(EXISTS "${YAML_CPP_LIB_PATH}")
+        install(
+            FILES "${YAML_CPP_LIB_PATH}"
+            DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+            COMPONENT "holoscan-dependencies"
         )
+    else()
+        message(FATAL_ERROR "yaml-cpp static library not found at: ${YAML_CPP_LIB_PATH}")
+    endif()
+
+    # Write custom "yaml-cpp-config.cmake" to reflect the updated 3rdparty output location
+    # in the "holoscan" installation
+    include(CMakePackageConfigHelpers)
+    set(YAML_CPP_CONFIG_OUT "${CMAKE_CURRENT_BINARY_DIR}/yaml-cpp-config.cmake")
+    configure_package_config_file(
+        ${CMAKE_CURRENT_LIST_DIR}/configs/yaml-cpp-config.cmake.in
+        ${YAML_CPP_CONFIG_OUT}
+        INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/yaml-cpp"
+    )
+    write_basic_package_version_file(
+        "${CMAKE_CURRENT_BINARY_DIR}/yaml-cpp-config-version.cmake"
+        VERSION ${YAML_CPP_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(
+        FILES
+            ${YAML_CPP_CONFIG_OUT}
+            "${CMAKE_CURRENT_BINARY_DIR}/yaml-cpp-config-version.cmake"
+        DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/yaml-cpp"
+        COMPONENT "holoscan-dependencies"
+    )
 
 endif()

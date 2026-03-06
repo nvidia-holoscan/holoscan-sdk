@@ -79,9 +79,10 @@ set_target_properties(holoinfer_torch PROPERTIES
 target_link_libraries(holoinfer_torch
     PRIVATE
         torch
+        dlpack::dlpack
         holoscan::holoinfer_utils
         holoscan::logger
-        yaml-cpp
+        yaml-cpp::yaml-cpp
         holoscan_security_flags
 )
 target_include_directories(holoinfer_torch
@@ -90,6 +91,5 @@ target_include_directories(holoinfer_torch
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../..>
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
-        $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>
     )

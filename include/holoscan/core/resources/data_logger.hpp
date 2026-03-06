@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_RESOURCES_DATA_LOGGER_HPP
 
 #include <any>
+#include <chrono>
 #include <cstdint>
 #include <memory>  // For std::shared_ptr in parameters
 #include <mutex>
@@ -299,7 +300,10 @@ class DataLoggerResource : public DataLogger, public Resource {
   // Use Resource here since both holoscan::Clock and holoscan::gxf::Clock inherit from it
   Parameter<std::shared_ptr<Resource>> clock_;
 
-  // Get the interface corresponding to the clock parameter
+  /// Cached clock interface used by get_timestamp(). During initialize(), this is set to either:
+  /// - The explicitly provided `clock_` parameter's interface (highest priority), or
+  /// - The scheduler's clock interface when `use_scheduler_clock_` is true, or
+  /// - nullptr (in which case get_timestamp() falls back to steady_clock with epoch offset)
   std::shared_ptr<ClockInterface> clock_interface_;
 
   // Filtering parameters

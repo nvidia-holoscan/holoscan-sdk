@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -123,16 +123,17 @@ void GPUResidentDeck::tear_down() {
 }
 
 void GPUResidentDeck::set_data_ready() {
-  cuda::std::atomic_ref<unsigned int> data_ready_atomic(
-      *reinterpret_cast<unsigned int*>(cpu_data_ready_trigger_->data()));
-  data_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::DATA_READY),
-                          cuda::std::memory_order_release);
-
-  // mark result as not ready atomically
+  // Clear result_ready before signaling data_ready.
   cuda::std::atomic_ref<unsigned int> result_ready_atomic(
       *reinterpret_cast<unsigned int*>(cpu_result_ready_trigger_->data()));
   result_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::RESULT_NOT_READY),
                             cuda::std::memory_order_release);
+
+  // Now signal that data is ready for the GPU to process
+  cuda::std::atomic_ref<unsigned int> data_ready_atomic(
+      *reinterpret_cast<unsigned int*>(cpu_data_ready_trigger_->data()));
+  data_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::DATA_READY),
+                          cuda::std::memory_order_release);
 }
 
 bool GPUResidentDeck::is_launched() const {

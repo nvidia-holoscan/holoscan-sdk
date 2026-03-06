@@ -65,12 +65,9 @@ nvidia::gxf::Receiver* get_gxf_receiver(const std::shared_ptr<IOSpec>& input_spe
     return nullptr;  // to cause a bad_any_cast
   }
 
-  gxf_tid_t rx_tid{};
-  gxf_context_t context = gxf_resource->gxf_context();
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, gxf_resource->gxf_typename(), &rx_tid));
-  void* rx_ptr = nullptr;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(context, gxf_resource->gxf_cid(), rx_tid, &rx_ptr));
-  return static_cast<nvidia::gxf::Receiver*>(rx_ptr);
+  // Use cached component pointer from GXFComponent (set during gxf_initialize)
+  // instead of calling GxfComponentTypeId + GxfComponentPointer on every receive
+  return static_cast<nvidia::gxf::Receiver*>(gxf_resource->gxf_cptr());
 }
 
 GXFInputContext::GXFInputContext(ExecutionContext* execution_context, Operator* op)
@@ -101,6 +98,309 @@ bool GXFInputContext::empty_impl(const char* name) {
   }
   return receiver->size() == 0;
 }
+
+namespace {
+
+//==============================================================================
+// Cached Type ID Helper Functions
+//
+// These functions provide type-ID-cached versions of entity.add<T>() and entity.get<T>()
+// for frequently-used component types. The standard GXF Entity::add<T>() and Entity::get<T>()
+// call GxfComponentTypeId() on every invocation, which involves string lookups. By caching
+// the type ID in a static variable, we avoid this overhead on every message emit/receive.
+//
+// Thread safety: These use std::call_once for thread-safe one-time initialization of the
+// cached type IDs. Type IDs are assigned once at application startup (during extension
+// registration) and remain constant for the lifetime of the GXF context.
+//==============================================================================
+
+/// @brief Get holoscan::Message component from entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<holoscan::Message>> get_message(
+    nvidia::gxf::Entity& entity) {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "holoscan::Message", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentFindAndGetPtr(entity.context(),
+                                          entity.eid(),
+                                          entity.entity_item_ptr(),
+                                          tid,
+                                          nullptr,
+                                          nullptr,
+                                          &cid,
+                                          &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<holoscan::Message>::Create(entity.context(), cid, tid, comp_ptr);
+}
+
+/// @brief Add holoscan::Message component to entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<holoscan::Message>> add_message(
+    nvidia::gxf::Entity& entity) {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "holoscan::Message", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentAddAndGetPtr(
+      entity.context(), entity.entity_item_ptr(), tid, nullptr, &cid, &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<holoscan::Message>::Create(entity.context(), cid, tid, comp_ptr);
+}
+
+/// @brief Get holoscan::MetadataDictionary component from entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<holoscan::MetadataDictionary>> get_metadata(
+    nvidia::gxf::Entity& entity, const char* name = "metadata_") {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "holoscan::MetadataDictionary", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentFindAndGetPtr(entity.context(),
+                                          entity.eid(),
+                                          entity.entity_item_ptr(),
+                                          tid,
+                                          name,
+                                          nullptr,
+                                          &cid,
+                                          &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<holoscan::MetadataDictionary>::Create(
+      entity.context(), cid, tid, comp_ptr);
+}
+
+/// @brief Add holoscan::MetadataDictionary component to entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<holoscan::MetadataDictionary>> add_metadata(
+    nvidia::gxf::Entity& entity, const char* name = "metadata_") {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "holoscan::MetadataDictionary", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentAddAndGetPtr(
+      entity.context(), entity.entity_item_ptr(), tid, name, &cid, &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<holoscan::MetadataDictionary>::Create(
+      entity.context(), cid, tid, comp_ptr);
+}
+
+/// @brief Get nvidia::gxf::CudaStreamId component from entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::CudaStreamId>> get_cuda_stream_id(
+    nvidia::gxf::Entity& entity, const char* name = nullptr) {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "nvidia::gxf::CudaStreamId", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentFindAndGetPtr(entity.context(),
+                                          entity.eid(),
+                                          entity.entity_item_ptr(),
+                                          tid,
+                                          name,
+                                          nullptr,
+                                          &cid,
+                                          &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<nvidia::gxf::CudaStreamId>::Create(
+      entity.context(), cid, tid, comp_ptr);
+}
+
+/// @brief Add nvidia::gxf::CudaStreamId component to entity with cached type ID lookup.
+nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::CudaStreamId>> add_cuda_stream_id(
+    nvidia::gxf::Entity& entity, const char* name = "cuda_stream_id_") {
+  static std::once_flag tid_init_flag;
+  static gxf_tid_t tid;
+  static gxf_result_t tid_init_result = GXF_SUCCESS;
+  std::call_once(tid_init_flag, [&entity]() {
+    tid_init_result = GxfComponentTypeId(entity.context(), "nvidia::gxf::CudaStreamId", &tid);
+  });
+  if (tid_init_result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{tid_init_result};
+  }
+
+  gxf_uid_t cid;
+  void* comp_ptr = nullptr;
+  auto result = GxfComponentAddAndGetPtr(
+      entity.context(), entity.entity_item_ptr(), tid, name, &cid, &comp_ptr);
+  if (result != GXF_SUCCESS) {
+    return nvidia::gxf::Unexpected{result};
+  }
+  return nvidia::gxf::Handle<nvidia::gxf::CudaStreamId>::Create(
+      entity.context(), cid, tid, comp_ptr);
+}
+
+//==============================================================================
+
+/**
+ * @brief Add or update a CudaStreamId component in an entity.
+ *
+ * By default (replace_existing=true), if the entity already contains a CudaStreamId, it is
+ * updated with the new stream_cid. This is the correct behavior when forwarding a received
+ * entity after processing on a different stream - downstream operators should see the most
+ * recent stream, not the original upstream stream.
+ *
+ * The replace_existing=false mode allows adding additional CudaStreamId components for
+ * advanced use cases where an entity needs to track multiple streams (e.g., when different
+ * parts of an entity were processed on different streams). Note that the standard
+ * receive_cuda_stream/receive_cuda_streams APIs only return the FIRST CudaStreamId found
+ * via entity.get<CudaStreamId>(). CudaStreamCondition uses findAll and can wait on all streams.
+ *
+ * @param gxf_entity The entity to add/update the CudaStreamId in.
+ * @param stream_cid The component ID of the CudaStream to reference.
+ * @param replace_existing If true (default), update existing CudaStreamId if present.
+ *                         If false, always add a new CudaStreamId component.
+ * @param is_new_entity If true, skip the get() check for existing CudaStreamId since we know
+ *                      the entity was just created. This avoids a GXF lookup on every emit
+ *                      for the common case of emitting newly-created entities.
+ * @return GXF_SUCCESS on success, GXF_FAILURE on error.
+ */
+gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t stream_cid,
+                                     bool replace_existing = true, bool is_new_entity = false) {
+  // For forwarded entities, check if CudaStreamId already exists and update it
+  if (replace_existing && !is_new_entity) {
+    // Check if there's already a CudaStreamId in the entity (e.g., when forwarding
+    // a received entity). If so, update it instead of adding a new one. This ensures
+    // downstream operators see the correct (most recent) stream via entity.get<CudaStreamId>().
+    auto existing_stream_id = get_cuda_stream_id(gxf_entity);
+    if (!existing_stream_id) {
+      // Check if it's an actual error vs just "component not found"
+      auto code = nvidia::gxf::ToResultCode(existing_stream_id);
+      if (code != GXF_ENTITY_COMPONENT_NOT_FOUND) {
+        HOLOSCAN_LOG_ERROR("Failed to get existing CudaStreamId with error: {}",
+                           GxfResultStr(code));
+        return code;
+      }
+      // Component not found is expected - fall through to add a new one
+    } else {
+      existing_stream_id.value()->stream_cid = stream_cid;
+      HOLOSCAN_LOG_TRACE("Updated existing CudaStreamId in entity to stream_cid: {}", stream_cid);
+      return GXF_SUCCESS;
+    }
+  }
+
+  // No existing CudaStreamId (or is_new_entity=true or replace_existing=false), add a new one
+  const auto maybe_stream_id = add_cuda_stream_id(gxf_entity);
+  if (!maybe_stream_id) {
+    auto code = nvidia::gxf::ToResultCode(maybe_stream_id);
+    HOLOSCAN_LOG_ERROR("Failed to add CUDA stream id to output message with error: {}.",
+                       GxfResultStr(code));
+    return GXF_FAILURE;
+  }
+  maybe_stream_id.value()->stream_cid = stream_cid;
+  return GXF_SUCCESS;
+}
+
+// Check if stream propagation for raw entities is disabled via environment variable.
+// This allows users to opt-out of the automatic findAll behavior for performance tuning.
+bool is_entity_stream_propagation_disabled() {
+  static std::once_flag init_flag;
+  static bool disabled = false;
+  std::call_once(init_flag, []() {
+    const char* env_value = std::getenv("HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION");
+    disabled = (env_value != nullptr && std::string(env_value) == "1");
+    if (disabled) {
+      HOLOSCAN_LOG_INFO(
+          "Entity stream propagation disabled via HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION=1");
+    }
+  });
+  return disabled;
+}
+
+// Propagate CUDA stream to memory buffers in an entity for stream-aware deallocation.
+// This enables allocators like BlockMemoryPool to defer memory reuse until GPU operations
+// complete on the specified stream, preventing data corruption from race conditions.
+//
+// This function iterates through all Tensor and VideoBuffer components in the entity
+// and sets the stream on their memory buffers.
+void propagate_stream_to_entity_memory_buffers(nvidia::gxf::Entity& gxf_entity,
+                                               gxf_context_t gxf_ctx, gxf_uid_t stream_cid) {
+  // Check if disabled via environment variable
+  if (is_entity_stream_propagation_disabled()) {
+    return;
+  }
+
+  // Get the cudaStream_t from the stream component
+  auto maybe_stream_handle = gxf::CudaStreamHandle::Create(gxf_ctx, stream_cid);
+  if (!maybe_stream_handle) {
+    HOLOSCAN_LOG_DEBUG("Failed to create CudaStreamHandle for stream propagation");
+    return;
+  }
+
+  auto stream_result = maybe_stream_handle.value()->stream();
+  if (!stream_result) {
+    HOLOSCAN_LOG_DEBUG("Failed to get CUDA stream from stream handle");
+    return;
+  }
+  cudaStream_t cuda_stream = stream_result.value();
+  void* stream_ptr = static_cast<void*>(cuda_stream);
+
+  // Set stream on all Tensors
+  auto tensors = gxf_entity.findAll<nvidia::gxf::Tensor>();
+  if (tensors) {
+    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
+    for (auto tensor_handle : tensors.value()) {
+      auto tensor_ptr = tensor_handle.value();
+      tensor_ptr->memory_buffer().setStream(stream_ptr);
+    }
+  }
+
+  // Set stream on all VideoBuffers
+  auto video_buffers = gxf_entity.findAll<nvidia::gxf::VideoBuffer>();
+  if (video_buffers) {
+    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
+    for (auto vb_handle : video_buffers.value()) {
+      auto vb_ptr = vb_handle.value();
+      vb_ptr->memory_buffer().setStream(stream_ptr);
+    }
+  }
+}
+
+}  // namespace
 
 gxf_result_t GXFInputContext::retrieve_cuda_streams(nvidia::gxf::Entity& message,
                                                     const std::string& input_name) {
@@ -255,7 +555,7 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     {
       PROF_SCOPED_EVENT(op_->id(), event_receive_metadata);
       // Merge metadata from all input ports into the dynamic metadata of the operator
-      auto maybe_metadata = entity.get<holoscan::MetadataDictionary>("metadata_");
+      auto maybe_metadata = get_metadata(entity);
       if (!maybe_metadata) {
         // If the operator does not have any metadata it is expected that the MetadataDictionary
         // component will not be present, so don't warn in this case.
@@ -283,11 +583,13 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
   // Handle any acquisition timestamps found in the entity
   {
     PROF_SCOPED_EVENT(op_->id(), event_receive_acquisition_timestamps);
-    // Get first timestamp encountered or use findAllHeap to get all timestamps in the Entity?
-    // auto maybe_timestamp = entity.get<nvidia::gxf::Timestamp>();
-    auto timestamp_components = entity.findAllHeap<nvidia::gxf::Timestamp>();
+    // Use findAll with capacity=1 instead of findAllHeap to avoid heap allocation.
+    // We only use front().value() below, so capacity of 1 is sufficient.
+    // This avoids both the heap allocation of findAllHeap AND the large 1024-element
+    // default stack allocation of findAll<T>() (kMaxComponents = 1024).
+    auto timestamp_components = entity.findAll<nvidia::gxf::Timestamp, 1>();
     int64_t gxf_acquisition_timestamp = 0;
-    if (0 == timestamp_components->size()) {
+    if (!timestamp_components || 0 == timestamp_components->size()) {
       // Requires Timestamp instance for message age
       HOLOSCAN_LOG_TRACE("Message received on input port '{}' carries no Timestamp.", input_name);
     } else {
@@ -345,7 +647,7 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     return entity_wrapper;  // to handle gxf::Entity as it is
   }
 
-  auto message = entity.get<holoscan::Message>();
+  auto message = get_message(entity);
   if (!message) {
     // TensorMap case is already logged in the outer InputContext::receive call, so don't log it
     // here as well.
@@ -487,133 +789,9 @@ std::optional<cudaStream_t> GXFOutputContext::stream_to_emit(const char* output_
   return stream;
 }
 
-namespace {
-
-/**
- * @brief Add or update a CudaStreamId component in an entity.
- *
- * By default (replace_existing=true), if the entity already contains a CudaStreamId, it is
- * updated with the new stream_cid. This is the correct behavior when forwarding a received
- * entity after processing on a different stream - downstream operators should see the most
- * recent stream, not the original upstream stream.
- *
- * The replace_existing=false mode allows adding additional CudaStreamId components for
- * advanced use cases where an entity needs to track multiple streams (e.g., when different
- * parts of an entity were processed on different streams). Note that the standard
- * receive_cuda_stream/receive_cuda_streams APIs only return the FIRST CudaStreamId found
- * via entity.get<CudaStreamId>(). CudaStreamCondition uses findAll and can wait on all streams.
- *
- * @param gxf_entity The entity to add/update the CudaStreamId in.
- * @param stream_cid The component ID of the CudaStream to reference.
- * @param replace_existing If true (default), update existing CudaStreamId if present.
- *                         If false, always add a new CudaStreamId component.
- * @return GXF_SUCCESS on success, GXF_FAILURE on error.
- */
-gxf_result_t add_stream_id_to_entity(nvidia::gxf::Entity& gxf_entity, gxf_uid_t stream_cid,
-                                     bool replace_existing = true) {
-  if (replace_existing) {
-    // Check if there's already a CudaStreamId in the entity (e.g., when forwarding
-    // a received entity). If so, update it instead of adding a new one. This ensures
-    // downstream operators see the correct (most recent) stream via entity.get<CudaStreamId>().
-    auto existing_stream_id = gxf_entity.get<nvidia::gxf::CudaStreamId>();
-    if (!existing_stream_id) {
-      // Check if it's an actual error vs just "component not found"
-      auto code = nvidia::gxf::ToResultCode(existing_stream_id);
-      if (code != GXF_ENTITY_COMPONENT_NOT_FOUND) {
-        HOLOSCAN_LOG_ERROR("Failed to get existing CudaStreamId with error: {}",
-                           GxfResultStr(code));
-        return code;
-      }
-      // Component not found is expected - fall through to add a new one
-    } else {
-      existing_stream_id.value()->stream_cid = stream_cid;
-      HOLOSCAN_LOG_TRACE("Updated existing CudaStreamId in entity to stream_cid: {}", stream_cid);
-      return GXF_SUCCESS;
-    }
-  }
-
-  // No existing CudaStreamId (or replace_existing=false), add a new one
-  const auto maybe_stream_id = gxf_entity.add<nvidia::gxf::CudaStreamId>("cuda_stream_id_");
-  if (!maybe_stream_id) {
-    auto code = nvidia::gxf::ToResultCode(maybe_stream_id);
-    HOLOSCAN_LOG_ERROR("Failed to add CUDA stream id to output message with error: {}.",
-                       GxfResultStr(code));
-    return GXF_FAILURE;
-  }
-  maybe_stream_id.value()->stream_cid = stream_cid;
-  return GXF_SUCCESS;
-}
-
-// Check if stream propagation for raw entities is disabled via environment variable.
-// This allows users to opt-out of the automatic findAll behavior for performance tuning.
-bool is_entity_stream_propagation_disabled() {
-  static std::once_flag init_flag;
-  static bool disabled = false;
-  std::call_once(init_flag, []() {
-    const char* env_value = std::getenv("HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION");
-    disabled = (env_value != nullptr && std::string(env_value) == "1");
-    if (disabled) {
-      HOLOSCAN_LOG_INFO(
-          "Entity stream propagation disabled via HOLOSCAN_DISABLE_ENTITY_STREAM_PROPAGATION=1");
-    }
-  });
-  return disabled;
-}
-
-// Propagate CUDA stream to memory buffers in an entity for stream-aware deallocation.
-// This enables allocators like BlockMemoryPool to defer memory reuse until GPU operations
-// complete on the specified stream, preventing data corruption from race conditions.
-//
-// This function iterates through all Tensor and VideoBuffer components in the entity
-// and sets the stream on their memory buffers.
-void propagate_stream_to_entity_memory_buffers(nvidia::gxf::Entity& gxf_entity,
-                                               gxf_context_t gxf_ctx, gxf_uid_t stream_cid) {
-  // Check if disabled via environment variable
-  if (is_entity_stream_propagation_disabled()) {
-    return;
-  }
-
-  // Get the cudaStream_t from the stream component
-  auto maybe_stream_handle = gxf::CudaStreamHandle::Create(gxf_ctx, stream_cid);
-  if (!maybe_stream_handle) {
-    HOLOSCAN_LOG_DEBUG("Failed to create CudaStreamHandle for stream propagation");
-    return;
-  }
-
-  auto stream_result = maybe_stream_handle.value()->stream();
-  if (!stream_result) {
-    HOLOSCAN_LOG_DEBUG("Failed to get CUDA stream from stream handle");
-    return;
-  }
-  cudaStream_t cuda_stream = stream_result.value();
-  void* stream_ptr = static_cast<void*>(cuda_stream);
-
-  // Set stream on all Tensors
-  auto tensors = gxf_entity.findAll<nvidia::gxf::Tensor>();
-  if (tensors) {
-    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
-    for (auto tensor_handle : tensors.value()) {
-      auto tensor_ptr = tensor_handle.value();
-      tensor_ptr->memory_buffer().setStream(stream_ptr);
-    }
-  }
-
-  // Set stream on all VideoBuffers
-  auto video_buffers = gxf_entity.findAll<nvidia::gxf::VideoBuffer>();
-  if (video_buffers) {
-    // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
-    for (auto vb_handle : video_buffers.value()) {
-      auto vb_ptr = vb_handle.value();
-      vb_ptr->memory_buffer().setStream(stream_ptr);
-    }
-  }
-}
-
-}  // namespace
-
 void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out_type,
                                  const int64_t acq_timestamp, bool omit_data_logging,
-                                 bool skip_stream_propagation) {
+                                 bool skip_stream_propagation, bool is_new_entity) {
   std::string output_name = holoscan::get_well_formed_name(name, outputs_);
   PROF_SCOPED_EVENT(op_->id(), event_emit_impl);
   HOLOSCAN_LOG_TRACE("GXFOutputContext::emit_impl for op: {}, output_name: {}, out_type: {}",
@@ -703,24 +881,21 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
     return;
   }
 
-  gxf_tid_t tx_tid;
-  gxf_context_t context = gxf_resource->gxf_context();
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentTypeId(context, gxf_resource->gxf_typename(), &tx_tid));
-
-  void* tx_ptr;
-  HOLOSCAN_GXF_CALL_FATAL(GxfComponentPointer(context, gxf_resource->gxf_cid(), tx_tid, &tx_ptr));
+  // Use cached component pointer from GXFComponent (set during gxf_initialize)
+  // instead of calling GxfComponentTypeId + GxfComponentPointer on every emit
+  void* tx_ptr = gxf_resource->gxf_cptr();
 
   HOLOSCAN_LOG_TRACE("in GXFOutputContext::emit_impl: out_type: {}", static_cast<int>(out_type));
   switch (out_type) {
     case OutputType::kAny: {
       // Create an Entity object and add a Message object to it.
       auto gxf_entity = nvidia::gxf::Entity::New(gxf_context());
-      auto buffer = gxf_entity.value().add<Message>();
+      auto buffer = add_message(gxf_entity.value());
 
       if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
         {
           PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
-          auto metadata = gxf_entity.value().add<MetadataDictionary>("metadata_");
+          auto metadata = add_metadata(gxf_entity.value());
           populate_output_metadata(metadata.value(), output_name);
         }
       }
@@ -728,7 +903,8 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       if (stream_found) {
         {
           PROF_SCOPED_EVENT(op_->id(), event_emit_streams);
-          auto stream_result = add_stream_id_to_entity(gxf_entity.value(), stream_cid);
+          // is_new_entity=true: skip get() check since entity was just created via Entity::New()
+          auto stream_result = add_stream_id_to_entity(gxf_entity.value(), stream_cid, true, true);
           if (stream_result != GXF_SUCCESS) {
             throw std::runtime_error(fmt::format("Failed to add CUDA stream to output message: {}",
                                                  GxfResultStr(stream_result)));
@@ -762,7 +938,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
       }
 
       // Set the data to the value of the Message object. Can only move **after** logging the data
-      buffer.value()->set_value(std::move(data));
+      buffer.value()->set_value(data);
 
       // Publish the Entity object.
       nvidia::gxf::Expected<void> gxf_result;
@@ -784,12 +960,12 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
     case OutputType::kGXFEntity: {
       // Cast to an Entity object and publish it.
       try {
-        auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(std::move(data));
+        auto gxf_entity = std::any_cast<nvidia::gxf::Entity>(data);
 
         if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
           {
             PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
-            auto metadata = gxf_entity.add<MetadataDictionary>("metadata_");
+            auto metadata = add_metadata(gxf_entity);
             populate_output_metadata(metadata.value(), output_name);
           }
         }
@@ -797,7 +973,9 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         if (stream_found) {
           {
             PROF_SCOPED_EVENT(op_->id(), event_emit_streams);
-            auto stream_result = add_stream_id_to_entity(gxf_entity, stream_cid);
+            // Pass is_new_entity to skip get() check when entity was just created
+            auto stream_result =
+                add_stream_id_to_entity(gxf_entity, stream_cid, true, is_new_entity);
             if (stream_result != GXF_SUCCESS) {
               throw std::runtime_error(fmt::format(
                   "Failed to add CUDA stream to output message: {}", GxfResultStr(stream_result)));

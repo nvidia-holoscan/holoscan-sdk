@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,7 @@ class GXFResource : public holoscan::Resource, public gxf::GXFComponent {
 
   virtual void add_to_graph_entity(Operator* op);
   void add_to_graph_entity(Fragment* fragment,
-                           std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+                           const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity);
 
   /**
    * @brief Get a YAML representation of the resource.

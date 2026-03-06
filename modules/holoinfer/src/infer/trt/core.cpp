@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+// Array subscript access to TensorRT dimension arrays is performance-critical for inference.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
+
 #include "core.hpp"
 
 #include <NvInferPlugin.h>
@@ -113,9 +116,37 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
     engine_path_ = model_path_;
   }
 
-  // If a CUDA stream pool is provided, try to allocate a stream from it
+  // If a CUDA stream pool is provided, try to allocate a stream from it.
+  // For CUDA Graphs, only use it when it's non-blocking to avoid capture invalidation from
+  // implicit synchronization with the legacy default stream.
   if (allocate_cuda_stream_) {
     cuda_stream_ = allocate_cuda_stream_(device_id_);
+    if (cuda_stream_ && enable_cuda_graphs_) {
+      // The legacy/default stream is not valid for stream capture.
+      if (cuda_stream_ == cudaStreamDefault) {
+        HOLOSCAN_LOG_WARN(
+            "TRT Inference: CUDA Graphs enabled but allocated default CUDA stream; "
+            "falling back to internally-created non-blocking stream.");
+        cuda_stream_ = nullptr;
+      } else {
+        unsigned int stream_flags = 0;
+        cudaError_t stream_status = cudaStreamGetFlags(cuda_stream_, &stream_flags);
+        if (stream_status != cudaSuccess) {
+          HOLOSCAN_LOG_WARN(
+              "TRT Inference: failed to query allocated CUDA stream flags ({}); "
+              "falling back to internally-created non-blocking stream.",
+              cudaGetErrorString(stream_status));
+          // Clear sticky error state from failed stream query before continuing.
+          cudaGetLastError();
+          cuda_stream_ = nullptr;
+        } else if ((stream_flags & cudaStreamNonBlocking) == 0U) {
+          HOLOSCAN_LOG_WARN(
+              "TRT Inference: CUDA Graphs enabled but allocated blocking CUDA stream; "
+              "falling back to internally-created non-blocking stream.");
+          cuda_stream_ = nullptr;
+        }
+      }
+    }
   }
 
   // If no stream could be allocated, create a new one
@@ -126,6 +157,7 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
     // we capture in this thread. We explicitly synchronize with the caller using events so stream
     // '0' does not need to sync with us.
     check_cuda(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+    owns_cuda_stream_ = true;
   }
   // create the CUDA event used to synchronize with the caller
   check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
@@ -148,7 +180,10 @@ TrtInfer::~TrtInfer() {
   if (engine_) {
     engine_.reset();
   }
-  if (cuda_stream_) {
+  // Only destroy the stream if we created it. Streams provided by the allocation callback
+  // are owned by the caller (e.g., CudaStreamPool) and will be destroyed during pool
+  // deinitialization.
+  if (cuda_stream_ && owns_cuda_stream_) {
     cudaStreamDestroy(cuda_stream_);
   }
   if (cuda_event_) {
@@ -310,6 +345,7 @@ bool TrtInfer::initialize_parameters() {
         input_dims_.push_back(std::move(indim));
 
         in_data_types_.push_back(holoinfer_type);
+        input_tensor_names_.push_back(tensor_name);
       } break;
       case nvinfer1::TensorIOMode::kOUTPUT: {
         std::vector<int64_t> outdim;
@@ -319,6 +355,7 @@ bool TrtInfer::initialize_parameters() {
 
         output_dims_.push_back(std::move(outdim));
         out_data_types_.push_back(holoinfer_type);
+        output_tensor_names_.push_back(tensor_name);
       } break;
       default: {
         HOLOSCAN_LOG_ERROR("Input index {} is neither input nor output.", i);
@@ -472,6 +509,7 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
     for (int ai = 0; ai < outputDims.nbDims; ai++) {
       output_dims_[out_tensors_index][ai] = outputDims.d[ai];
     }
+    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
 
     size_t dynamic_buffer_size = accumulate(output_dims_[out_tensors_index].begin(),
                                             output_dims_[out_tensors_index].end(),
@@ -588,6 +626,36 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
   check_cuda(cudaEventRecord(cuda_event_, cuda_stream_));
   *cuda_event_inference = cuda_event_;
   return InferStatus();
+}
+
+void TrtInfer::init_gr_inference(void* input_buffer, void* output_buffer) {
+  context_->setTensorAddress(input_tensor_names_[0].c_str(), input_buffer);
+  context_->setTensorAddress(output_tensor_names_[0].c_str(), output_buffer);
+
+  auto status = cudaStreamCreate(&first_call_stream_);
+  if (status != cudaSuccess) {
+    throw std::runtime_error("Failed to create CUDA stream in init_gr_inference");
+  }
+
+  bool infer_status = context_->enqueueV3(first_call_stream_);
+
+  if (!infer_status) {
+    HOLOSCAN_LOG_ERROR("TRT inference core: Inference failure in init_gr_inference.");
+    throw std::runtime_error("TRT inference core: Inference failure in init_gr_inference.");
+  }
+
+  cudaStreamSynchronize(first_call_stream_);
+}
+
+void TrtInfer::do_gr_inference(void* input_buffer, void* output_buffer, cudaStream_t cuda_stream) {
+  context_->setTensorAddress(input_tensor_names_[0].c_str(), input_buffer);
+  context_->setTensorAddress(output_tensor_names_[0].c_str(), output_buffer);
+
+  bool infer_status = context_->enqueueV3(cuda_stream);
+
+  if (!infer_status) {
+    throw std::runtime_error("TRT inference core: Inference failure in do_gr_inference.");
+  }
 }
 
 }  // namespace inference

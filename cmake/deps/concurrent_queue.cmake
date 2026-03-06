@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,12 +17,12 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 
 rapids_cpm_find(concurrent_queue 1.0.4
     GLOBAL_TARGETS concurrent_queue
-    BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
     CPM_ARGS
 
     GITHUB_REPOSITORY cameron314/concurrentqueue
     GIT_TAG v1.0.4
     GIT_SHALLOW TRUE
+    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/concurrentqueue.patch
 
     EXCLUDE_FROM_ALL
 )

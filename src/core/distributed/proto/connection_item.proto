@@ -30,6 +30,7 @@ enum ConnectorType
     DEFAULT = 0;
     DOUBLE_BUFFER = 1;
     UCX = 2;
+    PUBSUB = 3;
 }
 
 message ConnectorArg

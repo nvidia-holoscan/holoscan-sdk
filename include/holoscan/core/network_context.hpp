@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,6 +77,9 @@
       : super_class_name(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
 
 namespace holoscan {
+
+// Forward declaration
+class Clock;
 
 // TODO(unknown): NetworkContext is identical in implementation to Scheduler, so put the
 // functionality in
@@ -225,6 +228,13 @@ class NetworkContext : public Component {
    * @return The resources of the network context.
    */
   std::unordered_map<std::string, std::shared_ptr<Resource>>& resources() { return resources_; }
+
+  /**
+   * @brief Get the Clock used by the network context.
+   *
+   * @return The Clock used by the network context, or nullptr if not applicable.
+   */
+  virtual std::shared_ptr<Clock> clock() { return nullptr; }
 
   /**
    * @brief Define the network context specification.

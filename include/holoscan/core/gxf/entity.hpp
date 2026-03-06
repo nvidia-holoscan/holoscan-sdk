@@ -21,6 +21,7 @@
 #include <cuda_runtime_api.h>
 
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -74,14 +75,18 @@ class Entity : public nvidia::gxf::Entity {
     // We should use nullptr as a default name because In GXF, 'nullptr' should be used with
     // GxfComponentFind() if we want to get the first component of the given type.
 
-    // Try to get nvidia::gxf::Tensor from GXF Entity.
-    gxf_tid_t tid;
-    auto tid_result =
-        GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid);
-    if (tid_result != GXF_SUCCESS) {
+    // Use cached type ID for nvidia::gxf::Tensor to avoid repeated lookups (thread-safe)
+    static std::once_flag tid_init_flag;
+    static gxf_tid_t tid;
+    static gxf_result_t tid_init_result = GXF_SUCCESS;
+    std::call_once(tid_init_flag, [this]() {
+      tid_init_result =
+          GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid);
+    });
+    if (tid_init_result != GXF_SUCCESS) {
       if (log_errors) {
         HOLOSCAN_LOG_ERROR("Unable to get component type id from 'nvidia::gxf::Tensor' (error: {})",
-                           GxfResultStr(tid_result));
+                           GxfResultStr(tid_init_result));
       }
       return nullptr;
     }
@@ -128,9 +133,13 @@ class Entity : public nvidia::gxf::Entity {
                                         holoscan::is_one_of_v<DataT, holoscan::Tensor>>>
   void add(const std::shared_ptr<DataT>& data, const char* name = nullptr,
            std::optional<cudaStream_t> stream = std::nullopt) {
-    gxf_tid_t tid;
-    HOLOSCAN_GXF_CALL_FATAL(
-        GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid));
+    // Use cached type ID for nvidia::gxf::Tensor to avoid repeated lookups (thread-safe)
+    static std::once_flag tid_init_flag;
+    static gxf_tid_t tid;
+    std::call_once(tid_init_flag, [this]() {
+      HOLOSCAN_GXF_CALL_FATAL(
+          GxfComponentTypeId(context(), nvidia::TypenameAsString<nvidia::gxf::Tensor>(), &tid));
+    });
 
     gxf_uid_t cid;
     HOLOSCAN_GXF_CALL_FATAL(GxfComponentAdd(context(), eid(), tid, name, &cid));

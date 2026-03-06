@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,7 @@ namespace holoscan {
 void init_component(py::module_&);
 void init_condition(py::module_&);
 void init_metadata(py::module_&);
+void init_messagelabel(py::module_&);
 void init_network_context(py::module_&);
 void init_resource(py::module_&);
 void init_clock(py::module_&);

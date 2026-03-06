@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator round_robin application
-add_custom_target(python_round_robin ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/round_robin.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/round_robin.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "round_robin.py"
-  BYPRODUCTS "round_robin.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/round_robin.py"
+  COMMENT "Copying round_robin.py"
+)
+add_custom_target(python_round_robin ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/round_robin.py"
 )
 
 # Install the app

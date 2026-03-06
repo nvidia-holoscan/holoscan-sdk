@@ -1,6 +1,6 @@
 # GPU Resident Input Example
 
-This example demonstrates GPU-resident operators with a data ready handler for external sensor inputs. A registered data ready handler could be executed in the GPU itself.
+This example demonstrates GPU-resident operators with a data ready handler for external sensor inputs. A registered data ready handler is executed in the GPU itself.
 
 ## Overview
 
@@ -15,6 +15,24 @@ Data Ready Handler Fragment operator:
 
 ## Key Features
 
-- **Data Ready Handler**: Demonstrates how to integrate external input sources with GPU-resident execution
+- **Data Ready Handler**: Demonstrates how to integrate external input sources with GPU-resident graph execution
 - **CUDA Kernels**: All computation and verification happens on the GPU through custom CUDA kernels
 - **Device Memory Management**: Shows proper use of device memory ports between GPU-resident operators
+- **Performance Measurement**: Demonstrates how to enable, collect, and report performance metrics for GPU-resident graph execution
+
+## Performance Measurement
+
+The example includes basic performance measurement capabilities of the GPU-resident graph execution. The measured execution times are the times an iteration of the GPU-resident graph takes on the GPU. As the graph is GPU-resident, no times are measured on the CPU.
+
+```cpp
+// Enable performance measurement with sample collection (10,000 samples)
+app->gpu_resident().enable_perf_measurement(10000);
+
+// After execution, print performance metrics
+app->gpu_resident().print_perf_metrics(100, 100);
+
+// Save detailed performance results to CSV file
+app->gpu_resident().save_perf_results_as_csv();
+```
+
+This allows profiling of GPU-resident graph execution to understand timing characteristics and predictability of the application.

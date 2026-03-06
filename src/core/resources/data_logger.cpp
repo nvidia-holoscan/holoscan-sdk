@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -112,6 +112,7 @@ void DataLoggerResource::initialize() {
   }
 
   if (clock_.has_value() && clock_.get() != nullptr) {
+    // Use the explicitly provided clock parameter
     try {
       clock_interface_ = std::dynamic_pointer_cast<ClockInterface>(clock_.get());
       if (!clock_interface_) {
@@ -125,29 +126,34 @@ void DataLoggerResource::initialize() {
       HOLOSCAN_LOG_ERROR(error_message);
       throw std::runtime_error(error_message);
     }
-  }
-}
-
-int64_t DataLoggerResource::get_timestamp() const {
-  // First priority is the clock parameter if one was explicitly set
-  if (clock_interface_) {
-    return clock_interface_->timestamp();
-  }
-
-  // Fallback to the scheduler clock if requested
-  if (use_scheduler_clock_.get()) {
+  } else if (use_scheduler_clock_.get()) {
+    // Cache the scheduler's clock interface to avoid repeated lookups in get_timestamp()
+    // At this point in initialization, the scheduler has already been initialized and its
+    // clock is available (data loggers are initialized after the scheduler in GXFExecutor).
     const auto fragment_ptr = fragment();
     if (fragment_ptr) {
-      // Use const_cast since getting timestamp is logically const but scheduler() isn't const
       const auto scheduler_ptr = fragment_ptr->scheduler();
       if (scheduler_ptr) {
         const auto clock_ptr = scheduler_ptr->clock();
         if (clock_ptr) {
-          return clock_ptr->timestamp();
+          clock_interface_ = clock_ptr->clock_impl();
+          HOLOSCAN_LOG_DEBUG("DataLoggerResource '{}': cached scheduler clock interface", name());
         }
       }
     }
-    HOLOSCAN_LOG_DEBUG("{}: No scheduler clock found, falling back to system clock", name());
+    if (!clock_interface_) {
+      HOLOSCAN_LOG_WARN(
+          "DataLoggerResource '{}': use_scheduler_clock is true but scheduler clock not available "
+          "during initialization. Will fall back to system clock for timestamps.",
+          name());
+    }
+  }
+}
+
+int64_t DataLoggerResource::get_timestamp() const {
+  // Use the cached clock interface (either explicit clock parameter or scheduler clock)
+  if (clock_interface_) {
+    return clock_interface_->timestamp();
   }
 
   // Fallback to steady clock with epoch offset

@@ -1,5 +1,5 @@
 #
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -41,7 +41,7 @@ target_link_libraries(holoinfer_utils
     PRIVATE
         CUDA::cudart
         holoscan_security_flags
-        yaml-cpp
+        yaml-cpp::yaml-cpp
 )
 
 set_target_properties(holoinfer_utils PROPERTIES
@@ -72,18 +72,17 @@ target_include_directories(${PROJECT_NAME}
     PRIVATE
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/manager>
-    PUBLIC
-        $<BUILD_INTERFACE:${tl-expected_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${dlpack_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
 )
 
 target_link_libraries(${PROJECT_NAME}
     PUBLIC
         CUDA::cuda_driver
         CUDA::nvrtc
+        dlpack::dlpack
         holoscan::infer::headers
         holoscan::holoinfer_utils # [1]
+        magic_enum::magic_enum
+        tl::expected
     PRIVATE
         ${CMAKE_DL_LIBS} # to dlopen holoinfer_torch
         CUDA::cudart
@@ -92,7 +91,7 @@ target_link_libraries(${PROJECT_NAME}
         TensorRT::nvinfer_plugin
         TensorRT::nvonnxparser
         holoscan_security_flags
-        yaml-cpp
+        yaml-cpp::yaml-cpp
 )
 # [1] holoinfer_utils is technically a PRIVATE dependency only as we don't use any types from it
 #     through the public header of holoinfer/holoscan::infer (holoinfer.hpp). However, the

@@ -172,7 +172,7 @@ class GXFOutputContext : public OutputContext {
  protected:
   void emit_impl(std::any data, const char* name = nullptr, OutputType out_type = OutputType::kAny,
                  const int64_t acq_timestamp = -1, bool omit_data_logging = false,
-                 bool skip_stream_propagation = false) override;
+                 bool skip_stream_propagation = false, bool is_new_entity = false) override;
 
   std::shared_ptr<gxf::CudaObjectHandler> gxf_cuda_object_handler() {
     return std::dynamic_pointer_cast<gxf::CudaObjectHandler>(cuda_object_handler_);

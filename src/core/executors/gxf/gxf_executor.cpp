@@ -67,6 +67,7 @@
 #include "holoscan/core/gxf/gxf_wrapper.hpp"
 #include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
+#include "holoscan/core/network_contexts/gxf/pubsub_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"
 #include "holoscan/core/resources/data_logger.hpp"
@@ -121,10 +122,72 @@ std::pair<uint64_t, uint64_t> get_capacity_and_policy(
   return std::make_pair(capacity, policy);
 }
 
-bool has_ucx_connector(std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
-  auto has_ucx_receiver = graph_entity->try_get("holoscan::HoloscanUcxReceiver");
-  auto has_ucx_transmitter = graph_entity->try_get("holoscan::HoloscanUcxTransmitter");
-  return has_ucx_receiver || has_ucx_transmitter;
+// ---------------------------------------------------------------------------
+// Graph-entity overloads: used for broadcast entities (no Operator/IOSpec).
+// ---------------------------------------------------------------------------
+
+/// Check if a GXF graph entity contains any UCX connectors.
+bool has_ucx_connector(const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
+  if (!graph_entity) {
+    return false;
+  }
+  return graph_entity->try_get("holoscan::HoloscanUcxReceiver") ||
+         graph_entity->try_get("holoscan::HoloscanUcxTransmitter");
+}
+
+/// Check if a GXF graph entity contains any PubSub connectors.
+bool has_pubsub_connector(const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
+  if (!graph_entity) {
+    return false;
+  }
+  return graph_entity->try_get("nvidia::gxf::PubSubReceiver") ||
+         graph_entity->try_get("nvidia::gxf::PubSubTransmitter");
+}
+
+/// Check if a GXF graph entity contains any network (UCX or PubSub) connectors.
+bool has_network_connector(const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
+  return has_ucx_connector(graph_entity) || has_pubsub_connector(graph_entity);
+}
+
+// ---------------------------------------------------------------------------
+// Operator overloads: delegate to Operator member methods which already
+// prefer graph entity (ground truth) with IOSpec fallback.
+// ---------------------------------------------------------------------------
+
+bool has_ucx_connector(const std::shared_ptr<Operator>& op) {
+  return op && op->has_ucx_connector();
+}
+
+bool has_pubsub_connector(const std::shared_ptr<Operator>& op) {
+  return op && op->has_pubsub_connector();
+}
+
+/// Check if a Resource (connector) has a "topic_name" argument set.
+bool has_topic_name_arg(const std::shared_ptr<Resource>& resource) {
+  if (!resource) {
+    return false;
+  }
+  for (const auto& arg : resource->args()) {
+    if (arg.name() == "topic_name") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/// Validate that a PubSub connector has a topic_name set; throw if not.
+void require_pubsub_topic_name(const std::shared_ptr<Resource>& resource,
+                               const std::string& op_name, const std::string& port_name,
+                               const std::string& direction) {
+  if (!has_topic_name_arg(resource)) {
+    throw std::runtime_error(
+        fmt::format("PubSub {} port '{}.{}' has no topic name. "
+                    "Set it via .topic(\"name\") or "
+                    ".connector(ConnectorType::kPubSub, Arg(\"topic_name\", \"name\")).",
+                    direction,
+                    op_name,
+                    port_name));
+  }
 }
 
 }  // namespace
@@ -176,10 +239,12 @@ gxf_uid_t GXFExecutor::get_operator_port_cid(const std::shared_ptr<Operator>& op
   return cid;
 }
 
+// NOLINTBEGIN(cert-err58-cpp)
 static const std::vector<std::string> kDefaultGXFExtensions{
     "libgxf_std.so",
     "libgxf_cuda.so",
     "libgxf_multimedia.so",
+    "libgxf_pubsub.so",
     "libgxf_rmm.so",
     "libgxf_serialization.so",
     "libgxf_ucx.so",  // UcxContext, UcxReceiver, UcxTransmitter, etc.
@@ -188,6 +253,7 @@ static const std::vector<std::string> kDefaultGXFExtensions{
 static const std::vector<std::string> kDefaultHoloscanGXFExtensions{
     "libgxf_ucx_holoscan.so",  // serialize holoscan::Message
 };
+// NOLINTEND(cert-err58-cpp)
 
 // Timeout in seconds before forcing application exit on SIGINT/SIGTERM
 static constexpr int kForceExitTimeoutSeconds = 3;
@@ -286,10 +352,15 @@ GXFExecutor::~GXFExecutor() {
 
 void GXFExecutor::initialize_gxf_resources(
     std::unordered_map<std::string, std::shared_ptr<Resource>>& resources, gxf_uid_t eid,
-    std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
   for (const auto& [name, resource] : resources) {
     // Note: native resources are only supported on Operator, not for NetworkContext or Scheduler
     auto gxf_resource = std::dynamic_pointer_cast<gxf::GXFResource>(resource);
+    if (!gxf_resource) {
+      HOLOSCAN_LOG_ERROR("Resource '{}' is not a holoscan::gxf::GXFResource and will be skipped",
+                         name);
+      continue;
+    }
     // Initialize GXF component if it is not already initialized.
     if (gxf_resource->gxf_context() == nullptr) {
       gxf_resource->fragment(fragment());
@@ -298,9 +369,6 @@ void GXFExecutor::initialize_gxf_resources(
       }
       gxf_resource->gxf_eid(eid);  // set GXF entity id
       gxf_resource->initialize();
-    } else {
-      HOLOSCAN_LOG_ERROR("Resource '{}' is not a holoscan::gxf::GXFResource and will be ignored",
-                         name);
     }
   }
 }
@@ -543,6 +611,12 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
       }
       // Set the queue size to the number of preceding connections
       queue_size = connection_count;
+
+      // PubSub input ports may have no graph edges (connected by topic via Pub/Sub backend
+      // discovery). In that case, use a default queue size of 1 so port creation succeeds.
+      if (queue_size == 0 && rx_type == IOSpec::ConnectorType::kPubSub) {
+        queue_size = 1;
+      }
     } else {
       HOLOSCAN_LOG_ERROR("Failed to find node for operator '{}'", op->name());
       throw std::runtime_error(fmt::format("Failed to find node for operator '{}'", op->name()));
@@ -597,12 +671,9 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
         }
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
-        rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
-        break;
       case IOSpec::ConnectorType::kAsyncBuffer:
-        rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
-        break;
       case IOSpec::ConnectorType::kUCX:
+      case IOSpec::ConnectorType::kPubSub:
         rx_resource = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
         break;
       default:
@@ -614,6 +685,11 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
     auto rx_spec = std::make_shared<ComponentSpec>(fragment);
     rx_resource->setup(*rx_spec);
     rx_resource->spec(std::move(rx_spec));
+
+    // Validate that PubSub connectors have a topic_name set.
+    if (rx_type == IOSpec::ConnectorType::kPubSub) {
+      require_pubsub_topic_name(rx_resource, op->name(), rx_name, "input");
+    }
 
     // Note: had to make sure GXFComponent calls addComponent and not addReceiver or addTransmitter
     //       or errors will occur as follows:
@@ -847,12 +923,9 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
         }
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
-        tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
-        break;
       case IOSpec::ConnectorType::kAsyncBuffer:
-        tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
-        break;
       case IOSpec::ConnectorType::kUCX:
+      case IOSpec::ConnectorType::kPubSub:
         tx_resource = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
         break;
       default:
@@ -864,6 +937,11 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
     auto tx_spec = std::make_shared<ComponentSpec>(fragment);
     tx_resource->setup(*tx_spec);
     tx_resource->spec(std::move(tx_spec));
+
+    // Validate that PubSub connectors have a topic_name set.
+    if (tx_type == IOSpec::ConnectorType::kPubSub) {
+      require_pubsub_topic_name(tx_resource, op->name(), tx_name, "output");
+    }
 
     // enable tracking before calling add_to_graph_entity()
     if (fragment->data_flow_tracker()) {
@@ -919,8 +997,9 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
   }
 
   // Set the default scheduling term for this output
-  // For the UCX connector, we shouldn't set kDownstreamMessageAffordable condition.
-  if (io_spec->conditions().empty() && (tx_type != IOSpec::ConnectorType::kUCX)) {
+  // For the UCX or PubSub connectors, we shouldn't set kDownstreamMessageAffordable condition.
+  if (io_spec->conditions().empty() && (tx_type != IOSpec::ConnectorType::kUCX) &&
+      (tx_type != IOSpec::ConnectorType::kPubSub)) {
     const auto& non_default_output_ports = op->non_default_output_ports();
     bool port_has_user_supplied_condition =
         std::find(non_default_output_ports.begin(), non_default_output_ports.end(), tx_name) !=
@@ -1194,8 +1273,9 @@ gxf_result_t GXFExecutor::add_connection(gxf_uid_t source_cid, gxf_uid_t target_
 }
 
 void GXFExecutor::connect_broadcast_to_previous_op(
-    const BroadcastEntityMapType& broadcast_entities, holoscan::OperatorGraph::NodeType op,
-    holoscan::OperatorGraph::NodeType prev_op, holoscan::OperatorGraph::EdgeDataType port_map_val) {
+    const BroadcastEntityMapType& broadcast_entities, const holoscan::OperatorGraph::NodeType& op,
+    const holoscan::OperatorGraph::NodeType& prev_op,
+    const holoscan::OperatorGraph::EdgeDataType& port_map_val) {
   auto op_type = op->operator_type();
 
   // counter to ensure unique broadcast component names as required by nvidia::gxf::GraphEntity
@@ -1359,7 +1439,7 @@ void GXFExecutor::connect_broadcast_to_previous_op(
   }
 }
 
-void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType op,
+void GXFExecutor::create_broadcast_components(const holoscan::OperatorGraph::NodeType& op,
                                               BroadcastEntityMapType& broadcast_entities,
                                               const TargetConnectionsMapType& connections) {
   if (op == nullptr) {
@@ -1424,7 +1504,7 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
       case IOSpec::ConnectorType::kDefault:
       case IOSpec::ConnectorType::kDoubleBuffer:
       case IOSpec::ConnectorType::kUCX:  // In any case, need to add doubleBufferReceiver.
-      {
+      case IOSpec::ConnectorType::kPubSub: {
         // We don't create a holoscan::AnnotatedDoubleBufferReceiver even if data flow
         // tracking is on because we don't want to mark annotations for the Broadcast
         // component.
@@ -1473,6 +1553,7 @@ void GXFExecutor::create_broadcast_components(holoscan::OperatorGraph::NodeType 
   }
 }
 
+// NOLINTNEXTLINE(readability-function-cognitive-complexity)
 bool GXFExecutor::initialize_fragment() {
   HOLOSCAN_LOG_DEBUG("Initializing Fragment.");
 
@@ -1684,7 +1765,29 @@ bool GXFExecutor::initialize_fragment() {
           // GXF Connection component should not be added for types using a NetworkContext
           auto out_iospec = get_operator_port_iospec(prev_op, source_port, IOSpec::IOType::kOutput);
           auto connector_type = out_iospec->connector_type();
-          if (connector_type != IOSpec::ConnectorType::kUCX) {
+
+          // Validate that PubSub connectors are not mixed with non-PubSub across an edge.
+          for (const auto& target_port : target_ports) {
+            auto in_iospec = get_operator_port_iospec(op, target_port, IOSpec::IOType::kInput);
+            auto in_connector_type = in_iospec->connector_type();
+            const bool src_pubsub = (connector_type == IOSpec::ConnectorType::kPubSub);
+            const bool dst_pubsub = (in_connector_type == IOSpec::ConnectorType::kPubSub);
+            if (src_pubsub != dst_pubsub) {
+              throw std::runtime_error(fmt::format(
+                  "add_flow({}.{} -> {}.{}) mixes PubSub and non-PubSub connector types. "
+                  "Both sides of a connection must use the same connector kind. "
+                  "Source {} PubSub, target {} PubSub.",
+                  prev_op->name(),
+                  source_port,
+                  op->name(),
+                  target_port,
+                  src_pubsub ? "is" : "is not",
+                  dst_pubsub ? "is" : "is not"));
+            }
+          }
+
+          if (connector_type != IOSpec::ConnectorType::kUCX &&
+              connector_type != IOSpec::ConnectorType::kPubSub) {
             // const auto& target_port = target_ports.begin();
             for (const auto& target_port : target_ports) {
               // For cycles, a previous operator may not have been initialized yet, so we don't
@@ -1774,12 +1877,13 @@ bool GXFExecutor::initialize_fragment() {
     }
     // Iterate through downstream connections and find the direct ones to connect, only if
     // downstream operator is already initialized. This is to handle cycles in the graph.
-    bool target_op_has_ucx_connector = false;
-    for (auto [source_cid, target_info] : connections) {
+    bool target_op_has_network_connector = false;
+    for (const auto& [source_cid, target_info] : connections) {
       auto& [source_cname, connector_type, target_ports] = target_info;
-      if (connector_type == IOSpec::ConnectorType::kUCX) {
-        target_op_has_ucx_connector = true;
-        continue;  // Connection components are only for non-UCX connections
+      if (connector_type == IOSpec::ConnectorType::kUCX ||
+          connector_type == IOSpec::ConnectorType::kPubSub) {
+        target_op_has_network_connector = true;
+        continue;  // Connection components are only for non-network connections
       }
       for (auto& [tmp_next_op, target_port_name] : target_ports) {
         if (tmp_next_op->id() != -1) {
@@ -1798,17 +1902,17 @@ bool GXFExecutor::initialize_fragment() {
       }
     }
 
-    if (!target_op_has_ucx_connector) {
+    if (!target_op_has_network_connector) {
       for (auto& next_op : graph.get_next_nodes(op)) {
         if (next_op->operator_type() == Operator::OperatorType::kVirtual) {
-          target_op_has_ucx_connector = true;
+          target_op_has_network_connector = true;
           break;
         }
       }
     }
 
-    if (target_op_has_ucx_connector) {
-      HOLOSCAN_LOG_DEBUG("At least one target of op {} has a UCX connector.", op_name);
+    if (target_op_has_network_connector) {
+      HOLOSCAN_LOG_DEBUG("At least one target of op {} has a network connector.", op_name);
       // Create the Broadcast components and add their IDs to broadcast_entities, but do not add
       // any transmitter to the Broadcast entity. The transmitters will be added later when the
       // incoming edges to the respective operators are processed.
@@ -2156,7 +2260,7 @@ bool GXFExecutor::add_control_flow(const std::shared_ptr<Operator>& upstream_op,
 }
 
 std::shared_ptr<GPUDevice> GXFExecutor::add_gpu_device_to_graph_entity(
-    const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
+    const std::string& device_name, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity,
     std::optional<int32_t> device_id) {
   if (graph_entity == nullptr) {
     HOLOSCAN_LOG_ERROR("graph_entity is nullptr");
@@ -2172,7 +2276,7 @@ std::shared_ptr<GPUDevice> GXFExecutor::add_gpu_device_to_graph_entity(
       device_name, holoscan::Arg("dev_id", static_cast<int32_t>(gpu_id)));
 
   gpu_device->gxf_eid(graph_entity->eid());
-  gpu_device->add_to_graph_entity(fragment_, std::move(graph_entity));
+  gpu_device->add_to_graph_entity(fragment_, graph_entity);
   gpu_device->initialize();
 
   return gpu_device;
@@ -2277,7 +2381,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
       holoscan::DFFTCollector* dfft_collector_ptr = dft_tracker_handle.get();
       dfft_collector_ptr->data_flow_tracker(fragment_->data_flow_tracker());
 
-      // Identify leaf and root operators and add to the DFFTCollector object
+      // Identify leaf and root operators and stage them in the DataFlowTracker
       for (auto& op : graph.get_nodes()) {
         if (op == nullptr) {
           throw std::runtime_error("Operator is nullptr");
@@ -2295,12 +2399,108 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
                            is_current_op_leaf,
                            is_current_op_root);
         if (is_current_op_leaf) {
-          dfft_collector_ptr->add_leaf_op(op.get());
+          fragment_->data_flow_tracker()->add_leaf_op(op.get());
         }
         // root and leaf operators may also be the same if there is only one operator in a
         // fragment
         if (is_current_op_root) {
-          dfft_collector_ptr->add_root_op(op.get());
+          fragment_->data_flow_tracker()->add_root_op(op.get());
+        }
+
+        // check if the operator was added as a probe operator, then update the codelet id in
+        // dataflowtracker
+        if (fragment_->data_flow_tracker()->check_probe_op_name(op->name())) {
+          if (is_current_op_leaf || is_current_op_root) {
+            HOLOSCAN_LOG_WARN(
+                "Operator '{}' was added as a probe operator but it is already a {} operator. "
+                "Therefore, it will not be treated as a probe operator.",
+                op->name(),
+                (is_current_op_leaf && is_current_op_root ? "root and leaf"
+                 : is_current_op_leaf                     ? "leaf"
+                                                          : "root"));
+          } else {
+            fragment_->data_flow_tracker()->add_probe_op(op.get());
+          }
+          fragment_->data_flow_tracker()->remove_probe_op_name(op->name());
+        }
+      }
+      // ensures that no invalid probe operators are left in the tracker
+      fragment_->data_flow_tracker()->finalize_probe();
+    }
+
+    // Sanity-check: kUCX and kPubSub connectors must not be mixed in the same fragment
+    // because only a single NetworkContext is supported per fragment.
+    // Also auto-create PubSubContext when PubSub connectors are used but no NetworkContext is set.
+    // (For UCX, the AppDriver already creates UcxContext in run_local(); PubSub auto-wiring lives
+    // here because pub/sub can work in single-fragment applications too.)
+    {
+      auto& op_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
+      bool has_ucx = false;
+      bool has_pubsub = false;
+      for (auto& node : op_graph.get_nodes()) {
+        has_ucx |= has_ucx_connector(node);
+        has_pubsub |= has_pubsub_connector(node);
+        if (has_ucx && has_pubsub) {
+          break;
+        }  // early exit once conflict is detected
+      }
+
+      if (has_ucx && has_pubsub) {
+        throw std::runtime_error(
+            fmt::format("Fragment '{}' contains both UCX and PubSub connectors. "
+                        "Mixing connector types is not supported because only a single "
+                        "NetworkContext is allowed per fragment.",
+                        fragment_->name()));
+      }
+
+      if (has_pubsub && !fragment_->network_context()) {
+        HOLOSCAN_LOG_INFO(
+            "PubSub connectors detected but no NetworkContext set — "
+            "auto-creating PubSubContext for fragment '{}'",
+            fragment_->name());
+        auto pubsub_ctx = fragment_->create_pubsub_network_context();
+        fragment_->network_context(pubsub_ctx);
+      }
+
+      // PubSub uses asynchronous transport for message delivery. e.g Fast-DDS
+      // DataWriter/DataReader matching happens asynchronously after graph
+      // activation, and the GreedyScheduler's areNetworkConnectionsReady()
+      // returns true immediately for PubSub (no UCX connections to wait for).
+      // This causes stop_on_deadlock_timeout (default 0ms) to be used from
+      // startup, making the scheduler stop before any Pub/Sub messages arrive.
+      //
+      // Set a minimum stop_on_deadlock_timeout so the scheduler waits long
+      // enough for matching and initial message delivery to complete. The default
+      // can be overridden via HOLOSCAN_PUBSUB_DEADLOCK_TIMEOUT_MS.
+      if (has_pubsub) {
+        auto gxf_scheduler = std::dynamic_pointer_cast<gxf::GXFScheduler>(fragment_->scheduler());
+        if (gxf_scheduler && gxf_scheduler->gxf_cid() != 0) {
+          int64_t current_timeout = 0;
+          auto result = GxfParameterGetInt64(
+              context_, gxf_scheduler->gxf_cid(), "stop_on_deadlock_timeout", &current_timeout);
+          if (result == GXF_SUCCESS && current_timeout == 0) {
+            constexpr int64_t kPubSubDeadlockTimeoutMs = 5000;
+            constexpr const char* kPubSubDeadlockTimeoutEnvVar =
+                "HOLOSCAN_PUBSUB_DEADLOCK_TIMEOUT_MS";
+
+            int64_t pubsub_deadlock_timeout_ms =
+                AppDriver::get_int_env_var(kPubSubDeadlockTimeoutEnvVar, kPubSubDeadlockTimeoutMs);
+            if (pubsub_deadlock_timeout_ms <= 0) {
+              HOLOSCAN_LOG_WARN("Invalid {} value '{}' (must be > 0). Using default {}ms.",
+                                kPubSubDeadlockTimeoutEnvVar,
+                                pubsub_deadlock_timeout_ms,
+                                kPubSubDeadlockTimeoutMs);
+              pubsub_deadlock_timeout_ms = kPubSubDeadlockTimeoutMs;
+            }
+
+            GxfParameterSetInt64(context_,
+                                 gxf_scheduler->gxf_cid(),
+                                 "stop_on_deadlock_timeout",
+                                 pubsub_deadlock_timeout_ms);
+            HOLOSCAN_LOG_DEBUG(
+                "PubSub: adjusted stop_on_deadlock_timeout to {}ms for Pub/Sub async delivery",
+                pubsub_deadlock_timeout_ms);
+          }
         }
       }
     }
@@ -2348,23 +2548,25 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         }
 
         auto op_spec = node->spec();
-        bool has_ucx_connector = false;
+        bool op_has_network_connector = false;
         for (const auto& [_, io_spec] : op_spec->inputs()) {
-          if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-            has_ucx_connector = true;
+          if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX ||
+              io_spec->connector_type() == IOSpec::ConnectorType::kPubSub) {
+            op_has_network_connector = true;
             break;
           }
         }
-        if (!has_ucx_connector) {
+        if (!op_has_network_connector) {
           for (const auto& [_, io_spec] : op_spec->outputs()) {
-            if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX) {
-              has_ucx_connector = true;
+            if (io_spec->connector_type() == IOSpec::ConnectorType::kUCX ||
+                io_spec->connector_type() == IOSpec::ConnectorType::kPubSub) {
+              op_has_network_connector = true;
               break;
             }
           }
         }
-        // done if there is no UCX connector
-        if (!has_ucx_connector) {
+        // done if there is no network connector
+        if (!op_has_network_connector) {
           continue;
         }
 
@@ -2410,10 +2612,10 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
         }
       }
 
-      // Add implicit broadcast entities to the network entity group if they have a UCX connector
+      // Add implicit broadcast entities to the network entity group if they have a network
+      // connector
       for (auto& broadcast_entity : implicit_broadcast_entities_) {
-        // Add the entity to the entity group if it has a UCX connector
-        if (has_ucx_connector(broadcast_entity)) {
+        if (has_network_connector(broadcast_entity)) {
           auto broadcast_eid = broadcast_entity->eid();
           HOLOSCAN_LOG_DEBUG("Adding implicit broadcast eid '{}' to entity group '{}' with id '{}'",
                              broadcast_eid,
@@ -2423,25 +2625,28 @@ bool GXFExecutor::initialize_gxf_graph(OperatorGraph& graph) {
               GxfUpdateEntityGroup(context, network_entity_group->gxf_gid(), broadcast_eid));
         }
       }
+
+      // Note: PubSub connector -> PubSubContext wiring is handled by the GXF runtime.
+      // PubSubContext::addRoutes() discovers PubSubTransmitter/PubSubReceiver components
+      // in each entity during graph activation and registers them automatically.
     } else {
       HOLOSCAN_LOG_DEBUG("GXFExecutor::run: no NetworkContext to initialize");
 
-      const std::string ucx_error_msg{
-          "UCX-based connection found, but there is no NetworkContext."};
+      const std::string network_error_msg{
+          "Network-based connection (UCX or PubSub) found, but there is no NetworkContext."};
 
-      // Raise an error if any operator has a UCX connector.
+      // Raise an error if any operator has a network (UCX or PubSub) connector.
       auto& operator_graph = static_cast<OperatorFlowGraph&>(fragment_->graph());
       for (auto& node : operator_graph.get_nodes()) {
-        if (node->has_ucx_connector()) {
-          throw std::runtime_error(ucx_error_msg);
+        if (node->has_network_connector()) {
+          throw std::runtime_error(network_error_msg);
         }
       }
 
-      // Raise an error if any broadcast entity has a UCX connector
+      // Raise an error if any broadcast entity has a network connector
       for (auto& broadcast_entity : implicit_broadcast_entities_) {
-        // Add the entity to the entity group if it has a UCX connector
-        if (has_ucx_connector(broadcast_entity)) {
-          throw std::runtime_error(ucx_error_msg);
+        if (has_network_connector(broadcast_entity)) {
+          throw std::runtime_error(network_error_msg);
         }
       }
     }
@@ -2736,7 +2941,6 @@ bool GXFExecutor::initialize_scheduler(Scheduler* sch) {
   gxf_sch->gxf_context(context_);
 
   gxf_uid_t eid{};
-  gxf_uid_t scheduler_cid = op_cid_;
   const std::string scheduler_entity_name = fmt::format("{}{}", entity_prefix_, sch->name());
   scheduler_entity_ = std::make_shared<nvidia::gxf::GraphEntity>();
   auto maybe = scheduler_entity_->setup(context_, scheduler_entity_name.c_str());
@@ -2751,7 +2955,7 @@ bool GXFExecutor::initialize_scheduler(Scheduler* sch) {
 
   // Create Scheduler component
   gxf_sch->gxf_initialize();
-  scheduler_cid = gxf_sch->gxf_cid();
+  gxf_uid_t scheduler_cid = gxf_sch->gxf_cid();
 
   // initialize all GXF resources and assign them to a graph entity
   initialize_gxf_resources(sch->resources(), eid, scheduler_entity_);
@@ -2774,7 +2978,6 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
       static_cast<gxf::GXFNetworkContext*>(network_context);
   gxf_network_context->gxf_context(context_);
 
-  gxf_uid_t network_context_cid = op_cid_;
   const std::string network_context_entity_name =
       fmt::format("{}{}", entity_prefix_, network_context->name());
   // TODO (GXF4): add way to check error code and throw runtime_error if setup call failed
@@ -2791,7 +2994,7 @@ bool GXFExecutor::initialize_network_context(NetworkContext* network_context) {
 
   // Create NetworkContext component
   gxf_network_context->gxf_initialize();
-  network_context_cid = gxf_network_context->gxf_cid();
+  gxf_uid_t network_context_cid = gxf_network_context->gxf_cid();
 
   // initialize all GXF resources and assign them to a graph entity
   initialize_gxf_resources(network_context->resources(), eid, network_context_entity_);
@@ -2849,7 +3052,8 @@ bool GXFExecutor::initialize_fragment_services() {
 }
 
 bool GXFExecutor::add_condition_to_graph_entity(
-    std::shared_ptr<Condition> condition, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    const std::shared_ptr<Condition>& condition,
+    std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
   if (condition && graph_entity) {
     add_component_args_to_graph_entity(condition->args(), graph_entity);
     auto gxf_condition = std::dynamic_pointer_cast<gxf::GXFCondition>(condition);
@@ -2873,7 +3077,8 @@ bool GXFExecutor::add_condition_to_graph_entity(
 }
 
 bool GXFExecutor::add_resource_to_graph_entity(
-    std::shared_ptr<Resource> resource, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    const std::shared_ptr<Resource>& resource,
+    std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
   if (resource && graph_entity) {
     add_component_args_to_graph_entity(resource->args(), graph_entity);
     // Native Resources will not be added to the GraphEntity
@@ -2895,7 +3100,7 @@ bool GXFExecutor::add_resource_to_graph_entity(
 }
 
 bool GXFExecutor::add_iospec_to_graph_entity(
-    IOSpec* io_spec, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    IOSpec* io_spec, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
   if (!io_spec || !graph_entity) {
     return false;
   }
@@ -2912,7 +3117,7 @@ bool GXFExecutor::add_iospec_to_graph_entity(
   for (auto& [_, condition] : io_spec->conditions()) {
     bool condition_status = add_condition_to_graph_entity(condition, graph_entity);
     if (!condition_status) {
-      HOLOSCAN_LOG_ERROR("IOSpec: failed to add connector '{}' to graph entity", condition->name());
+      HOLOSCAN_LOG_ERROR("IOSpec: failed to add condition '{}' to graph entity", condition->name());
     }
     overall_status = overall_status && condition_status;
   }
@@ -2920,7 +3125,7 @@ bool GXFExecutor::add_iospec_to_graph_entity(
 }
 
 void GXFExecutor::add_component_args_to_graph_entity(
-    std::vector<Arg>& args, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+    std::vector<Arg>& args, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
   for (auto& arg : args) {
     auto arg_type = arg.arg_type();
     auto element_type = arg_type.element_type();

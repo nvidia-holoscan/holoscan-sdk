@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -608,7 +608,8 @@ const std::vector<ImageFormat>& get_formats() {
 std::vector<ImageFormat> get_supported_formats(vk::PhysicalDevice physical_device) {
   std::vector<ImageFormat> supported_formats;
 
-  const std::vector<ImageFormat> all_formats = get_formats();
+  const std::vector<ImageFormat>& all_formats = get_formats();
+  supported_formats.reserve(all_formats.size());
 
   // Filter only formats supported by the hardware
   for (const auto& fmt : all_formats) {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -103,6 +103,20 @@ class TrtInfer : public InferBase {
   std::vector<holoinfer_datatype> get_output_datatype() const;
 
   void cleanup() {}
+  /**
+   * @brief Initialize the GPU Resident inference
+   * @param input_buffer Input buffer on GPU
+   * @param output_buffer Output buffer
+   */
+  void init_gr_inference(void* input_buffer, void* output_buffer);
+
+  /**
+   * @brief Do the GPU Resident inference.
+   * @param input_buffer Input buffer
+   * @param output_buffer Output buffer
+   * @param cuda_stream CUDA stream
+   */
+  void do_gr_inference(void* input_buffer, void* output_buffer, cudaStream_t cuda_stream);
 
  private:
   /// @brief Path to onnx model file
@@ -186,6 +200,8 @@ class TrtInfer : public InferBase {
 
   /// Cuda stream
   cudaStream_t cuda_stream_ = nullptr;
+  /// Whether this backend owns (created) the CUDA stream and should destroy it
+  bool owns_cuda_stream_ = false;
   /// CUDA event for device
   cudaEvent_t cuda_event_ = nullptr;
 
@@ -196,6 +212,24 @@ class TrtInfer : public InferBase {
 
   /// @brief Inference runtime
   std::unique_ptr<nvinfer1::IRuntime> infer_runtime_;
+
+  /// @brief Vector of input device buffers.
+  std::vector<void*> input_device_buffer_;
+
+  /// @brief Vector of output device buffers.
+  std::vector<void*> output_device_buffer_;
+
+  /// @brief Vector of input tensor names.
+  std::vector<std::string> input_tensor_names_;
+
+  /// @brief Vector of output tensor names.
+  std::vector<std::string> output_tensor_names_;
+
+  /// @brief First call stream
+  cudaStream_t first_call_stream_ = 0;
+
+  /// @brief Flag showing if inference is initialized. Default is False.
+  bool init_inference = false;
 };
 
 }  // namespace inference

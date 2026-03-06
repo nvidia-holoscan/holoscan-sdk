@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,14 @@ target_link_libraries(multithread
 )
 
 # Copy config file to the build tree
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/multithread.yaml"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml"
+  COMMENT "Copying multithread.yaml"
+)
 add_custom_target(multithread_yaml
-    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multithread.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS "multithread.yaml"
-    BYPRODUCTS "multithread.yaml"
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/multithread.yaml"
 )
 add_dependencies(multithread multithread_yaml)
 
@@ -98,10 +102,14 @@ if(HOLOSCAN_BUILD_TESTS)
   file(WRITE ${PORT_MAP_CONFIG_FILE} "${CONFIG_STRING}")
 
   # Copy the test script to the build directory (used by both tests)
+  add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py"
+    COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py" ${CMAKE_CURRENT_BINARY_DIR}
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py"
+    COMMENT "Copying run_with_output_testing.py"
+  )
   add_custom_target(multithread_test_script
-      COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py" ${CMAKE_CURRENT_BINARY_DIR}
-      DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/run_with_output_testing.py"
-      BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py"
+    DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py"
   )
   set(TEST_SCRIPT ${CMAKE_CURRENT_BINARY_DIR}/run_with_output_testing.py)
 

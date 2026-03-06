@@ -199,6 +199,9 @@ bool AppWorkerClient::fragment_execution(
           case IOSpec::ConnectorType::kUCX:
             connection_item->set_connector_type(holoscan::distributed::ConnectorType::UCX);
             break;
+          case IOSpec::ConnectorType::kPubSub:
+            connection_item->set_connector_type(holoscan::distributed::ConnectorType::PUBSUB);
+            break;
         }
 
         // Currently supporting only arguments for UCX connector (rx_address, address, port)

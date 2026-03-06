@@ -71,6 +71,7 @@ bool is_torch_cuda_sm_compatible(int device_id) {
 }
 
 // Input processor optimization
+// NOLINTNEXTLINE(cert-err58-cpp)
 static const std::unordered_map<std::string, torch::ScalarType> kTorchTypeMap = {
     {"kFloat32", torch::kFloat32},
     {"kInt32", torch::kInt32},
@@ -166,6 +167,7 @@ class TorchInferImpl {
     } catch (const std::out_of_range& e) {
       std::string requested_key = schema.as<std::string>();
       std::vector<std::string> available_keys;
+      available_keys.reserve(tensor_map.size());
       for (const auto& kv : tensor_map) {
         available_keys.push_back(kv.first);
       }
@@ -323,6 +325,7 @@ torch::Tensor TorchInferImpl::create_tensor(const std::shared_ptr<DataBuffer>& i
                               status);
   } catch (const std::out_of_range& e) {
     std::vector<std::string> supported_types;
+    supported_types.reserve(kTorchTypeMap.size());
     for (const auto& [key, value] : kTorchTypeMap) {
       supported_types.push_back(key);
     }
@@ -437,6 +440,7 @@ InferStatus TorchInferImpl::transfer_to_output(std::shared_ptr<DataBuffer>& outp
                                    cuda_stream_);
   } catch (const std::out_of_range& e) {
     std::vector<std::string> supported_types;
+    supported_types.reserve(kTorchTypeMap.size());
     for (const auto& [key, value] : kTorchTypeMap) {
       supported_types.push_back(key);
     }
@@ -497,8 +501,13 @@ bool TorchInferImpl::set_dynamic_input_dimension(
   input_dims_.clear();
 
   for (int i = 0; i < input_nodes_; i++) {
-    auto holoscan_tensor_name = input_holoscan_tensors[i];
-    auto dims = dims_per_tensor.at(holoscan_tensor_name);
+    const auto& holoscan_tensor_name = input_holoscan_tensors[i];
+    auto dims_it = dims_per_tensor.find(holoscan_tensor_name);
+    if (dims_it == dims_per_tensor.end()) {
+      HOLOSCAN_LOG_ERROR("Tensor '{}' not found in dims_per_tensor map", holoscan_tensor_name);
+      return false;
+    }
+    const auto& dims = dims_it->second;
 
     const size_t tensor_size = accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
 
@@ -1063,6 +1072,7 @@ std::vector<std::vector<int64_t>> TorchInfer::get_output_dims() const {
 
 std::vector<holoinfer_datatype> TorchInfer::get_input_datatype() const {
   std::vector<holoinfer_datatype> result;
+  result.reserve(impl_->input_type_.size());
   for (const auto& type_str : impl_->input_type_) {
     result.push_back(kHoloInferDataTypeMap.at(type_str));
   }
@@ -1071,6 +1081,7 @@ std::vector<holoinfer_datatype> TorchInfer::get_input_datatype() const {
 
 std::vector<holoinfer_datatype> TorchInfer::get_output_datatype() const {
   std::vector<holoinfer_datatype> result;
+  result.reserve(impl_->output_type_.size());
   for (const auto& type_str : impl_->output_type_) {
     result.push_back(kHoloInferDataTypeMap.at(type_str));
   }

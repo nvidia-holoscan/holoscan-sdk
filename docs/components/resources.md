@@ -73,6 +73,63 @@ Holoscan provides several allocator types with different characteristics:
 
 - **`RMMAllocator`**: Provides both device and pinned host memory pools. Required for operators like `VideoStreamReplayerOp` that need both memory types. Inherits from `CudaAllocator`, providing `allocate_async`/`free_async` methods.
 
+### MatXAllocator (Utility)
+
+The `MatXAllocator` class (defined in `holoscan/utils/matx_allocator.hpp`) is a lightweight adapter that enables any Holoscan SDK allocator to be used with [MatX](https://nvidia.github.io/MatX/) GPU tensor operations. MatX uses compile-time duck typing (SFINAE) to detect custom allocators — it requires `allocate(size_t)` and `deallocate(void*, size_t)` methods, which `MatXAllocator` provides by delegating to the underlying Holoscan allocator.
+
+**Key features:**
+
+- Works with any Holoscan allocator: `BlockMemoryPool`, `UnboundedAllocator`, `StreamOrderedAllocator`, `RMMAllocator`
+- Stream-aware: when constructed with a `cudaStream_t` and a `CudaAllocator`-derived allocator (e.g., `RMMAllocator`, `StreamOrderedAllocator`), uses `allocate_async`/`free_async` for stream-ordered allocation
+- For `BlockMemoryPool` with a stream, uses GXF-level stream-aware deferred deallocation
+
+**Behavior by allocator type** (behavior depends on whether a CUDA stream is passed to `MatXAllocator`, not on the allocator class itself):
+
+| Allocator | Stream | Allocation | Deallocation |
+|---|---|---|---|
+| `RMMAllocator` / `StreamOrderedAllocator` | Yes | Async (stream-ordered) | Async (stream-ordered) |
+| `RMMAllocator` / `StreamOrderedAllocator` | No | Sync | Sync |
+| `BlockMemoryPool` | Yes | Sync | Deferred (CUDA event) |
+| `BlockMemoryPool` | No | Sync | Sync (immediate) |
+| `UnboundedAllocator` | Any | Sync | Sync |
+
+"Stream" = whether a non-null `cudaStream_t` is passed to `MatXAllocator`. Rows 1–2 refer to the same allocator type; the distinction is whether `MatXAllocator` is constructed with a non-null stream. "Sync" means *not stream-ordered* (no `cudaMallocAsync`/`cudaFreeAsync`); it does **not** mean each allocation forces a GPU sync. For `BlockMemoryPool`, allocation from the preallocated pool is CPU bookkeeping only.
+
+**Usage example (C++):**
+
+```cpp
+#include <holoscan/utils/matx_allocator.hpp>
+
+// Inside an operator's compute() method, where allocator_ is a
+// Parameter<std::shared_ptr<Allocator>> registered in setup():
+holoscan::MatXAllocator matx_alloc(allocator_.get());
+
+// Or with a CUDA stream for stream-ordered allocation:
+holoscan::MatXAllocator matx_alloc(allocator_.get(), cuda_stream);
+
+// Use with MatX tensor operations — memory comes from the Holoscan allocator
+auto tensor = matx::make_tensor<float>({1024}, matx_alloc);
+
+// Stream rebinding for multi-stream pipelines:
+auto alloc2 = matx_alloc.with_stream(another_stream);
+```
+
+:::{note}
+MatX's `make_tensor` with a custom allocator does **not** accept a CUDA stream parameter.
+To use stream-ordered allocation, bind the stream when constructing the `MatXAllocator`.
+Use `with_stream()` to create allocators for different streams without rebuilding from scratch.
+:::
+
+:::{note}
+The `MatXAllocator` does **not** own the underlying allocator. The allocator must outlive the `MatXAllocator` and any tensors allocated through it. In practice, register the allocator as a shared resource in `setup()` and construct the `MatXAllocator` with `allocator_.get()` in `compute()`.
+:::
+
+:::{note}
+To import a `holoscan::Tensor` into MatX via DLPack, use `tensor->to_dlpack()` and MatX's `make_tensor(TensorType&, const DLManagedTensor)` overload. Manage the returned `DLManagedTensor*` with a scope guard (e.g., `std::unique_ptr` with a custom deleter). See the `matx_allocator` example for a complete demonstration of both raw-pointer and DLPack-based import.
+:::
+
+See the `matx_allocator` example under `examples/matx/matx_allocator/` for a complete working application.
+
 ### CudaStreamPool
 
 This allocator creates a pool of CUDA streams.
@@ -241,3 +298,107 @@ This resource represents a single CUDA Green Context, which is a partition of th
 - The `index` parameter specifies the index of the green context partition within the pool to use. If not specified or specified as a negative number, the default green context from `green_context_pool` will be used.
 
 By assigning different `CudaGreenContext` resources to different operators, users can ensure that each operator runs in its own isolated GPU partition, improving performance isolation and resource management in complex applications.
+
+(cuda-stream-resources)=
+## CUDA Stream and Event Types
+
+The following types are used internally by the Holoscan SDK's execution runtime for managing CUDA streams and events during operator execution. They originate from the underlying GXF (Graph Execution Framework) CUDA extension and may be encountered when working with GPU-accelerated operators. For guidance on handling CUDA streams in your operators, see the [CUDA Stream Handling](../holoscan_cuda_stream_handling.md) guide.
+
+### CudaStream
+
+Holds and provides access to a native `cudaStream_t`. `CudaStream` handles are allocated by `CudaStreamPool`. A handle remains valid until explicitly released via `CudaStreamPool.releaseStream()` or implicitly when `CudaStreamPool` is deactivated.
+
+Use `stream()` to obtain the native `cudaStream_t` for submitting GPU operations. After submitting work, call `record(event, input_entity, sync_cb)` to extend the input entity's lifecycle until the GPU consumes it, preventing premature buffer release.
+
+### CudaStreamId
+
+Holds a CUDA stream ID used to look up the corresponding `CudaStream` handle. The `stream_cid` field should be the component ID of a `CudaStream`.
+
+### CudaEvent
+
+Holds and provides access to a native `cudaEvent_t` handle. Initialize via `init(flags, dev_id)` or set a third-party event via `initWithEvent(event, dev_id, free_fnc)`. The event remains valid until `deinit` is called (or until destruction).
+
+### CudaStreamSync
+
+A synchronization component that must be placed in the pipeline after all CUDA operator stages. When a message entity is received, it finds all `CudaStreamId` components in that message, extracts each `CudaStream`, and synchronizes all previously recorded events along with submitted GPU operations.
+
+:::{warning}
+`CudaStreamSync` must be present in the graph when `CudaStream.record()` is used, otherwise memory leaks may occur.
+:::
+
+(multimedia-data-types)=
+## Multimedia Data Types
+
+The following data types are used by Holoscan SDK operators that process audio and video data. They originate from the underlying GXF multimedia extension and define the buffer formats and metadata used when passing media data between operators.
+
+### VideoBuffer
+
+`VideoBuffer` holds memory and metadata for a video frame, analogous to a `Tensor` but with video-specific metadata. `VideoBufferInfo` captures the following fields:
+
+| Field | Description |
+|---|---|
+| `width` | Width of the video frame |
+| `height` | Height of the video frame |
+| `color_format` | VideoFormat of the frame |
+| `color_planes` | ColorPlane(s) for the VideoFormat |
+| `surface_layout` | SurfaceLayout of the frame |
+
+Supported `VideoFormat` values:
+
+| VideoFormat | Description |
+|---|---|
+| `GXF_VIDEO_FORMAT_YUV420` | BT.601 multi-planar 4:2:0 YUV |
+| `GXF_VIDEO_FORMAT_YUV420_ER` | BT.601 multi-planar 4:2:0 YUV ER |
+| `GXF_VIDEO_FORMAT_YUV420_709` | BT.709 multi-planar 4:2:0 YUV |
+| `GXF_VIDEO_FORMAT_YUV420_709_ER` | BT.709 multi-planar 4:2:0 YUV ER |
+| `GXF_VIDEO_FORMAT_NV12` | BT.601 multi-planar 4:2:0 YUV with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_ER` | BT.601 multi-planar 4:2:0 YUV ER with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_709` | BT.709 multi-planar 4:2:0 YUV with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_709_ER` | BT.709 multi-planar 4:2:0 YUV ER with interleaved UV |
+| `GXF_VIDEO_FORMAT_RGBA` | RGBA-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGRA` | BGRA-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_ARGB` | ARGB-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_ABGR` | ABGR-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_RGBX` | RGBX-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGRX` | BGRX-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_XRGB` | XRGB-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_XBGR` | XBGR-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_RGB` | RGB-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGR` | BGR-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_R8_G8_B8` | RGB unsigned 8-bit multiplanar |
+| `GXF_VIDEO_FORMAT_B8_G8_R8` | BGR unsigned 8-bit multiplanar |
+| `GXF_VIDEO_FORMAT_GRAY` | 8-bit grayscale single plane |
+
+Supported `SurfaceLayout` values:
+
+| SurfaceLayout | Description |
+|---|---|
+| `GXF_SURFACE_LAYOUT_PITCH_LINEAR` | Pitch-linear surface memory |
+| `GXF_SURFACE_LAYOUT_BLOCK_LINEAR` | Block-linear surface memory |
+
+### AudioBuffer
+
+`AudioBuffer` holds memory and metadata for an audio frame, analogous to a `Tensor` but with audio-specific metadata. `AudioBufferInfo` captures the following fields:
+
+| Field | Description |
+|---|---|
+| `channels` | Number of channels in an audio frame |
+| `samples` | Number of samples in an audio frame |
+| `sampling_rate` | Sampling rate in Hz |
+| `bytes_per_sample` | Number of bytes per sample |
+| `audio_format` | AudioFormat of the frame |
+| `audio_layout` | AudioLayout of the frame |
+
+Supported `AudioFormat` values:
+
+| AudioFormat | Description |
+|---|---|
+| `GXF_AUDIO_FORMAT_S16LE` | 16-bit signed PCM audio |
+| `GXF_AUDIO_FORMAT_F32LE` | 32-bit floating-point audio |
+
+Supported `AudioLayout` values:
+
+| AudioLayout | Description |
+|---|---|
+| `GXF_AUDIO_LAYOUT_INTERLEAVED` | Interleaved channel data (e.g., LRLRLR) |
+| `GXF_AUDIO_LAYOUT_NON_INTERLEAVED` | Non-interleaved channel data (e.g., LLLRRR) |

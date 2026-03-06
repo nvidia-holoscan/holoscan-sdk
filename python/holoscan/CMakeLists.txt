@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,22 +54,24 @@ function(holoscan_pybind11_module pybind11_module_name)
         "\$ORIGIN/${wheel_lib_relative_path}"   # in our python wheel
     )
     list(JOIN _rpath ":" _rpath)
-    set_property(TARGET ${module_target}
-        APPEND PROPERTY BUILD_RPATH ${_rpath}
-    )
+    set_target_properties(${module_target} PROPERTIES INSTALL_RPATH ${_rpath})
+    set_target_properties(${module_target} PROPERTIES BUILD_WITH_INSTALL_RPATH ON)
     unset(_rpath)
 
     # make submodule folder
     file(MAKE_DIRECTORY ${module_binary_dir})
 
-    # custom target to ensure the module's __init__.py file is copied
+    # custom command to copy the module's __init__.py file (only when needed)
     set(module_init_file ${CMAKE_CURRENT_SOURCE_DIR}/__init__.py)
     set(module_init_target ${module_target}_init)
-    add_custom_target(${module_init_target}
+    set(module_init_output ${module_binary_dir}/__init__.py)
+    add_custom_command(
+        OUTPUT "${module_init_output}"
         COMMAND ${CMAKE_COMMAND} -E copy "${module_init_file}" "${module_binary_dir}/"
         DEPENDS "${module_init_file}"
-        BYPRODUCTS "${module_binary_dir}/__init__.py"
+        COMMENT "Copying ${pybind11_module_name} __init__.py"
     )
+    add_custom_target(${module_init_target} DEPENDS "${module_init_output}")
     add_dependencies(${module_target} ${module_init_target})
 
     # Notes:
@@ -96,22 +98,17 @@ configure_file(
     @ONLY
 )
 
-# decorator.py
+# decorator.py (copy only when needed)
 set(CMAKE_PYBIND11_DECORATORS_PY_FILE ${CMAKE_CURRENT_LIST_DIR}/decorator.py)
-add_custom_target(holoscan-python-decorator
+set(DECORATORS_OUTPUT_FILE ${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/decorator.py)
+add_custom_command(
+    OUTPUT "${DECORATORS_OUTPUT_FILE}"
     COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_PYBIND11_DECORATORS_PY_FILE}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
     DEPENDS "${CMAKE_PYBIND11_DECORATORS_PY_FILE}"
+    COMMENT "Copying decorator.py"
 )
+add_custom_target(holoscan-python-decorator DEPENDS "${DECORATORS_OUTPUT_FILE}")
 add_dependencies(holoscan-python holoscan-python-decorator)
-
-# cli
-set(HOLOSCAN_PYTHON_CLI_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cli)
-add_custom_target(holoscan-python-cli
-    COMMAND ${CMAKE_COMMAND} -E copy "${HOLOSCAN_PYTHON_CLI_MODULE_PATH}" "${HOLOSCAN_PYTHON_MODULE_BINARY_DIR}/"
-    DEPENDS "${HOLOSCAN_PYTHON_CLI_MODULE_PATH}"
-)
-add_dependencies(holoscan-python holoscan-python-cli)
-add_subdirectory(cli) # redundant?
 
 ################################################################################
 # Pybind11 modules

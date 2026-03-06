@@ -109,8 +109,9 @@ struct PoseTreeUCXClient::ClientImpl {
   std::vector<std::pair<std::shared_ptr<ucxx::Request>, std::shared_ptr<void>>> pending_requests;
 };
 
-void waitSingleRequest(std::shared_ptr<ucxx::Worker> worker, std::shared_ptr<ucxx::Request> request,
-                       int64_t timeout_ms, int64_t poll_sleep_us) {
+void waitSingleRequest(const std::shared_ptr<ucxx::Worker>& worker,
+                       const std::shared_ptr<ucxx::Request>& request, int64_t timeout_ms,
+                       int64_t poll_sleep_us) {
   auto start_time = std::chrono::steady_clock::now();
   while (!request->isCompleted()) {
     worker->progress();
@@ -235,7 +236,8 @@ void PoseTreeUCXClient::run() {
     // Register AM receiver callbacks
     ucxx::AmReceiverCallbackInfo delta_callback_info("AMClient", MSG_DELTA);
     impl_->worker->registerAmReceiverCallback(
-        std::move(delta_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(delta_callback_info),
+        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received delta message");
           if (!running_) {
             return;
@@ -318,7 +320,8 @@ void PoseTreeUCXClient::run() {
         });
     ucxx::AmReceiverCallbackInfo snapshot_callback_info("AMClient", MSG_SNAPSHOT_DATA);
     impl_->worker->registerAmReceiverCallback(
-        std::move(snapshot_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(snapshot_callback_info),
+        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received snapshot message");
           if (!running_) {
             return;
@@ -416,7 +419,8 @@ void PoseTreeUCXClient::run() {
 
     ucxx::AmReceiverCallbackInfo close_callback_info("AMClient", MSG_CLOSE);
     impl_->worker->registerAmReceiverCallback(
-        std::move(close_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(close_callback_info),
+        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           if (!running_) {
             return;
           }
@@ -434,7 +438,8 @@ void PoseTreeUCXClient::run() {
 
     ucxx::AmReceiverCallbackInfo config_callback_info("AMClient", MSG_DISTRIBUTED_CONFIG);
     impl_->worker->registerAmReceiverCallback(
-        std::move(config_callback_info), [this](std::shared_ptr<ucxx::Request> req, ucp_ep_h) {
+        std::move(config_callback_info),
+        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           if (!running_) {
             return;
           }
@@ -463,7 +468,7 @@ void PoseTreeUCXClient::run() {
     auto subscribe_request = impl_->endpoint->amSend(
         &subscribe_msg, sizeof(subscribe_msg), UCS_MEMORY_TYPE_HOST, subscribe_info);
     waitSingleRequest(impl_->worker,
-                      std::move(subscribe_request),
+                      subscribe_request,
                       config_.request_timeout_ms,
                       config_.request_poll_sleep_us);
 

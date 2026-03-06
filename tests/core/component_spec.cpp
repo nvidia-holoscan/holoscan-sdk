@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -205,7 +205,7 @@ TEST_F(ComponentSpecWithGXFContext, TestComponentSpecDescription) {
       d, "double_vec_of_vec", "Double 2D vector parameter", "double floats in double vector");
   spec->param(s, "string_vector", "String vector parameter", "");
 
-  constexpr auto description = R"(fragment: ""
+  constexpr auto description = R"(fragment: test_fragment
 params:
   - name: string_vector
     type: std::vector<std::string>

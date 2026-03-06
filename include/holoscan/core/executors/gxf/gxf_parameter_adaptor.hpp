@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -45,6 +45,7 @@ class GXFParameterAdaptor {
       std::function<gxf_result_t(gxf_context_t context, gxf_uid_t uid, const char* key,
                                  const ArgType& arg_type, const std::any& any_value)>;
 
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static AdaptFunc none_param_handler =
       []([[maybe_unused]] gxf_context_t context, [[maybe_unused]] gxf_uid_t uid, const char* key,
          [[maybe_unused]] const ArgType& arg_type, [[maybe_unused]] const std::any& any_value) {
@@ -138,16 +139,15 @@ class GXFParameterAdaptor {
         if (!param.has_value()) {
           if (param.flag() == ParameterFlag::kOptional) {
             return GXF_SUCCESS;
-          } else {
-            HOLOSCAN_LOG_WARN(
-                "Unable to get argument for key '{}' with type '{}'", key, typeid(typeT).name());
-            return GXF_FAILURE;
           }
+          HOLOSCAN_LOG_WARN(
+              "Unable to get argument for key '{}' with type '{}'", key, typeid(typeT).name());
+          return GXF_FAILURE;
         }
 
         typeT& value = param.get();
 
-        gxf_result_t result = set_gxf_parameter_value(context, uid, key, arg_type, value);
+        const gxf_result_t result = set_gxf_parameter_value(context, uid, key, arg_type, value);
         return result;
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Bad any cast exception: {}", e.what());
@@ -162,8 +162,8 @@ class GXFParameterAdaptor {
                                    const ArgType& arg_type,
                                    const std::any& any_value) {
       try {
-        typeT value = std::any_cast<typeT>(any_value);
-        gxf_result_t result = set_gxf_parameter_value(context, uid, key, arg_type, value);
+        auto value = std::any_cast<typeT>(any_value);
+        const gxf_result_t result = set_gxf_parameter_value(context, uid, key, arg_type, value);
         return result;
       } catch (const std::bad_any_cast& e) {
         HOLOSCAN_LOG_ERROR("Bad any cast exception: {}", e.what());
@@ -177,6 +177,7 @@ class GXFParameterAdaptor {
   }
 
   template <typename typeT>
+  // NOLINTNEXTLINE(readability-function-cognitive-complexity)
   static gxf_result_t set_gxf_parameter_value(gxf_context_t context, gxf_uid_t uid, const char* key,
                                               const ArgType& arg_type, typeT& value) {
     switch (arg_type.container_type()) {
@@ -290,13 +291,12 @@ class GXFParameterAdaptor {
             if constexpr (std::is_same_v<typeT, holoscan::IOSpec*>) {
               if (value) {
                 auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(value->connector());
-                gxf_uid_t cid = gxf_resource->gxf_cid();
+                const gxf_uid_t cid = gxf_resource->gxf_cid();
 
                 return GxfParameterSetHandle(context, uid, key, cid);
-              } else {
-                // If the IOSpec is null, do not set the parameter.
-                return GXF_SUCCESS;
               }
+              // If the IOSpec is null, do not set the parameter.
+              return GXF_SUCCESS;
             }
             break;
           }
@@ -314,12 +314,11 @@ class GXFParameterAdaptor {
                   gxf_resource->initialize();
                 }
                 return GxfParameterSetHandle(context, uid, key, gxf_resource->gxf_cid());
-              } else {
-                HOLOSCAN_LOG_TRACE(
-                    "Resource is null (or a native resource) for key '{}'. Not setting parameter.",
-                    key);
-                return GXF_SUCCESS;
               }
+              HOLOSCAN_LOG_TRACE(
+                  "Resource is null (or a native resource) for key '{}'. Not setting parameter.",
+                  key);
+              return GXF_SUCCESS;
             }
             HOLOSCAN_LOG_ERROR("Unable to handle ArgElementType::kResource for key '{}'", key);
             break;
@@ -338,17 +337,17 @@ class GXFParameterAdaptor {
                   gxf_condition->initialize();
                 }
                 return GxfParameterSetHandle(context, uid, key, gxf_condition->gxf_cid());
-              } else if (value) {
-                auto native_condition_cid = static_cast<gxf_uid_t>(value->wrapper_cid());
+              }
+              if (value) {
+                const auto native_condition_cid = static_cast<gxf_uid_t>(value->wrapper_cid());
                 if (native_condition_cid != 0) {
                   return GxfParameterSetHandle(context, uid, key, native_condition_cid);
-                } else {
-                  HOLOSCAN_LOG_ERROR(
-                      "GXF component ID is null for native condition '{}' corresponding to key "
-                      "'{}'. Not setting parameter.",
-                      value->name(),
-                      key);
                 }
+                HOLOSCAN_LOG_ERROR(
+                    "GXF component ID is null for native condition '{}' corresponding to key "
+                    "'{}'. Not setting parameter.",
+                    value->name(),
+                    key);
               } else {
                 HOLOSCAN_LOG_TRACE("Condition item in the vector is null. Skipping it for key '{}'",
                                    key);
@@ -400,16 +399,21 @@ class GXFParameterAdaptor {
               if constexpr (holoscan::dimension_of_v<typeT> == 1) {
                 // Create vector of Handles
                 YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-                for (typename holoscan::type_info<typeT>::element_type item : value) {
-                  yaml_node.push_back(item);
+                for (const auto& item : value) {
+                  // Explicit cast handles std::vector<bool>'s proxy type (_Bit_reference)
+                  yaml_node.push_back(
+                      static_cast<typename holoscan::type_info<typeT>::element_type>(item));
                 }
                 return GxfParameterSetFromYamlNode(context, uid, key, &yaml_node, "");
               } else if constexpr (holoscan::dimension_of_v<typeT> == 2) {
                 YAML::Node yaml_node = YAML::Load("[]");  // Create an empty sequence
-                for (std::vector<typename holoscan::type_info<typeT>::element_type>& vec : value) {
+                for (const std::vector<typename holoscan::type_info<typeT>::element_type>& vec :
+                     value) {
                   YAML::Node inner_yaml_node = YAML::Load("[]");  // Create an empty sequence
-                  for (typename holoscan::type_info<typeT>::element_type item : vec) {
-                    inner_yaml_node.push_back(item);
+                  for (const auto& item : vec) {
+                    // Explicit cast handles std::vector<bool>'s proxy type (_Bit_reference)
+                    inner_yaml_node.push_back(
+                        static_cast<typename holoscan::type_info<typeT>::element_type>(item));
                   }
                   if (inner_yaml_node.size() > 0) {
                     yaml_node.push_back(inner_yaml_node);
@@ -466,9 +470,9 @@ class GXFParameterAdaptor {
 
                     gxf_resource->initialize();
                   }
-                  gxf_uid_t resource_cid = gxf_resource->gxf_cid();
+                  const gxf_uid_t resource_cid = gxf_resource->gxf_cid();
                   HOLOSCAN_LOG_TRACE("\tresource_cid: {}", resource_cid);
-                  std::string full_resource_name =
+                  const std::string full_resource_name =
                       gxf::get_full_component_name(context, resource_cid);
                   yaml_node.push_back(full_resource_name);
                 } else {
@@ -501,14 +505,15 @@ class GXFParameterAdaptor {
 
                     gxf_condition->initialize();
                   }
-                  gxf_uid_t condition_cid = gxf_condition->gxf_cid();
-                  std::string full_condition_name =
+                  const gxf_uid_t condition_cid = gxf_condition->gxf_cid();
+                  const std::string full_condition_name =
                       gxf::get_full_component_name(context, condition_cid);
                   yaml_node.push_back(full_condition_name);
                 } else if (condition) {
-                  auto native_condition_cid = static_cast<gxf_uid_t>(condition->wrapper_cid());
+                  const auto native_condition_cid =
+                      static_cast<gxf_uid_t>(condition->wrapper_cid());
                   if (native_condition_cid != 0) {
-                    std::string full_condition_name =
+                    const std::string full_condition_name =
                         gxf::get_full_component_name(context, native_condition_cid);
                     yaml_node.push_back(full_condition_name);
                   } else {

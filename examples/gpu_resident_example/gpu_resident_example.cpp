@@ -274,6 +274,9 @@ bool run_iteration(holoscan::GPUResidentOperator* source_op, holoscan::GPUReside
       "Failed to copy random numbers from host to source operator output device memory");
   HOLOSCAN_LOG_INFO("Iteration {} - Copied random data to source operator output", iteration + 1);
 
+  // synchronize the default stream
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(0), "Failed to synchronize default stream");
+
   // Make data ready for GPU resident execution
   gr_fragment->gpu_resident().data_ready();
 
@@ -296,13 +299,17 @@ bool run_iteration(holoscan::GPUResidentOperator* source_op, holoscan::GPUReside
           host_result.data(), sink_input_device_addr, sizeof(int) * 512, cudaMemcpyDeviceToHost),
       "Failed to copy result from sink operator input device memory to host");
 
+  // synchronize the default stream
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(0), "Failed to synchronize default stream");
   // Verify the results
   return verify_results(host_input, host_result, iteration);
 }
 
 int main() {
   auto app = holoscan::make_application<GRApp>();
-  auto future = app->run_async();
+
+  // Compose the application graph to create the fragment objects.
+  app->compose_graph();
 
   // Get the GPU resident fragment from the application
   auto& fragment_graph = app->fragment_graph();
@@ -310,8 +317,21 @@ int main() {
 
   if (!gr_fragment) {
     HOLOSCAN_LOG_ERROR("Could not find gr_fragment");
-    return cleanup_and_exit(nullptr, future);
+    return 1;
   }
+
+  // Compose the fragment's operator graph so GPU-resident functions become available.
+  gr_fragment->compose_graph();
+
+  // This example reads back results to the host via cudaMemcpy between iterations.
+  // Enable sync_with_host so that a system-wide fence is issued at the end of each
+  // iteration, guaranteeing that all device memory writes are visible to the host
+  // before result_ready() returns true.
+  // Note: sync_with_host is not required when the pipeline is driven entirely by
+  // GPU-side data ready handlers with no host-side readback between iterations.
+  gr_fragment->gpu_resident().sync_with_host();
+
+  auto future = app->run_async();
 
   // Wait for the GPU-resident CUDA graph to be launched
   if (!wait_for_graph_launch(gr_fragment)) {

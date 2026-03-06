@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@ namespace holoscan {
 
 void NetworkContext::initialize() {
   // Initialize the operator through the executor
-  auto fragment_ptr = fragment();
+  auto* fragment_ptr = fragment();
   if (fragment_ptr) {
     auto& executor = fragment_ptr->executor();
     executor.initialize_network_context(this);

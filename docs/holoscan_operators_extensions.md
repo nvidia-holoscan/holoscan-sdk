@@ -4,26 +4,48 @@ The units of work of Holoscan applications are implemented within Operators, as 
 
 ___
 
-(holoscan-operators=)
+(holoscan-operators)=
 ## Operators
 
 The operators below are defined under the `holoscan::ops` namespace for C++ and CMake, and under the `holoscan.operators` module in Python.
 
-| Class    | CMake target/lib | Documentation                  |
-|--------- |----------------- |------------------------------- |
-| **BayerDemosaicOp** | `bayer_demosaic` | {cpp:class}`C++ <holoscan::ops::BayerDemosaicOp>`/{py:class}`Python <holoscan.operators.BayerDemosaicOp>` |
-| **FormatConverterOp** | `format_converter` | {cpp:class}`C++ <holoscan::ops::FormatConverterOp>`/{py:class}`Python <holoscan.operators.FormatConverterOp>` |
-| **HolovizOp** | `holoviz` | {cpp:class}`C++ <holoscan::ops::HolovizOp>`/{py:class}`Python <holoscan.operators.HolovizOp>` |
-| **InferenceOp** | `inference` | {cpp:class}`C++ <holoscan::ops::InferenceOp>`/{py:class}`Python <holoscan.operators.InferenceOp>` |
-| **InferenceProcessorOp** | `inference_processor` | {cpp:class}`C++ <holoscan::ops::InferenceProcessorOp>`/{py:class}`Python <holoscan.operators.InferenceProcessorOp>` |
-| **PingRxOp** | `ping_rx` | {cpp:class}`C++ <holoscan::ops::PingRxOp>`/{py:class}`Python <holoscan.operators.PingRxOp>` |
-| **PingTensorRxOp** | `ping_tensor_rx` | {cpp:class}`C++ <holoscan::ops::PingTensorRxOp>`/{py:class}`Python <holoscan.operators.PingTensorRxOp>` |
-| **PingTensorTxOp** | `ping_tensor_tx` | {cpp:class}`C++ <holoscan::ops::PingTensorTxOp>`/{py:class}`Python <holoscan.operators.PingTensorTxOp>` |
-| **PingTxOp** | `ping_tx` | {cpp:class}`C++ <holoscan::ops::PingTxOp>`/{py:class}`Python <holoscan.operators.PingTxOp>` |
-| **SegmentationPostprocessorOp** | `segmentation_postprocessor` | {cpp:class}`C++ <holoscan::ops::SegmentationPostprocessorOp>`/{py:class}`Python <holoscan.operators.SegmentationPostprocessorOp>` |
-| **VideoStreamRecorderOp** | `video_stream_recorder` | {cpp:class}`C++ <holoscan::ops::VideoStreamRecorderOp>`/{py:class}`Python <holoscan.operators.VideoStreamRecorderOp>` |
-| **VideoStreamReplayerOp** | `video_stream_replayer` | {cpp:class}`C++ <holoscan::ops::VideoStreamReplayerOp>`/{py:class}`Python <holoscan.operators.VideoStreamReplayerOp>` |
-| **V4L2VideoCaptureOp** | `v4l2` | {cpp:class}`C++ <holoscan::ops::V4L2VideoCaptureOp>`/{py:class}`Python <holoscan.operators.V4L2VideoCaptureOp>` |
+If you are new to Holoscan, a common starting pipeline is:
+`VideoStreamReplayerOp`/`V4L2VideoCaptureOp` -> `FormatConverterOp` -> `InferenceOp` -> `SegmentationPostprocessorOp` -> `HolovizOp`.
+
+### Imaging and visualization
+
+| Class                 | Typical use                                                                                                                       | API reference                                                                                                 |
+| --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **BayerDemosaicOp**   | Convert Bayer RAW camera input to RGB/BGR style images for downstream processing.                                                 | {cpp:class}`C++ <holoscan::ops::BayerDemosaicOp>`/{py:class}`Python <holoscan.operators.BayerDemosaicOp>`     |
+| **FormatConverterOp** | Convert between tensor/image formats, memory layouts, and data types between operators. See {ref}`byom-example`.                  | {cpp:class}`C++ <holoscan::ops::FormatConverterOp>`/{py:class}`Python <holoscan.operators.FormatConverterOp>` |
+| **HolovizOp**         | Visualize tensors, overlays, geometry, and results for debugging or runtime display. See {ref}`visualization`.                    | {cpp:class}`C++ <holoscan::ops::HolovizOp>`/{py:class}`Python <holoscan.operators.HolovizOp>`                 |
+
+### Inference and post-processing
+
+| Class                           | Typical use                                                                                                                        | API reference                                                                                                                     |
+| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| **InferenceOp**                 | Run one or more AI models (including dependency-ordered pipelines) in streaming applications. See {ref}`inference`.                | {cpp:class}`C++ <holoscan::ops::InferenceOp>`/{py:class}`Python <holoscan.operators.InferenceOp>`                                 |
+| **InferenceProcessorOp**        | Apply model-specific preprocessing/postprocessing around inference outputs.                                                        | {cpp:class}`C++ <holoscan::ops::InferenceProcessorOp>`/{py:class}`Python <holoscan.operators.InferenceProcessorOp>`               |
+| **SegmentationPostprocessorOp** | Convert raw segmentation model outputs into masks/labels suitable for display or downstream logic.                                 | {cpp:class}`C++ <holoscan::ops::SegmentationPostprocessorOp>`/{py:class}`Python <holoscan.operators.SegmentationPostprocessorOp>` |
+
+### Source, replay, and recording
+
+| Class                     | Typical use                                                                                                                            | API reference                                                                                                         |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| **V4L2VideoCaptureOp**    | Capture live video frames from V4L2 devices on Linux systems.                                                                          | {cpp:class}`C++ <holoscan::ops::V4L2VideoCaptureOp>`/{py:class}`Python <holoscan.operators.V4L2VideoCaptureOp>`       |
+| **VideoStreamReplayerOp** | Replay recorded streams for deterministic development, benchmarking, and regression testing. See {ref}`video-replayer-example`.        | {cpp:class}`C++ <holoscan::ops::VideoStreamReplayerOp>`/{py:class}`Python <holoscan.operators.VideoStreamReplayerOp>` |
+| **VideoStreamRecorderOp** | Record tensor streams to disk for offline replay and reproducible experiments.                                                         | {cpp:class}`C++ <holoscan::ops::VideoStreamRecorderOp>`/{py:class}`Python <holoscan.operators.VideoStreamRecorderOp>` |
+
+### Basic networking
+
+| Class              | Typical use                                                                                                                                                                                                    | API reference                                                                                           |
+| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **PingTxOp**       | Emit synthetic scalar data to test graph connectivity and scheduling behavior. See {ref}`native operator ping example <ping-multi-port-cpp>` and {ref}`native operator ping example <ping-multi-port-python>`. | {cpp:class}`C++ <holoscan::ops::PingTxOp>`/{py:class}`Python <holoscan.operators.PingTxOp>`             |
+| **PingRxOp**       | Receive and inspect synthetic scalar data in tutorial or debugging pipelines. See {ref}`native operator ping example <ping-multi-port-cpp>` and {ref}`native operator ping example <ping-multi-port-python>`.  | {cpp:class}`C++ <holoscan::ops::PingRxOp>`/{py:class}`Python <holoscan.operators.PingRxOp>`             |
+| **PingTensorTxOp** | Emit synthetic tensor payloads to validate tensor paths and operator interoperability.                                                                                                                         | {cpp:class}`C++ <holoscan::ops::PingTensorTxOp>`/{py:class}`Python <holoscan.operators.PingTensorTxOp>` |
+| **PingTensorRxOp** | Receive synthetic tensor payloads for debugging C++/Python tensor flow behavior.                                                                                                                               | {cpp:class}`C++ <holoscan::ops::PingTensorRxOp>`/{py:class}`Python <holoscan.operators.PingTensorRxOp>` |
+
+For complete, end-to-end application examples that combine these operators, see the [Holoscan SDK examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) and the [Holohub repository](https://github.com/nvidia-holoscan/holohub).
 
 Given an instance of an operator class, you can print a human-readable description of its specification to inspect the inputs, outputs, and parameters that can be configured on that operator class:
 
@@ -45,23 +67,11 @@ The Holoscan SDK uses meta-programming with templating and `std::any` to support
 :::
 ___
 
-(sdk-extensions)=
-## Extensions
-
-The Holoscan SDK also includes some GXF extensions with GXF codelets, which are typically wrapped as operators, or present for legacy reasons. In addition to the core GXF extensions (std, cuda, serialization, multimedia) listed [here](gxf/doc/index.md), the Holoscan SDK includes the following GXF extensions:
-- [gxf_holoscan_wrapper](#gxf-holoscan-wrapper)
-- [ucx_holoscan](#ucx-holoscan)
-
-### GXF Holoscan Wrapper
-
-The `gxf_holoscan_wrapper` extension provides the `holoscan::gxf::OperatorWrapper` codelet and the `holoscan::gxf::ResourceWrapper` component. It serves as a utility base class for wrapping a Holoscan operator or resource as a GXF codelet or component, respectively. This extension allows Holoscan operators and resources to be integrated into GXF applications and GraphComposer workflows.
-
-Learn more about it in the [Using Holoscan Operators in GXF Applications](gxf/gxf_wrap_holoscan.md) section.
-
 (ucx-holoscan)=
-### UCX (Holoscan)
 
-The `ucx_holoscan` extension includes `nvidia::holoscan::UcxHoloscanComponentSerializer` which is a `nvidia::gxf::ComponentSerializer` that handles serialization of `holoscan::Message` and `holoscan::Tensor` types for transmission using the Unified Communication X (UCX) library. UCX is the library used by Holoscan SDK to enable communication of data between fragments in distributed applications.
+### Holoscan UCX GXF Extension
+
+The `ucx_holoscan` extension includes `nvidia::holoscan::UcxHoloscanComponentSerializer` which is a `nvidia::gxf::ComponentSerializer` that handles serialization of `holoscan::Message` and `holoscan::Tensor` types for transmission using the Unified Communication X (UCX) library. UCX is the library used by Holoscan SDK to enable communication of data between fragments in distributed applications. For more details see the {ref}`creating-holoscan-distributed-application` page.
 
 :::{note}
 The `UcxHoloscanComponentSerializer` is intended for use in combination with other UCX components defined in the GXF UCX extension. Specifically, it can be used by the `UcxEntitySerializer` where it can operate alongside the `UcxComponentSerializer` that serializes GXF-specific types (`nvidia::gxf::Tensor`, `nvidia::gxf::VideoBuffer`, etc.). This way both GXF and Holoscan types can be serialized by distributed applications.
@@ -69,6 +79,7 @@ The `UcxHoloscanComponentSerializer` is intended for use in combination with oth
 
 ___
 
-### HoloHub
+### Holohub
 
-Visit the [HoloHub repository](https://github.com/nvidia-holoscan/holohub) to find a collection of additional Holoscan operators and extensions.
+Holohub is an open collection of reusable Holoscan operators, applications, workflows, and supporting tools designed to accelerate Holoscan-based development. You can browse the full set of operators directly in the [Holohub repository](https://github.com/nvidia-holoscan/holohub/tree/main/operators) or explore them with detailed documentation and search features on the [Holohub documentation website](https://nvidia-holoscan.github.io/holohub/operators/).  
+For a quick overview of Holohub, see the {ref}`Holohub Overview <holohub>`.

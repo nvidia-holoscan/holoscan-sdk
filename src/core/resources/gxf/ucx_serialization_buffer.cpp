@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,6 +49,8 @@ size_t parse_ucx_size(const char* value_str) {
   char units[3] = {0};
 
   // Try to parse the string - this matches UCX's approach more closely
+  // Return value checked below; overflow unlikely for memory size configs
+  // NOLINTNEXTLINE(cert-err34-c)
   int num_fields = sscanf(input.c_str(), "%zu%c%c", &value, &units[0], &units[1]);
 
   size_t multiplier = 1;
@@ -136,26 +138,28 @@ void UcxSerializationBuffer::setup(ComponentSpec& spec) {
   const char* env_value = std::getenv(buffer_env_name.c_str());
   size_t default_buffer_size = 0;
   if (env_value) {
+    // Copy env_value to std::string before any setenv() calls (which may invalidate the pointer)
+    std::string env_value_str(env_value);
     try {
-      default_buffer_size = std::stoull(env_value);
+      default_buffer_size = std::stoull(env_value_str);
       HOLOSCAN_LOG_DEBUG("UcxSerializationBuffer: setting buffer size to {}", default_buffer_size);
 
       // Need to set corresponding underlying UCX environment variables as well or an error
       // such as the following may be seen at run time
       //     ucp_am.c:758  Fatal: RTS is too big XXXX, max YYYY
       if (should_set_ucx_seg_size("UCX_TCP_RX_SEG_SIZE", default_buffer_size)) {
-        setenv("UCX_TCP_RX_SEG_SIZE", env_value, 1);
+        setenv("UCX_TCP_RX_SEG_SIZE", env_value_str.c_str(), 1);
         HOLOSCAN_LOG_DEBUG(
             "UcxSerializationBuffer: set UCX_TCP_RX_SEG_SIZE to {} to match "
             "HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE",
-            env_value);
+            env_value_str);
       }
       if (should_set_ucx_seg_size("UCX_TCP_TX_SEG_SIZE", default_buffer_size)) {
-        setenv("UCX_TCP_TX_SEG_SIZE", env_value, 1);
+        setenv("UCX_TCP_TX_SEG_SIZE", env_value_str.c_str(), 1);
         HOLOSCAN_LOG_DEBUG(
             "UcxSerializationBuffer: set UCX_TCP_TX_SEG_SIZE to {} to match "
             "HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE",
-            env_value);
+            env_value_str);
       }
     } catch (std::exception& e) {
       HOLOSCAN_LOG_WARN(

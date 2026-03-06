@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -57,7 +57,7 @@ class CudaGreenContextPool : public gxf::GXFResource {
   HOLOSCAN_RESOURCE_FORWARD_ARGS_SUPER(CudaGreenContextPool, gxf::GXFResource)
   CudaGreenContextPool() = default;
   CudaGreenContextPool(int32_t dev_id, uint32_t flags, uint32_t num_partitions,
-                       std::vector<uint32_t> sms_per_partition = {},
+                       const std::vector<uint32_t>& sms_per_partition = {},
                        int32_t default_context_index = -1, uint32_t min_sm_size = 2) {
     if (min_sm_size < 1)
       throw std::invalid_argument("min_sm_size must be at least 1");

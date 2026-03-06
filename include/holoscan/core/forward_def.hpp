@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@ enum class ArgContainerType : uint8_t;
 enum class ArgElementType;
 class ArgList;
 class ArgType;
-class CLIOptions;
+struct CLIOptions;
 class CLIParser;
 template <typename typeT>
 struct codec;
@@ -62,7 +62,7 @@ class MetadataDictionary;
 enum class MetadataPolicy;
 class Operator;
 class OperatorSpec;
-class OperatorTimestampLabel;
+struct OperatorTimestampLabel;
 class OutputContext;
 
 template <typename ValueT>
@@ -109,6 +109,7 @@ class AppWorkerClient;
 }  // namespace distributed
 
 // NetworkContexts
+class PubSubContext;
 class UcxContext;
 
 // Schedulers
@@ -162,6 +163,8 @@ class HoloscanUcxReceiver;
 class HoloscanUcxTransmitter;
 class ManualClock;
 class OrConditionCombiner;
+class PubSubReceiver;
+class PubSubTransmitter;
 class Receiver;
 class RealtimeClock;
 class RMMAllocator;

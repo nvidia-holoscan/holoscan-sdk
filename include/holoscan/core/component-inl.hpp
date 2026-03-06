@@ -24,6 +24,7 @@
 #include <typeinfo>  // For typeid
 #include <utility>
 
+// NOLINTNEXTLINE(misc-header-include-cycle) circular dependency with condition.hpp is intentional
 #include "./argument_setter.hpp"
 #include "./fragment_service.hpp"
 #include "./fragment_service_provider.hpp"
@@ -108,6 +109,9 @@ std::shared_ptr<ServiceT> ComponentBase::service(std::string_view id) const {
   auto base_service = service_provider_->get_service_erased(typeid(ServiceT), id);
   if (!base_service) {
     // Keep this fallback lookup logic in sync with Fragment::service().
+    // Fallback: try to find a service by id only (ignoring type key) and check if it's
+    // type-castable to ServiceT. This enables retrieval of services registered with a derived
+    // type when looking up by a base type.
     if constexpr (std::is_base_of_v<Resource, ServiceT>) {
       if (!id.empty()) {
         auto service_resource_by_name = service_provider_->get_service_resource_by_name(id);
@@ -121,6 +125,21 @@ std::shared_ptr<ServiceT> ComponentBase::service(std::string_view id) const {
               name(),
               std::string(id),
               typeid(ServiceT).name());
+        }
+      }
+    } else if constexpr (std::is_base_of_v<FragmentService, ServiceT>) {
+      // For FragmentService-derived types (non-Resource), search by id and try dynamic_cast
+      if (!id.empty()) {
+        auto services_by_id = service_provider_->get_services_by_id(id);
+        for (const auto& svc : services_by_id) {
+          auto typed_service = std::dynamic_pointer_cast<ServiceT>(svc);
+          if (typed_service) {
+            HOLOSCAN_LOG_DEBUG(
+                "Component '{}': Service with id '{}' found via base-class fallback lookup.",
+                name(),
+                std::string(id));
+            return typed_service;
+          }
         }
       }
     }

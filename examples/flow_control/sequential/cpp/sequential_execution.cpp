@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,7 +28,7 @@ class SimpleOp : public holoscan::Operator {
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
-    std::cout << "I am here - " << name() << std::endl;
+    std::cout << "I am here - " << name() << '\n';
   }
 };
 

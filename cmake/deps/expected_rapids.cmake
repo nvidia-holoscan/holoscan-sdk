@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,19 @@
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
 rapids_cpm_find(tl-expected 1.1.0
-    GLOBAL_TARGETS tl::expected expected
+    GLOBAL_TARGETS tl::expected
 
     CPM_ARGS
 
     GITHUB_REPOSITORY TartanLlama/expected
     GIT_TAG v1.1.0
     GIT_SHALLOW TRUE
+    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/tl-expected.patch
+    EXCLUDE_FROM_ALL
 
     OPTIONS
     "EXPECTED_BUILD_TESTS OFF"
-    EXCLUDE_FROM_ALL
+    "EXPECTED_BUILD_PACKAGE OFF"
 )
 
 # Set 'tl-expected_SOURCE_DIR' with PARENT_SCOPE so that

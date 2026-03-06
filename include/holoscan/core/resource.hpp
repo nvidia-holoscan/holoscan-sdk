@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@
 #include <string>
 #include <utility>
 
+// NOLINTNEXTLINE(misc-header-include-cycle) circular dependency with argument_setter is intentional
 #include "./component.hpp"
 
 #define HOLOSCAN_RESOURCE_FORWARD_TEMPLATE()                                                     \
@@ -221,7 +222,7 @@ class Resource : public Component {
   YAML::Node to_yaml_node() const override;
 
   /// Set the parameters based on defaults (sets GXF parameters for GXF components)
-  virtual void set_parameters();
+  void set_parameters() override;
 
  protected:
   using ComponentBase::update_params_from_args;

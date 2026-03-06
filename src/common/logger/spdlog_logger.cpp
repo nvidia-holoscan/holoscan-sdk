@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+// Array subscript access to loggers_ by log level is intentional for performance in hot paths.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
 
 #include "common/logger/spdlog_logger.hpp"
 
@@ -42,13 +45,13 @@ class ansicolor_file_sink : public ansicolor_sink<ConsoleMutex> {
 
 }  // namespace sinks
 
-static inline std::shared_ptr<logger> create_file_logger(const std::string name, FILE* file) {
+static inline std::shared_ptr<logger> create_file_logger(const std::string& name, FILE* file) {
   // Do not register to spdlog registry
   spdlog::details::registry::instance().set_automatic_registration(false);
 
   return spdlog::synchronous_factory::template create<
       spdlog::sinks::ansicolor_file_sink<spdlog::details::console_mutex>>(
-      std::move(name), file, spdlog::color_mode::automatic);
+      name, file, spdlog::color_mode::automatic);
 }
 
 }  // namespace spdlog
@@ -187,3 +190,5 @@ void* DefaultSpdlogLogger::redirect(int level) const {
 }  // namespace logger
 
 }  // namespace nvidia
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)

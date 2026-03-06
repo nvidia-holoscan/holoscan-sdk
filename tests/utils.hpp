@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,7 @@ namespace holoscan {
 class TestWithGXFContext : public ::testing::Test {
  protected:
   void SetUp() override {
+    F.name("test_fragment");
     F.config(config_file);
     auto& executor = F.executor();
     auto context = executor.context();

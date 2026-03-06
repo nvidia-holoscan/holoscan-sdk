@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,7 +39,7 @@ class PingMxOp : public Operator {
                [[maybe_unused]] ExecutionContext& context) override {
     auto value = op_input.receive<int>("in").value();
 
-    std::cout << "Middle message value: " << value << std::endl;
+    std::cout << "Middle message value: " << value << '\n';
 
     // Multiply the value by the multiplier parameter
     value *= multiplier_;

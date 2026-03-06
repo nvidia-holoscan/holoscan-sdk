@@ -26,8 +26,6 @@
 #include "holoscan/core/arg.hpp"
 #include "holoscan/logger/logger.hpp"
 
-using namespace std::string_literals;
-
 namespace holoscan {
 
 namespace {  // anonymous namespace for helper functions
@@ -43,7 +41,7 @@ std::unordered_set<std::string> nested_yaml_map_keys(YAML::Node yaml_node) {
     if (value.IsMap()) {
       std::unordered_set<std::string> inner_keys = nested_yaml_map_keys(value);
       for (const auto& inner_key : inner_keys) {
-        keys.emplace(key + "."s + inner_key);
+        keys.emplace(fmt::format("{}.{}", key, inner_key));
       }
     }
   }

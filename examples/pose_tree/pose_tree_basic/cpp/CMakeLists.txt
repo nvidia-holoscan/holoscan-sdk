@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,14 @@ target_link_libraries(pose_tree_basic
 )
 
 # Copy config file
-add_custom_target(pose_tree_basic_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/pose_tree_basic.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/pose_tree_basic.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "pose_tree_basic.yaml"
-  BYPRODUCTS "pose_tree_basic.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/pose_tree_basic.yaml"
+  COMMENT "Copying pose_tree_basic.yaml"
+)
+add_custom_target(pose_tree_basic_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/pose_tree_basic.yaml"
 )
 
 add_dependencies(pose_tree_basic pose_tree_basic_yaml)

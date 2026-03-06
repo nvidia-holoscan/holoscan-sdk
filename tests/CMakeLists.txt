@@ -14,6 +14,22 @@
 # limitations under the License.
 
 # ##################################################################################################
+# * Fetch dependencies -----------------------------------------------------------------------------
+
+# Reuse stb from holoviz if available, otherwise fetch it
+include(FetchContent)
+FetchContent_GetProperties(stb)
+if(NOT stb_POPULATED)
+  FetchContent_Declare(
+      stb
+      GIT_REPOSITORY https://github.com/nothings/stb.git
+      GIT_TAG af1a5bc352164740c1cc1354942b1c6b72eacb8a
+      GIT_PROGRESS TRUE
+  )
+  FetchContent_MakeAvailable(stb)
+endif()
+
+# ##################################################################################################
 # * compiler function -----------------------------------------------------------------------------
 
 # This function takes in a test name and test source and handles setting all of the associated
@@ -50,7 +66,7 @@ function(ConfigureTest CMAKE_TEST_NAME)
   # Run the test from the main bin directory to access data as needed
   add_test(NAME ${CMAKE_TEST_NAME} COMMAND ${CMAKE_TEST_NAME} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
   set_property(TEST ${CMAKE_TEST_NAME} PROPERTY ENVIRONMENT
-    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH}")
+    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH};HOLOSCAN_LIB_PATH=${BIN_DIR}/gxf_extensions:${BIN_DIR}/lib:$ENV{HOLOSCAN_LIB_PATH}")
 
   install(
     TARGETS ${CMAKE_TEST_NAME}
@@ -106,6 +122,16 @@ if(CMAKE_CUDA_COMPILER)
     PRIVATE
       holoscan::matx
   )
+
+  # MatX custom allocator adapter tests
+  ConfigureTest(
+    MATX_ALLOCATOR_TEST
+    core/matx_allocator_test.cu
+  )
+  target_link_libraries(MATX_ALLOCATOR_TEST
+    PRIVATE
+      holoscan::matx
+  )
 endif()
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
@@ -121,6 +147,8 @@ ConfigureTest(GPU_RESIDENT_TEST
   gpu_resident/gpu_resident_fragment.cpp
   gpu_resident/error_conditions.cpp
   gpu_resident/data_ready_handler.cpp
+  gpu_resident/device_ptr_connection.cpp
+  gpu_resident/test_kernels.cu
   system/env_wrapper.cpp
 )
 
@@ -222,6 +250,7 @@ ConfigureTest(
   system/cuda_allocators.cpp
   system/cuda_green_context.cpp
   system/cuda_stream.cpp
+  system/cuda_stream_alloc_in_start.cpp
   system/cuda_stream_condition.cpp
   system/cycle.cpp
   system/emit_receive_port_name_test.cpp
@@ -319,6 +348,7 @@ target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   holoscan::ops::ping_tx
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx
+  ucxx::ucxx
 )
 
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
@@ -407,6 +437,21 @@ target_link_libraries(SEGMENTATION_POSTPROCESSOR_TEST
     holoscan::ops::segmentation_postprocessor
 )
 
+# ##################################################################################################
+# * bayer_demosaic_gpu_resident tests --------------------------------------------------------------
+ConfigureTest(BAYER_DEMOSAIC_GPU_RESIDENT_TEST
+  operators/bayer_demosaic_gpu_resident/test_bayer_demosaic_gpu_resident.cpp
+)
+target_include_directories(BAYER_DEMOSAIC_GPU_RESIDENT_TEST
+  PRIVATE
+    ${stb_SOURCE_DIR}
+)
+target_link_libraries(BAYER_DEMOSAIC_GPU_RESIDENT_TEST
+  PRIVATE
+    holoscan::ops::bayer_demosaic_gpu_resident
+    CUDA::nppicc
+)
+
 # #######
 ConfigureTest(HOLOINFER_TEST
   holoinfer/inference/test_core.cpp
@@ -435,11 +480,13 @@ target_link_libraries(HOLOINFER_TEST
 # * Flow Tracking tests ----------------------------------------------------------------------------------
 ConfigureTest(
   FLOW_TRACKING_TEST
+  flow_tracking/add_probe_operator_tests.cpp
   flow_tracking/async_buffer_tracking.cpp
   flow_tracking/async_buffer_tracking_cycles.cpp
   flow_tracking/entity_passthrough.cpp
   flow_tracking/flow_tracking_cycle.cpp
   flow_tracking/limited_tracking_tests.cpp
+  system/env_wrapper.cpp
 )
 target_link_libraries(FLOW_TRACKING_TEST
   PRIVATE

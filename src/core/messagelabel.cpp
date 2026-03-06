@@ -20,6 +20,7 @@
 #include <iostream>
 #include <iterator>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,6 +49,31 @@ int64_t MessageLabel::get_e2e_latency(int index) {
 
   auto cur_path = message_paths[index];
 
+  if (cur_path.front().rec_timestamp <= 0) {
+    HOLOSCAN_LOG_ERROR(
+        "MessageLabel::end-to-end latency is not available for path {}. Op {} - rec_timestamp: {}",
+        index,
+        cur_path.front().operator_name,
+        cur_path.front().rec_timestamp);
+    return -1;
+  }
+
+  if (cur_path.back().pub_timestamp <= 0) {
+    // treat the last operator's receiving timestamp as the final timestamp
+    if (cur_path.back().rec_timestamp <= 0) {
+      // timestamp is wrong, LOG error
+      HOLOSCAN_LOG_ERROR(
+          "MessageLabel::end-to-end latency is not available for path {}. Last operator's ({}) "
+          "publish and receive timestamps are not set. pub: {}, rec: {}",
+          index,
+          cur_path.back().operator_name,
+          cur_path.back().pub_timestamp,
+          cur_path.back().rec_timestamp);
+      return -1;
+    }
+    return (cur_path.back().rec_timestamp - cur_path.front().rec_timestamp);
+  }
+
   return (cur_path.back().pub_timestamp - cur_path.front().rec_timestamp);
 }
 
@@ -73,7 +99,7 @@ std::string MessageLabel::to_string() const {
   return fmt::to_string(msg_buf);
 }
 
-std::string MessageLabel::to_string(MessageLabel::TimestampedPath path) {
+std::string MessageLabel::to_string(const MessageLabel::TimestampedPath& path) {
   auto msg_buf = fmt::memory_buffer();
   for (auto& it : path) {
     fmt::format_to(std::back_inserter(msg_buf),
@@ -96,7 +122,7 @@ std::vector<std::string> MessageLabel::get_all_path_names() {
   return all_paths;
 }
 
-void MessageLabel::add_new_op_timestamp(holoscan::OperatorTimestampLabel o_timestamp) {
+void MessageLabel::add_new_op_timestamp(const holoscan::OperatorTimestampLabel& o_timestamp) {
   if (message_paths.empty()) {
     // By default, allocate space for DEFAULT_PATH_LENGTH Operators in a path
     TimestampedPath new_path;
@@ -127,10 +153,19 @@ void MessageLabel::update_last_op_publish() {
   }
 }
 
-void MessageLabel::add_new_path(MessageLabel::TimestampedPath path) {
+void MessageLabel::add_new_path(const MessageLabel::TimestampedPath& path) {
   message_paths.push_back(path);
   PathOperators new_path_operators;
   for (auto& op : path) {
+    new_path_operators.insert(op.operator_name);
+  }
+  message_path_operators.push_back(std::move(new_path_operators));
+}
+
+void MessageLabel::add_new_path(MessageLabel::TimestampedPath&& path) {
+  message_paths.push_back(std::move(path));
+  PathOperators new_path_operators;
+  for (const auto& op : message_paths.back()) {
     new_path_operators.insert(op.operator_name);
   }
   message_path_operators.push_back(std::move(new_path_operators));

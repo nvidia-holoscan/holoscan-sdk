@@ -35,6 +35,9 @@
 #include "holoscan/pose_tree/math/pose3.hpp"
 #include "holoscan/pose_tree/pose_tree_history.hpp"
 
+// NOLINTBEGIN(cert-dcl58-cpp) - std::hash specialization for std::pair is technically UB
+// per the standard, but works on all major compilers. A proper fix would require a custom
+// hash functor and refactoring HashMap to accept it.
 namespace std {
 /**
  * @brief Hash specialization for std::pair.
@@ -55,6 +58,7 @@ struct hash<pair<A, B>> {
   }
 };
 }  // namespace std
+// NOLINTEND(cert-dcl58-cpp)
 
 namespace holoscan {
 
@@ -644,6 +648,7 @@ class PoseTree {
    */
   template <class... Args>
   expected_t<Pose2d> get_pose2_xy(Args&&... args) const {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     return get(std::forward<Args>(args)...).map([](const Pose3d& pose_3d) {
       return pose_3d.to_pose2_xy();
     });

@@ -19,6 +19,8 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include <fmt/format.h>
+
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -429,10 +431,10 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
       // EdgeDataElementType = std::unordered_map<std::string, std::set<std::string>>
       // This maps output port names to sets of input port names
       for (const auto& [output_port_name, input_port_names_set] : *port_map_ptr) {
-        std::string output_port_unique_id = source_name + "." + output_port_name;
+        std::string output_port_unique_id = fmt::format("{}.{}", source_name, output_port_name);
 
         for (const auto& input_port_name : input_port_names_set) {
-          std::string input_port_unique_id = dest_name + "." + input_port_name;
+          std::string input_port_unique_id = fmt::format("{}.{}", dest_name, input_port_name);
 
           // For input-to-output map: input port connects to this output port
           input_to_output_map[input_port_unique_id].push_back(output_port_unique_id);

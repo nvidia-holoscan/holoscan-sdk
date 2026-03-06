@@ -72,8 +72,8 @@ static const std::vector<const char*>& args() {
       // On posix, retrieve arguments from /proc/self/cmdline, separated by null terminators.
       std::vector<char> cmdline;
 
-      auto deleter = [](FILE* f) { std::fclose(f); };
-      std::unique_ptr<FILE, decltype(deleter)> fp_unique(std::fopen("/proc/self/cmdline", "r"),
+      auto deleter = [](FILE* f) { (void)std::fclose(f); };
+      std::unique_ptr<FILE, decltype(deleter)> fp_unique(std::fopen("/proc/self/cmdline", "re"),
                                                          deleter);
       FILE* fp = fp_unique.get();
       if (!fp) {
@@ -452,7 +452,7 @@ void Application::add_fragment(const std::shared_ptr<Fragment>& frag) {
 
 void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                            const std::shared_ptr<Fragment>& downstream_frag,
-                           std::set<std::pair<std::string, std::string>> port_pairs) {
+                           const std::set<std::pair<std::string, std::string>>& port_pairs) {
   // If port_pairs is empty, print an error message and return.
   if (port_pairs.empty()) {
     HOLOSCAN_LOG_ERROR("Unable to add fragment flow with empty port_pairs");
@@ -580,6 +580,9 @@ void Application::reset_state() {
     if (is_fragment_graph_composed_ && !is_composed_) {
       // Reset the fragment graph but keep the existing trackers
       auto old_fragment_graph = std::move(fragment_graph_);
+      // Redundant for std::shared_ptr after move, but kept to clarify intent:
+      // lazy re-initialization via fragment_graph()
+      fragment_graph_.reset();
 
       // Recompose the main graph and fragment graph
       compose_graph();
@@ -666,7 +669,7 @@ void Application::enable_metadata(bool enabled) {
   is_metadata_enabled_ = enabled;
 }
 
-void Application::add_data_logger(std::shared_ptr<DataLogger> logger) {
+void Application::add_data_logger(const std::shared_ptr<DataLogger>& logger) {
   if (fragment_graph().is_empty()) {
     // single-fragment application
     Fragment::add_data_logger(logger);
@@ -1018,6 +1021,8 @@ void Application::initiate_distributed_app_shutdown(const std::string& fragment_
 }
 
 void Application::initiate_local_app_shutdown(const std::string& fragment_name) {
+  (void)fragment_name;  // Kept for API compatibility; local shutdown stops all fragments.
+
   auto& frag_graph = fragment_graph();
   if (frag_graph.is_empty()) {
     HOLOSCAN_LOG_DEBUG("Cannot initiate local shutdown: fragment graph is empty");
@@ -1064,16 +1069,6 @@ void Application::initiate_local_app_shutdown(const std::string& fragment_name) 
 
     // Terminate current root fragments
     for (const auto& root_fragment : current_roots) {
-      // Skip the fragment that initiated the shutdown to avoid blocking its own thread
-      if (root_fragment->name() == fragment_name) {
-        HOLOSCAN_LOG_DEBUG("Skipping stop_execution() for initiating fragment '{}'",
-                           root_fragment->name());
-        // Still remove it from the graph so we can process downstream fragments
-        frag_graph.remove_node(root_fragment);
-        terminated_fragments.insert(root_fragment->name());
-        continue;
-      }
-
       HOLOSCAN_LOG_INFO("Terminating fragment '{}' via stop_execution()", root_fragment->name());
 
       // Get the stop_on_deadlock_timeout from this fragment's scheduler

@@ -15,6 +15,10 @@
  * limitations under the License.
  */
 
+// NOLINTBEGIN(concurrency-mt-unsafe,cppcoreguidelines-pro-bounds-constant-array-index)
+// Logger configuration is done from main thread at startup.
+// Array access by LogLevel enum is safe since enum values are bounded.
+
 #include "holoscan/logger/logger.hpp"
 
 #include <algorithm>
@@ -201,3 +205,5 @@ void Logger::log_message(LogLevel level, fmt::string_view format, fmt::format_ar
 }
 
 }  // namespace holoscan
+
+// NOLINTEND(concurrency-mt-unsafe,cppcoreguidelines-pro-bounds-constant-array-index)

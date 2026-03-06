@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native fragment service with resource application
-add_custom_target(python_fragment_service_with_resource ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/fragment_service_with_resource.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/fragment_service_with_resource.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "fragment_service_with_resource.py"
-  BYPRODUCTS "fragment_service_with_resource.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/fragment_service_with_resource.py"
+  COMMENT "Copying fragment_service_with_resource.py"
+)
+add_custom_target(python_fragment_service_with_resource ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/fragment_service_with_resource.py"
 )
 
 # Install the app

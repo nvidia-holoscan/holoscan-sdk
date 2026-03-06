@@ -1,0 +1,19 @@
+diff --git a/cpp/CMakeLists.txt b/cpp/CMakeLists.txt
+index f0b659e..508321b 100644
+--- a/cpp/CMakeLists.txt
++++ b/cpp/CMakeLists.txt
+@@ -223,9 +223,13 @@ install(
+   TARGETS ucxx
+   DESTINATION ${lib_dir}
+   EXPORT ucxx-exports
++  COMPONENT ucxx
+ )
+ 
+-install(DIRECTORY ${UCXX_SOURCE_DIR}/include/ucxx DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
++install(DIRECTORY ${UCXX_SOURCE_DIR}/include/ucxx
++  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
++  COMPONENT ucxx
++)
+ 
+ set(doc_string
+     [=[

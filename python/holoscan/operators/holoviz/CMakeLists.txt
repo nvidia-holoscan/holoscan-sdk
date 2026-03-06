@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,10 +18,7 @@ holoscan_pybind11_module(holoviz
     ../../core/emitter_receiver_registry.cpp
 )
 target_link_libraries(holoviz_python
-    PUBLIC holoscan::ops::holoviz
-)
-
-target_include_directories(holoviz_python
     PUBLIC
-        $<BUILD_INTERFACE:${magic_enum_SOURCE_DIR}/include>
+        holoscan::ops::holoviz
+        magic_enum::magic_enum
 )

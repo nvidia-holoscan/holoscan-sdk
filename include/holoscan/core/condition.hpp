@@ -31,6 +31,7 @@
 #include <utility>
 
 #include "./common.hpp"
+// NOLINTNEXTLINE(misc-header-include-cycle) circular dependency with argument_setter is intentional
 #include "./component.hpp"
 
 #define HOLOSCAN_CONDITION_FORWARD_TEMPLATE()                                                     \

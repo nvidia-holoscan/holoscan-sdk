@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,19 +21,23 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # override the default options.
 set(version 1.14.1)
 
-rapids_cpm_find(spdlog ${version}
-    GLOBAL_TARGETS spdlog::spdlog spdlog::spdlog_header_only
+include(FetchContent)
 
-    CPM_ARGS
+set(SPDLOG_GITHUB_REPOSITORY "https://github.com/gabime/spdlog.git")
+set(SPDLOG_TAG "v${version}")
 
-    GITHUB_REPOSITORY gabime/spdlog
-    GIT_TAG v${version}
-    GIT_SHALLOW TRUE
-
-    OPTIONS
-    "SPDLOG_FMT_EXTERNAL_HO ON"
-    EXCLUDE_FROM_ALL
+set(SPDLOG_FMT_EXTERNAL_HO ON)   # header-only
+set(SPDLOG_FMT_EXTERNAL OFF)
+set(SPDLOG_INSTALL ON)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY ${SPDLOG_GITHUB_REPOSITORY}
+    GIT_TAG        ${SPDLOG_TAG}
+    GIT_SHALLOW    TRUE
+    PATCH_COMMAND patch -p1 -i ${CMAKE_CURRENT_LIST_DIR}/patches/spdlog.patch
+    UPDATE_DISCONNECTED TRUE
 )
+FetchContent_MakeAvailable(spdlog)
 
 if(spdlog_ADDED)
     set(spdlog_SOURCE_DIR "${spdlog_SOURCE_DIR}" PARENT_SCOPE)

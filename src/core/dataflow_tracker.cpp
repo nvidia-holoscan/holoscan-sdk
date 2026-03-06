@@ -86,7 +86,7 @@ void DataFlowTracker::print() const {
   std::cout.flush();  // flush standard output; otherwise output may not be printed
 }
 
-void DataFlowTracker::update_latency(std::string pathstring, double current_latency) {
+void DataFlowTracker::update_latency(const std::string& pathstring, double current_latency) {
   std::scoped_lock lock(all_path_metrics_mutex_);
 
   if (all_path_metrics_.find(pathstring) == all_path_metrics_.end()) {
@@ -161,7 +161,7 @@ void DataFlowTracker::update_latency(std::string pathstring, double current_late
   }
 }
 
-void DataFlowTracker::update_source_messages_number(std::string source, uint64_t num) {
+void DataFlowTracker::update_source_messages_number(const std::string& source, uint64_t num) {
   std::scoped_lock lock(source_messages_mutex_);
   source_messages_[source] = num;
 }
@@ -181,7 +181,7 @@ std::vector<std::string> DataFlowTracker::get_path_strings() {
   return all_pathstrings;
 }
 
-double DataFlowTracker::get_metric(std::string pathstring, holoscan::DataFlowMetric metric) {
+double DataFlowTracker::get_metric(const std::string& pathstring, holoscan::DataFlowMetric metric) {
   if (metric == DataFlowMetric::kNumSrcMessages) {
     HOLOSCAN_LOG_ERROR("metric with pathstring must not be DataFlowMetric::kNumSrcMessages");
     return -1;
@@ -217,7 +217,7 @@ void DataFlowTracker::enable_logging(std::string filename, uint64_t num_buffered
   logfile_messages_ = 0;
 }
 
-void DataFlowTracker::write_to_logfile(std::string text) {
+void DataFlowTracker::write_to_logfile(const std::string& text) {
   if (!text.empty() && is_file_logging_enabled_) {
     if (!logger_ofstream_.is_open()) {
       logger_ofstream_.open(logger_filename_);
@@ -236,6 +236,47 @@ void DataFlowTracker::write_to_logfile(std::string text) {
       buffered_messages_.reserve(num_buffered_messages_);
     }
   }
+}
+
+void DataFlowTracker::add_root_op(Operator* op) {
+  root_ops_[op->id()] = op;
+}
+
+void DataFlowTracker::add_leaf_op(Operator* op) {
+  leaf_ops_[op->id()] = op;
+}
+
+void DataFlowTracker::add_probe_op(Operator* op) {
+  probe_ops_[op->id()] = op;
+}
+
+void DataFlowTracker::add_probe_operator(const std::string& operator_name) {
+  // Check if the operator name is already in the set
+  if (probe_op_names_.find(operator_name) != probe_op_names_.end()) {
+    HOLOSCAN_LOG_WARN("Probe operator '{}' is already registered", operator_name);
+    return;
+  }
+
+  // Add the operator name to the set
+  probe_op_names_.insert(operator_name);
+}
+
+std::optional<Operator*> DataFlowTracker::is_root_codelet(int64_t codelet_cid) const {
+  auto it = root_ops_.find(codelet_cid);
+  return (it != root_ops_.end()) ? std::optional<Operator*>{it->second}
+                                 : std::optional<Operator*>{};
+}
+
+std::optional<Operator*> DataFlowTracker::is_leaf_codelet(int64_t codelet_cid) const {
+  auto it = leaf_ops_.find(codelet_cid);
+  return (it != leaf_ops_.end()) ? std::optional<Operator*>{it->second}
+                                 : std::optional<Operator*>{};
+}
+
+std::optional<Operator*> DataFlowTracker::is_probe_codelet(int64_t codelet_cid) const {
+  auto it = probe_ops_.find(codelet_cid);
+  return (it != probe_ops_.end()) ? std::optional<Operator*>{it->second}
+                                  : std::optional<Operator*>{};
 }
 
 uint64_t DataFlowTracker::generate_frame_number(const std::string& operator_name) {
@@ -270,6 +311,21 @@ std::map<std::string, uint64_t> DataFlowTracker::get_port_frame_numbers(
   }
 
   return result;
+}
+
+bool DataFlowTracker::check_probe_op_name(const std::string& operator_name) const {
+  return probe_op_names_.find(operator_name) != probe_op_names_.end();
+}
+
+void DataFlowTracker::remove_probe_op_name(const std::string& operator_name) {
+  probe_op_names_.erase(operator_name);
+}
+
+void DataFlowTracker::finalize_probe() {
+  if (!probe_op_names_.empty()) {
+    throw std::runtime_error(
+        fmt::format("Invalid probe operators found: [{}]", fmt::join(probe_op_names_, ", ")));
+  }
 }
 
 }  // namespace holoscan

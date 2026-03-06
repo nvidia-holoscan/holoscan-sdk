@@ -279,7 +279,7 @@ class Application : public Fragment {
    */
   virtual void add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                         const std::shared_ptr<Fragment>& downstream_frag,
-                        std::set<std::pair<std::string, std::string>> port_pairs);
+                        const std::set<std::pair<std::string, std::string>>& port_pairs);
 
   /**
    * @brief Calls compose() if the fragment graph is not composed yet.
@@ -393,7 +393,7 @@ class Application : public Fragment {
    *
    * @param logger The data logger to add.
    */
-  void add_data_logger(std::shared_ptr<DataLogger> logger);
+  void add_data_logger(const std::shared_ptr<DataLogger>& logger);
 
  protected:
   friend class AppDriver;

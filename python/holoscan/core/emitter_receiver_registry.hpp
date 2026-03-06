@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,16 +105,16 @@ class PYBIND11_EXPORT EmitterReceiverRegistry {
    */
   using EmitterReceiver = std::pair<EmitFunc, ReceiveFunc>;
 
-  inline static EmitFunc none_emit = []([[maybe_unused]] py::object& data,
-                                        [[maybe_unused]] const std::string& name,
-                                        [[maybe_unused]] PyOutputContext& op_output,
-                                        [[maybe_unused]] const int64_t acq_timestamp = -1) -> void {
+  inline static EmitFunc none_emit =  // NOLINT(cert-err58-cpp)
+      []([[maybe_unused]] py::object& data, [[maybe_unused]] const std::string& name,
+         [[maybe_unused]] PyOutputContext& op_output,
+         [[maybe_unused]] const int64_t acq_timestamp = -1) -> void {
     HOLOSCAN_LOG_ERROR(
         "Unable to emit message (op: '{}', port: '{}')", op_output.op()->name(), name);
     return;
   };
 
-  inline static ReceiveFunc none_receive =
+  inline static ReceiveFunc none_receive =  // NOLINT(cert-err58-cpp)
       []([[maybe_unused]] std::any result, [[maybe_unused]] const std::string& name,
          [[maybe_unused]] PyInputContext& op_input) -> py::object {
     HOLOSCAN_LOG_ERROR(
@@ -125,7 +125,8 @@ class PYBIND11_EXPORT EmitterReceiverRegistry {
   /**
    * @brief Default @ref EmitterReceiver for Arg.
    */
-  inline static EmitterReceiver none_emitter_receiver = std::make_pair(none_emit, none_receive);
+  inline static EmitterReceiver none_emitter_receiver =  // NOLINT(cert-err58-cpp)
+      std::make_pair(none_emit, none_receive);
 
   /**
    * @brief Get the instance object.

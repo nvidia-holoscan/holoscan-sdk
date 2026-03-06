@@ -22,11 +22,12 @@
 #include <algorithm>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <queue>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
-#include <mutex>
 
 #define STRINGIFY(x) #x
 #define TOSTRING(x) STRINGIFY(x)
@@ -284,6 +285,17 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                           cuda_buffer_in_,
                                           cuda_buffer_out_,
                                           inference_specs->allocate_cuda_stream_)});
+
+          if (inference_specs->gpu_resident_inference_) {
+            try {
+              holo_infer_context_.at(model_name)
+                  ->init_gr_inference(inference_specs->gpu_resident_input_,
+                                      inference_specs->gpu_resident_output_);
+            } catch (const std::runtime_error& e) {
+              status.set_message("ERROR: " + std::string(e.what()));
+              return status;
+            }
+          }
           break;
         }
 
@@ -350,6 +362,10 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
         }
 
         case holoinfer_backend::h_torch: {
+          // TODO(FAQ-FIX): This acceptance of .pth should align with the documentation.
+          // The torch backend requires TorchScript format (.pt), not PyTorch state dict (.pth).
+          // Consider rejecting .pth with a specific error instructing conversion to TorchScript.
+          // Refs: public/docs/hsdk_faq.md (Development Q7), public/docs/inference.md
           if (std::filesystem::path(model_path).extension() != ".pt" &&
               std::filesystem::path(model_path).extension() != ".pth") {
             HOLOSCAN_LOG_ERROR("Torch model must be in torchsript format (.pt or .pth).");
@@ -447,6 +463,7 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           status.set_message("Allocation failed for output tensor: " + out_tensor_names[d]);
           return status;
         }
+
         HOLOSCAN_LOG_INFO("HoloInfer buffer created for {}", out_tensor_names[d]);
 
         if (device_id != device_gpu_dt_) {
@@ -534,6 +551,8 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       }
 
       models_input_dims_.insert({model_name, holo_infer_context_.at(model_name)->get_input_dims()});
+      models_output_dims_.insert(
+          {model_name, holo_infer_context_.at(model_name)->get_output_dims()});
 
       if (vec_unique_gpu_ids.size() > 1) {
         // create the CUDA event used to synchronize the streams
@@ -564,6 +583,15 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
   parallel_processing_ = inference_specs->parallel_processing_;
 
+  HOLOSCAN_LOG_INFO("Building execution plan...");
+  auto plan_status = build_execution_plan(
+      inference_specs->pre_processor_map_, inference_specs->inference_map_, execution_plan_);
+
+  if (plan_status.get_code() == holoinfer_code::H_ERROR) {
+    HOLOSCAN_LOG_ERROR("Execution plan build failed: {}", plan_status.get_message());
+    return plan_status;
+  }
+
   return InferStatus();
 }
 
@@ -584,6 +612,18 @@ void ManagerInfer::cleanup() {
 
 ManagerInfer::~ManagerInfer() {
   cleanup();
+}
+
+InferStatus ManagerInfer::run_core_gr_inference(const std::string& model_name, void* in_buffer,
+                                                void* out_buffer, cudaStream_t cuda_stream) {
+  InferStatus status = InferStatus(holoinfer_code::H_ERROR);
+  try {
+    holo_infer_context_.at(model_name)->do_gr_inference(in_buffer, out_buffer, cuda_stream);
+  } catch (const std::runtime_error& e) {
+    status.set_message("ERROR: " + std::string(e.what()));
+    return status;
+  }
+  return InferStatus();
 }
 
 InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
@@ -619,9 +659,14 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
 
   for (const auto& in_tensor : input_tensors) {
     if (input_preprocess_data.find(in_tensor) == input_preprocess_data.end()) {
-      status.set_message("Inference manager, Preprocessed data for tensor " + in_tensor +
-                         " does not exist.");
-      return status;
+      // if the input tensor is not present in the input_preprocess_data, it may be an
+      // internal tensor that is part of output_inferred_data. This is the case of model
+      // dependencies where the output of one model is the input to another model.
+      if (output_inferred_data.find(in_tensor) == output_inferred_data.end()) {
+        status.set_message("Inference manager, Data for input tensor " + in_tensor +
+                           " does not exist.");
+        return status;
+      }
     }
   }
 
@@ -645,11 +690,24 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
     const cudaEvent_t cuda_event_dt = mgpu_cuda_event_.at(model_name).at(device_gpu_dt_);
 
     for (const auto& in_tensor : input_tensors) {
-      const auto device_buff = in_preprocess_data.at(in_tensor)->device_buffer_->data();
-      const auto buffsize = in_preprocess_data.at(in_tensor)->device_buffer_->get_bytes();
+      bool found_in_input = false;
+      if (in_preprocess_data.find(in_tensor) != in_preprocess_data.end()) {
+        found_in_input = true;
+      } else {
+        if (output_inferred_data.find(in_tensor) == output_inferred_data.end()) {
+          status.set_message("Inference manager, Data for input tensor " + in_tensor +
+                             " does not exist.");
+          return status;
+        }
+      }
 
-      const auto device_gpu_dt_buff_in =
-          input_preprocess_data.at(in_tensor)->device_buffer_->data();
+      auto preprocessed_data =
+          found_in_input ? in_preprocess_data.at(in_tensor) : output_inferred_data.at(in_tensor);
+
+      const auto device_buff = preprocessed_data->device_buffer_->data();
+      const auto buffsize = preprocessed_data->device_buffer_->get_bytes();
+
+      const auto device_gpu_dt_buff_in = preprocessed_data->device_buffer_->data();
 
       const cudaStream_t stream_d = input_streams_dev.at(in_tensor);
       const cudaStream_t stream_dt = in_streams_gpudt.at(in_tensor);
@@ -681,11 +739,23 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
         check_cuda(cudaStreamWaitEvent(cuda_stream, cuda_event_d));
       }
 
-      indata.push_back(in_preprocess_data.at(in_tensor));
+      indata.push_back(preprocessed_data);
     }
   } else {
     for (const auto& in_tensor : input_tensors) {
-      indata.push_back(input_preprocess_data.at(in_tensor));
+      bool found_in_input = false;
+      if (input_preprocess_data.find(in_tensor) != input_preprocess_data.end()) {
+        found_in_input = true;
+      } else {
+        if (output_inferred_data.find(in_tensor) == output_inferred_data.end()) {
+          status.set_message("Inference manager, Data for input tensor " + in_tensor +
+                             " does not exist.");
+          return status;
+        }
+      }
+      auto preprocessed_data =
+          found_in_input ? input_preprocess_data.at(in_tensor) : output_inferred_data.at(in_tensor);
+      indata.push_back(preprocessed_data);
     }
   }
 
@@ -809,92 +879,94 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
 
   std::chrono::steady_clock::time_point s_time;
   std::chrono::steady_clock::time_point e_time;
-  std::map<std::string, std::shared_ptr<std::packaged_task<InferStatus()>>> inference_futures;
   s_time = std::chrono::steady_clock::now();
-  for (const auto& [model_instance, _] : infer_param_) {
-    bool process_model = true;
 
-    // for this particular model, set the input dimensions (for dynamic inputs)
-    // get the sequence of holoscan tensors for this particular model
+  for (const auto& level : execution_plan_) {
+    std::map<std::string, std::shared_ptr<std::packaged_task<InferStatus()>>> inference_futures;
 
-    if (inference_specs->dynamic_input_dims_) {
-      auto input_tensors = inference_specs->pre_processor_map_.at(model_instance);
+    for (const auto& model_instance : level) {
+      bool process_model = true;
 
-      bool set_dynamic_input =
-          holo_infer_context_.at(model_instance)
-              ->set_dynamic_input_dimension(input_tensors, inference_specs->dims_per_tensor_);
+      if (inference_specs->dynamic_input_dims_) {
+        auto input_tensors = inference_specs->pre_processor_map_.at(model_instance);
 
-      if (!set_dynamic_input) {
-        HOLOSCAN_LOG_ERROR("Setting up of dynamic input failed for model {}", model_instance);
-        status.set_code(holoinfer_code::H_ERROR);
-        return status;
+        bool set_dynamic_input =
+            holo_infer_context_.at(model_instance)
+                ->set_dynamic_input_dimension(input_tensors, inference_specs->dims_per_tensor_);
+
+        if (!set_dynamic_input) {
+          HOLOSCAN_LOG_ERROR("Setting up of dynamic input failed for model {}", model_instance);
+          status.set_code(holoinfer_code::H_ERROR);
+          return status;
+        }
       }
-    }
 
-    if (activation_map.find(model_instance) != activation_map.end()) {
-      try {
-        auto activation_value = std::stoul(activation_map.at(model_instance));
-        HOLOSCAN_LOG_DEBUG("Activation value: {} for Model: {}", activation_value, model_instance);
-        if (activation_value > 1) {
-          HOLOSCAN_LOG_WARN("Activation map can have either a value of 0 or 1 for a model.");
+      if (activation_map.find(model_instance) != activation_map.end()) {
+        try {
+          auto activation_value = std::stoul(activation_map.at(model_instance));
+          HOLOSCAN_LOG_DEBUG(
+              "Activation value: {} for Model: {}", activation_value, model_instance);
+          if (activation_value > 1) {
+            HOLOSCAN_LOG_WARN("Activation map can have either a value of 0 or 1 for a model.");
+            HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
+          }
+          if (activation_value == 0) {
+            process_model = false;
+          }
+        } catch (std::invalid_argument const& ex) {
+          HOLOSCAN_LOG_WARN("Invalid argument in activation map: {}", ex.what());
+          HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
+        } catch (std::out_of_range const& ex) {
+          HOLOSCAN_LOG_WARN("Invalid range in activation map: {}", ex.what());
           HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
         }
-        if (activation_value == 0) {
-          process_model = false;
+      }
+
+      auto temporal_id = infer_param_.at(model_instance)->get_temporal_id();
+      if (process_model && (frame_counter_ % temporal_id == 0)) {
+        if (!parallel_processing_) {
+          InferStatus infer_status = run_core_inference(
+              model_instance, permodel_preprocess_data, permodel_output_data, cuda_stream);
+          if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
+            status.set_code(holoinfer_code::H_ERROR);
+            infer_status.display_message();
+            status.set_message("Inference manager, Inference failed in execution for " +
+                               model_instance);
+            return status;
+          }
+        } else {
+          inference_futures.insert({model_instance,
+                                    work_queue_->async(std::bind(&ManagerInfer::run_core_inference,
+                                                                 this,
+                                                                 model_instance,
+                                                                 permodel_preprocess_data,
+                                                                 permodel_output_data,
+                                                                 cuda_stream))});
         }
-      } catch (std::invalid_argument const& ex) {
-        HOLOSCAN_LOG_WARN("Invalid argument in activation map: {}", ex.what());
-        HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
-      } catch (std::out_of_range const& ex) {
-        HOLOSCAN_LOG_WARN("Invalid range in activation map: {}", ex.what());
-        HOLOSCAN_LOG_WARN("Activation map value is ignored for model {}", model_instance);
       }
     }
 
-    auto temporal_id = infer_param_.at(model_instance)->get_temporal_id();
-    if (process_model && (frame_counter_ % temporal_id == 0)) {
-      if (!parallel_processing_) {
-        InferStatus infer_status = run_core_inference(
-            model_instance, permodel_preprocess_data, permodel_output_data, cuda_stream);
+    if (parallel_processing_ && !inference_futures.empty()) {
+      std::string failed_models;
+      for (auto& inf_fut : inference_futures) {
+        InferStatus infer_status = inf_fut.second->get_future().get();
         if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
           status.set_code(holoinfer_code::H_ERROR);
           infer_status.display_message();
-          status.set_message("Inference manager, Inference failed in execution for " +
-                             model_instance);
-          return status;
+          failed_models += " " + inf_fut.first;
         }
-      } else {
-        inference_futures.insert({model_instance,
-                                  work_queue_->async(std::bind(&ManagerInfer::run_core_inference,
-                                                               this,
-                                                               model_instance,
-                                                               permodel_preprocess_data,
-                                                               permodel_output_data,
-                                                               cuda_stream))});
+      }
+      if (status.get_code() != holoinfer_code::H_SUCCESS) {
+        status.set_message("Inference manager, Inference failed in execution for" + failed_models);
+        return status;
       }
     }
   }
-
-  if (parallel_processing_) {
-    std::string failed_models;
-    for (auto& inf_fut : inference_futures) {
-      InferStatus infer_status = inf_fut.second->get_future().get();
-      if (infer_status.get_code() != holoinfer_code::H_SUCCESS) {
-        status.set_code(holoinfer_code::H_ERROR);
-        infer_status.display_message();
-        failed_models += " " + inf_fut.first;
-      }
-    }
-    if (status.get_code() != holoinfer_code::H_SUCCESS) {
-      status.set_message("Inference manager, Inference failed in execution for" + failed_models);
-      return status;
-    }
-  }
-
   // update output dimensions here for dynamic outputs
   for (const auto& [model_instance, _] : infer_param_) {
     models_output_dims_[model_instance] = holo_infer_context_.at(model_instance)->get_output_dims();
   }
+
   e_time = std::chrono::steady_clock::now();
   int64_t current_infer_time =
       std::chrono::duration_cast<std::chrono::milliseconds>(e_time - s_time).count();
@@ -902,6 +974,38 @@ InferStatus ManagerInfer::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   status.set_message("Inference Latency: " + std::to_string(current_infer_time) + " ms");
 
   return status;
+}
+
+InferStatus ManagerInfer::execute_gr_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                               cudaStream_t cuda_stream) {
+  std::chrono::steady_clock::time_point s_time;
+  std::chrono::steady_clock::time_point e_time;
+  s_time = std::chrono::steady_clock::now();
+  for (const auto& [model_instance, _] : infer_param_) {
+    try {
+      auto in_buffer = inference_specs->gpu_resident_input_;
+      auto out_buffer = inference_specs->gpu_resident_output_;
+      auto status = run_core_gr_inference(model_instance, in_buffer, out_buffer, cuda_stream);
+      if (status.get_code() != holoinfer_code::H_SUCCESS) {
+        return status;
+      }
+    } catch (const std::runtime_error& e) {
+      HOLOSCAN_LOG_ERROR("ERROR: " + std::string(e.what()));
+      return InferStatus(holoinfer_code::H_ERROR, std::string(e.what()));
+    } catch (...) {
+      HOLOSCAN_LOG_ERROR("ERROR: Unknown exception occurred in execute_gr_inference.");
+      return InferStatus(holoinfer_code::H_ERROR,
+                         "Unknown exception occurred in execute_gr_inference.");
+    }
+  }
+  e_time = std::chrono::steady_clock::now();
+  int64_t current_infer_time =
+      std::chrono::duration_cast<std::chrono::milliseconds>(e_time - s_time).count();
+
+  HOLOSCAN_LOG_DEBUG("First-time Inference Latency for GPU-resident inference: {} ms",
+                     std::to_string(current_infer_time));
+
+  return InferStatus();
 }
 
 DimType ManagerInfer::get_input_dimensions() const {
@@ -940,7 +1044,11 @@ InferStatus InferContext::execute_inference(std::shared_ptr<InferenceSpecs>& inf
   try {
     g_manager = g_managers.at(unique_id_);
 
-    status = g_manager->execute_inference(inference_specs, cuda_stream);
+    if (inference_specs->gpu_resident_inference_) {
+      status = g_manager->execute_gr_inference(inference_specs, cuda_stream);
+    } else {
+      status = g_manager->execute_inference(inference_specs, cuda_stream);
+    }
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
     status.set_message(std::string("Inference manager, Error in inference execution: ") + e.what());

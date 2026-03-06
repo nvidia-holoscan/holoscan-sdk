@@ -271,24 +271,23 @@ int main(int argc, char** argv) {
       case '?':
         // Display help message
         std::cout
-            << "Usage: " << argv[0] << " [options]" << std::endl
-            << "Options:" << std::endl
-            << "  -h, --help        display this information" << std::endl
+            << "Usage: " << argv[0] << " [options]" << '\n'
+            << "Options:" << '\n'
+            << "  -h, --help        display this information" << '\n'
             << "  -c, --count       limits the number of frames to show before the application "
                "ends. Set to -1 by default (unlimited). Any positive integer will limit the "
                "number of frames displayed."
-            << std::endl
+            << '\n'
             << "  -t, --type        condition type to use: 'first_pixel_out' or 'present_done' "
                "(default: present_done)"
-            << std::endl
-            << "  -v, --vsync       enable vsync for the visualizer (default: disabled)"
-            << std::endl
-            << std::endl
-            << "Condition types:" << std::endl
+            << '\n'
+            << "  -v, --vsync       enable vsync for the visualizer (default: disabled)" << '\n'
+            << '\n'
+            << "Condition types:" << '\n'
             << "  first_pixel_out   FirstPixelOutCondition - waits for first pixel out signal"
-            << std::endl
+            << '\n'
             << "  present_done      PresentDoneCondition - waits for presentation completion"
-            << std::endl;
+            << '\n';
         return EXIT_SUCCESS;
 
       case 'c':
@@ -304,7 +303,7 @@ int main(int argc, char** argv) {
           condition_type = ConditionType::PRESENT_DONE;
         } else {
           std::cerr << "Error: Invalid condition type '" << argument << "'. "
-                    << "Valid options are: 'first_pixel_out', 'present_done'" << std::endl;
+                    << "Valid options are: 'first_pixel_out', 'present_done'\n";
           return EXIT_FAILURE;
         }
         break;

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -152,6 +152,8 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     }
     auto opt_profile_size = network_options.batch_sizes[current_opt_profile_index].size() / 3;
 
+    // Array subscript access to TensorRT Dims.d[] is performance-critical for inference.
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
     for (auto nd = 0; nd < opt_profile_size; ++nd) {
       profile_batch_dims[0].d[nd] = network_options.batch_sizes[current_opt_profile_index][3 * nd];
       profile_batch_dims[1].d[nd] =
@@ -171,6 +173,7 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
         }
       }
     }
+    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
 
     profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kMIN, profile_batch_dims[0]);
     profile->setDimensions(input_name, nvinfer1::OptProfileSelector::kOPT, profile_batch_dims[1]);

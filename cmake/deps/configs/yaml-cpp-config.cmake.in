@@ -1,0 +1,59 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+
+# yaml-cpp configuration for the Holoscan SDK revendored static library.
+
+@PACKAGE_INIT@
+
+# Idempotency and conflict checks
+if(yaml-cpp_FOUND)
+  check_required_components(yaml-cpp)
+  return()
+endif()
+# Target may already exist from an earlier find_package at another scope.
+# Treat as found so this find_package call succeeds idempotently.
+if(TARGET yaml-cpp)
+  set(yaml-cpp_FOUND TRUE)
+  check_required_components(yaml-cpp)
+  return()
+endif()
+
+# Prefix: lib/cmake/yaml-cpp -> install root (e.g. lib or lib64)
+get_filename_component(prefix "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set_and_check(prefix "${prefix}")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL "3.20")
+  cmake_path(NORMAL_PATH prefix OUTPUT_VARIABLE prefix)
+endif()
+set_and_check(YAML_CPP_INCLUDE_DIR "${prefix}/@CMAKE_INSTALL_INCLUDEDIR@/3rdparty/yaml-cpp")
+set_and_check(YAML_CPP_LIBRARY "${prefix}/lib/libyaml-cpp.a")
+
+set(yaml-cpp_FOUND TRUE)
+add_library(yaml-cpp STATIC IMPORTED GLOBAL)
+set_target_properties(yaml-cpp PROPERTIES
+  IMPORTED_LOCATION "${YAML_CPP_LIBRARY}"
+)
+target_include_directories(yaml-cpp INTERFACE "${YAML_CPP_INCLUDE_DIR}")
+target_compile_definitions(yaml-cpp INTERFACE YAML_CPP_STATIC_DEFINE)
+
+if(NOT TARGET yaml-cpp::yaml-cpp)
+  add_library(yaml-cpp::yaml-cpp ALIAS yaml-cpp)
+endif()
+
+if(NOT yaml-cpp_FIND_QUIETLY)
+  message(STATUS "Found yaml-cpp: ${CMAKE_CURRENT_LIST_DIR} (found version: \"${yaml-cpp_VERSION}\")")
+endif()
+
+check_required_components(yaml-cpp)

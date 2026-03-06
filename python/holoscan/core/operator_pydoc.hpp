@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -442,6 +442,46 @@ Returns
 -------
 transmitter : holoscan.resources.Transmitter or None
     The transmitter used by this output port. Will be None if the port does not exist.
+)doc")
+
+PYDOC(get_data_flow_tracking_label, R"doc(
+Get the current message label for a given input port.
+This method is only available when data flow tracking is enabled.
+
+This method retrieves the `MessageLabel` associated with data received on the specified
+input port. The `MessageLabel` contains timing and path information for data flow tracking.
+
+Parameters
+----------
+input_port_name : str
+    The name of the input port.
+
+Returns
+-------
+holoscan.core.MessageLabel
+    The current message label for the input port. Returns an empty `MessageLabel` if the
+    port does not have a message label or if the port does not exist (logs an error in
+    the latter case as well).
+
+Raises
+------
+RuntimeError
+    If the operator backend is not GXF-compatible.
+RuntimeError
+    If the fragment is not set.
+RuntimeError
+    If the operator spec is not set.
+RuntimeError
+    If fragment flow tracking is not enabled.
+
+Notes
+-----
+- This method is only available for GXF-compatible operators.
+- The `MessageLabel` is updated during message reception and contains information about the
+  data flow path and timing through the application graph.
+- This method should ideally be called after receiving data on the input port.
+- If the input_port_name is invalid (not found in the operator's input ports), an error
+  is logged and an empty `MessageLabel` is returned.
 )doc")
 
 PYDOC(queue_policy, R"doc(

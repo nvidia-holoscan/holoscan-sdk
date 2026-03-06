@@ -51,6 +51,19 @@ GPUResidentExecutor::~GPUResidentExecutor() {
     HOLOSCAN_CUDA_CALL_ERR_MSG(cudaGraphDestroy(gpu_resident_graph_),
                                "Failed to destroy the GPU-resident graph");
   }
+
+  // moving the stop method here as stop() might include CUDA deallocations.
+  // call the stop method of the operators
+  try {
+    for (auto& op_node : topo_ordered_drh_operators_) {
+      op_node->stop();
+    }
+    for (auto& op_node : topo_ordered_main_operators_) {
+      op_node->stop();
+    }
+  } catch (const std::exception& e) {
+    HOLOSCAN_LOG_ERROR("Exception during operator cleanup: {}", e.what());
+  }
 }
 
 void GPUResidentExecutor::run([[maybe_unused]] OperatorGraph& graph) {
@@ -79,9 +92,27 @@ std::future<void> GPUResidentExecutor::run_async([[maybe_unused]] OperatorGraph&
 
 bool GPUResidentExecutor::initialize_operator(Operator* op) {
   HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::initialize_operator()");
+  op->set_parameters();
   // mark the operator as initialized from the executor point-of-view
   op->is_initialized_ = true;
   return true;
+}
+
+void GPUResidentExecutor::set_unique_ids(std::shared_ptr<Operator> op) {
+  if (op && op->spec()) {
+    for (auto& [port_name, input_spec] : op->spec()->inputs()) {
+      // check if the unique_id is already set
+      if (input_spec->unique_id().empty()) {
+        input_spec->set_unique_id(fmt::format("{}.{}", op->qualified_name(), port_name));
+      }
+    }
+    for (auto& [port_name, output_spec] : op->spec()->outputs()) {
+      // check if the unique_id is already set
+      if (output_spec->unique_id().empty()) {
+        output_spec->set_unique_id(fmt::format("{}.{}", op->qualified_name(), port_name));
+      }
+    }
+  }
 }
 
 void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph) {
@@ -96,10 +127,13 @@ void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph
 
   auto current_op = root_node;
   current_op->initialize();  // initialize the operators before preparing the data flow
+  set_unique_ids(current_op);
+
   while (graph->get_next_nodes(current_op).size() > 0) {
     auto next_ops = graph->get_next_nodes(current_op);
     auto next_op = next_ops[0];
     next_op->initialize();
+    set_unique_ids(next_op);
 
     HOLOSCAN_LOG_INFO("Connection {} -> {}", current_op->name(), next_op->name());
     const auto& port_map = graph->get_port_map(current_op, next_op);
@@ -118,11 +152,97 @@ void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph
 
     // Get memory block size from the source operator's output spec
     auto& outputs = current_op->spec()->outputs();
-    size_t memory_block_size = outputs[source_port]->memory_block_size();
+    auto output_memory_block_size = outputs[source_port]->memory_block_size();
+    auto input_memory_block_size = next_op->spec()->inputs()[destination_port]->memory_block_size();
+    auto output_device_ptr = outputs[source_port]->device_ptr();
+    auto input_device_ptr = next_op->spec()->inputs()[destination_port]->device_ptr();
 
-    // we know one to one connection
-    allocate_io_device_buffer(
-        current_op, next_op, source_port, destination_port, memory_block_size);
+    // The algorithm to decide between memory block and device pointer is as follows:
+    // 1. if both source and destination have valid non-zero memory block size, then use the memory
+    //    block size to allocate the memory for their connection
+    // 2. if either source or destination has a valid non-null device pointer, then use the device
+    //    pointer to connect the operators. LOG warning if the other has a valid non-zero memory
+    //    block size.
+    // 3. if both source and destination have valid non-null device pointers, then LOG ERROR and use
+    //    the source device pointer
+    // 4. if either source or destination has a valid non-zero memory block size, then use the valid
+    //    memory size to allocate the memory for their connection. Log a warning if the other
+    //    object has neither a valid memory block size nor a valid non-null device pointer.
+
+    bool has_output_mem = (output_memory_block_size > 0);
+    bool has_input_mem = (input_memory_block_size > 0);
+    bool has_output_ptr = (output_device_ptr != nullptr);
+    bool has_input_ptr = (input_device_ptr != nullptr);
+
+    if (has_output_mem && has_input_mem) {
+      // Case 1: Both have memory block sizes - allocate a shared buffer
+      if (output_memory_block_size != input_memory_block_size) {
+        throw std::runtime_error(
+            fmt::format("Output memory block size ({}) does not match input memory block size ({}) "
+                        "for connection {}.{} -> {}.{}",
+                        output_memory_block_size,
+                        input_memory_block_size,
+                        current_op->name(),
+                        source_port,
+                        next_op->name(),
+                        destination_port));
+      }
+      allocate_io_device_buffer(
+          current_op, next_op, source_port, destination_port, output_memory_block_size);
+    } else if (has_output_ptr || has_input_ptr) {
+      // Cases 2 & 3: At least one side has a device pointer
+      if (has_output_ptr && has_input_ptr) {
+        // Case 3: Both have device pointers - LOG ERROR, use the source device pointer
+        HOLOSCAN_LOG_ERROR(
+            "Both source ({}.{}) and destination ({}.{}) have device pointers. "
+            "Using the source device pointer.",
+            current_op->name(),
+            source_port,
+            next_op->name(),
+            destination_port);
+        connect_io_device_ptr(
+            current_op, next_op, source_port, destination_port, output_device_ptr);
+      } else {
+        // Case 2: Only one side has a device pointer
+        void* device_ptr = has_output_ptr ? output_device_ptr : input_device_ptr;
+        if (has_output_mem || has_input_mem) {
+          HOLOSCAN_LOG_WARN(
+              "Using device pointer for connection {}.{} -> {}.{}, "
+              "ignoring the memory block size specified on the other end.",
+              current_op->name(),
+              source_port,
+              next_op->name(),
+              destination_port);
+        }
+        connect_io_device_ptr(
+            current_op, next_op, source_port, destination_port, device_ptr);
+      }
+    } else if (has_output_mem || has_input_mem) {
+      // Case 4: Only one side has a memory block size, the other has nothing
+      size_t mem_size = has_output_mem ? output_memory_block_size : input_memory_block_size;
+      const auto& mem_op_name = has_output_mem ? current_op->name() : next_op->name();
+      const auto& no_mem_op_name = has_output_mem ? next_op->name() : current_op->name();
+      HOLOSCAN_LOG_WARN(
+          "Only operator '{}' has a valid memory block size for connection {}.{} -> {}.{}. "
+          "Operator '{}' has neither a valid memory block size nor a valid device pointer.",
+          mem_op_name,
+          current_op->name(),
+          source_port,
+          next_op->name(),
+          destination_port,
+          no_mem_op_name);
+      allocate_io_device_buffer(
+          current_op, next_op, source_port, destination_port, mem_size);
+    } else {
+      // Neither side has a memory block size or a device pointer
+      throw std::runtime_error(
+          fmt::format("Neither source ({}.{}) nor destination ({}.{}) has a valid "
+                      "memory block size or device pointer for their connection.",
+                      current_op->name(),
+                      source_port,
+                      next_op->name(),
+                      destination_port));
+    }
     current_op = std::move(next_op);
   }
 }
@@ -132,6 +252,15 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> do
                                                     const std::string& source_port,
                                                     const std::string& target_port,
                                                     size_t memory_block_size) {
+  if (memory_block_size == 0) {
+    throw std::runtime_error(
+        fmt::format("The memory block size must be non zero before allocating device memory for "
+                    "the port {}.{}/{}.{}",
+                    downstream_op->name(),
+                    source_port,
+                    upstream_op->name(),
+                    target_port));
+  }
   std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> device_buffer =
       std::make_shared<holoscan::utils::cuda::DeviceBuffer>(memory_block_size);
 
@@ -158,6 +287,57 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> do
   io_device_buffers_[target_port_unique_id] = std::move(device_buffer);
 }
 
+void GPUResidentExecutor::connect_io_device_ptr(std::shared_ptr<Operator> source_op,
+                                                std::shared_ptr<Operator> dest_op,
+                                                const std::string& source_port,
+                                                const std::string& target_port,
+                                                void* device_ptr) {
+  if (device_ptr == nullptr) {
+    throw std::runtime_error(
+        fmt::format("The device pointer must be non-null for connecting ports {}.{} -> {}.{}",
+                    source_op->name(),
+                    source_port,
+                    dest_op->name(),
+                    target_port));
+  }
+
+  // Check if the device pointer is a valid one using CUDA API
+  cudaPointerAttributes ptr_attr;
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaPointerGetAttributes(&ptr_attr, device_ptr),
+                                 "Failed to get the pointer attributes");
+  if (ptr_attr.type != cudaMemoryTypeDevice) {
+    throw std::runtime_error(
+        fmt::format("Not a valid device memory pointer (i.e., not cudaMemoryTypeDevice) for "
+                    "connecting ports {}.{} -> {}.{}",
+                    source_op->name(),
+                    source_port,
+                    dest_op->name(),
+                    target_port));
+  }
+
+  if (!source_op->spec() || !dest_op->spec()) {
+    throw std::runtime_error(
+        fmt::format("One of the operator ({} or {}) specifications is not available",
+                    source_op->name(),
+                    dest_op->name()));
+  }
+
+  auto& source_port_unique_id = source_op->spec()->outputs()[source_port]->unique_id();
+  auto& target_port_unique_id = dest_op->spec()->inputs()[target_port]->unique_id();
+
+  if (io_device_ptrs_.find(source_port_unique_id) != io_device_ptrs_.end()) {
+    throw std::runtime_error(
+        fmt::format("Port name {} already exists in the io_device_ptrs_ map", source_port));
+  }
+  if (io_device_ptrs_.find(target_port_unique_id) != io_device_ptrs_.end()) {
+    throw std::runtime_error(
+        fmt::format("Port name {} already exists in the io_device_ptrs_ map", target_port));
+  }
+
+  io_device_ptrs_[source_port_unique_id] = device_ptr;
+  io_device_ptrs_[target_port_unique_id] = device_ptr;
+}
+
 void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
                                          const std::string& port_name) {
   if (!op->spec()) {
@@ -165,12 +345,23 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
   }
 
   auto& port_unique_id = op->spec()->input_output_unique_id(port_name);
+
+  // Check executor-allocated device buffers first
   auto it = io_device_buffers_.find(port_unique_id);
   if (it != io_device_buffers_.end()) {
     return it->second->data();
   }
+
+  // Check externally-owned device pointer connections
+  auto ptr_it = io_device_ptrs_.find(port_unique_id);
+  if (ptr_it != io_device_ptrs_.end()) {
+    return ptr_it->second;
+  }
+
   HOLOSCAN_LOG_ERROR(
-      "Port name {} of operator {} was not found in io_device_buffers_ map", port_name, op->name());
+      "Port name {} of operator {} was not found in io_device_buffers_ or io_device_ptrs_ map",
+      port_name,
+      op->name());
   return nullptr;
 }
 
@@ -273,6 +464,14 @@ void GPUResidentExecutor::create_cuda_graph_from_operators(
   HOLOSCAN_LOG_DEBUG("Number of nodes in the graph: {}", num_nodes);
   if (num_nodes <= 0) {
     HOLOSCAN_LOG_WARN("Graph of GPU-resident execution is empty.");
+  } else {
+    // save the main workload graph as a dot file
+    if (AppDriver::get_bool_env_var("HOLOSCAN_GPU_RESIDENT_SAVE_GRAPH", false)) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(
+          cudaGraphDebugDotPrint(
+              graph, "holoscan_gpu_resident_workload_graph.dot", cudaGraphDebugDotFlagsVerbose),
+          "Failed to save the main workload graph");
+    }
   }
 }
 
@@ -335,14 +534,6 @@ bool GPUResidentExecutor::initialize_fragment() {
   create_cuda_graph_from_operators(
       topo_ordered_main_operators_, workload_graph_, *graph_capture_stream());
 
-  // call the stop method of the operators
-  for (auto& op_node : topo_ordered_drh_operators_) {
-    op_node->stop();
-  }
-  for (auto& op_node : topo_ordered_main_operators_) {
-    op_node->stop();
-  }
-
   fragment_initialized_ = true;
 
   return true;
@@ -387,13 +578,52 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
           &if_node_handle, gpu_resident_graph_, 0, cudaGraphCondAssignDefault),
       "Failed to create the if node conditional handle");
 
+  // used to decide the root node of the while body graph
+  cudaGraphNode_t whilebody_root_node = nullptr;
+
+  // used to decide the intended parent node of the while controller kernel node
+  cudaGraphNode_t whilecontroller_parent_node = nullptr;
+  if (perf_enabled_) {
+    // create a kernel node for the start_perf_timer kernel
+    cudaKernelNodeParams start_perf_timer_kernel_params{};
+    start_perf_timer_kernel_params.blockDim = dim3(1, 1, 1);
+    start_perf_timer_kernel_params.gridDim = dim3(1, 1, 1);
+    start_perf_timer_kernel_params.sharedMemBytes = 0;
+    start_perf_timer_kernel_params.func = (void*)&start_perf_timer;
+    void* start_time_ns_addr = start_time_ns_dev_->data();
+    void* start_perf_timer_args[] = {&start_time_ns_addr};
+    start_perf_timer_kernel_params.kernelParams = start_perf_timer_args;
+
+    cudaGraphNode_t start_perf_timer_kernel_node;
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaGraphAddKernelNode(&start_perf_timer_kernel_node,
+                               while_body_graph,
+                               nullptr,
+                               0,
+                               &start_perf_timer_kernel_params),
+        "Failed to add the start perf timer kernel node to the body graph");
+    whilebody_root_node = start_perf_timer_kernel_node;
+    whilecontroller_parent_node = start_perf_timer_kernel_node;
+  }
+
   cudaGraphNode_t drh_graph_node = nullptr;
   if (data_ready_handler_fragment_) {
     // if there is a data ready handler fragment, then add the drh_graph_ to the
     // while_body_graph
     HOLOSCAN_CUDA_CALL_THROW_ERROR(
-        cudaGraphAddChildGraphNode(&drh_graph_node, while_body_graph, nullptr, 0, drh_graph_),
+        cudaGraphAddChildGraphNode(&drh_graph_node,
+                                   while_body_graph,
+                                   (whilebody_root_node ? &whilebody_root_node : nullptr),
+                                   (whilebody_root_node ? 1 : 0),
+                                   drh_graph_),
         "Failed to add the data ready handler graph to the while body graph");
+    if (!whilebody_root_node) {  // no start_perf_timer kernel node added
+      // set data ready handler graph as the root node of the while body graph
+      whilebody_root_node = drh_graph_node;
+    }
+    // since there is data ready handler graph, the while controller kernel's parent node will be
+    // the data ready handler graph.
+    whilecontroller_parent_node = drh_graph_node;
   }
   // create the while controller kernel node and add it as the root node in the
   // body graph of the while node
@@ -407,9 +637,14 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
   void* data_ready_addr = gpu_resident_deck_->data_ready_device_address();
   void* result_ready_addr = gpu_resident_deck_->result_ready_device_address();
   void* tear_down_addr = gpu_resident_deck_->tear_down_device_address();
+  unsigned int sleep_interval_us = data_not_ready_sleep_interval_us_;
 
-  void* while_controller_args[] = {
-      &data_ready_addr, &result_ready_addr, &tear_down_addr, &while_node_handle, &if_node_handle};
+  void* while_controller_args[] = {&data_ready_addr,
+                                   &result_ready_addr,
+                                   &tear_down_addr,
+                                   &sleep_interval_us,
+                                   &while_node_handle,
+                                   &if_node_handle};
   while_controller_kernel_params.kernelParams = while_controller_args;
 
   // add the while controller kernel node to the WHILE body graph
@@ -419,11 +654,15 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
   HOLOSCAN_CUDA_CALL_THROW_ERROR(
       cudaGraphAddKernelNode(&while_controller_kernel_node,
                              while_body_graph,
-                             (drh_graph_node ? &drh_graph_node : nullptr),
-                             (drh_graph_node ? 1 : 0),
+                             (whilecontroller_parent_node ? &whilecontroller_parent_node : nullptr),
+                             (whilecontroller_parent_node ? 1 : 0),
                              &while_controller_kernel_params),
       "Failed to add the while controller kernel node to the body graph");
 
+  if (!whilebody_root_node) {  // no while body root node was added, therefore, the while controller
+                               // kernel node is the root node of the while body graph
+    whilebody_root_node = while_controller_kernel_node;
+  }
   // add an IF node
   cudaGraphNodeParams if_node_params{};
   if_node_params.type = cudaGraphNodeTypeConditional;
@@ -453,7 +692,17 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
   while_end_marker_kernel_params.gridDim = dim3(1, 1, 1);
   while_end_marker_kernel_params.sharedMemBytes = 0;
   while_end_marker_kernel_params.func = (void*)&while_end_marker;
-  void* while_end_marker_args[] = {&data_ready_addr, &result_ready_addr};
+  void* start_time_ns_addr = perf_enabled_ ? start_time_ns_dev_->data() : nullptr;
+  void* execution_times_us_addr = perf_enabled_ ? execution_times_us_dev_->data() : nullptr;
+  void* actual_samples_collected_addr =
+      perf_enabled_ ? actual_samples_collected_dev_->data() : nullptr;
+  void* while_end_marker_args[] = {&data_ready_addr,
+                                   &result_ready_addr,
+                                   &execution_times_us_addr,
+                                   &num_samples_,
+                                   &start_time_ns_addr,
+                                   &actual_samples_collected_addr,
+                                   &sync_with_host_};
   while_end_marker_kernel_params.kernelParams = while_end_marker_args;
 
   // add the result ready kernel node to the IF node's body graph
@@ -505,6 +754,40 @@ void GPUResidentExecutor::timeout_ms(unsigned long long timeout_ms) {
   }
   timeout_ms_ = timeout_ms;
   gpu_resident_deck_->timeout_ms(timeout_ms);
+}
+
+void GPUResidentExecutor::sync_with_host(bool enable) {
+  if (!gpu_resident_deck_) {
+    auto err_msg = fmt::format("GPUResidentExecutor::{}(): GPU-resident deck is not "
+                               "initialized/found.",
+                               __func__);
+    throw std::runtime_error(err_msg);
+  } else if (gpu_resident_deck_->is_launched()) {
+    HOLOSCAN_LOG_ERROR(
+        "GPUResidentExecutor::{}(): GPU-resident CUDA workload is already launched. "
+        "{} cannot be set anymore.",
+        __func__,
+        __func__);
+    return;
+  }
+  sync_with_host_ = enable;
+}
+
+void GPUResidentExecutor::data_not_ready_sleep_interval_us(unsigned int sleep_interval_us) {
+  if (!gpu_resident_deck_) {
+    auto err_msg = fmt::format("GPUResidentExecutor::{}(): GPU-resident deck is not "
+                               "initialized/found.",
+                               __func__);
+    throw std::runtime_error(err_msg);
+  } else if (gpu_resident_deck_->is_launched()) {
+    HOLOSCAN_LOG_ERROR(
+        "GPUResidentExecutor::{}(): GPU-resident CUDA workload is already launched. "
+        "{} cannot be set anymore.",
+        __func__,
+        __func__);
+    return;
+  }
+  data_not_ready_sleep_interval_us_ = sleep_interval_us;
 }
 
 void GPUResidentExecutor::tear_down() {
@@ -698,6 +981,45 @@ bool GPUResidentExecutor::verify_distinct_operator_names() {
   }
 
   return true;
+}
+
+void GPUResidentExecutor::enable_perf_measurement(unsigned int num_samples) {
+  if (!num_samples) {
+    throw std::runtime_error(
+        "Number of samples for GPU-resident performance measurementcannot be 0");
+  }
+  perf_enabled_ = true;
+  num_samples_ = num_samples;
+  execution_times_us_dev_ =
+      std::make_shared<holoscan::utils::cuda::DeviceBuffer>(sizeof(unsigned int) * num_samples);
+  start_time_ns_dev_ =
+      std::make_shared<holoscan::utils::cuda::DeviceBuffer>(sizeof(unsigned long long));
+  // Allocate buffer for actual samples collected counter and initialize to 0
+  actual_samples_collected_dev_ =
+      std::make_shared<holoscan::utils::cuda::DeviceBuffer>(sizeof(unsigned int));
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(
+      cudaMemset(actual_samples_collected_dev_->data(), 0, sizeof(unsigned int)),
+      "Failed to initialize actual_samples_collected device buffer to 0");
+}
+
+std::pair<unsigned int*, unsigned int> GPUResidentExecutor::execution_times_us() {
+  if (perf_enabled_) {
+    // Get the actual number of samples collected from device memory
+    unsigned int actual_samples =
+        *static_cast<unsigned int*>(actual_samples_collected_dev_->host_data());
+    // synchronize the default stream
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(0),
+                                   "Failed to synchronize the default stream");
+    auto result = std::make_pair(static_cast<unsigned int*>(execution_times_us_dev_->host_data()),
+                                 actual_samples);
+    // synchronize the default stream
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(0),
+                                   "Failed to synchronize the default stream");
+    return result;
+  } else {
+    HOLOSCAN_LOG_ERROR("Performance measurement is not enabled for GPU-resident execution.");
+    return std::make_pair(nullptr, 0);
+  }
 }
 
 }  // namespace holoscan

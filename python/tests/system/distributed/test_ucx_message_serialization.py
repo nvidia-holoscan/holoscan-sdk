@@ -24,11 +24,13 @@ from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment, IOSpec, Operator, OperatorSpec
 from holoscan.operators.holoviz import HolovizOp
 
+from ...utils import is_torch_cuda_compatible
 from .utils import remove_ignored_errors
 
 with contextlib.suppress(ImportError):
     import cupy as cp
     import numpy as np
+    import torch
 
 # test HolovizOp InputSpec
 test_input_specs = []
@@ -120,6 +122,12 @@ class PingMessageTxOp(Operator):
         elif current_value == "cupy-as-holoscan-tensor":
             z = cp.zeros((16, 8, 4), dtype=cp.float32)
             op_output.emit(z, "out", emitter_name="holoscan::Tensor")
+        elif current_value == "torch":
+            z = torch.zeros((16, 8, 4), dtype=torch.float32, device="cuda")
+            op_output.emit(z, "out")
+        elif current_value == "torch-as-holoscan-tensor":
+            z = torch.zeros((16, 8, 4), dtype=torch.float32, device="cuda")
+            op_output.emit(z, "out", emitter_name="holoscan::Tensor")
         elif current_value == "cupy-complex":
             tensormap = dict(z=cp.ones((16, 8, 4), dtype=cp.complex64))
             op_output.emit(tensormap, "out")
@@ -152,6 +160,10 @@ def _check_value(value, expected_value):
     elif expected_value == "cupy" or expected_value == "cupy-as-holoscan-tensor":
         # object with __cuda_array_attribute__ is deserialized as a CuPy array
         assert isinstance(value, cp.ndarray)
+        assert value.shape == (16, 8, 4)
+    elif expected_value == "torch" or expected_value == "torch-as-holoscan-tensor":
+        # PyTorch tensors are preserved as torch.Tensor on receive
+        assert isinstance(value, torch.Tensor)
         assert value.shape == (16, 8, 4)
     elif expected_value == "cupy-complex":
         # object with __cuda_array_attribute__ is deserialized as a CuPy array
@@ -299,6 +311,8 @@ class SingleFragmentDataPingApp(Application):
         "cupy",  # single cupy array
         "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
         "cupy-complex",  # single complex-valued cupy array
+        "torch",  # single PyTorch tensor
+        "torch-as-holoscan-tensor",  # single PyTorch tensor as holoscan::Tensor
         "input_specs",  # list of HolovizOp.InputSpec
     ],
 )
@@ -308,6 +322,9 @@ def test_single_fragment_data_ping_app(value, capfd):
         pytest.importorskip("numpy")
     elif value in ["cupy", "cupy-as-holoscan-tensor", "cupy-complex", "cupy-tensormap"]:
         pytest.importorskip("cupy")
+    elif value in ["torch", "torch-as-holoscan-tensor"]:
+        if not is_torch_cuda_compatible():
+            pytest.skip("Torch CUDA unavailable or SM incompatible.")
     elif value == "input_specs":
         value = test_input_specs
 
@@ -342,6 +359,10 @@ def test_ucx_object_serialization_app(capfd):
         "cupy-complex",  # single complex-valued cupy array
         test_input_specs,  # list of HolovizOp.InputSpec
     ]
+
+    # Optionally add PyTorch tensor tests if torch is available with compatible CUDA
+    if is_torch_cuda_compatible():
+        test_values.extend(["torch", "torch-as-holoscan-tensor"])
 
     app = MultiFragmentPyObjectPingApp(value=test_values)
     app.run()
@@ -467,6 +488,10 @@ def test_ucx_object_receivers_serialization_app(capfd):
         "cupy-as-holoscan-tensor",  # single cupy array as holoscan::Tensor
         test_input_specs,  # list of HolovizOp.InputSpec
     ]
+
+    # Optionally add PyTorch tensor tests if torch is available with compatible CUDA
+    if is_torch_cuda_compatible():
+        test_values.extend(["torch", "torch-as-holoscan-tensor"])
 
     app = MultiFragmentPyObjectReceiversPingApp(value=test_values)
     app.run()

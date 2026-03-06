@@ -152,6 +152,7 @@ void HoloInferTests::setup_specifications() {
                                                   use_cuda_graphs,
                                                   dla_core,
                                                   dla_gpu_fallback,
+                                                  false,
                                                   std::function<cudaStream_t(int32_t device_id)>());
 }
 

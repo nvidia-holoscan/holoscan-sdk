@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,6 +113,7 @@ TEST(UniqueValue, All) {
     EXPECT_FALSE(g_has_been_destroyed)
         << "action should not be set after UniqueValue had been move constructed";
 
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) intentional test
     EXPECT_FALSE(static_cast<bool>(unique_value))
         << "old unique_value should be in a valid but empty state";
     EXPECT_EQ(test_value, other_unique_value.get())
@@ -133,6 +134,7 @@ TEST(UniqueValue, All) {
     EXPECT_FALSE(g_has_been_destroyed)
         << "action should not be set after UniqueValue had been move assigned";
 
+    // NOLINTNEXTLINE(bugprone-use-after-move,hicpp-invalid-access-moved) intentional test
     EXPECT_FALSE(static_cast<bool>(unique_value))
         << "old unique_value should be in a valid but empty state";
     EXPECT_EQ(test_value, other_unique_value.get())

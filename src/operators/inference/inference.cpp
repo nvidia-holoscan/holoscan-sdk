@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,7 +17,9 @@
 
 #include "holoscan/operators/inference/inference.hpp"
 
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -228,29 +230,76 @@ void InferenceOp::initialize() {
 
 void InferenceOp::start() {
   try {
-    // Check for the validity of parameters from configuration
-    auto status = HoloInfer::inference_validity_check(model_path_map_.get().get_map(),
-                                                      pre_processor_map_.get().get_map(),
-                                                      inference_map_.get().get_map(),
-                                                      in_tensor_names_.get(),
-                                                      out_tensor_names_.get());
+    auto status = HoloInfer::setup_inference_io(pre_processor_map_.get().get_map(),
+                                                inference_map_.get().get_map(),
+                                                model_inputs_,
+                                                model_outputs_,
+                                                transmit_outputs_,
+                                                out_tensor_names_.get());
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
       status.display_message();
       HoloInfer::raise_error(module_, "Parameter Validation failed: " + status.get_message());
     }
 
+    //  Check for the validity of parameters from configuration
+    status = HoloInfer::inference_validity_check(model_path_map_.get().get_map(),
+                                                 pre_processor_map_.get().get_map(),
+                                                 inference_map_.get().get_map(),
+                                                 model_inputs_,
+                                                 model_outputs_);
+    if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
+      status.display_message();
+      HoloInfer::raise_error(module_, "Parameter Validation failed: " + status.get_message());
+    }
+
+    // Use ExecutionContext::allocate_cuda_stream to allocate CUDA streams for inference
+    // backends. This delegates to CudaObjectHandler, which discovers the stream pool by:
+    //   1. Looking for a parameter named "cuda_stream_pool"
+    //   2. Scanning operator resources for any CudaStreamPool (type-based lookup)
+    //   3. Creating a default pool if neither is found
+    //
+    // The previous approach (cuda_stream_pool_.try_get()) only worked when the pool was
+    // passed as a named Arg("cuda_stream_pool", pool). When passed positionally via
+    // make_operator (e.g. make_operator<InferenceOp>("name", pool)), the pool is added to
+    // the operator's resources_ map but the cuda_stream_pool_ Parameter is not set, so
+    // try_get() would return false and no stream callback would be configured.
+    //
+    // Behavior change: when no CudaStreamPool is explicitly provided, CudaObjectHandler
+    // creates a default pool (capacity 1), so inference backends will now receive a
+    // Holoscan-managed stream rather than creating their own unmanaged streams.
+    //
+    // The lambda adapts ExecutionContext::allocate_cuda_stream's (string name) ->
+    // expected<cudaStream_t> interface to HoloInfer's (int32_t device_id) -> cudaStream_t
+    // callback signature. Unique stream names ensure each backend gets its own dedicated
+    // stream, and device_from_stream verifies device compatibility.
     std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream;
-    // If a CUDA stream pool is provided, use it to allocate a CUDA stream
-    if (cuda_stream_pool_.try_get()) {
-      allocate_cuda_stream = [this](int32_t device_id) -> cudaStream_t {
-        if (cuda_stream_pool_->get_dev_id() == device_id) {
-          auto maybe_stream = cuda_stream_pool_->get()->allocateStream();
-          if (!maybe_stream) {
-            throw std::runtime_error("Failed to allocate CUDA stream");
-          }
-          return maybe_stream.value()->stream().value();
+    auto exec_ctx = execution_context();
+    if (exec_ctx) {
+      auto counter = std::make_shared<int>(0);
+      allocate_cuda_stream = [exec_ctx, counter](int32_t device_id) -> cudaStream_t {
+        auto stream_name = "inference_" + std::to_string((*counter)++);
+        auto maybe_stream = exec_ctx->allocate_cuda_stream(stream_name);
+        if (!maybe_stream) {
+          throw std::runtime_error(std::string("Failed to allocate CUDA stream: ") +
+                                   maybe_stream.error().what());
         }
-        return nullptr;
+        auto stream = maybe_stream.value();
+        // Verify the allocated stream is on the requested device.
+        // device_from_stream only works with Holoscan-managed streams, so skip
+        // the check for the default stream (which should not occur in practice).
+        if (stream != cudaStreamDefault) {
+          auto maybe_dev = exec_ctx->device_from_stream(stream);
+          if (!maybe_dev) {
+            // Should not happen: stream was just allocated by this ExecutionContext.
+            // Log and continue without device verification.
+            HOLOSCAN_LOG_ERROR("Failed to query device for allocated CUDA stream '{}': {}",
+                               stream_name,
+                               maybe_dev.error().what());
+          } else if (maybe_dev.value() != device_id) {
+            return nullptr;
+          }
+        }
+        return stream;
       };
     }
 
@@ -276,6 +325,7 @@ void InferenceOp::start() {
                                                     enable_cuda_graphs_.get(),
                                                     dla_core_.get(),
                                                     dla_gpu_fallback_.get(),
+                                                    false,
                                                     allocate_cuda_stream);
     HOLOSCAN_LOG_INFO("Inference Specifications created");
     // Create holoscan inference context
@@ -325,7 +375,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     // (cuda_stream will be set by get_data_per_model)
     cudaStream_t cuda_stream{};
     gxf_result_t stat = holoscan::utils::get_data_per_model(op_input,
-                                                            in_tensor_names_.get(),
+                                                            model_inputs_,
                                                             inference_specs_->data_per_tensor_,
                                                             inference_specs_->dims_per_tensor_,
                                                             input_on_cuda_.get(),
@@ -343,19 +393,21 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     }
 
     // check for tensor validity the first time
+
     if (validate_tensor_dimensions_ && !dynamic_input_dims_) {
       validate_tensor_dimensions_ = false;
       auto model_in_dims_map = holoscan_infer_context_->get_input_dimensions();
 
       auto dim_status = HoloInfer::tensor_dimension_check(pre_processor_map_.get().get_map(),
                                                           model_in_dims_map,
-                                                          inference_specs_->dims_per_tensor_);
+                                                          inference_specs_->dims_per_tensor_,
+                                                          model_inputs_);
       if (dim_status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
         HoloInfer::raise_error(module_,
                                "Compute, Inference execution, " + dim_status.get_message());
       }
     }
-    // Execute inference and populate output buffer in inference specifications
+    //  Execute inference and populate output buffer in inference specifications
     HoloInfer::TimePoint s_time, e_time;
     HoloInfer::timer_init(s_time);
 
@@ -368,6 +420,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     auto status = holoscan_infer_context_->execute_inference(inference_specs_, cuda_stream);
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
+
     if (status.get_code() != HoloInfer::holoinfer_code::H_SUCCESS) {
       status.display_message();
       HoloInfer::raise_error(module_, "Compute, Inference execution, " + status.get_message());
@@ -382,7 +435,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                     inference_map_.get().get_map(),
                                                     inference_specs_->output_per_model_,
                                                     op_output,
-                                                    out_tensor_names_.get(),
+                                                    transmit_outputs_,
                                                     model_out_dims_map,
                                                     output_on_cuda_.get(),
                                                     transmit_on_cuda_.get(),

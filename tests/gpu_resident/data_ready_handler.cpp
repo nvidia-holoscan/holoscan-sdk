@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,13 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
+#include <cstdio>
+#include <fstream>
 #include <memory>
+#include <regex>
 #include <string>
+#include <thread>
 
 #include <holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp>
 #include <holoscan/core/gpu_resident_operator.hpp>
@@ -556,5 +561,27 @@ TEST_F(GPUResidentDataReadyHandlerTest, TestMultipleInitializationCalls) {
          "in output:\n"
       << output;
 }
+
+// ================================================================================================
+// Performance Measurement Tests with Data Ready Handler
+// ================================================================================================
+
+TEST_F(GPUResidentDataReadyHandlerTest, TestPerfMeasurementAPIWithDataReadyHandler) {
+  auto main_fragment = std::make_shared<TestMainWorkloadFragment>();
+  auto drh_fragment = std::make_shared<TestDataReadyHandlerFragment>();
+
+  main_fragment->compose();
+  main_fragment->gpu_resident().register_data_ready_handler(drh_fragment);
+
+  // Enable performance measurement after registering data ready handler
+  EXPECT_NO_THROW(main_fragment->gpu_resident().enable_perf_measurement(100));
+
+  // Note: print and save will still throw without running the graph to collect data
+  EXPECT_THROW(main_fragment->gpu_resident().print_perf_metrics(0, 0), std::runtime_error);
+  EXPECT_THROW(main_fragment->gpu_resident().save_perf_results_as_csv(), std::runtime_error);
+}
+
+// Not adding any other tests, as the example of data ready handler already covers the performance
+// measurement functionality tests.
 
 }  // namespace holoscan

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator ping application
-add_custom_target(python_ping_expiring_message ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ping_expiring_message.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_expiring_message.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "ping_expiring_message.py"
-  BYPRODUCTS "ping_expiring_message,py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ping_expiring_message.py"
+  COMMENT "Copying ping_expiring_message.py"
+)
+add_custom_target(python_ping_expiring_message ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/ping_expiring_message.py"
 )
 
 # Install the app

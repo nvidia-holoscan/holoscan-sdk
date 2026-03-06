@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,10 +16,14 @@
 # Get relative folder path for the app
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_custom_target(python_ping_vector ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ping_vector.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_vector.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "ping_vector.py"
-  BYPRODUCTS "ping_vector.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ping_vector.py"
+  COMMENT "Copying ping_vector.py"
+)
+add_custom_target(python_ping_vector ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/ping_vector.py"
 )
 
 # Install the app

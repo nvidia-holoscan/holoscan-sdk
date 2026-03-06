@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,7 +51,7 @@ class SimpleOp : public holoscan::Operator {
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
-    std::cout << "[" << name() << "] Executing compute method" << std::endl;
+    std::cout << "[" << name() << "] Executing compute method\n";
 
     // Set async condition to kWait state to wait for the controller to change the state to kReady
     // by setting the event state to kEventDone
@@ -109,7 +109,7 @@ class ControllerOp : public holoscan::Operator {
     start_cv_.notify_all();
   }
 
-  void stop() override { std::cout << "[" << name() << "] Stopping controller" << std::endl; }
+  void stop() override { std::cout << "[" << name() << "] Stopping controller\n"; }
 
   void compute([[maybe_unused]] holoscan::InputContext& op_input,
                [[maybe_unused]] holoscan::OutputContext& op_output,
@@ -118,7 +118,7 @@ class ControllerOp : public holoscan::Operator {
     // Setting the event state to kEventDone triggers the scheduler,
     // which updates the operator's scheduling condition type to kReady, leading to the execution of
     // the compute method.
-    std::cout << "[" << name() << "] Stopping controller execution" << std::endl;
+    std::cout << "[" << name() << "] Stopping controller execution\n";
     // Stop this operator's execution (event state is set to kEventNever)
     stop_execution();
   }
@@ -132,7 +132,7 @@ class ControllerOp : public holoscan::Operator {
   void execute_operator(const std::string& op_name) {
     auto op_it = op_map_.find(op_name);
     if (op_it == op_map_.end()) {
-      std::cout << "[" << name() << "] Operator " << op_name << " not found" << std::endl;
+      std::cout << "[" << name() << "] Operator " << op_name << " not found\n";
       return;
     }
 
@@ -151,7 +151,7 @@ class ControllerOp : public holoscan::Operator {
   void shutdown() {
     // Set all operators' event states to kEventNever to change their scheduling condition type to
     // NEVER.
-    std::cout << "[" << name() << "] Shutting down controller" << std::endl;
+    std::cout << "[" << name() << "] Shutting down controller\n";
 
     for (auto& [op_name, op] : op_map_) {
       op->async_condition()->event_state(holoscan::AsynchronousEventState::kEventNever);
@@ -203,27 +203,24 @@ class AsyncOperatorExecutionControlApp : public holoscan::Application {
     add_operator(op3);
 
     // Print information about the example
-    std::cout << "This example demonstrates async operator execution control." << std::endl;
-    std::cout << "The controller operator runs in a separate thread and synchronizes" << std::endl;
-    std::cout << "the execution of multiple SimpleOp operators using async_condition()."
-              << std::endl;
-    std::cout << "-------------------------------------------------------------------" << std::endl;
-    std::cout << "Key concepts demonstrated:" << std::endl;
-    std::cout << "1. Using asynchronous conditions to control operator execution states"
-              << std::endl;
-    std::cout << "2. External execution control from outside the Holoscan runtime" << std::endl;
-    std::cout << "3. Notification callbacks for coordination between operators" << std::endl;
-    std::cout << "4. Manual scheduling of operators in a specific order (op3 → op2 → op1)"
-              << std::endl;
-    std::cout << "5. Graceful shutdown of an application with async operators" << std::endl;
-    std::cout << "-------------------------------------------------------------------" << std::endl;
-    std::cout << "Execution flow:" << std::endl;
+    std::cout << "This example demonstrates async operator execution control.\n";
+    std::cout << "The controller operator runs in a separate thread and synchronizes\n";
+    std::cout << "the execution of multiple SimpleOp operators using async_condition()." << '\n';
+    std::cout << "-------------------------------------------------------------------\n";
+    std::cout << "Key concepts demonstrated:\n";
+    std::cout << "1. Using asynchronous conditions to control operator execution states" << '\n';
+    std::cout << "2. External execution control from outside the Holoscan runtime\n";
+    std::cout << "3. Notification callbacks for coordination between operators\n";
+    std::cout << "4. Manual scheduling of operators in a specific order (op3 → op2 → op1)" << '\n';
+    std::cout << "5. Graceful shutdown of an application with async operators\n";
+    std::cout << "-------------------------------------------------------------------\n";
+    std::cout << "Execution flow:\n";
     std::cout << "- All operators start in kWait state except the controller (kEventWaiting)"
-              << std::endl;
-    std::cout << "- Main thread gets controller and executes operators in sequence" << std::endl;
-    std::cout << "- Each operator signals completion via the notification callback" << std::endl;
-    std::cout << "- The controller then shuts down the application" << std::endl;
-    std::cout << "-------------------------------------------------------------------" << std::endl;
+              << '\n';
+    std::cout << "- Main thread gets controller and executes operators in sequence\n";
+    std::cout << "- Each operator signals completion via the notification callback\n";
+    std::cout << "- The controller then shuts down the application\n";
+    std::cout << "-------------------------------------------------------------------\n";
   }
 
  private:
@@ -252,7 +249,7 @@ int main() {
   // Waiting for the application to complete
   future.get();
 
-  std::cout << "-------------------------------------------------------------------" << std::endl;
-  std::cout << "Application completed. All operators have finished execution." << std::endl;
+  std::cout << "-------------------------------------------------------------------\n";
+  std::cout << "Application completed. All operators have finished execution.\n";
   return 0;
 }

@@ -19,11 +19,8 @@
 #include <utility>
 
 #include "holoscan/core/flow_tracking_annotation.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp"
-
-#include <gxf/std/async_buffer_transmitter.hpp>
+#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 
@@ -38,24 +35,6 @@ gxf_result_t HoloscanAsyncBufferTransmitter::publish_abi(gxf_uid_t uid) {
 
   // Call the Base class' publish_abi now
   auto code = nvidia::gxf::AsyncBufferTransmitter::publish_abi(uid);
-
-  if (tracking_) {
-    // Check whether the associated operator is a root operator for the first time.
-    if (is_op_root_ == -1) {
-      // coverity[USE_AFTER_FREE:FALSE_POSITIVE] - no-op deleter, non-owning shared_ptr
-      std::shared_ptr<holoscan::Operator> op_shared_ptr(op(), [](Operator*) {});
-      is_op_root_ = op()->is_root() || op()->is_user_defined_root() ||
-                    Operator::is_all_operator_predecessor_virtual(std::move(op_shared_ptr),
-                                                                  op()->fragment()->graph());
-    }
-
-    // After the first time, only update number of published messages for a root operator only.
-    if (is_op_root_) {
-      if (!op_transmitter_name_pair_.size())
-        op_transmitter_name_pair_ = fmt::format("{}->{}", op()->qualified_name(), name());
-      op()->update_published_messages(op_transmitter_name_pair_);
-    }
-  }
 
   return code;
 }

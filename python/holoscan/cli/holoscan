@@ -1,7 +1,0 @@
-#!/bin/bash
-
-echo "As of version 2.9.0, Holoscan CLI is no longer bundled with the Holoscan SDK."
-echo "To enhance your experience and ensure you have access to the latest tools,"
-echo "please use the command below to install Holoscan CLI:"
-echo -e "\n$ pip install holoscan-cli \n"
-echo "Visit https://github.com/nvidia-holoscan/holoscan-cli for more information.\n"

@@ -133,7 +133,8 @@ std::string AppDriverServiceImpl::uri_decode(const std::string& src) {
       result += ' ';
     } else if (ch == '%' && i + 2 < src.size()) {
       int value;
-      // Use sscanf to read the hex value
+      // Use sscanf to read the hex value (0x00-0xFF range, return value checked)
+      // NOLINTNEXTLINE(cert-err34-c)
       if (std::sscanf(src.substr(i + 1, 2).c_str(), "%x", &value) == 1) {
         result += static_cast<char>(value);
         i += 2;  // skip the next two characters

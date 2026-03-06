@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -325,14 +325,14 @@ int main(int argc, char** argv) {
       case 'h':
       case '?':
         std::cout
-            << "Usage: " << argv[0] << " [options]" << std::endl
-            << "Options:" << std::endl
-            << "  -h, --help     display this information" << std::endl
+            << "Usage: " << argv[0] << " [options]\n"
+            << "Options:\n"
+            << "  -h, --help     display this information\n"
             << "  -c, --count    limits the number of frames to show before the application "
                "ends. Set to `"
             << count
             << "` by default. Any positive integer will limit on the number of frames displayed."
-            << std::endl;
+            << '\n';
         return EXIT_SUCCESS;
 
       case 'c':

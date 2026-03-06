@@ -24,6 +24,7 @@
 
 #include <common/fixed_vector.hpp>
 #include <gxf/core/entity.hpp>
+#include <gxf/std/codelet.hpp>
 #include <gxf/std/resources.hpp>  // GPUDevice
 #include <magic_enum.hpp>
 

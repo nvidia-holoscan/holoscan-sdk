@@ -127,7 +127,10 @@ class Executor {
    */
   bool owns_context() { return owns_context_; }
 
-  // add uint64_t context getters/setters for Python API
+  // uint64_t context getters/setters for Python API.
+  // Requires a 64-bit platform where pointers fit in uint64_t for safe reinterpret_cast.
+  static_assert(sizeof(void*) <= sizeof(uint64_t), "64-bit context assumption required");
+  // NOLINTNEXTLINE(performance-no-int-to-ptr)
   void context_uint64(uint64_t context) { context_ = reinterpret_cast<void*>(context); }
   uint64_t context_uint64() { return reinterpret_cast<uint64_t>(context_); }
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +14,14 @@
 # limitations under the License.
 
 # Copy config file
-add_custom_target(cli_packager_yaml ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/app.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/app.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "app.yaml"
-  BYPRODUCTS "app.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/app.yaml"
+  COMMENT "Copying app.yaml"
+)
+add_custom_target(cli_packager_app_yaml ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/app.yaml"
 )
 
 # Install following the relative folder path

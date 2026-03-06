@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <vector>
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
@@ -82,6 +83,29 @@ class ManagerInfer {
    */
   InferStatus execute_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
                                 cudaStream_t cuda_stream);
+
+  /**
+   * @brief Executes GPU Resident inference for a particular model and generates inferred data
+   *
+   * @param inference_specs specifications for inference
+   * @param cuda_stream CUDA stream
+   *
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus execute_gr_inference(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                   cudaStream_t cuda_stream);
+
+  /**
+   * @brief Runs the GPU Resident inference for a particular model
+   *
+   * @param model_name Input model to do the inference on
+   * @param in_buffer Input buffer
+   * @param out_buffer Output buffer
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_gr_inference(const std::string& model_name, void* in_buffer,
+                                    void* out_buffer, cudaStream_t cuda_stream);
 
   /**
    * @brief Executes Core inference for a particular model and generates inferred data
@@ -181,7 +205,11 @@ class ManagerInfer {
   /// Work queue use for parallel processing
   std::unique_ptr<WorkQueue> work_queue_;
 
+  /// Execution plan for the inference
+  std::vector<std::vector<std::string>> execution_plan_;
+
   /// Map storing Backends supported with holoinfer mapping
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static std::map<std::string, holoinfer_backend> supported_backend_{
       {"onnxrt", holoinfer_backend::h_onnx},
       {"trt", holoinfer_backend::h_trt},

@@ -3084,6 +3084,29 @@
             ]
         },
         {
+            "name": "(gdb) examples/gpu_resident_inference_example/cpp",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${command:cmake.buildDirectory}/examples/gpu_resident_inference_example/gpu_resident_inference_example",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${command:cmake.buildDirectory}",
+            "environment": [
+                {
+                    "name": "HOLOSCAN_LOG_LEVEL",
+                    "value": "DEBUG"
+                }
+            ],
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        },
+        {
             "name": "(gdb) SYSTEM_TEST",
             "type": "cppdbg",
             "request": "launch",

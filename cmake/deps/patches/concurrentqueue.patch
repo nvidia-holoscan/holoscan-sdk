@@ -1,0 +1,46 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ea80135..2101f7a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -11,6 +11,7 @@ target_include_directories(${PROJECT_NAME}
+                 $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+                 $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}/>
+ )
++add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+ 
+ install(TARGETS ${PROJECT_NAME} 
+     EXPORT ${PROJECT_NAME}Targets
+@@ -38,7 +39,7 @@ install(EXPORT
+         DESTINATION
+                 ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+         COMPONENT
+-                Devel
++                concurrentqueue
+ )
+ 
+ install(
+@@ -48,7 +49,7 @@ install(
+         DESTINATION
+                 ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}
+         COMPONENT
+-                Devel
++                concurrentqueue
+ )
+ 
+ install(
+@@ -58,7 +59,14 @@ install(
+                 lightweightsemaphore.h 
+                 LICENSE.md
+         DESTINATION 
+-                ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}/moodycamel
++                ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}/
++        COMPONENT
++                concurrentqueue
++)
++export(
++        TARGETS concurrentqueue
++        NAMESPACE ${PROJECT_NAME}::
++        FILE ${PROJECT_NAME}Targets.cmake
+ )
+ 
+ set(CPACK_PACKAGE_NAME ${PROJECT_NAME})

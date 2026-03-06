@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,6 +25,7 @@ rapids_cpm_find(dlpack 1.0
     GITHUB_REPOSITORY dmlc/dlpack
     GIT_TAG v1.0
     GIT_SHALLOW TRUE
+    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/dlpack.patch
     EXCLUDE_FROM_ALL
 )
 

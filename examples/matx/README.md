@@ -13,6 +13,11 @@ The MatX examples are designed to show how to integrate MatX with Holoscan for c
 
 This example provides a simple introduction to using MatX within a Holoscan application. It shows how to create a MatX tensor, pass it between operators using zero-copy conversion to a `holoscan::Tensor`, and perform computations on the GPU.
 
+### [MatX Allocator](./matx_allocator)
+- **C++**: [`matx_allocator.cu`](./matx_allocator/cpp/matx_allocator.cu)
+
+This example demonstrates how to use `holoscan::MatXAllocator` to create MatX tensors backed by a Holoscan memory pool (`RMMAllocator`), rather than MatX's default CUDA allocator. It shows pooled allocation, DLPack tensor interop between MatX and Holoscan, and GPU computation on the received tensor.
+
 ### [Best Practices to integrate external libraries into Holoscan pipelines --- Integrate MatX library](https://github.com/nvidia-holoscan/holohub/tree/main/tutorials/integrate_external_libs_into_pipeline#integrate-matx-library)
 
 This tutorial in [HoloHub](https://github.com/nvidia-holoscan/holohub) shows some examples of how to use MatX in a Holoscan pipeline.
@@ -22,6 +27,7 @@ This tutorial in [HoloHub](https://github.com/nvidia-holoscan/holohub) shows som
 - **MatX Tensors**: Creating and manipulating `matx::tensor` objects.
 - **Integration with Holoscan**: Using MatX within Holoscan operators for building pipelines.
 - **Zero-Copy Interoperability**: Exchanging data between MatX and Holoscan tensors without copies via DLPack.
+- **Pooled Allocation**: Backing MatX tensors with Holoscan memory pools via `MatXAllocator`.
 
 ## Getting Started
 

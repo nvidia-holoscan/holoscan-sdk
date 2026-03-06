@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,15 +16,23 @@
 # Get relative folder path for the app
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_custom_target(python_cuda_green_context ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cuda_green_context.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/cuda_green_context.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "cuda_green_context.py"
-  BYPRODUCTS "cuda_green_context.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cuda_green_context.py"
+  COMMENT "Copying cuda_green_context.py"
+)
+add_custom_target(python_cuda_green_context ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/cuda_green_context.py"
+)
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/cuda_default_green_context.py"
+  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/cuda_default_green_context.py" ${CMAKE_CURRENT_BINARY_DIR}
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/cuda_default_green_context.py"
+  COMMENT "Copying cuda_default_green_context.py"
 )
 add_custom_target(python_default_cuda_green_context ALL
-  COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/cuda_default_green_context.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "cuda_default_green_context.py"
-  BYPRODUCTS "cuda_default_green_context.py"
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/cuda_default_green_context.py"
 )
 
 # Install the app

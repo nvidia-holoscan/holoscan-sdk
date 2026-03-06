@@ -32,9 +32,25 @@ For more information about GPUDirect RDMA, see the following:
 (gxf-tech)=
 ## Graph Execution Framework
 
-The Graph Execution Framework (GXF) is a core component of the Holoscan SDK that provides features to execute pipelines of various independent tasks with high performance by minimizing or removing the need to copy data across each block of work, and providing ways to optimize memory allocation.
+GXF (Graph Execution Framework) is an NVIDIA-internal graph execution framework that forms the foundation of the Holoscan SDK. GXF provides a low-level entity-component system for building and executing computation graphs, including schedulers, memory allocators, message passing, and a YAML-based graph definition format.
 
-GXF will be mentioned in many places across this user guide, including a {ref}`dedicated section <gxf-user-guide>` which provides more details.
+The Holoscan SDK provides a developer-friendly C++ and Python APIs that abstract away GXF internals, culminating in a fully native operator and application model. Today, most Holoscan SDK users do not need to interact with GXF directly.
+
+### GXF core concepts
+
+For historical context and to help interpret older code or documentation, here is a mapping of GXF concepts to their Holoscan SDK equivalents:
+
+| GXF Concept | Holoscan SDK Equivalent | Description |
+|---|---|---|
+| **Entity** | (implicit) | A node in the computation graph; a container for components. In the Holoscan SDK, an Operator implicitly represents an entity. |
+| **Codelet** | **{ref}`Operator <exhale_class_classholoscan_1_1Operator>`** | A component that executes custom code via lifecycle methods (`start`, `tick`/`compute`, `stop`). |
+| **Component** | **{ref}`Resource <exhale_class_classholoscan_1_1Resource>`** | Supporting functionality such as memory allocators, clocks, or serializers attached to an entity. |
+| **Scheduling Term** | **{ref}`Condition <exhale_class_classholoscan_1_1Condition>`** | A predicate that determines when an operator is ready for execution. |
+| **Receiver / Transmitter** | **{ref}`Input / Output Port <exhale_class_classholoscan_1_1IOSpec>`** | Message-passing endpoints between operators. |
+| **Connection** | **Flow (Edge)** | A directed edge in the application graph connecting an output port to an input port. |
+| **Scheduler** | **{ref}`Scheduler <exhale_class_classholoscan_1_1Scheduler>`** | Orchestrates the execution of operators based on their conditions. |
+| **GXF Extension** | **Operator / Resource library** | A shared library that registers components with the runtime. Native Holoscan operators do not require GXF extension registration. |
+
 
 (tensorrt)=
 ## TensorRT Optimized Inference

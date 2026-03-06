@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+// example code
+
 #include <cuda.h>
 #include <getopt.h>
 #include <imgui.h>
@@ -91,7 +94,7 @@ uint32_t width = 1920;
 uint32_t height = 1080;
 
 // timing
-std::chrono::steady_clock::time_point start;
+std::chrono::steady_clock::time_point start;  // NOLINT(cert-err58-cpp)
 std::chrono::milliseconds elapsed;
 uint32_t iterations = 0;
 float fps = 0.F;
@@ -512,23 +515,22 @@ int main(int argc, char** argv) {
     const std::string argument(optarg ? optarg : "");
     switch (c) {
       case 'h':
-        std::cout << "Usage: " << argv[0] << " [options]" << std::endl
-                  << "Options:" << std::endl
-                  << "  -h, --help               display this information" << std::endl
-                  << "  -b, --bench              benchmark mode" << std::endl
-                  << "  -l, --headless           headless mode" << std::endl
-                  << "  -f, --fullscreen         fullscreen mode" << std::endl
-                  << "  -e, --exclusive_display  exclusive display mode" << std::endl
+        std::cout << "Usage: " << argv[0] << " [options]\n"
+                  << "Options:\n"
+                  << "  -h, --help               display this information\n"
+                  << "  -b, --bench              benchmark mode\n"
+                  << "  -l, --headless           headless mode\n"
+                  << "  -f, --fullscreen         fullscreen mode\n"
+                  << "  -e, --exclusive_display  exclusive display mode\n"
                   << "  -d, --display NAME       name of the display to use in exclusive display "
-                     "or fullscreen mode (either EDID, `xrandr` or `hwinfo --monitor` name)"
+                     "or fullscreen mode (either EDID, `xrandr` or `hwinfo --monitor` name)\n"
                   << "  -p, --present_mode MODE  determines how the rendered result will be "
                      "presented on the screen (`auto`, `fifo`, `immediate`, `mailbox`, "
                      "`fifo_latest_ready`, `shared_demand_refresh`, `shared_continuous_refresh`, "
-                     "`fifo_relaxed`)"
+                     "`fifo_relaxed`)\n"
                   << "  -c, --color_space SPACE  specifies how the surface data is interpreted "
                      "when presented on screen (`srgb_nonlinear`, `extended_srgb_linear`, "
-                     "`bt2020_linear`, `hdr10_st2084` or `bt709_linear`)"
-                  << std::endl;
+                     "`bt2020_linear`, `hdr10_st2084` or `bt709_linear`)\n";
         return EXIT_SUCCESS;
 
       case 'b':
@@ -674,7 +676,7 @@ int main(int argc, char** argv) {
             tick();
           } while (elapsed.count() < 2000);
           std::cout << current_source << " " << format_items[current_format_index] << " "
-                    << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps" << std::endl;
+                    << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps\n";
         }
       }
     } else if (headless_mode) {
@@ -702,7 +704,7 @@ int main(int argc, char** argv) {
 
       // write to a file
       const char* filename = "framebuffer.png";
-      std::cout << "Writing image to " << filename << "." << std::endl;
+      std::cout << "Writing image to " << filename << ".\n";
       stbi_write_png("framebuffer.png", display_width, display_height, 4, data.data(), 0);
 
       if (cuMemFree(read_buffer) != CUDA_SUCCESS) {
@@ -720,9 +722,11 @@ int main(int argc, char** argv) {
 
     cleanupCuda();
   } catch (std::exception& e) {
-    std::cerr << e.what() << std::endl;
+    std::cerr << e.what() << '\n';
     return EXIT_FAILURE;
   }
 
   return EXIT_SUCCESS;
 }
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)

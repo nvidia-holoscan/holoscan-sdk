@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator ping application
-add_custom_target(python_ping_clock ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/ping_clock.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/ping_clock.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "ping_clock.py"
-  BYPRODUCTS "ping_clock.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/ping_clock.py"
+  COMMENT "Copying ping_clock.py"
+)
+add_custom_target(python_ping_clock ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/ping_clock.py"
 )
 
 # Install the app

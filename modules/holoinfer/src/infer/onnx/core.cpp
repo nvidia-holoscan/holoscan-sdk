@@ -85,6 +85,7 @@ class OnnxInferImpl {
       Ort::MemoryInfo("Cuda", OrtAllocatorType::OrtArenaAllocator, 0, OrtMemTypeDefault);
 
   cudaStream_t cuda_stream_ = nullptr;
+  bool owns_cuda_stream_ = false;
   cudaEvent_t cuda_event_ = nullptr;
 
   Ort::Value create_tensor(const std::shared_ptr<DataBuffer>& data_buffer,
@@ -419,6 +420,7 @@ OnnxInferImpl::OnnxInferImpl(const std::string& model_file_path, bool enable_fp1
     // If no stream could be allocated, create a new one
     if (!cuda_stream_) {
       check_cuda(cudaStreamCreateWithFlags(&cuda_stream_, cudaStreamNonBlocking));
+      owns_cuda_stream_ = true;
     }
 
     check_cuda(cudaEventCreateWithFlags(&cuda_event_, cudaEventDisableTiming));
@@ -444,7 +446,10 @@ OnnxInferImpl::~OnnxInferImpl() {
   if (cuda_options_) {
     Ort::GetApi().ReleaseCUDAProviderOptions(cuda_options_);
   }
-  if (cuda_stream_) {
+  // Only destroy the stream if we created it. Streams provided by the allocation callback
+  // are owned by the caller (e.g., CudaStreamPool) and will be destroyed during pool
+  // deinitialization.
+  if (cuda_stream_ && owns_cuda_stream_) {
     cudaStreamDestroy(cuda_stream_);
   }
   if (cuda_event_) {

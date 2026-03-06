@@ -45,6 +45,7 @@
 #include "graph.hpp"
 #include "io_spec.hpp"
 #include "network_context.hpp"
+#include "network_contexts/gxf/pubsub_context.hpp"
 #include "resources/data_logger.hpp"
 #include "scheduler.hpp"
 #include "subgraph.hpp"
@@ -205,6 +206,66 @@ class Fragment : public FragmentServiceProvider {
      * @return The data ready handler fragment, or nullptr if none is registered.
      */
     std::shared_ptr<Fragment> data_ready_handler_fragment();
+
+    /**
+     * @brief Set the sleep interval on device when data is not ready. In each iteration of the
+     * GPU-resident loop execution, it will sleep for the specified interval if the data is not
+     * ready. This is useful to save energy and reduce heat generation.
+     *
+     * @param sleep_interval_us the sleep interval in microseconds. Default is 500 us.
+     */
+    void data_not_ready_sleep_interval_us(unsigned int sleep_interval_us = 500);
+
+    /**
+     * @brief Enable or disable a system-wide memory fence at the end of each GPU-resident
+     * iteration.
+     *
+     * When enabled, the GPU issues a system-wide fence (`__threadfence_system()`) after the
+     * workload completes and before signaling result-ready. This ensures that all device memory
+     * writes are globally visible to the host before the
+     * result-ready flag is observed.
+     *
+     * This option is intended for scenarios where the host controls the GPU-resident execution
+     * loop and reads back results between iterations (e.g., via `cudaMemcpy`). It is recommended
+     * for debugging, development, and testing purposes.
+     *
+     * @note Enabling this adds latency to each iteration and is not recommended for
+     * performance-critical workloads.
+     *
+     * Must be called before the GPU-resident CUDA graph is launched.
+     *
+     * @param enable true to enable the system-wide fence, false to disable (default: false).
+     */
+    void sync_with_host(bool enable = true);
+
+    /**
+     * @brief Enable execution time measurement. Execution time is the time between the start of a
+     * streaming data iteration and the end of the same iteration. Execution time is not measured
+     * when the data is not marked as ready.
+     *
+     * It is important to note that the GPU-resident execution can continue longer than the number
+     * of samples to collect. However, the execution times are only collected for the provided
+     * number of samples. Since the execution times are stored in device memory, they are not
+     * collected for unbounded number of iterations.
+     *
+     * @param num_samples the total number of samples to collect. Default is 100.
+     */
+    void enable_perf_measurement(unsigned int num_samples = 100);
+
+    /**
+     * @brief Saves the execution times in microseconds as a CSV file
+     *
+     * @param filename the name of the file to save the execution times in microseconds.
+     */
+    void save_perf_results_as_csv(const std::string& filename = "gpu_resident_perf.csv");
+
+    /**
+     * @brief Prints a few key metrics information about the execution times.
+     *
+     * @param skip_first the number of samples to skip at the beginning. Default is 10.
+     * @param skip_last the number of samples to skip at the end. Default is 10.
+     */
+    void print_perf_metrics(unsigned int skip_first = 10, unsigned int skip_last = 10);
 
    private:
     Fragment* fragment_;  ///< Pointer to the parent Fragment
@@ -413,6 +474,25 @@ class Fragment : public FragmentServiceProvider {
    * @param network_context The network context to be added.
    */
   void network_context(const std::shared_ptr<NetworkContext>& network_context);
+
+  /**
+   * @brief Create the NetworkContext for PubSub connectors.
+   *
+   * Called by the executor when PubSub connectors are detected and no
+   * NetworkContext has been explicitly set via `network_context()`.
+   *
+   * Override in your Application subclass to return a custom PubSubContext
+   * subclass with a concrete backend:
+   *
+   * ```cpp
+   * std::shared_ptr<NetworkContext> create_pubsub_network_context() override {
+   *   return make_network_context<MyCustomPubSubContext>("pubsub_context");
+   * }
+   * ```
+   *
+   * @return A new NetworkContext to use for PubSub connectors.
+   */
+  virtual std::shared_ptr<NetworkContext> create_pubsub_network_context();
 
   /**
    * @brief Get the Argument(s) from the configuration file.
@@ -711,6 +791,18 @@ class Fragment : public FragmentServiceProvider {
   std::shared_ptr<Resource> get_service_resource_by_name(std::string_view id) const override;
 
   /**
+   * @brief Retrieve all fragment services with a matching id, regardless of registered type.
+   *
+   * This method is used as a fallback when exact type lookup fails, enabling retrieval
+   * of services registered with a derived type when looking up by a base type.
+   *
+   * @param id The service id (name) used during service registration.
+   * @return A vector of shared_ptrs to matching FragmentServices. Empty if none found.
+   */
+  std::vector<std::shared_ptr<FragmentService>> get_services_by_id(
+      std::string_view id) const override;
+
+  /**
    * @brief Register an existing fragment service instance.
    *
    * Registers an already created fragment service instance with the specified identifier.
@@ -786,6 +878,7 @@ class Fragment : public FragmentServiceProvider {
     std::type_index service_type = typeid(DefaultFragmentService);
     if (is_service) {
       auto* svc_ptr = svc_to_register.get();
+      // NOLINTNEXTLINE(clang-diagnostic-potentially-evaluated-expression) runtime type needed
       service_type = typeid(*svc_ptr);
     }
     ServiceKey key{service_type, std::string(id)};
@@ -798,6 +891,7 @@ class Fragment : public FragmentServiceProvider {
 
       // Also register the service with its resource type
       auto* resource_ptr = resource.get();
+      // NOLINTNEXTLINE(clang-diagnostic-potentially-evaluated-expression) runtime type needed
       ServiceKey resource_key{typeid(*resource_ptr), std::string(id)};
       fragment_services_by_key_[resource_key] = svc_to_register;
     }
@@ -836,6 +930,9 @@ class Fragment : public FragmentServiceProvider {
     auto base_service = get_service_erased(typeid(ServiceT), id);
     if (!base_service) {
       // Keep this fallback lookup logic in sync with ComponentBase::service().
+      // Fallback: try to find a service by id only (ignoring type key) and check if it's
+      // type-castable to ServiceT. This enables retrieval of services registered with a derived
+      // type when looking up by a base type.
       if constexpr (std::is_base_of_v<Resource, ServiceT>) {
         if (!id.empty()) {
           auto service_resource_by_name = get_service_resource_by_name(id);
@@ -849,6 +946,21 @@ class Fragment : public FragmentServiceProvider {
                 name(),
                 std::string(id),
                 typeid(ServiceT).name());
+          }
+        }
+      } else if constexpr (std::is_base_of_v<FragmentService, ServiceT>) {
+        // For FragmentService-derived types (non-Resource), search by id and try dynamic_cast
+        if (!id.empty()) {
+          auto services_by_id = get_services_by_id(id);
+          for (const auto& svc : services_by_id) {
+            auto typed_service = std::dynamic_pointer_cast<ServiceT>(svc);
+            if (typed_service) {
+              HOLOSCAN_LOG_DEBUG(
+                  "Fragment '{}': Service with id '{}' found via base-class fallback lookup.",
+                  name(),
+                  std::string(id));
+              return typed_service;
+            }
           }
         }
       }
@@ -1419,10 +1531,11 @@ class Fragment : public FragmentServiceProvider {
    * @brief Get an accessor for GPU-resident specific functions.
    *
    * This method returns a GPUResidentAccessor object that provides convenient access to
-   * GPU-resident specific functionality. It allows for a cleaner API pattern:
+   * GPU-resident specific functionality. For example:
    *
    * ```cpp
    * fragment->gpu_resident().timeout_ms(1000);
+   * fragment->gpu_resident().sync_with_host();
    * fragment->gpu_resident().data_ready();
    * fragment->gpu_resident().result_ready();
    * fragment->gpu_resident().is_launched();

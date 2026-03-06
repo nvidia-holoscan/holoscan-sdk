@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +32,7 @@ class SimpleOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::OutputContext& op_output,
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     value_++;
-    std::cout << "I am here - " << name() << std::endl;
+    std::cout << "I am here - " << name() << '\n';
   }
 
   int get_value() const { return value_; }
@@ -96,7 +96,7 @@ class ConditionalExecutionApp : public holoscan::Application {
     //   //for (const auto& flow : all_next_flows) {
     //   //  std::cout << flow->next_operator->name() << " ";
     //   //}
-    //   //std::cout << std::endl;
+    //   //std::cout << '\n';
 
     //   if (simple_op->get_value() % 2 == 1) {
     //     simple_op->add_dynamic_flow(node2_flow);

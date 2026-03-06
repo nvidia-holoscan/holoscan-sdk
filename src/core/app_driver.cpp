@@ -128,7 +128,7 @@ void AppDriver::exclude_cuda_ipc_transport_on_igpu() {
 
 uint64_t AppDriver::parse_memory_size(const std::string& size_str) {
   try {
-    std::size_t dot_pivot = size_str.find_first_of(".");
+    std::size_t dot_pivot = size_str.find_first_of('.');
     std::size_t unit_pivot = size_str.find_first_not_of("0123456789.");
     std::size_t pivot = size_str.find_first_of("MmGg", unit_pivot);
     std::size_t pivot2 = size_str.find_first_of("Ii", pivot + 1);
@@ -389,14 +389,14 @@ bool AppDriver::need_to_update_port_names(
   for (auto& [source_op_port, target_op_ports] : *port_map) {
     auto [src_operator_name, _] = Operator::parse_port_name(source_op_port);
 
-    if (src_operator_name.find(".") == std::string::npos) {
+    if (src_operator_name.find('.') == std::string::npos) {
       return true;
     }
 
     for (const auto& target_op_port : target_op_ports) {
       auto [target_operator_name, _] = Operator::parse_port_name(target_op_port);
 
-      if (target_operator_name.find(".") == std::string::npos) {
+      if (target_operator_name.find('.') == std::string::npos) {
         return true;
       }
     }
@@ -1713,9 +1713,9 @@ void AppDriver::setup_signal_handlers() {
 
         HOLOSCAN_LOG_ERROR("Clean shutdown timed out after {} seconds. Forcing exit...",
                            kDriverShutdownTimeoutSeconds);
-        // Use the original signal to terminate
-        std::signal(signum, SIG_DFL);
-        std::raise(signum);
+        // Restoring default signal handler and re-raising - no recovery possible if these fail
+        (void)std::signal(signum, SIG_DFL);
+        (void)std::raise(signum);
       }).detach();
     }).detach();
   };

@@ -19,6 +19,7 @@
 
 #include <stdlib.h>  // POSIX setenv
 #include <csignal>   // Add this line for signal handling functions
+#include <cstdlib>   // std::_Exit
 
 #include <algorithm>
 #include <atomic>
@@ -761,8 +762,23 @@ void AppWorker::setup_signal_handlers() {
 
         HOLOSCAN_LOG_ERROR("Worker clean shutdown timed out after {} ms. Forcing exit...",
                            timeout_ms);
-        std::signal(signum, SIG_DFL);
-        std::raise(signum);
+        // Restoring default signal handler and re-raising
+        auto prev_handler = std::signal(signum, SIG_DFL);
+        if (prev_handler == SIG_ERR) {
+          HOLOSCAN_LOG_ERROR(
+              "std::signal failed to restore default handler after {} ms timeout, "
+              "calling std::_Exit",
+              timeout_ms);
+          std::_Exit(128 + signum);
+        }
+        int raise_result = std::raise(signum);
+        if (raise_result != 0) {
+          HOLOSCAN_LOG_ERROR(
+              "std::raise failed (returned {}) after {} ms timeout, calling std::_Exit",
+              raise_result,
+              timeout_ms);
+          std::_Exit(128 + signum);
+        }
       }).detach();
     }).detach();
   };

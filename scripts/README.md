@@ -12,6 +12,7 @@ This folder includes the following scripts:
 - [`graph_surgeon.py`](#graph_surgeonpy)
 - [`gxf_entity_codec.py`](#gxf_entity_codecpy)
 - [`list_ld_dependencies.sh`](#list_ld_dependenciessh)
+- [`scheduler_overhead_benchmark.py`](#scheduler_overhead_benchmarkpy)
 - [`video_validation.py`](#video_validationpy)
 
 > Note: these will be included in the SDK installation at `/opt/nvidia/holoscan/bin`
@@ -241,6 +242,27 @@ container:
     nvcr.io/nvidia/clara-holoscan/holoscan:v3.5.0-dgpu \
     /list.sh
   ```
+
+____
+
+## scheduler_overhead_benchmark.py
+
+Measures scheduling and message-passing overhead for Holoscan operators. This script helps developers understand the performance characteristics of different scheduler configurations and operator granularities.
+
+### Usage
+
+```sh
+HOLOSCAN_LOG_LEVEL=ERROR python3 scripts/scheduler_overhead_benchmark.py
+```
+
+The script runs benchmarks comparing:
+- Greedy vs. Event-Based schedulers
+- Operator execution with and without message passing
+- Different worker thread configurations
+
+Use `--help` for options such as iteration count and worker thread settings.
+
+Results help determine appropriate operator granularity for your application. See the [Performance Considerations](https://docs.nvidia.com/holoscan/sdk-user-guide/performance_considerations.html) section in the documentation for interpretation guidance.
 
 ____
 

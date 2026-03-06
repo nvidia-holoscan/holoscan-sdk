@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@ class PingTxOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     value_++;
     std::cout << name() << " - "
-              << "Sending value " << value_ << std::endl;
+              << "Sending value " << value_ << '\n';
     op_output.emit(value_, "output");
   }
 
@@ -58,7 +58,7 @@ class PingMxOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value = op_input.receive<int>("input").value();
     std::cout << name() << " - "
-              << "Received value " << value << std::endl;
+              << "Received value " << value << '\n';
     op_output.emit(value, "output");
   }
 };
@@ -76,7 +76,7 @@ class PingRxOp : public holoscan::Operator {
                [[maybe_unused]] holoscan::ExecutionContext& context) override {
     auto value = op_input.receive<int>("input").value();
     std::cout << name() << " - "
-              << "Received value " << value << std::endl;
+              << "Received value " << value << '\n';
   }
 };
 
@@ -117,7 +117,7 @@ class StreamExecutionApp : public holoscan::Application {
     set_dynamic_flows(node1, [node2](const std::shared_ptr<Operator>& op) {
       static int iteration = 0;
       ++iteration;
-      std::cout << "#iteration: " << iteration << std::endl;
+      std::cout << "#iteration: " << iteration << '\n';
 
       if (iteration <= 5) {
         op->add_dynamic_flow("output", node2);

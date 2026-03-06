@@ -30,7 +30,7 @@
 
 namespace holoscan {
 
-void CLIParser::initialize(std::string app_description, std::string app_version) {
+void CLIParser::initialize(std::string app_description, const std::string& app_version) {
   // Set the application description and version.
   app_.description(std::move(app_description));
   app_.set_version_flag("--version", app_version, "Show the version of the application.");

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -146,6 +146,17 @@ Parameters
 ----------
 num : int
     The number of messages to skip.
+)doc")
+
+PYDOC(add_probe_operator, R"doc(
+Add a probe operator by name.
+
+If the operator name is already registered as a probe operator, a warning message will be logged.
+
+Parameters
+----------
+operator_name : str
+    The name of the operator to register as a probe operator.
 )doc")
 
 }  // namespace DataFlowTracker

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,14 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy sequential with subgraph Python application
-add_custom_target(python_sequential_with_subgraph ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/sequential_with_subgraph.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/sequential_with_subgraph.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "sequential_with_subgraph.py"
-  BYPRODUCTS "sequential_with_subgraph.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/sequential_with_subgraph.py"
+  COMMENT "Copying sequential_with_subgraph.py"
+)
+add_custom_target(python_sequential_with_subgraph ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/sequential_with_subgraph.py"
 )
 
 # Install the app

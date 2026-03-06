@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,9 +30,9 @@ class HelloWorldOp : public Operator {
 
   void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
-    std::cout << std::endl;
-    std::cout << "Hello World!" << std::endl;
-    std::cout << std::endl;
+    std::cout << '\n';
+    std::cout << "Hello World!\n";
+    std::cout << '\n';
   }
 };
 

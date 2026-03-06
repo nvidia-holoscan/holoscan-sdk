@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,8 @@
 
 #include "holoscan/core/resources/gxf/dfft_collector.hpp"
 
-#include <iostream>
 #include <utility>
 
-#include "gxf/std/clock.hpp"
 #include "gxf/std/codelet.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -43,7 +41,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
 
   auto codelet = entity->get<nvidia::gxf::Codelet>();
 
-  int64_t codelet_id = -1;
+  gxf_uid_t codelet_id = -1;
 
   if (codelet.value()) {
     codelet_id = codelet.value()->cid();
@@ -57,12 +55,24 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
   // Sometimes, Entity Monitor is called in GXF without tick, start or stop but just to check
   // scheduling condition and abort doing anything. getExecutionCount() is tested to check whether a
   // tick really happened for a leaf operator
-  if (leaf_ops_.find(codelet_id) != leaf_ops_.end() &&
-      leaf_ops_[codelet_id]->has_input_message_labels() &&
+
+  // Lazily initialize execution counters
+  if (leaf_last_execution_count_.find(codelet_id) == leaf_last_execution_count_.end()) {
+    leaf_last_execution_count_[codelet_id] = 0;
+  }
+  if (probe_last_execution_count_.find(codelet_id) == probe_last_execution_count_.end()) {
+    probe_last_execution_count_[codelet_id] = 0;
+  }
+
+  auto leaf_op_opt = data_flow_tracker_->is_leaf_codelet(codelet_id);
+  if (leaf_op_opt && *leaf_op_opt && (*leaf_op_opt)->has_input_message_labels() &&
       codelet.value()->getExecutionCount() > leaf_last_execution_count_[codelet_id]) {
     leaf_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
-    MessageLabel m = leaf_ops_[codelet_id]->get_consolidated_input_label();
-    leaf_ops_[codelet_id]->reset_input_message_labels();
+
+    holoscan::Operator* op_ptr = *leaf_op_opt;
+
+    MessageLabel m = op_ptr->get_consolidated_input_label();
+    op_ptr->reset_input_message_labels();
 
     if (m.num_paths()) {
       auto all_path_names = m.get_all_path_names();
@@ -72,24 +82,42 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
       }
       data_flow_tracker_->write_to_logfile(m.to_string());
     }
+  } else {
+    auto probe_op_opt = data_flow_tracker_->is_probe_codelet(codelet_id);
+    if (probe_op_opt && *probe_op_opt && (*probe_op_opt)->has_input_message_labels() &&
+        codelet.value()->getExecutionCount() > probe_last_execution_count_[codelet_id]) {
+      probe_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
+
+      holoscan::Operator* op_ptr = *probe_op_opt;
+      MessageLabel m = op_ptr->get_consolidated_input_label();
+
+      // we don't want to reset the input message labels, as that could block further data flow
+      // tracking
+
+      if (m.num_paths()) {
+        auto all_path_names = m.get_all_path_names();
+        m.update_last_op_publish();
+        for (int i = 0; i < m.num_paths(); i++) {
+          data_flow_tracker_->update_latency(all_path_names[i], m.get_e2e_latency_ms(i));
+        }
+        // we don't write to logfile because logging is for end-to-end application performance
+        // In the future, we can have separate logging for probe operators
+      }
+    }
   }
   // leaf can also be root, especially for distributed app
-  if (root_ops_.find(codelet_id) != root_ops_.end()) {
-    holoscan::Operator* cur_op = root_ops_[codelet_id];
+  if (auto root_op_opt = data_flow_tracker_->is_root_codelet(codelet_id)) {
+    holoscan::Operator* cur_op = *root_op_opt;
+    for (auto& it : cur_op->num_published_messages_map()) {
+      data_flow_tracker_->update_source_messages_number(it.first, it.second);
+    }
+  } else if (auto probe_op_opt2 = data_flow_tracker_->is_probe_codelet(codelet_id)) {
+    holoscan::Operator* cur_op = *probe_op_opt2;
     for (auto& it : cur_op->num_published_messages_map()) {
       data_flow_tracker_->update_source_messages_number(it.first, it.second);
     }
   }
   return GXF_SUCCESS;
-}
-
-void DFFTCollector::add_leaf_op(holoscan::Operator* op) {
-  leaf_ops_[op->id()] = op;
-  leaf_last_execution_count_[op->id()] = 0;
-}
-
-void DFFTCollector::add_root_op(holoscan::Operator* op) {
-  root_ops_[op->id()] = op;
 }
 
 void DFFTCollector::data_flow_tracker(holoscan::DataFlowTracker* d) {

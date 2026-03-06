@@ -20,8 +20,8 @@ project(matx_basic CUDA CXX)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
   message(STATUS "CMAKE_CUDA_ARCHITECTURES not defined, setting it to `native`")
   set(CMAKE_CUDA_ARCHITECTURES "native")
-elseif(CMAKE_CUDA_ARCHITECTURES LESS 70)
-  message(STATUS "MatX requires CUDA compute capability 7.0 or newer. Setting to 7.0")
+elseif(CMAKE_CUDA_ARCHITECTURES MATCHES "^[0-9]+$" AND CMAKE_CUDA_ARCHITECTURES LESS 70)
+  message(STATUS "MatX requires CUDA compute capability 7.0 or newer. Setting to 70")
   # Note: atomicCas() used in matx/transforms/reduce.h requires compute capability 7.0 or newer
   set(CMAKE_CUDA_ARCHITECTURES "70")
 endif()
@@ -46,7 +46,7 @@ else()
 endif()
 
 if(NOT CCCL_FOUND)
-  message(STATUS "Found CCCL ${CCCL_VERSION} but need at least CCCL ${MATX_CCCL_MIN_VERSION} for MatX.
+  message(STATUS "CCCL not found or version too old. Need at least CCCL ${MATX_CCCL_MIN_VERSION} for MatX.
 Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
 and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.
 Skipping the matx_basic example...")

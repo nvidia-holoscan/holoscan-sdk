@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,11 @@
  * limitations under the License.
  */
 
+#include <cuda_runtime.h>
 #include <stdexcept>
 
-#include "holoscan/utils/cuda_macros.hpp"
 #include "holoscan/utils/cuda/buffer.hpp"
+#include "holoscan/utils/cuda_macros.hpp"
 
 namespace holoscan {
 namespace utils {
@@ -54,8 +55,25 @@ void DeviceBuffer::resize(size_t number_of_elements) {
   }
 }
 
+void* DeviceBuffer::host_data(cudaStream_t stream) {
+  // Lazy allocation of host memory - when it's required
+  if (!host_buffer_) {
+    host_buffer_ = new uint8_t[size_];
+    if (!host_buffer_) {
+      throw std::runtime_error("Failed to allocate host memory");
+    }
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaMemcpyAsync(host_buffer_, buffer_, size_, cudaMemcpyDeviceToHost, stream),
+        "Failed to copy data from device to host");
+  }
+  return host_buffer_;
+}
+
 DeviceBuffer::~DeviceBuffer() {
   free_(buffer_);
+  if (host_buffer_) {
+    delete[] static_cast<uint8_t*>(host_buffer_);
+  }
 }
 
 CudaHostMappedBuffer::CudaHostMappedBuffer(size_t size, int device_id)

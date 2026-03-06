@@ -350,7 +350,7 @@ int main(int argc, char** argv) {
                   << "Options:" << std::endl
                   << "  -h, --help     display this information" << std::endl
                   << "  -c, --count    Set the number of frames to display the video" << std::endl
-                  << std::endl;
+                  << '\n';
         return EXIT_SUCCESS;
 
       case 'c':

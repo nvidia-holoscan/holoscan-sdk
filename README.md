@@ -40,7 +40,7 @@ before getting started.
 ## Troubleshooting and Feedback
 
 We appreciate community discussion and feedback in support of Holoscan platform users and developers. We ask that users:
-- Review the [Holoscan SDK Frequently Asked Questions](FAQ.md) document for common solutions and workarounds.
+- Review the [Holoscan SDK Frequently Asked Questions](docs/hsdk_faq.md) document for common solutions and workarounds.
 - Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
 - Enter SDK issues on the [SDK GitHub Issues board](https://github.com/nvidia-holoscan/holoscan-sdk/issues).
 

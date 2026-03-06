@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,11 +24,12 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/parameter.hpp"
 
 namespace holoscan {
+
+class GPUResidentExecutor;
 
 class GPUResidentOperator : public holoscan::Operator {
  public:

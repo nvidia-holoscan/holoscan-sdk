@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_CONDITIONS_GXF_DOWNSTREAM_AFFORDABLE_HPP
 
 #include <memory>
+#include <utility>
 
 #include <gxf/std/scheduling_terms.hpp>
 
@@ -62,7 +63,9 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
   void setup(ComponentSpec& spec) override;
 
   // TODO(GXF4):   Expected<void> setTransmitter(Handle<Transmitter> value)
-  void transmitter(std::shared_ptr<Transmitter> transmitter) { transmitter_ = transmitter; }
+  void transmitter(std::shared_ptr<Transmitter> transmitter) {
+    transmitter_ = std::move(transmitter);
+  }
   std::shared_ptr<Transmitter> transmitter() { return transmitter_; }
 
   void min_size(uint64_t min_size);

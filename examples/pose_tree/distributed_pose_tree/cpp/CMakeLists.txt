@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,14 @@ target_link_libraries(distributed_pose_tree
 )
 
 # Copy config file
-add_custom_target(distributed_pose_tree_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/distributed_pose_tree.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/distributed_pose_tree.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "distributed_pose_tree.yaml"
-  BYPRODUCTS "distributed_pose_tree.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/distributed_pose_tree.yaml"
+  COMMENT "Copying distributed_pose_tree.yaml"
+)
+add_custom_target(distributed_pose_tree_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/distributed_pose_tree.yaml"
 )
 
 add_dependencies(distributed_pose_tree distributed_pose_tree_yaml)

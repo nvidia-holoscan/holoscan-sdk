@@ -102,7 +102,8 @@ The following examples illustrate the use of specific resource classes that can 
 
 ## Inference
 * [**Activation-map**](activation_map): A simple inference pipeline demonstrates selecting a subset of models.
-* [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications
+* [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications.
+* [**GPU-Resident-Inference**](gpu_resident_inference_example): a simple inference sample to demonstrate usage of GPUResidentInferenceOp.
 
 ### Working with third-party frameworks
 
@@ -112,6 +113,7 @@ The following examples demonstrate how to seamlessly leverage third-party framew
 * [**CuPy native**](cupy_native): basic computation on the GPU using cupy arrays
 * [**PyTorch native**](pytorch_native): basic computation on the GPU (or CPU fallback) using PyTorch tensors
 * [**MatX basic**](matx/matx_basic): basic C++ computation on the GPU using MatX tensors (via DLPack zero-copy interop with `holoscan::Tensor`)
+* [**MatX allocator**](matx/matx_allocator): create MatX tensors backed by a Holoscan memory pool (`RMMAllocator`) using the `MatXAllocator` adapter, with DLPack interop and GPU computation
 
 ### Sensors
 

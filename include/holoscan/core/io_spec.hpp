@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,8 @@
 #include <utility>
 #include <vector>
 
+#include <gxf/pubsub/qos_profile.hpp>
+
 #include "./common.hpp"
 #include "./condition.hpp"
 #include "./conditions/gxf/asynchronous.hpp"
@@ -45,6 +47,8 @@
 #include "./resources/gxf/async_buffer_transmitter.hpp"
 #include "./resources/gxf/double_buffer_receiver.hpp"
 #include "./resources/gxf/double_buffer_transmitter.hpp"
+#include "./resources/gxf/pubsub_receiver.hpp"
+#include "./resources/gxf/pubsub_transmitter.hpp"
 #include "./resources/gxf/ucx_receiver.hpp"
 #include "./resources/gxf/ucx_transmitter.hpp"
 
@@ -81,7 +85,7 @@ class IOSpec {
      *
      * @param size The size of the input/output.
      */
-    explicit IOSize(int64_t size = 0) : size_(size) {}
+    constexpr explicit IOSize(int64_t size = 0) : size_(size) {}
 
     /**
      * @brief Set the size of the input/output.
@@ -95,29 +99,31 @@ class IOSpec {
      *
      * @return The size of the input/output.
      */
-    int64_t size() const { return size_; }
+    constexpr int64_t size() const { return size_; }
 
     /**
      * @brief Cast the IOSize to int64_t.
      *
      * @return The size of the input/output.
      */
-    operator int64_t() const { return size_; }
+    constexpr operator int64_t() const { return size_; }
 
    private:
     int64_t size_;
   };
 
   // Define the static constants for the IOSize class.
+  // NOLINTBEGIN(cert-err58-cpp)
   inline static const IOSize kAnySize = IOSize{-1};        ///< Any size
   inline static const IOSize kPrecedingCount = IOSize{0};  ///< # of preceding connections
   inline static const IOSize kSizeOne = IOSize{1};         ///< Size one
+  // NOLINTEND(cert-err58-cpp)
 
   /**
    * @brief Connector type. Determines the type of Receiver (when IOType is kInput) or Transmitter
    *        (when IOType is kOutput) class used.
    */
-  enum class ConnectorType { kDefault, kDoubleBuffer, kAsyncBuffer, kUCX };
+  enum class ConnectorType { kDefault, kDoubleBuffer, kAsyncBuffer, kUCX, kPubSub };
 
   /**
    * @enum QueuePolicy
@@ -160,7 +166,7 @@ class IOSpec {
         queue_size_(size),
         queue_policy_(policy) {
     // Operator::parse_port_name requires that "." is not allowed in the IOSPec name
-    if (name.find(".") != std::string::npos) {
+    if (name.find('.') != std::string::npos) {
       throw std::invalid_argument(fmt::format(
           "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
           name));
@@ -179,16 +185,41 @@ class IOSpec {
    */
   IOSpec(OperatorSpec* op_spec, const std::string& name, size_t memory_block_size, IOType io_type)
       : op_spec_(op_spec), io_type_(io_type), memory_block_size_(memory_block_size) {
-    if (name.find(".") != std::string::npos) {
+    if (name.find('.') != std::string::npos) {
       throw std::invalid_argument(fmt::format(
           "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
           name));
     }
-    // catch error early - memory block size must be non zero
+    // catch error early - memory block size must be non zero - but don't throw error
     if (memory_block_size == 0) {
-      throw std::invalid_argument(
-          fmt::format("The memory block size must be non zero for device input/output ports. "
-                      "Please check the memory block size of the input/output port '{}'.",
+      HOLOSCAN_LOG_WARN(fmt::format(
+          "The memory block size is zero for the device input/output port '{}'.", name));
+    }
+    name_ = name;
+  }
+
+  /**
+   * @brief Construct a new IOSpec object with device pointer. This type of IOSpec is used for
+   * GPU-resident execution when a memory block is allocated in a customized way by the operator.
+   * We don't allow queue_size or queue_policy for this type of IOSpec.
+   *
+   * @param op_spec The pointer to the operator specification that contains this input/output.
+   * @param name The name of this input/output.
+   * @param io_type The type of this input/output.
+   * @param device_ptr The device pointer for this input/output.
+   */
+  IOSpec(OperatorSpec* op_spec, const std::string& name, void* device_ptr, IOType io_type)
+      : op_spec_(op_spec), io_type_(io_type), device_ptr_(device_ptr) {
+    if (name.find('.') != std::string::npos) {
+      throw std::invalid_argument(fmt::format(
+          "The . character is reserved and cannot be used in the port (IOSpec) name ('{}').",
+          name));
+    }
+    // catch error early - device pointer must be non null - but don't throw error
+    if (device_ptr == nullptr) {
+      HOLOSCAN_LOG_WARN(
+          fmt::format("The device pointer is null for the device input/output port '{}'. The other "
+                      "end of the port must have a valid device pointer or memory block size.",
                       name));
     }
     name_ = name;
@@ -235,6 +266,13 @@ class IOSpec {
    * @return The memory block size of this input/output.
    */
   size_t memory_block_size() const { return memory_block_size_; }
+
+  /**
+   * @brief Get the device pointer of this input/output.
+   *
+   * @return The device pointer of this input/output.
+   */
+  void* device_ptr() const { return device_ptr_; }
 
   /**
    * @brief Get the conditions of this input/output.
@@ -384,6 +422,13 @@ class IOSpec {
           connector_ = std::make_shared<UcxTransmitter>(std::forward<ArgsT>(args)...);
         }
         break;
+      case ConnectorType::kPubSub:
+        if (io_type_ == IOType::kInput) {
+          connector_ = std::make_shared<PubSubReceiver>(std::forward<ArgsT>(args)...);
+        } else {
+          connector_ = std::make_shared<PubSubTransmitter>(std::forward<ArgsT>(args)...);
+        }
+        break;
       default:
         HOLOSCAN_LOG_ERROR("Unknown connector type {}", static_cast<int>(type));
         break;
@@ -400,6 +445,55 @@ class IOSpec {
     }
     return *this;
   }
+
+  /**
+   * @brief Set a topic name for this port (Publish/Subscribe connectors only).
+   *
+   * If the connector type is kDefault, it is automatically changed to kPubSub and the topic is
+   * applied. If the connector type is already kPubSub, the topic is set on the existing connector.
+   * For any other connector type (e.g. kUCX, kDoubleBuffer), a warning is logged and the topic
+   * is ignored.
+   *
+   * When both publisher and subscriber use the same topic, add_flow() is optional;
+   * add_operator() for each is sufficient — Pub/Sub backend discovery matches by topic.
+   *
+   * @param name Topic name (must match between publisher and subscriber ports).
+   * @return Reference to this IOSpec.
+   */
+  IOSpec& topic(const std::string& name);
+
+  /**
+   * @brief Set a QoS profile for this port (Publish/Subscribe connectors only).
+   *
+   * Uses the backend-independent `nvidia::gxf::QoSProfile` struct. Named presets
+   * (e.g. `QoSProfile::SensorData()`, `QoSProfile::Reliable()`) and the fluent
+   * builder API are both supported.
+   *
+   * If the connector type is kDefault, it is automatically changed to kPubSub and
+   * the QoS is applied. If the connector type is already kPubSub, the QoS is set
+   * on the existing connector. For any other connector type, a warning is logged
+   * and the QoS is ignored.
+   *
+   * Example:
+   * @code
+   * void setup(OperatorSpec& spec) override {
+   *   spec.output<MyType>("out")
+   *       .topic("sensor_data")
+   *       .qos(nvidia::gxf::QoSProfile::SensorData());
+   *
+   *   spec.input<MyType>("in")
+   *       .topic("sensor_data")
+   *       .qos(nvidia::gxf::QoSProfile::SensorData());
+   * }
+   * @endcode
+   *
+   * The DDS backend maps QoSProfile through `dds_qos_profiles.hpp`.
+   * Other backends (e.g. Zenoh, UCX) would map the same struct to their own QoS mechanisms.
+   *
+   * @param profile The QoS profile to apply.
+   * @return Reference to this IOSpec.
+   */
+  IOSpec& qos(const nvidia::gxf::QoSProfile& profile);
 
   /**
    * @brief Get the queue size of the input/output port.
@@ -545,6 +639,7 @@ class IOSpec {
   IOSize queue_size_ = kSizeOne;
   std::optional<QueuePolicy> queue_policy_ = std::nullopt;
   size_t memory_block_size_ = 0;
+  void* device_ptr_ = nullptr;  // void* is used to avoid including CUDA headers here
   std::string unique_id_;
 };
 

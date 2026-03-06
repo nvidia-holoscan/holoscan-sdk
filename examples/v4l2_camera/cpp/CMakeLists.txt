@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,10 +30,14 @@ target_link_libraries(v4l2_camera
 )
 
 # Copy config file
-add_custom_target(v4l2_camera_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "v4l2_camera.yaml"
-  BYPRODUCTS "v4l2_camera.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.yaml"
+  COMMENT "Copying v4l2_camera.yaml"
+)
+add_custom_target(v4l2_camera_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera.yaml"
 )
 
 add_dependencies(v4l2_camera v4l2_camera_yaml)

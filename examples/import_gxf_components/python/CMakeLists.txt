@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,17 +17,25 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy native operator import_gxf_components application
-add_custom_target(python_import_gxf_components ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/import_gxf_components.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "import_gxf_components.py"
-  BYPRODUCTS "import_gxf_components.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.py"
+  COMMENT "Copying import_gxf_components.py"
+)
+add_custom_target(python_import_gxf_components ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/import_gxf_components.py"
 )
 
 # Copy the config file
-add_custom_target(python_import_gxf_components_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/import_gxf_components.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "import_gxf_components.yaml"
-  BYPRODUCTS "import_gxf_components.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/import_gxf_components.yaml"
+  COMMENT "Copying import_gxf_components.yaml"
+)
+add_custom_target(python_import_gxf_components_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/import_gxf_components.yaml"
 )
 add_dependencies(python_import_gxf_components python_import_gxf_components_yaml racerx_data)
 

@@ -193,11 +193,50 @@ class GPUResidentExecutor : public Executor {
    */
   std::shared_ptr<Fragment> data_ready_handler_fragment();
 
+  /**
+   * @brief Set the sleep interval on device when data is not ready.
+   *
+   * @param sleep_interval_us the sleep interval in microseconds. Default is 500 us.
+   */
+  void data_not_ready_sleep_interval_us(unsigned int sleep_interval_us = 500);
+
+  /**
+   * @brief Enable or disable a system-wide fence in the while-end-marker kernel.
+   *
+   * @see Fragment::GPUResidentAccessor::sync_with_host for the public-facing API and
+   * full documentation.
+   *
+   * @param enable true to enable, false to disable.
+   */
+  void sync_with_host(bool enable);
+
+  /**
+   * @brief Enable execution time measurement. Execution time is the time between the start of a
+   * streaming data iteration and the end of the same iteration. Execution time is not measured when
+   * the data is not marked as ready.
+   *
+   * @param num_samples the total number of samples to collect. Default is 100.
+   */
+  void enable_perf_measurement(unsigned int num_samples = 100);
+
+  /**
+   * @brief Get the host pointer to the execution times in microseconds.
+   *
+   * @return a pair of the host pointer to the execution times in microseconds and the number of
+   * samples collected.
+   */
+  std::pair<unsigned int*, unsigned int> execution_times_us();
+
  private:
   void allocate_io_device_buffer(std::shared_ptr<Operator> downstream_op,
                                  std::shared_ptr<Operator> upstream_op,
                                  const std::string& source_port, const std::string& target_port,
                                  size_t memory_block_size);
+
+  void connect_io_device_ptr(std::shared_ptr<Operator> source_op,
+                             std::shared_ptr<Operator> dest_op,
+                             const std::string& source_port, const std::string& target_port,
+                             void* device_ptr);
   /**
    * @brief This function creates the full GPU-resident CUDA graph. It also
    * instantiates the CUDA graph to be ready for launch.
@@ -219,19 +258,35 @@ class GPUResidentExecutor : public Executor {
    */
   bool verify_distinct_operator_names();
 
+  void set_unique_ids(std::shared_ptr<Operator> op);
+
   bool fragment_initialized_ = false;
 
-  /// @brief Map of input/output port name to the device buffers
+  /// @brief Map of input/output port name to the device buffers (executor-allocated)
   std::unordered_map<std::string, std::shared_ptr<holoscan::utils::cuda::DeviceBuffer>>
       io_device_buffers_;
+
+  /// @brief Map of input/output port name to externally-owned device pointers
+  std::unordered_map<std::string, void*> io_device_ptrs_;
   /// @brief Vector of topologically ordered operators
   std::vector<std::shared_ptr<Operator>> topo_ordered_main_operators_;
 
   /// topologically ordered operators of the data ready handler fragment
   std::vector<std::shared_ptr<Operator>> topo_ordered_drh_operators_;
 
+  /// Device buffer to store the execution times in microseconds.
+  std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> execution_times_us_dev_;
+  std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> start_time_ns_dev_;
+  /// Device buffer to store the actual number of samples collected
+  std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> actual_samples_collected_dev_;
+
+  bool perf_enabled_ = false;
+  unsigned int num_samples_ = 0;
+  bool sync_with_host_ = false;
+
   std::shared_ptr<ExecutionContext> exec_context_;
   unsigned long long timeout_ms_ = 0;
+  unsigned int data_not_ready_sleep_interval_us_ = 500;
 
   std::shared_ptr<cudaStream_t> graph_capture_stream_;
   std::shared_ptr<cudaStream_t> drh_capture_stream_;

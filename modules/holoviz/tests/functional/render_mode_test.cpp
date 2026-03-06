@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay) test code
+
 #include <gtest/gtest.h>
 
 #include <vector>
@@ -157,3 +159,5 @@ TEST_F(RenderMode, DontPresent) {
   EXPECT_EQ(read_color_data[2], black[2]);
   EXPECT_EQ(read_color_data[3], black[3]);
 }
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)

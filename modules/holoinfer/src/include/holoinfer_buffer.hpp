@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -286,6 +286,7 @@ struct InferenceSpecs {
    * @param dla_core The DLA core index to execute the engine on, only supported for trt. Set to -1
    * to disable DLA.
    * @param dla_gpu_fallback If DLA is enabled, use the GPU if a layer cannot be executed on DLA.
+   * @param gpu_resident_inference Flag to enable GPU resident inference.
    * @param allocate_cuda_stream Function to allocate a CUDA stream (optional)
    */
   InferenceSpecs(const std::string& backend, const Mappings& backend_map,
@@ -295,7 +296,7 @@ struct InferenceSpecs {
                  const Mappings& activation_map, const MultiMappings& trt_opt_profile,
                  bool dynamic_input_dims, bool is_engine_path, bool oncpu, bool parallel_proc,
                  bool use_fp16, bool cuda_buffer_in, bool cuda_buffer_out, bool use_cuda_graphs,
-                 int32_t dla_core, bool dla_gpu_fallback,
+                 int32_t dla_core, bool dla_gpu_fallback, bool gpu_resident_inference,
                  std::function<cudaStream_t(int32_t)> allocate_cuda_stream)
       : backend_type_(backend),
         backend_map_(backend_map),
@@ -317,6 +318,7 @@ struct InferenceSpecs {
         use_cuda_graphs_(use_cuda_graphs),
         dla_core_(dla_core),
         dla_gpu_fallback_(dla_gpu_fallback),
+        gpu_resident_inference_(gpu_resident_inference),
         allocate_cuda_stream_(std::move(allocate_cuda_stream)) {}
 
   /**
@@ -424,6 +426,12 @@ struct InferenceSpecs {
   ///  @brief Flag showing if using CUDA Graphs. Default is True.
   bool use_cuda_graphs_ = true;
 
+  /// @brief Pointer to GPU resident input buffer.
+  void* gpu_resident_input_;
+
+  /// @brief Pointer to GPU resident output buffer.
+  void* gpu_resident_output_;
+
   /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to
   /// disable DLA.
   int32_t dla_core_ = -1;
@@ -431,6 +439,9 @@ struct InferenceSpecs {
   /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
   /// disabled, engine creation will fail if a layer cannot executed on DLA.
   bool dla_gpu_fallback_ = true;
+
+  /// @brief Flag showing if GPU resident inference is enabled. Default is False.
+  bool gpu_resident_inference_ = false;
 
   /// @brief Input Data Map with key as tensor name and value as DataBuffer
   DataMap data_per_tensor_;

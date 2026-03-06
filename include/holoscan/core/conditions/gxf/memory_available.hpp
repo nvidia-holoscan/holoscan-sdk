@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <cinttypes>
 #include <memory>
+#include <utility>
 
 #include <gxf/std/scheduling_terms.hpp>
 
@@ -52,7 +53,7 @@ class MemoryAvailableCondition : public gxf::GXFCondition {
 
   const char* gxf_typename() const override { return "nvidia::gxf::MemoryAvailableSchedulingTerm"; }
 
-  void allocator(std::shared_ptr<Allocator> allocator) { allocator_ = allocator; }
+  void allocator(std::shared_ptr<Allocator> allocator) { allocator_ = std::move(allocator); }
   std::shared_ptr<Allocator> allocator() { return allocator_.get(); }
 
   void setup(ComponentSpec& spec) override;

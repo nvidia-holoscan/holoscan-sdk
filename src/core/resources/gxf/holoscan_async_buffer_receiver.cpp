@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,15 +26,18 @@ namespace holoscan {
 gxf_result_t HoloscanAsyncBufferReceiver::receive_abi(gxf_uid_t* uid) {
   gxf_result_t code = nvidia::gxf::AsyncBufferReceiver::receive_abi(uid);
 
-  if (tracking_ && code == GXF_SUCCESS) {
-    HOLOSCAN_LOG_DEBUG("Receiving message with UID: {}", *uid);
-    if (*uid == kNullUid) {
-      HOLOSCAN_LOG_WARN("Invalid message received. Ignoring data flow tracking annotation.");
-      return code;
+  if (tracking_) {
+    if (code == GXF_SUCCESS) {
+      // Receive succeeded - deannotate the message
+      // last argument tells message is old or not
+      HOLOSCAN_LOG_DEBUG("Receiving message with UID: {}", *uid);
+      deannotate_message(
+          uid, context(), op(), name(), (uid ? (*uid == last_received_uid_) : false));
+      last_received_uid_ = uid ? *uid : last_received_uid_;
+    } else {
+      // Receive failed. Clear any stale input_message_label.
+      deannotate_message(nullptr, context(), op(), name());
     }
-    // last argument tells message is old or not
-    deannotate_message(uid, context(), op(), name(), (*uid == last_received_uid_));
-    last_received_uid_ = *uid;
   }
 
   return code;

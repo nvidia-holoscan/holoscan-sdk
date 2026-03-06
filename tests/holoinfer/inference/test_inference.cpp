@@ -602,6 +602,58 @@ void HoloInferTests::inference_tests() {
   }
 #endif
 
+  // Dependency map: linear plan order (model_1 -> model_2)
+  {
+    auto pre_backup = pre_processor_map;
+    auto inf_backup = inference_map;
+
+    pre_processor_map["model_1"] = {"m1_pre_proc"};
+    pre_processor_map["model_2"] = {"m1_infer"};  // depends on model_1 output
+    inference_map["model_1"] = {"m1_infer"};
+    inference_map["model_2"] = {"m2_infer"};
+
+    std::vector<std::vector<std::string>> plan;
+    auto dep_status = HoloInfer::build_execution_plan(pre_processor_map, inference_map, plan);
+    if (dep_status.get_code() == HoloInfer::holoinfer_code::H_SUCCESS) {
+      bool ok = (plan.size() == 2 && plan[0].size() == 1 && plan[1].size() == 1 &&
+                 plan[0][0] == "model_1" && plan[1][0] == "model_2");
+      if (!ok) {
+        dep_status.set_code(HoloInfer::holoinfer_code::H_ERROR);
+        dep_status.set_message("Unexpected execution plan ordering");
+      }
+    }
+    holoinfer_assert(dep_status,
+                     test_module,
+                     55,
+                     test_identifier_infer.at(55),
+                     HoloInfer::holoinfer_code::H_SUCCESS);
+
+    pre_processor_map = std::move(pre_backup);
+    inference_map = std::move(inf_backup);
+  }
+
+  // Dependency map: cycle detection (model_1 <-> model_2)
+  {
+    auto pre_backup = pre_processor_map;
+    auto inf_backup = inference_map;
+
+    pre_processor_map["model_1"] = {"m2_infer"};
+    pre_processor_map["model_2"] = {"m1_infer"};
+    inference_map["model_1"] = {"m1_infer"};
+    inference_map["model_2"] = {"m2_infer"};
+
+    std::vector<std::vector<std::string>> plan;
+    auto dep_status = HoloInfer::build_execution_plan(pre_processor_map, inference_map, plan);
+    holoinfer_assert(dep_status,
+                     test_module,
+                     56,
+                     test_identifier_infer.at(56),
+                     HoloInfer::holoinfer_code::H_ERROR);
+
+    pre_processor_map = std::move(pre_backup);
+    inference_map = std::move(inf_backup);
+  }
+
   // cleaning engine files
   for (const auto& file : std::filesystem::directory_iterator(model_folder)) {
     if (file.is_regular_file()) {

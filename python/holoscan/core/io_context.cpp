@@ -288,15 +288,17 @@ bool PyOutputContext::handle_inference_op(py::object& data, const std::string& n
 }
 
 bool PyOutputContext::check_distributed_app(const std::string& name) {
-  bool is_ucx_connector = false;
+  bool is_network_connector = false;
   if (outputs_.find(name) != outputs_.end()) {
     auto connector_type = outputs_.at(name)->connector_type();
-    is_ucx_connector = connector_type == IOSpec::ConnectorType::kUCX;
+    is_network_connector = connector_type == IOSpec::ConnectorType::kUCX ||
+                           connector_type == IOSpec::ConnectorType::kPubSub;
   }
 
-  if (is_ucx_connector) {
+  if (is_network_connector) {
     return true;
   }
+  // TODO(grelee): may need additional changes to support pubsub here.
 
   // If this operator doesn't have a UCX connector, can still determine if the app is
   // a multi-fragment app via the application pointer assigned to the fragment
@@ -314,7 +316,7 @@ bool PyOutputContext::check_distributed_app(const std::string& name) {
 void PyOutputContext::emit_tensor_like_distributed(py::object& data, const std::string& name,
                                                    int64_t acq_timestamp,
                                                    EmitterReceiverRegistry& registry) {
-  HOLOSCAN_LOG_DEBUG("py_emit: emitting a tensor-like object over a UCX connector");
+  HOLOSCAN_LOG_DEBUG("py_emit: emitting a tensor-like object over a UCX or Pub/Sub connector");
   const auto& emit_func = registry.get_emitter(typeid(holoscan::Tensor));
   emit_func(data, name, *this, acq_timestamp);
 }
@@ -488,6 +490,7 @@ void init_io_context(py::module_& m) {
           [](PyOutputContext& op_output,
              intptr_t stream_ptr,
              const char* output_port_name = nullptr) {
+            // NOLINTNEXTLINE(performance-no-int-to-ptr)
             auto cuda_stream = reinterpret_cast<cudaStream_t>(stream_ptr);
             op_output.set_cuda_stream(cuda_stream, output_port_name);
             return;

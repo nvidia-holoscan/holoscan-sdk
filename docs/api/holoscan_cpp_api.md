@@ -163,6 +163,8 @@
 - {ref}`exhale_class_classholoscan_1_1DoubleBufferTransmitter`
 - {ref}`exhale_class_classholoscan_1_1GXFComponentResource`
 - {ref}`exhale_class_classholoscan_1_1ManualClock`
+- {ref}`exhale_class_classholoscan_1_1PubSubReceiver`
+- {ref}`exhale_class_classholoscan_1_1PubSubTransmitter`
 - {ref}`exhale_class_classholoscan_1_1RealtimeClock`
 - {ref}`exhale_class_classholoscan_1_1Receiver`
 - {ref}`exhale_class_classholoscan_1_1RMMAllocator`
@@ -188,6 +190,7 @@
 
 #### Network Contexts
 
+- {ref}`exhale_class_classholoscan_1_1PubSubContext`
 - {ref}`exhale_class_classholoscan_1_1UcxContext`
 
 ### Native Operator Support

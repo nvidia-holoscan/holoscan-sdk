@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -134,7 +134,7 @@ class MessageLabel {
    *
    * @param m_paths The vector of TimestampedPaths to create the MessageLabel from.
    */
-  explicit MessageLabel(const std::vector<TimestampedPath> m_paths) : message_paths(m_paths) {
+  explicit MessageLabel(const std::vector<TimestampedPath>& m_paths) : message_paths(m_paths) {
     for (auto& path : m_paths) {
       PathOperators new_path_operators;
       for (auto& op : path) {
@@ -198,7 +198,7 @@ class MessageLabel {
    * @param path The path for which to get the latency
    * @return The end-to-end latency of the path in ms
    */
-  static double get_path_e2e_latency_ms(TimestampedPath path) {
+  static double get_path_e2e_latency_ms(const TimestampedPath& path) {
     int64_t latency = path.back().pub_timestamp - path.front().rec_timestamp;
     return (static_cast<double>(latency) / 1000);
   }
@@ -284,7 +284,7 @@ class MessageLabel {
    *
    * @param o_timestamp The new operator timestamp to be added
    */
-  void add_new_op_timestamp(holoscan::OperatorTimestampLabel o_timestamp);
+  void add_new_op_timestamp(const holoscan::OperatorTimestampLabel& o_timestamp);
 
   /**
    * @brief Update the publish timestamp of the last operator in all the paths in a message label.
@@ -297,7 +297,14 @@ class MessageLabel {
    *
    * @param path The path to be added.
    */
-  void add_new_path(TimestampedPath path);
+  void add_new_path(const TimestampedPath& path);
+
+  /**
+   * @brief Add a new path to the MessageLabel using move semantics.
+   *
+   * @param path The path to be moved into the MessageLabel.
+   */
+  void add_new_path(TimestampedPath&& path);
 
   /**
    * @brief Convert the MessageLabel to a string.
@@ -307,7 +314,7 @@ class MessageLabel {
    */
   std::string to_string() const;
 
-  static std::string to_string(TimestampedPath path);
+  static std::string to_string(const TimestampedPath& path);
 
   /**
    * @brief Print the to_string() in the standard output with a heading for the MessageLabel.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,14 +73,14 @@ class AddrInfo {
 };
 
 static bool is_port_available(int port) {
-  struct addrinfo hints{};
+  struct addrinfo hints {};
   // Set up the hints structure
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_PASSIVE;
 
-  char port_str[6];
-  snprintf(port_str, sizeof(port_str), "%d", port);
+  char port_str[12];  // Large enough for any int including sign
+  (void)snprintf(port_str, sizeof(port_str), "%d", port);
 
   try {
     AddrInfo ai(port_str, hints);

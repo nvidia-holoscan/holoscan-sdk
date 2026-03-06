@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,10 +19,7 @@
 #define HOLOSCAN_CORE_RESOURCES_GXF_DFFT_COLLECTOR_HPP
 
 #include <map>
-#include <set>
-#include <utility>
 
-#include "gxf/std/clock.hpp"
 #include "gxf/std/monitor.hpp"
 #include "holoscan/core/dataflow_tracker.hpp"
 
@@ -48,53 +45,22 @@ class DFFTCollector : public nvidia::gxf::Monitor {
   gxf_result_t on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gxf_result_t code) override;
 
   /**
-   * @brief Add an operator as a leaf operator.
-   *
-   * @param op The operator to be added as a leaf operator.
-   */
-  void add_leaf_op(holoscan::Operator* op);
-
-  /**
-   * @brief Add an operator as a root operator.
-   *
-   * @param op The operator to be added as a root operator.
-   */
-  void add_root_op(holoscan::Operator* op);
-
-  /**
    * @brief Set the DataFlowTracker object for this DFFTCollector object.
    *
    * @param d The dataflow tracker object to be set.
    */
   void data_flow_tracker(holoscan::DataFlowTracker* d);
 
-  /**
-   * @brief Get the number of root operators.
-   *
-   * @return The number of root operators.
-   */
-  int num_root_ops() { return root_ops_.size(); }
-
-  /**
-   * @brief Get the number of leaf operators.
-   *
-   * @return The number of leaf operators.
-   */
-  int num_leaf_ops() { return leaf_ops_.size(); }
-
  private:
   /// Pointer to the DataFlowTracker object to update the DataFlowTracker object with the final
   /// results at the end of the execution of a tick of a leaf operator.
   holoscan::DataFlowTracker* data_flow_tracker_ = nullptr;
 
-  /// A map of codelet id and the operator pointers for the leaf operators.
-  std::map<int64_t, holoscan::Operator*> leaf_ops_;
+  /// A map of codelet id and the last execution count number from the nvidia::gxf::Codelet
+  std::map<gxf_uid_t, int64_t> leaf_last_execution_count_;
 
   /// A map of codelet id and the last execution count number from the nvidia::gxf::Codelet
-  std::map<int64_t, int64_t> leaf_last_execution_count_;
-
-  /// A map of codelet id and the operator pointers for the root operators.
-  std::map<int64_t, holoscan::Operator*> root_ops_;
+  std::map<gxf_uid_t, int64_t> probe_last_execution_count_;
 };
 
 }  // namespace holoscan

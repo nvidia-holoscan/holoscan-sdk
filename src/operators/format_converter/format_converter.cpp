@@ -283,6 +283,9 @@ void FormatConverterOp::stop() {
   device_scratch_buffer_.reset();
 }
 
+// Array subscript access in compute() and convertTensorFormat() is performance-critical for
+// real-time image processing. Suppressing bounds checking warnings for these hot paths.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
 void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output,
                                 ExecutionContext& context) {
   // Process input message
@@ -1170,6 +1173,7 @@ void FormatConverterOp::convertTensorFormat(
       break;
   }
 }
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
 
 void FormatConverterOp::setup(OperatorSpec& spec) {
   auto& in_tensor = spec.input<gxf::Entity>("source_video");

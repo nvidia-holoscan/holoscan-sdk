@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,24 +17,36 @@
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
 # Copy the per-receiver application
-add_custom_target(python_multi_message_per_receiver ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/multi_message_per_receiver.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_message_per_receiver.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "multi_message_per_receiver.py"
-  BYPRODUCTS "multi_message_per_receiver.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/multi_message_per_receiver.py"
+  COMMENT "Copying multi_message_per_receiver.py"
+)
+add_custom_target(python_multi_message_per_receiver ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/multi_message_per_receiver.py"
 )
 
 # Copy the sum-of-all application
-add_custom_target(python_multi_message_sum_of_all ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/multi_message_sum_of_all.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/multi_message_sum_of_all.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "multi_message_sum_of_all.py"
-  BYPRODUCTS "multi_message_sum_of_all.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/multi_message_sum_of_all.py"
+  COMMENT "Copying multi_message_sum_of_all.py"
+)
+add_custom_target(python_multi_message_sum_of_all ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/multi_message_sum_of_all.py"
 )
 
-# Copy the sum-of-all application
-add_custom_target(python_single_message_timeout ALL
+# Copy the single_message_timeout application
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/single_message_timeout.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/single_message_timeout.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "single_message_timeout.py"
-  BYPRODUCTS "single_message_timeout.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/single_message_timeout.py"
+  COMMENT "Copying single_message_timeout.py"
+)
+add_custom_target(python_single_message_timeout ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/single_message_timeout.py"
 )
 
 # Install the apps

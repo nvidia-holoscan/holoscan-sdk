@@ -228,15 +228,17 @@ void OutputContext::emit(holoscan::TensorMap& data, const char* name, const int6
   }
 
   // Pass skip_stream_propagation=true since we already set streams via Entity::add above
+  // Pass is_new_entity=true since entity was just created via Entity::New()
   emit_impl(nvidia::gxf::Entity(out_message),
             name,
             OutputType::kGXFEntity,
             acq_timestamp,
             /*omit_data_logging=*/true,
-            /*skip_stream_propagation=*/true);
+            /*skip_stream_propagation=*/true,
+            /*is_new_entity=*/true);
 }
 
-void OutputContext::emit(std::shared_ptr<holoscan::Tensor> data, const char* name,
+void OutputContext::emit(const std::shared_ptr<holoscan::Tensor>& data, const char* name,
                          const int64_t acq_timestamp) {
   HOLOSCAN_LOG_TRACE("OutputContext::emit (std::shared_ptr<holoscan::Tensor>) for op: {}, name: {}",
                      op_->name(),
@@ -263,12 +265,14 @@ void OutputContext::emit(std::shared_ptr<holoscan::Tensor> data, const char* nam
   out_message.add(data, "", stream);
 
   // Pass skip_stream_propagation=true since we already set the stream via Entity::add above
+  // Pass is_new_entity=true since entity was just created via Entity::New()
   emit_impl(nvidia::gxf::Entity(out_message),
             name,
             OutputType::kGXFEntity,
             acq_timestamp,
             /*omit_data_logging=*/true,
-            /*skip_stream_propagation=*/true);
+            /*skip_stream_propagation=*/true,
+            /*is_new_entity=*/true);
 }
 
 bool OutputContext::log_tensor(const std::shared_ptr<Tensor>& tensor, const std::string& unique_id,

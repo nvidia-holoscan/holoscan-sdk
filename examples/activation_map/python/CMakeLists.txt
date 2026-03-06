@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,17 +15,25 @@
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_custom_target(python_activation_map ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/activation_map.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/activation_map.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "activation_map.py"
-  BYPRODUCTS "activation_map.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/activation_map.py"
+  COMMENT "Copying activation_map.py"
+)
+add_custom_target(python_activation_map ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/activation_map.py"
 )
 
 # Copy config file
-add_custom_target(python_activation_map_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/activation_map.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "activation_map.yaml"
-  BYPRODUCTS "activation_map.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/activation_map.yaml"
+  COMMENT "Copying activation_map.yaml"
+)
+add_custom_target(python_activation_map_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/activation_map.yaml"
 )
 
 add_dependencies(python_activation_map python_activation_map_yaml)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,11 +77,13 @@ void init_execution_context(py::module_& m) {
             cuda_streams.reserve(cuda_stream_ptrs.size());
             for (const auto& stream_ptr : cuda_stream_ptrs) {
               if (stream_ptr) {
+                // NOLINTNEXTLINE(performance-no-int-to-ptr)
                 cuda_streams.push_back(reinterpret_cast<cudaStream_t>(stream_ptr.value()));
               } else {
                 cuda_streams.push_back(std::nullopt);
               }
             }
+            // NOLINTNEXTLINE(performance-no-int-to-ptr)
             auto target_cuda_stream = reinterpret_cast<cudaStream_t>(target_cuda_stream_ptr);
             context.synchronize_streams(cuda_streams, target_cuda_stream);
             return;
@@ -92,8 +94,9 @@ void init_execution_context(py::module_& m) {
       .def(
           "device_from_stream",
           [](ExecutionContext& context, intptr_t cuda_stream_ptr) -> std::optional<int> {
-            auto maybe_device =
-                context.device_from_stream(reinterpret_cast<cudaStream_t>(cuda_stream_ptr));
+            // NOLINTNEXTLINE(performance-no-int-to-ptr)
+            auto cuda_stream = reinterpret_cast<cudaStream_t>(cuda_stream_ptr);
+            auto maybe_device = context.device_from_stream(cuda_stream);
             if (maybe_device) {
               return maybe_device.value();
             } else {

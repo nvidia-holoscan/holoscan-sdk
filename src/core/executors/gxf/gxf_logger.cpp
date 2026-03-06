@@ -19,6 +19,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 #include <string_view>
 
 #include <common/logger.hpp>
@@ -31,9 +32,12 @@ static nvidia::Severity s_gxf_log_level = nvidia::Severity::INFO;
 
 static void ensure_gxf_log_level(int level) {
   if (level < static_cast<int>(nvidia::Severity::NONE) ||
-      level > static_cast<int>(nvidia::Severity::COUNT)) {
-    std::fprintf(stderr, "GXFLogger: Invalid log level %d.", level);
-    std::abort();
+      level >= static_cast<int>(nvidia::Severity::COUNT)) {
+    HOLOSCAN_LOG_ERROR("GXFLogger: Invalid log level {}. Must be in range [{}, {}).",
+                       level,
+                       static_cast<int>(nvidia::Severity::NONE),
+                       static_cast<int>(nvidia::Severity::COUNT));
+    throw std::invalid_argument("Invalid GXF log level");
   }
 }
 
@@ -76,7 +80,7 @@ void GXFLogger::log(const char* file, int line, const char* /* name */, int leve
   }
 
   std::string_view file_str(file);
-  auto last_slash = file_str.find_last_of("/");
+  auto last_slash = file_str.find_last_of("/\\");
   std::string_view file_base =
       (last_slash == std::string_view::npos) ? file_str : file_str.substr(last_slash + 1);
 
@@ -94,13 +98,7 @@ const char* GXFLogger::pattern() const {
 
 void GXFLogger::level(int level) {
   ensure_gxf_log_level(level);
-  nvidia::Severity severity = static_cast<nvidia::Severity>(level);
-
-  if (severity == nvidia::Severity::COUNT) {
-    std::fprintf(stderr, "GXFLogger: Log severity cannot be 'COUNT'.\n");
-    std::abort();
-  }
-  s_gxf_log_level = severity;
+  s_gxf_log_level = static_cast<nvidia::Severity>(level);
 }
 
 int GXFLogger::level() const {

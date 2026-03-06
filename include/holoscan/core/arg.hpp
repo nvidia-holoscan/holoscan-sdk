@@ -166,6 +166,7 @@ class ArgType {
       ArgElementType element_type) {
     return {std::type_index(typeid(std::decay_t<typeT>)), element_type};
   }
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static std::unordered_map<std::type_index, ArgElementType> element_type_map_{
       to_element_type_pair<bool>(ArgElementType::kBoolean),
       to_element_type_pair<int8_t>(ArgElementType::kInt8),
@@ -194,6 +195,7 @@ class ArgType {
       to_element_type_pair<std::shared_ptr<Condition>>(ArgElementType::kCondition),
       to_element_type_pair<std::shared_ptr<Resource>>(ArgElementType::kResource),
   };
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static const std::unordered_map<ArgElementType, const char*> element_type_name_map_{
       {ArgElementType::kCustom, "CustomType"},
       {ArgElementType::kBoolean, "bool"},

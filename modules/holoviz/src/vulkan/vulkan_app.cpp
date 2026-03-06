@@ -15,6 +15,9 @@
  * limitations under the License.
  */
 
+// Array subscript access is performance-critical for real-time Vulkan rendering.
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
+
 #include "vulkan_app.hpp"
 
 #include <nvmath/nvmath.h>
@@ -209,7 +212,7 @@ class Vulkan::Impl {
    * sequence with Vulkan HPP objects store all NVVK objects in this struct and deinit() on
    * destructor.
    */
-  class NvvkObjects {
+  class NvvkObjects {  // NOLINT(clang-analyzer-optin.performance.Padding) single instance
    public:
     ~NvvkObjects() {
       try {
@@ -457,6 +460,7 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   // Build a list of compatible physical devices
   const std::vector<vk::PhysicalDevice> physical_devices = instance_.enumeratePhysicalDevices();
   std::vector<vk::PhysicalDevice> compatible_physical_devices;
+  compatible_physical_devices.reserve(compatible_devices.size());
   for (auto&& compatible_device : compatible_devices) {
     compatible_physical_devices.push_back(vk::PhysicalDevice(physical_devices[compatible_device]));
   }
@@ -2638,3 +2642,5 @@ uint64_t Vulkan::get_vblank_counter() {
 }
 
 }  // namespace holoscan::viz
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)

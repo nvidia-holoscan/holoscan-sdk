@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,7 +67,7 @@ class CudaStreamPool : public Allocator {
   CudaStreamPool() = default;
   CudaStreamPool(int32_t dev_id, uint32_t stream_flags, int32_t stream_priority,
                  uint32_t reserved_size, uint32_t max_size,
-                 std::shared_ptr<CudaGreenContext> cuda_green_context = nullptr,
+                 const std::shared_ptr<CudaGreenContext>& cuda_green_context = nullptr,
                  const std::string& nvtx_identifier = "defaultStreamPool")
       : dev_id_(dev_id),
         stream_flags_(stream_flags),

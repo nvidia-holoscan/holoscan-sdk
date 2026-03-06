@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -222,6 +222,33 @@ class OneOptionalInOneOutOp : public Operator {
   int count_ = 1;
 };
 
+class TwoInOneOutNoConditionOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(TwoInOneOutNoConditionOp)
+
+  TwoInOneOutNoConditionOp() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.input<gxf::Entity>("in0");
+    spec.input<gxf::Entity>("in1");
+    spec.output<gxf::Entity>("out");
+  }
+
+  void compute(InputContext& op_input, OutputContext& op_output,
+               ExecutionContext& context) override {
+    auto in_message1 = op_input.receive<gxf::Entity>("in0");
+    auto in_message2 = op_input.receive<gxf::Entity>("in1");
+
+    auto out_message = gxf::Entity::New(&context);
+    op_output.emit(out_message);
+
+    HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
+  }
+
+ private:
+  int count_ = 1;
+};
+
 ///////////////////////////////////////////////////////////////////////////////
 // Utility Applications
 ///////////////////////////////////////////////////////////////////////////////
@@ -243,8 +270,10 @@ class CycleWithSourceApp : public holoscan::Application {
     using namespace holoscan;
     auto one_out =
         make_operator<OneOutOp>("OneOut", make_condition<CountCondition>("count-condition", 1));
-    auto two_in_one_out =
-        make_operator<TwoInOneOutOp>("TwoInOneOut", make_condition<CountCondition>(10));
+    auto two_in_one_out = make_operator<TwoInOneOutOp>(
+        "TwoInOneOut",
+        make_condition<CountCondition>(10),
+        make_condition<PeriodicCondition>("periodic-condition", std::chrono::milliseconds(5)));
     auto one_in_one_out = make_operator<OneInOneOutOp>("OneInOneOut");
 
     add_flow(one_out, two_in_one_out, {{"out", "in0"}});

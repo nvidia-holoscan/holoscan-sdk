@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,9 +43,14 @@ RuntimeError::RuntimeError(holoscan::ErrorCode error_code, const char* what_arg)
     : std::runtime_error(construct_error_message(error_code, what_arg)) {}
 
 const char* RuntimeError::error_string(const holoscan::ErrorCode error_code) {
-  if (static_cast<int>(error_code) >= static_cast<int>(holoscan::ErrorCode::kErrorCodeCount)) {
+  static_assert(sizeof(ErrorStrings) / sizeof(ErrorStrings[0]) ==
+                    static_cast<size_t>(holoscan::ErrorCode::kErrorCodeCount),
+                "ErrorStrings array size must match ErrorCode::kErrorCodeCount");
+  if (static_cast<int>(error_code) < 0 ||
+      static_cast<int>(error_code) >= static_cast<int>(holoscan::ErrorCode::kErrorCodeCount)) {
     return "Unknown error code";
   }
+  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index) bounds checked above
   return ErrorStrings[static_cast<int>(error_code)];
 }
 

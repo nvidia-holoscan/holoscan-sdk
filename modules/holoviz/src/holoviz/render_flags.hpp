@@ -39,6 +39,8 @@ using RenderFlags = render_flags::RenderFlags;
 
 }  // namespace holoscan::viz
 
+// NOLINTBEGIN(clang-analyzer-optin.core.EnumCastOutOfRange) bitmask enum combination is valid
+
 /**
  * Bitwise OR operator for RenderFlags
  */
@@ -58,5 +60,7 @@ constexpr holoscan::viz::RenderFlags operator&(holoscan::viz::RenderFlags a,
       static_cast<std::underlying_type<holoscan::viz::RenderFlags>::type>(a) &
       static_cast<std::underlying_type<holoscan::viz::RenderFlags>::type>(b));
 }
+
+// NOLINTEND(clang-analyzer-optin.core.EnumCastOutOfRange)
 
 #endif /* HOLOSCAN_VIZ_HOLOVIZ_RENDER_FLAGS_HPP */

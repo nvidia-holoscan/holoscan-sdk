@@ -74,6 +74,7 @@ inline void pop_pid_from_queue(int queue_fd, pid_t pid) {
   } else if (bytes_read < 0) {
     throw std::runtime_error(fmt::format("Failed to read queue file: {}", strerror(errno)));
   } else {
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index) read limited to sizeof-1
     buffer[bytes_read] = '\0';
 
     // Find the first newline to skip our PID
@@ -154,14 +155,14 @@ FileFIFOMutex::FileFIFOMutex(std::string file_path) {
   }
 
   // Main lock file
-  fd_ = open(file_path.c_str(), O_CREAT | O_RDWR, 0666);
+  fd_ = open(file_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
   if (fd_ == -1) {
     throw std::invalid_argument(fmt::format("Failed to open/create lock file: {}", file_path));
   }
 
   // Queue file to maintain FIFO order
   std::string queue_path = std::move(file_path) + ".queue";
-  queue_fd_ = open(queue_path.c_str(), O_CREAT | O_RDWR, 0666);
+  queue_fd_ = open(queue_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
   if (queue_fd_ == -1) {
     throw std::invalid_argument(fmt::format("Failed to open/create queue file: {}", queue_path));
   }
@@ -236,6 +237,7 @@ void FileFIFOMutex::lock() {
 
     if (bytes_read > 0) {
       // Null-terminate and parse first PID in queue
+      // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index) read limited to sizeof-1
       buffer[bytes_read] = '\0';
       pid_t first_pid = strtol(buffer, nullptr, 10);
 

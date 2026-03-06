@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,37 +16,20 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_cpm_find.html
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(rmm 25.10.00
-    GLOBAL_TARGETS rmm
-    BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
-    CPM_ARGS
+include(FetchContent)
 
-    GITHUB_REPOSITORY rapidsai/rmm
-    GIT_TAG v25.10.00
-    SOURCE_SUBDIR cpp
-    GIT_SHALLOW TRUE
-    OPTIONS
-       BUILD_TESTS OFF
-    EXCLUDE_FROM_ALL
+set(RMM_GITHUB_REPOSITORY "https://github.com/rapidsai/rmm.git")
+set(RMM_TAG "v25.10.00")
+set(BUILD_TESTS OFF)
+
+FetchContent_Declare(
+    rmm
+    GIT_REPOSITORY ${RMM_GITHUB_REPOSITORY}
+    GIT_TAG        ${RMM_TAG}
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  cpp
+
+    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/rmm.patch
+    UPDATE_DISCONNECTED TRUE
 )
-
-if(rmm_ADDED)
-    # Install the headers needed for development with the SDK
-    install(DIRECTORY ${rmm_SOURCE_DIR}/cpp/include/rmm
-        DESTINATION "include"
-        COMPONENT "holoscan-dependencies"
-        )
-    install(DIRECTORY ${rmm_BINARY_DIR}/include/rmm
-        DESTINATION "include"
-        COMPONENT "holoscan-dependencies"
-        )
-    install(DIRECTORY ${CPM_PACKAGE_rapids_logger_SOURCE_DIR}/include/rapids_logger
-        DESTINATION "include"
-        COMPONENT "holoscan-dependencies"
-        )
-    install(
-       TARGETS rmm rapids_logger
-       DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}"
-       COMPONENT "holoscan-dependencies"
-    )
-endif()
+FetchContent_MakeAvailable(rmm)

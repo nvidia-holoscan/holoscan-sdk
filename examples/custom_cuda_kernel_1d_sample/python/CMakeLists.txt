@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,17 +15,25 @@
 
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_custom_target(python_custom_cuda_kernel_1d_sample ALL
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_1d_sample.py"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_1d_sample.py" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "custom_cuda_kernel_1d_sample.py"
-  BYPRODUCTS "custom_cuda_kernel_1d_sample.py"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_1d_sample.py"
+  COMMENT "Copying custom_cuda_kernel_1d_sample.py"
+)
+add_custom_target(python_custom_cuda_kernel_1d_sample ALL
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_1d_sample.py"
 )
 
 # Copy config file
-add_custom_target(python_custom_cuda_kernel_1d_sample_yaml
+add_custom_command(
+  OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_1d_sample.yaml"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_1d_sample.yaml" ${CMAKE_CURRENT_BINARY_DIR}
-  DEPENDS "custom_cuda_kernel_1d_sample.yaml"
-  BYPRODUCTS "custom_cuda_kernel_1d_sample.yaml"
+  DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_1d_sample.yaml"
+  COMMENT "Copying custom_cuda_kernel_1d_sample.yaml"
+)
+add_custom_target(python_custom_cuda_kernel_1d_sample_yaml
+  DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/custom_cuda_kernel_1d_sample.yaml"
 )
 
 add_dependencies(python_custom_cuda_kernel_1d_sample python_custom_cuda_kernel_1d_sample_yaml)

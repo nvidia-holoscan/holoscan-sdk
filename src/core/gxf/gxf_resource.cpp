@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,8 +111,8 @@ void GXFResource::add_to_graph_entity(Operator* op) {
   add_to_graph_entity(op->fragment(), op->graph_entity());
 }
 
-void GXFResource::add_to_graph_entity(Fragment* fragment,
-                                      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity) {
+void GXFResource::add_to_graph_entity(
+    Fragment* fragment, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity) {
   if (gxf_context_ == nullptr) {
     // cannot reassign to a different graph entity if the resource was already initialized with GXF
     if (gxf_graph_entity_ && is_initialized_) {

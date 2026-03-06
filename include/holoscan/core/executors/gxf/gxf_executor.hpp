@@ -378,7 +378,7 @@ class GXFExecutor : public holoscan::Executor {
    */
   void initialize_gxf_resources(
       std::unordered_map<std::string, std::shared_ptr<Resource>>& resources, gxf_uid_t eid,
-      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+      const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity);
 
   /** @brief Create a GXF Connection component between a transmitter and receiver.
    *
@@ -407,7 +407,7 @@ class GXFExecutor : public holoscan::Executor {
    * @param broadcast_entities The mapping of broadcast graph entities.
    * @param connections TODO
    */
-  void create_broadcast_components(holoscan::OperatorGraph::NodeType op,
+  void create_broadcast_components(const holoscan::OperatorGraph::NodeType& op,
                                    BroadcastEntityMapType& broadcast_entities,
                                    const TargetConnectionsMapType& connections);
 
@@ -426,16 +426,16 @@ class GXFExecutor : public holoscan::Executor {
    * @param port_map_val The port mapping between prev_op and op.
    */
   void connect_broadcast_to_previous_op(const BroadcastEntityMapType& broadcast_entities,
-                                        holoscan::OperatorGraph::NodeType op,
-                                        holoscan::OperatorGraph::NodeType prev_op,
-                                        holoscan::OperatorGraph::EdgeDataType port_map_val);
+                                        const holoscan::OperatorGraph::NodeType& op,
+                                        const holoscan::OperatorGraph::NodeType& prev_op,
+                                        const holoscan::OperatorGraph::EdgeDataType& port_map_val);
 
   /// Helper function that adds a GXF Condition to the specified graph entity
-  bool add_condition_to_graph_entity(std::shared_ptr<Condition> condition,
+  bool add_condition_to_graph_entity(const std::shared_ptr<Condition>& condition,
                                      std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
 
   /// Helper function that adds a GXF Resource to the specified graph entity.
-  bool add_resource_to_graph_entity(std::shared_ptr<Resource> resource,
+  bool add_resource_to_graph_entity(const std::shared_ptr<Resource>& resource,
                                     std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
 
   /* @brief Add an IOspec connector resource and any conditions to the graph entity.
@@ -447,7 +447,7 @@ class GXFExecutor : public holoscan::Executor {
    * @return true if the IOSpec's components were all successfully added to the graph entity.
    */
   bool add_iospec_to_graph_entity(IOSpec* io_spec,
-                                  std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+                                  const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity);
 
   /* @brief Add any GXF resources and conditions present in the arguments to the provided graph
    * entity.
@@ -458,8 +458,8 @@ class GXFExecutor : public holoscan::Executor {
    * @param graph_entity The graph entity this IOSpec will be associated with.
    * @return true if the IOSpec's components were all successfully added to the graph entity.
    */
-  void add_component_args_to_graph_entity(std::vector<Arg>& args,
-                                          std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity);
+  void add_component_args_to_graph_entity(
+      std::vector<Arg>& args, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity);
 
   /* @brief Connect UCX transmitters to virtual operators.
    *
@@ -497,7 +497,7 @@ class GXFExecutor : public holoscan::Executor {
                                          const std::string& port_name, IOSpec::IOType io_type);
 
   std::shared_ptr<GPUDevice> add_gpu_device_to_graph_entity(
-      const std::string& device_name, std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity,
+      const std::string& device_name, const std::shared_ptr<nvidia::gxf::GraphEntity>& graph_entity,
       std::optional<int32_t> device_id = std::nullopt);
 
   // Static flags for signal handling

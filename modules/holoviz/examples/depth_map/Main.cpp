@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+// NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
+// example code
 
 #include <cuda.h>
 #include <getopt.h>
@@ -44,6 +47,7 @@ uint32_t map_width = 0;
 uint32_t map_height = 0;
 uint32_t frame_index = 0;
 
+// NOLINTNEXTLINE(cert-err58-cpp)
 std::vector<uint32_t> palette{0xFF000000, 0xFF7F7F7F, 0xFFFFFFFF};
 
 // UI state
@@ -147,7 +151,7 @@ void loadSourceData(const char* depth_dir, const char* color_dir) {
     }
     depth_mems.push_back(cu_device_mem);
   }
-  std::cout << std::endl;
+  std::cout << '\n';
 
   std::vector<std::string> color_files;
   for (auto const& dir_entry : std::filesystem::directory_iterator{color_dir}) {
@@ -167,7 +171,7 @@ void loadSourceData(const char* depth_dir, const char* color_dir) {
     }
     color_mems.push_back(cu_device_mem);
   }
-  std::cout << std::endl;
+  std::cout << '\n';
 }
 
 void generateSourceData() {
@@ -286,6 +290,7 @@ void tick() {
       case RenderMode::DEPTH:
         if (formats[current_format_index] == viz::ImageFormat::R8_UNORM) {
           if (ImGui::Button("+")) {
+            // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - demo code, crypto-quality not needed
             palette.push_back(static_cast<uint32_t>(std::rand()) | 0xFF000000);
           }
           ImGui::SameLine();
@@ -466,14 +471,14 @@ int main(int argc, char** argv) {
       const std::string argument(optarg ? optarg : "");
       switch (c) {
         case 'h':
-          std::cout << "Usage: " << argv[0] << " [options]" << std::endl
-                    << "Options:" << std::endl
-                    << "  -d DIR, --depth_dir DIR  directory to load depth images from" << std::endl
-                    << "  -c DIR, --color_dir DIR  directory to load color images from" << std::endl
-                    << "  -b, --bench              benchmark mode" << std::endl
-                    << "  -l, --headless           headless mode" << std::endl
-                    << "  -h, --help               display this information" << std::endl
-                    << std::endl;
+          std::cout << "Usage: " << argv[0] << " [options]\n"
+                    << "Options:\n"
+                    << "  -d DIR, --depth_dir DIR  directory to load depth images from\n"
+                    << "  -c DIR, --color_dir DIR  directory to load color images from\n"
+                    << "  -b, --bench              benchmark mode\n"
+                    << "  -l, --headless           headless mode\n"
+                    << "  -h, --help               display this information\n"
+                    << '\n';
           return EXIT_SUCCESS;
         case 'b':
           benchmark_mode = true;
@@ -487,14 +492,16 @@ int main(int argc, char** argv) {
             throw std::runtime_error("Depth directory path is too long (max " +
                                      std::to_string(sizeof(depth_dir) - 1) + " characters)");
           }
-          snprintf(depth_dir, sizeof(depth_dir), "%s", argument.c_str());
+          // snprintf cannot fail: length is validated above
+          (void)snprintf(depth_dir, sizeof(depth_dir), "%s", argument.c_str());
           break;
         case 'c':
           if (argument.length() >= sizeof(color_dir)) {
             throw std::runtime_error("Color directory path is too long (max " +
                                      std::to_string(sizeof(color_dir) - 1) + " characters)");
           }
-          snprintf(color_dir, sizeof(color_dir), "%s", argument.c_str());
+          // snprintf cannot fail: length is validated above
+          (void)snprintf(color_dir, sizeof(color_dir), "%s", argument.c_str());
           break;
         default:
           throw std::runtime_error("Unhandled option ");
@@ -534,8 +541,7 @@ int main(int argc, char** argv) {
 
             std::cout << size << " " << format_items[current_format_index] << " "
                       << render_mode_items[int(current_render_mode)] << " "
-                      << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps"
-                      << std::endl;
+                      << float(iterations) / (float(elapsed.count()) / 1000.F) << " fps\n";
           }
         }
       }
@@ -560,3 +566,5 @@ int main(int argc, char** argv) {
 
   return EXIT_SUCCESS;
 }
+
+// NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)

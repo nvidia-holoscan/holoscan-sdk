@@ -163,6 +163,7 @@ class GxfFormatTensor : public GxfFormat {
 /**
  * Map from a V4L2 format to a nvidia::gxf::VideoFormat
  */
+// NOLINTNEXTLINE(cert-err58-cpp)
 static const V4L2VideoCaptureOp::FormatList v4l2_to_gxf_format{
     {V4L2_PIX_FMT_RGBA32,
      std::shared_ptr<GxfFormat>(
@@ -318,6 +319,7 @@ static void MJPEGToRGBA(const void* mjpg, void* rgba, size_t width, size_t heigh
 /**
  * List of formats which can be converted to RGBA
  */
+// NOLINTNEXTLINE(cert-err58-cpp)
 static const std::map<uint32_t, V4L2VideoCaptureOp::ConverterFunc> v4l2_to_converter{
     {V4L2_PIX_FMT_YUYV, &YUYVToRGBA},
     {V4L2_PIX_FMT_RGB24, &RGB24ToRGBA},
@@ -781,6 +783,7 @@ void V4L2VideoCaptureOp::v4l2_check_formats() {
     auto it = v4l2_to_converter.find(format_desc_.pixelformat);
     if (it == v4l2_to_converter.end()) {
       std::vector<std::string> supported_formats;
+      supported_formats.reserve(v4l2_to_converter.size());
       for (auto&& format : v4l2_to_converter) {
         supported_formats.push_back(FOURCC2STRING(format.first));
       }

@@ -59,9 +59,45 @@ int _HOLOSCAN_EXTERNAL_API_ report_error(const std::string& module, const std::s
 void _HOLOSCAN_EXTERNAL_API_ raise_error(const std::string& module, const std::string& submodule);
 
 /**
- * @brief Checks for correctness of inference parameters from configuration.
+ * @brief Setup inference I/O map for inference
+ * @param pre_map Pre-processor map
+ * @param inf_map Inference map
+ * @param model_inputs Model inputs
+ * @param model_outputs Model outputs
+ * @param transmit_outputs Transmit outputs
+ * @param out_tensor_names Output tensor names
+ * @return InferStatus with appropriate code and message
+ */
+InferStatus setup_inference_io(const MultiMappings& pre_map, const MultiMappings& inf_map,
+                               std::vector<std::string>& model_inputs,
+                               std::vector<std::string>& model_outputs,
+                               std::vector<std::string>& transmit_outputs,
+                               const std::vector<std::string>& out_tensor_names);
+
+/**
+ * @brief Validate dependency map
+ * @param pre_processor_map Map with model name as key, mapped to vector of input tensor names
+ * @param dependency_map Map with model name as key, mapped to vector of prerequisite model names
+ * @return InferStatus with appropriate code and message
+ */
+InferStatus validate_dependency_map(const MultiMappings& pre_processor_map,
+                                    const MultiMappings& dependency_map);
+
+/**
+ * @brief Build execution plan
+ * @param pre_processor_map Map with model name as key, mapped to vector of input tensor names
+ * @param inference_map Map with model name as key, mapped to vector of output tensor names
+ * @param execution_plan Vector of levels; each level contains models that can run in parallel.
+ * @return InferStatus with appropriate code and message
+ */
+InferStatus build_execution_plan(const MultiMappings& pre_processor_map,
+                                 const MultiMappings& inference_map,
+                                 std::vector<std::vector<std::string>>& execution_plan);
+
+/**
+ * @brief Validate inference parameters
  * @param model_path_map Map with model name as key, path to model as value
- * @param pre_processor_map Map of model name as key, mapped to vector of tensor names
+ * @param pre_processor_map Map with model name as key, mapped to vector of input tensor names
  * @param inference_map Map with model name as key, mapped to vector of output tensor names
  * @param in_tensor_names Input tensor names
  * @param out_tensor_names Output tensor names
@@ -118,7 +154,7 @@ void timer_init(TimePoint& _t);
  *
  * @returns 0 if successful.
  */
-int timer_check(TimePoint& start, TimePoint& end, const std::string& module);
+int64_t timer_check(TimePoint& start, TimePoint& end, const std::string& module);
 
 void string_split(const std::string& line, std::vector<std::string>& tokens, char c);
 
@@ -127,13 +163,16 @@ void string_split(const std::string& line, std::vector<std::string>& tokens, cha
  * @param pre_processor_map Map with model name as key, mapped to vector of input tensor names
  * @param model_input_dimensions Map with model name as key, mapped to input dimensions
  * @param dims_per_tensor Map with input tensor as key, mapped to its dimension
+ * @param all_input_tensors Vector of all input tensor names
  */
 InferStatus tensor_dimension_check(const MultiMappings& pre_processor_map,
                                    const DimType& model_input_dimensions,
-                                   const std::map<std::string, std::vector<int>>& dims_per_tensor);
+                                   const std::map<std::string, std::vector<int>>& dims_per_tensor,
+                                   const std::vector<std::string>& all_input_tensors);
 
 using node_type = std::map<std::string, std::map<std::string, std::string>>;
 
+// NOLINTNEXTLINE(cert-err58-cpp)
 static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
     {"kFloat32", holoinfer_datatype::h_Float32},
     {"kInt32", holoinfer_datatype::h_Int32},
@@ -141,11 +180,21 @@ static const std::map<std::string, holoinfer_datatype> kHoloInferDataTypeMap = {
     {"kUInt8", holoinfer_datatype::h_UInt8},
     {"kInt64", holoinfer_datatype::h_Int64},
     {"kFloat16", holoinfer_datatype::h_Float16},
-    {"kBool", holoinfer_datatype::h_Int8}};
+    {"kBool", holoinfer_datatype::h_Bool}};
 
 InferStatus parse_yaml_node(const YAML::Node& in_config, std::vector<std::string>& names,
                             std::vector<std::vector<int64_t>>& dims,
                             std::vector<std::string>& types);
+
+InferStatus load_yaml(const std::string& yaml_file,
+                      std::map<std::string, std::string>& model_path_map,
+                      std::map<std::string, std::vector<std::string>>& pre_processor_map,
+                      std::map<std::string, std::vector<std::string>>& inference_map,
+                      std::map<std::string, std::vector<std::string>>& batch_sizes,
+                      std::vector<std::string>& in_tensor_names,
+                      std::vector<std::string>& out_tensor_names,
+                      std::map<std::string, size_t>& tensor_to_buffersize,
+                      std::map<std::string, holoinfer_datatype>& tensor_to_datatype);
 
 }  // namespace inference
 }  // namespace holoscan

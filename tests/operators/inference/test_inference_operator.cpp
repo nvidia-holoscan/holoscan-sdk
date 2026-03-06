@@ -193,18 +193,31 @@ class InferenceOpTestApp : public holoscan::Application {
       std::vector<uint32_t> partitions = {4, 4};
       cuda_green_context_pool = make_resource<CudaGreenContextPool>(
           "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
-      cuda_green_context1 = make_resource<CudaGreenContext>(
-          "cuda_green_context", cuda_green_context_pool, 0);
+      cuda_green_context1 =
+          make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 0);
       if (test_two_) {
-        cuda_green_context2 = make_resource<CudaGreenContext>(
-            "cuda_green_context", cuda_green_context_pool, 1);
+        cuda_green_context2 =
+            make_resource<CudaGreenContext>("cuda_green_context", cuda_green_context_pool, 1);
       }
     }
 
-    auto cuda_stream_pool1 = make_resource<CudaStreamPool>(
-            "cuda_stream_pool1", 0, 0, 0, 1, 5, cuda_green_context1);
-    auto cuda_stream_pool2 = test_two_ ? make_resource<CudaStreamPool>(
-            "cuda_stream_pool2", 0, 0, 0, 1, 5, cuda_green_context2) : nullptr;
+    auto cuda_stream_pool1 = make_resource<CudaStreamPool>("cuda_stream_pool1",
+                                                           0,
+                                                           cudaStreamNonBlocking,
+                                                           0,
+                                                           1,
+                                                           5,
+                                                           cuda_green_context1);
+    auto cuda_stream_pool2 =
+        test_two_
+            ? make_resource<CudaStreamPool>("cuda_stream_pool2",
+                                            0,
+                                            cudaStreamNonBlocking,
+                                            0,
+                                            1,
+                                            5,
+                                            cuda_green_context2)
+            : nullptr;
 
     auto tensor_generator_op = make_operator<ops::TensorGeneratorOp>(
         "tensor_generator", Arg("allocator") = allocator, make_condition<CountCondition>(10));
@@ -219,14 +232,14 @@ class InferenceOpTestApp : public holoscan::Application {
     std::vector<int> in_tensor_dimensions = {BATCH_SIZE, TENSOR_SIZE, TENSOR_SIZE};
 
     // First inference operator
-    auto infer_op1 = make_operator<ops::InferenceOp>(
-        "infer1",
-        from_config("inference"),
-        Arg("backend") = backend_,
-        Arg("model_path_map") = model_path_map1,
-        Arg("allocator") = allocator,
-        Arg("in_tensor_dimensions") = in_tensor_dimensions,
-        cuda_stream_pool1);
+    auto infer_op1 =
+        make_operator<ops::InferenceOp>("infer1",
+                                        from_config("inference"),
+                                        Arg("backend") = backend_,
+                                        Arg("model_path_map") = model_path_map1,
+                                        Arg("allocator") = allocator,
+                                        Arg("in_tensor_dimensions") = in_tensor_dimensions,
+                                        cuda_stream_pool1);
 
     // Second inference operator (only if testing two inference ops in parallel)
     std::shared_ptr<ops::InferenceOp> infer_op2 = nullptr;
@@ -256,10 +269,11 @@ class InferenceOpTestApp : public holoscan::Application {
           cuda_stream_pool2);
     }
 
-    auto result_checker_op1 = make_operator<ops::ResultCheckerOp>(
-        "checker1", enable_green_context_);
-    auto result_checker_op2 = test_two_ ?
-        make_operator<ops::ResultCheckerOp>("checker2", enable_green_context_) : nullptr;
+    auto result_checker_op1 =
+        make_operator<ops::ResultCheckerOp>("checker1", enable_green_context_);
+    auto result_checker_op2 =
+        test_two_ ? make_operator<ops::ResultCheckerOp>("checker2", enable_green_context_)
+                  : nullptr;
 
     // Add flows
     add_flow(tensor_generator_op, infer_op1, {{"output", "receivers"}});
@@ -334,17 +348,17 @@ TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
 
 INSTANTIATE_TEST_CASE_P(InferenceOpTestApp, InferenceOpTestFixture,
                         ::testing::Values(
-                          // Single inference op
-                          std::make_tuple("onnxrt", "identity_model.onnx", false, false),
-                          std::make_tuple("onnxrt", "identity_model.onnx", true, false),
-                          std::make_tuple("trt", "identity_model.onnx", false, false),
-                          std::make_tuple("trt", "identity_model.onnx", true, false),
-                          std::make_tuple("torch", "identity_model.pt", false, false),
-                          std::make_tuple("torch", "identity_model.pt", true, false),
-                          // Two inference ops
-                          std::make_tuple("onnxrt", "identity_model.onnx", false, true),
-                          std::make_tuple("onnxrt", "identity_model.onnx", true, true),
-                          std::make_tuple("trt", "identity_model.onnx", false, true),
-                          std::make_tuple("trt", "identity_model.onnx", true, true),
-                          std::make_tuple("torch", "identity_model.pt", false, true),
-                          std::make_tuple("torch", "identity_model.pt", true, true)));
+                            // Single inference op
+                            std::make_tuple("onnxrt", "identity_model.onnx", false, false),
+                            std::make_tuple("onnxrt", "identity_model.onnx", true, false),
+                            std::make_tuple("trt", "identity_model.onnx", false, false),
+                            std::make_tuple("trt", "identity_model.onnx", true, false),
+                            std::make_tuple("torch", "identity_model.pt", false, false),
+                            std::make_tuple("torch", "identity_model.pt", true, false),
+                            // Two inference ops
+                            std::make_tuple("onnxrt", "identity_model.onnx", false, true),
+                            std::make_tuple("onnxrt", "identity_model.onnx", true, true),
+                            std::make_tuple("trt", "identity_model.onnx", false, true),
+                            std::make_tuple("trt", "identity_model.onnx", true, true),
+                            std::make_tuple("torch", "identity_model.pt", false, true),
+                            std::make_tuple("torch", "identity_model.pt", true, true)));

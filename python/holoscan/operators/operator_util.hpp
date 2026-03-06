@@ -35,7 +35,7 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-void add_positional_condition_and_resource_args(Operator* op, const py::args& args) {
+inline void add_positional_condition_and_resource_args(Operator* op, const py::args& args) {
   for (auto it = args.begin(); it != args.end(); ++it) {
     if (py::isinstance<Condition>(*it)) {
       op->add_arg(it->cast<std::shared_ptr<Condition>>());
@@ -87,7 +87,7 @@ inline YAML::Node cast_to_yaml_node<int8_t>(const py::handle& obj) {
 }
 
 template <typename T>
-void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
+inline void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   // not intended for images or other large tensors, just
   // for short arrays containing parameter settings to operators/resources
   if (obj.attr("ndim").cast<int>() == 1) {
@@ -113,7 +113,7 @@ void set_vector_arg_via_numpy_array(const py::array& obj, Arg& out) {
   }
 }
 
-void set_vector_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
+inline void set_vector_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
   std::string dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float16") {  // currently promoting float16 scalars to float
     set_vector_arg_via_numpy_array<float>(obj, out);
@@ -149,7 +149,7 @@ void set_vector_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& o
 }
 
 template <typename T>
-void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
+inline void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
   // not intended for images or other large tensors, just
   // for short arrays containing parameter settings to operators/resources
 
@@ -205,7 +205,7 @@ void set_vector_arg_via_py_sequence(const py::sequence& seq, Arg& out) {
   }
 }
 
-void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
+inline void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
   py::sequence seq;
   if (py::isinstance<py::sequence>(obj)) {
     seq = obj;
@@ -240,7 +240,7 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
       throw std::runtime_error("Nested sequence of unsupported type.");
     }
   } else {
-    auto item = item0;
+    const auto& item = item0;
     if (py::isinstance<py::bool_>(item)) {
       set_vector_arg_via_py_sequence<bool>(seq, out);
     } else if (py::isinstance<py::int_>(item)) {
@@ -258,7 +258,7 @@ void set_vector_arg_via_iterable(const py::object& obj, Arg& out) {
   return;
 }
 
-void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
+inline void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& out) {
   std::string dtype_name = dt.attr("name").cast<std::string>();
   if (dtype_name == "float16") {  // currently promoting float16 scalars to float
     out = cast_to_yaml_node<float>(obj);
@@ -290,7 +290,7 @@ void set_scalar_arg_via_dtype(const py::object& obj, const py::dtype& dt, Arg& o
   return;
 }
 
-Arg py_object_to_arg(py::object obj, std::string name = "") {
+inline Arg py_object_to_arg(py::object obj, std::string name = "") {
   Arg out(name);
   if (py::isinstance<py::str>(obj)) {
     out = cast_to_yaml_node<std::string>(obj);
@@ -333,7 +333,7 @@ Arg py_object_to_arg(py::object obj, std::string name = "") {
   return out;
 }
 
-ArgList kwargs_to_arglist(const py::kwargs& kwargs) {
+inline ArgList kwargs_to_arglist(const py::kwargs& kwargs) {
   // Note: scalars will be kNative while any iterables will have type kNative.
   //       There is currently no option to choose conversion to kArray instead of kNative.
   ArgList arglist;
@@ -348,7 +348,7 @@ ArgList kwargs_to_arglist(const py::kwargs& kwargs) {
 
 ////////////////////////////////////////////////////////////////////////////////
 
-void add_kwargs(ComponentBase* component, const py::kwargs& kwargs) {
+inline void add_kwargs(ComponentBase* component, const py::kwargs& kwargs) {
   ArgList arg_list = kwargs_to_arglist(kwargs);
   component->add_arg(arg_list);
 }

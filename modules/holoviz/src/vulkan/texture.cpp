@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -50,6 +50,7 @@ void Texture::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
   if (is_yuv_format(format_)) {
     // can't upload directly to YUV textures. Create a buffer, import it to CUDA and when
     // uploading, copy to that buffer and update the texture from the buffer using Vulkan upload.
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
     for (uint32_t plane = 0; plane < texture_.memHandles.size(); ++plane) {
       uint32_t channels, hw_channels, component_size, width_divisor, height_divisior;
       format_info(format_,
@@ -66,7 +67,9 @@ void Texture::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
           vulkan_->create_buffer_for_cuda_interop(size, vk::BufferUsageFlagBits::eTransferSrc));
       upload_buffers_.back()->import_to_cuda(cuda_service);
     }
+    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
   } else {
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
     for (uint32_t plane = 0; plane < texture_.memHandles.size(); ++plane) {
       const nvvk::MemAllocator::MemInfo mem_info =
           alloc_->getMemoryAllocator()->getMemoryInfo(texture_.memHandles[plane]);
@@ -119,6 +122,7 @@ void Texture::import_to_cuda(const std::unique_ptr<CudaService>& cuda_service) {
           }());
       mipmaps_.push_back(std::move(mipmap));
     }
+    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
   }
 }
 
@@ -140,6 +144,7 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
     begin_access_with_cuda(stream);
   }
 
+  // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
   std::array<Buffer*, 3> buffers{};
   for (uint32_t plane = 0; plane < device_ptr.size(); ++plane) {
     if (!device_ptr[plane]) {
@@ -247,6 +252,7 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
       buffers[plane] = upload_buffers_[plane].get();
     }
   }
+  // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
 
   if (!mipmaps_.empty()) {
     // indicate that the texture had been used by CUDA

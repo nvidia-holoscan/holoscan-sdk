@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -64,6 +64,7 @@ class CodecRegistry {
    */
   using Codec = std::pair<SerializeFunc, DeserializeFunc>;
 
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static SerializeFunc none_serialize =
       [](const Message& /*message*/,
          holoscan::Endpoint* /*buffer*/) -> expected<size_t, RuntimeError> {
@@ -71,6 +72,7 @@ class CodecRegistry {
     return static_cast<size_t>(0);
   };
 
+  // NOLINTNEXTLINE(cert-err58-cpp)
   inline static DeserializeFunc none_deserialize =
       [](holoscan::Endpoint* /*buffer*/) -> expected<Message, RuntimeError> {
     HOLOSCAN_LOG_ERROR("Unable to deserialize message");
@@ -80,7 +82,8 @@ class CodecRegistry {
   /**
    * @brief Default @ref Codec for Arg.
    */
-  inline static Codec none_codec = std::make_pair(none_serialize, none_deserialize);
+  inline static Codec none_codec =  // NOLINT(cert-err58-cpp)
+      std::make_pair(none_serialize, none_deserialize);
 
   /**
    * @brief Get the instance object.

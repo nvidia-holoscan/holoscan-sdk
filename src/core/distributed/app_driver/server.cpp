@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -157,6 +157,7 @@ bool AppDriverServer::close_worker_connection(const std::string& worker_address)
 
 std::vector<std::string> AppDriverServer::get_worker_addresses() const {
   std::vector<std::string> worker_addresses;
+  worker_addresses.reserve(worker_clients_.size());
   for (const auto& [worker_address, _] : worker_clients_) {
     worker_addresses.emplace_back(worker_address);
   }

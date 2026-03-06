@@ -23,6 +23,37 @@ The API also provides the ability to retrieve the number of messages sent from t
 - Look at the {cpp:class}`C++ <holoscan::DataFlowTracker>` and {py:class}`python <holoscan.core.DataFlowTracker>` API documentation for exhaustive definitions
 :::
 
+## Supported Configurations
+
+Data flow tracking is only supported for operator connections that use the **default Holoscan configuration**. Applications using custom connection configurations (user-defined queue size, queue policy, etc.) are not tested and may not be compatible with flow tracking.
+
+### Default Connection Configuration
+
+The default connection configuration in Holoscan includes:
+
+1. **Queue Size**: The default capacity for both input and output ports is set to 1.
+
+2. **Connector Types**: Default or explicitly supported receiver/transmitter types
+   - For local connections (within a fragment):
+     - {cpp:class}`DoubleBufferReceiver <holoscan::DoubleBufferReceiver>`/{cpp:class}`DoubleBufferTransmitter <holoscan::DoubleBufferTransmitter>` ({py:class}`Python <holoscan.resources.DoubleBufferReceiver>`/{py:class}`Python <holoscan.resources.DoubleBufferTransmitter>`) or `ConnectorType::kDefault` ({py:const}`Python <holoscan.core.IOSpec.ConnectorType.DEFAULT>`)
+     - {cpp:class}`AsyncBufferReceiver <holoscan::AsyncBufferReceiver>`/{cpp:class}`AsyncBufferTransmitter <holoscan::AsyncBufferTransmitter>` ({py:class}`Python <holoscan.resources.AsyncBufferReceiver>`/{py:class}`Python <holoscan.resources.AsyncBufferTransmitter>`) or `ConnectorType::kAsyncBuffer` ({py:const}`Python <holoscan.core.IOSpec.ConnectorType.ASYNC_BUFFER>`) for asynchronous operations
+   - For distributed connections (across fragments): {cpp:class}`UcxReceiver <holoscan::UcxReceiver>`/{cpp:class}`UcxTransmitter <holoscan::UcxTransmitter>` ({py:class}`Python <holoscan.resources.UcxReceiver>`/{py:class}`Python <holoscan.resources.UcxTransmitter>`) - automatically used for cross-fragment connections
+
+3. **Queue Policy**: The default queue policy is to throw an error for a new message when the queue is full
+
+4. **Scheduling Conditions**: Default conditions for input and output ports
+   - Input ports: {cpp:class}`MessageAvailableCondition <holoscan::MessageAvailableCondition>` ({py:class}`Python <holoscan.conditions.MessageAvailableCondition>`) with `min_size=1`
+   - Output ports: {cpp:class}`DownstreamMessageAffordableCondition <holoscan::DownstreamMessageAffordableCondition>` ({py:class}`Python <holoscan.conditions.DownstreamMessageAffordableCondition>`) with `min_size=1`
+
+:::{note}
+If an application uses custom configurations such as:
+- Queue sizes greater than 1
+- `kPop` or `kReject` queue policy
+- Custom scheduling conditions (e.g., `ConditionType::kNone`)
+
+Data flow tracking may not function as expected.
+:::
+
 ## Enabling Data Flow Tracking
 
 Before an application ({cpp:class}`C++ <holoscan::Application>`/{py:class}`python <holoscan.core.Application>`) is run with the `run()` method, data flow tracking can be enabled. For single fragment applications, this can be done by calling the `track()` method in {cpp:func}`C++ <holoscan::Fragment::track>` and using the `Tracker` class in {py:class}`python <holoscan.core.Tracker>`.
@@ -181,6 +212,77 @@ with Tracker(app) as trackers:
 ````
 `````
 
+## Accessing Timestamped Message Labels in Operators
+
+In addition to retrieving application-level tracking results after execution, operators can access message label information during their `compute()` method using the `get_data_flow_tracking_label()` method ({cpp:func}`C++ <holoscan::Operator::get_data_flow_tracking_label>`/{py:func}`python <holoscan.core.Operator.get_data_flow_tracking_label>`).
+
+This operator-level API provides access to the {cpp:class}`MessageLabel <holoscan::MessageLabel>`/{py:class}`MessageLabel <holoscan.core.MessageLabel>` associated with data received on a specific input port, enabling programmatic analysis of timing information.
+
+This enables more programmatic observability within the operators. This is also useful for implementing adaptive operators that can adjust their behavior based on message flow characteristics, or for debugging and monitoring data flow patterns during execution.
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:emphasize-lines: 3-10
+:name: holoscan-operator-message-label-cpp
+
+void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) override {
+  auto value = op_input.receive<ValueData>("in").value();
+  
+  if(fragment()->data_flow_tracker()) {
+    // Get the message label for the input port
+    auto message_label = get_data_flow_tracking_label("in");
+    
+    // Access message label information
+    HOLOSCAN_LOG_INFO("Message has {} path(s)", message_label.num_paths());
+    auto path_names = message_label.get_all_path_names();
+    for (int i = 0; i < path_names.size(); i++) {
+      HOLOSCAN_LOG_INFO("  Path {}: {}", i, path_names[i]);
+    }
+  }
+  
+  // Process data and emit
+  op_output.emit(processed_value, "out");
+}
+```
+````
+````{tab-item} Python
+```{code-block} python
+:emphasize-lines: 3-9
+:name: holoscan-operator-message-label-python
+
+def compute(self, op_input, op_output, context):
+    value = op_input.receive("in")
+
+    if self.fragment.data_flow_tracker():
+      # Get the message label for the input port
+      message_label = self.get_data_flow_tracking_label("in")
+      
+      # Access message label information
+      print(f"Message has {message_label.num_paths()} path(s)")
+      path_names = message_label.get_all_path_names()
+      for i, path_name in enumerate(path_names):
+          print(f"  Path {i}: {path_name}")
+    
+    # Process data and emit
+    op_output.emit(processed_value, "out")
+```
+````
+`````
+
+:::{note}
+- This method throws a `std::runtime_error` (C++)/ `RuntimeError` (Python) if:
+  - The operator backend is not GXF-compatible
+  - The fragment is not set
+  - The operator spec is not set
+  - Fragment flow tracking is not enabled
+- An empty `MessageLabel` is returned (with an error logged) if the input port name is invalid
+- An empty `MessageLabel` is returned if the port does not have tracking data yet
+- This method should ideally be called after receiving data on the input port
+:::
+
+See the {cpp:class}`MessageLabel <holoscan::MessageLabel>`/{py:class}`MessageLabel <holoscan.core.MessageLabel>` API documentation for the complete list of available methods to query path and timing information.
+
 ## Customizing Data Flow Tracking
 
 Data flow tracking can be customized using a few optional configuration parameters. The `track()` method ({cpp:func}`C++ <holoscan::Fragment::track>`//{py:func}`Python <holoscan.core.Application.track>`) (or `track_distributed` method ({cpp:func}`C++ <holoscan::Application::track_distributed>`/{py:func}`Python <holoscan.core.Application.track_distributed>`)` for distributed apps) can be configured to skip a few messages at the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few messages at the end of an application's run as a *wrap-up* period. Additionally, outlier end-to-end latencies can be ignored by setting a latency threshold value (in ms) which is the minimum latency below which the observed latencies are ignored.
@@ -284,6 +386,39 @@ The logger file logs the paths of the messages after a leaf operator has finishe
 
 This log file can further be analyzed to understand latency distributions, bottlenecks, data flow,
 and other characteristics of an application.
+
+## Probing Intermediate Operators
+
+The `add_probe_operator` method ({cpp:func}`C++ <holoscan::DataFlowTracker::add_probe_operator>`/{py:func}`python <holoscan.core.DataFlowTracker.add_probe_operator>`) allows tracking of intermediate operators (non-root, non-leaf operators) in the application graph. This enables measurement of latency from root operators to the probed operator and the number of messages published by that operator. Logging is not currently supported for probed operators.
+
+:::{note}
+The `add_probe_operator` function is currently only tested with the `DoubleBufferTransmitter`, `DoubleBufferReceiver` and the default connection configurations. Support for other message passing configurations has not yet been validated.
+:::
+
+`````{tab-set}
+````{tab-item} C++
+```{code-block} cpp
+:emphasize-lines: 3
+:name: holoscan-flow-tracking-probe-cpp
+auto app = holoscan::make_application<MyPingApp>();
+auto& tracker = app->track();
+tracker.add_probe_operator("middle_operator");
+app->run();
+```
+````
+````{tab-item} Python
+```{code-block} python
+:emphasize-lines: 4
+:name: holoscan-flow-tracking-probe-python
+from holoscan.core import Tracker
+# ...
+app = MyPingApp()
+with Tracker(app) as tracker:
+   tracker.add_probe_operator("middle_operator")
+   app.run()
+```
+````
+`````
 
 ### Logging for Distributed Applications
 

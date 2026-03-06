@@ -5,9 +5,15 @@ This product includes software developed at NVIDIA CORPORATION (https://www.nvid
 
 Holoscan uses the following open source software:
 
+OpenSSL (https://github.com/openssl/openssl)
+Licensed under Apache 2.0 (https://github.com/openssl/openssl/blob/master/LICENSE.txt)
+
 automake (https://packages.ubuntu.com/jammy/automake)
 1995-2013, Free Software Foundation, Inc
 Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/a/automake-1.16/automake-1.16_1.16.5-1.3/copyright)
+
+cURLpp (https://github.com/jpbarrette/curlpp)
+Licensed under MIT (https://github.com/jpbarrette/curlpp/blob/v0.8.1/doc/LICENSE)
 
 CLI11   (https://github.com/CLIUtils/CLI11)
 Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
@@ -23,9 +29,23 @@ CMake (https://gitlab.kitware.com/cmake/cmake)
 Copyright 2000-2023 Kitware, Inc. and Contributors. All rights reserved.
 Licensed under BSD-3-clause (https://gitlab.kitware.com/cmake/cmake/raw/master/Copyright.txt)
 
+cmakelint (https://pypi.org/project/cmakelint/)
+Copyright 2009 Richard Quirk
+Licensed under Apache-2.0 (https://github.com/cmake-lint/cmake-lint/blob/632dc76/LICENSE)
+
+codespell (https://pypi.org/project/codespell/)
+Licensed under GPL-2.0 (https://github.com/codespell-project/codespell/blob/master/COPYING)
+
 moodycamel::ConcurrentQueue (https://github.com/cameron314/concurrentqueue)
 Copyright (c) 2013 - 2016 Cameron Desrochers
 Licensed under BSD-2-clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
+
+coveragepy (https://pypi.org/project/coverage/)
+Licensed under Apache 2.0 (https://github.com/coveragepy/coveragepy/blob/ab3dd57/LICENSE.txt)
+
+cpplint (https://pypi.org/project/cpplint/)
+Copyright (C) 2009 Google Inc.
+Licensed under BSD-3-Clause (https://github.com/cpplint/cpplint/blob/master/LICENSE)
 
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
@@ -90,6 +110,9 @@ Copyright © 2015      Research Organization for Information Science and Technol
 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
 Licensed under BSD-3-clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
 
+iproute2 (https://git.kernel.org/pub/scm/network/iproute2/iproute2.git)
+Licensed under GPLv2 (https://github.com/iproute2/iproute2?tab=GPL-2.0-1-ov-file#readme)
+
 libdecor-0-plugin-1-cairo (https://packages.ubuntu.com/jammy/libdecor-0-plugin-1-cairo)
 2010 Intel Corporation
 2011 Benjamin Franzke
@@ -122,6 +145,10 @@ Copyright (c) 1991-2020 Thomas G. Lane. All Rights Reserved.
 Copyright (c) 1991-2020 Guido Vollbeding. All Rights Reserved.
 Copyright (c) 2010 Nokia Corporation
 Licensed under JPEG (https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md)
+
+libnuma (https://github.com/numactl/numactl/blob/be8b2225/libnuma.c)
+Copyright (C) 2003,2004,2005,2008 Andi Kleen,SuSE Labs and Cliff Wickman,SGI.
+Licensed under LGPL-2.1 (https://github.com/numactl/numactl/blob/be8b2225/libnuma.c)
 
 libtool (https://www.gnu.org/software/libtool/)
 Copyright (C) 1996-2009 Free Software Foundation, Inc.
@@ -218,11 +245,18 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.3/LICENSE)
+Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
+
+net-tools (https://github.com/ecki/net-tools)
+Licensed under GPLv2 (https://github.com/ecki/net-tools?tab=GPL-2.0-1-ov-file)
 
 Ninja (https://packages.ubuntu.com/jammy/ninja-build)
 2011-2014 Google
 Licensed under Apache 2 License (http://changelogs.ubuntu.com/changelogs/pool/universe/n/ninja-build/ninja-build_1.10.1-1/copyright)
+
+numpy (https://numpy.org/)
+Copyright (c) 2005-2025, NumPy Developers
+Licensed under BSD-3-Clause (https://github.com/numpy/numpy/blob/v2.4.2/LICENSE.txt)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
@@ -276,12 +310,20 @@ RAPIDS rapids-cmake (https://github.com/rapidsai/rapids-cmake)
 Copyright (c) 2020-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 Licensed under Apache-2.0 (https://github.com/rapidsai/rapids-cmake/blob/v24.12.00/LICENSE)
 
+rdma-core/ibverbs (https://github.com/linux-rdma/rdma-core)
+Refer to individual files for information on the copyright holders.
+Licensed under BSD (MIT variant) (https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT)
+
 RMM (https://github.com/rapidsai/rmm)
 Copyright (c) 2018-2024, NVIDIA CORPORATION.
 Licensed under Apache 2.0 (https://github.com/rapidsai/rmm/blob/branch-24.04/LICENSE)
 
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
+
+ruff (https://pypi.org/project/ruff/)
+Copyright (c) 2022 Charles Marsh
+Licensed under MIT (https://github.com/astral-sh/ruff/blob/main/LICENSE)
 
 spdlog (https://github.com/gabime/spdlog)
 Copyright (c) 2016 Gabi Melman.
@@ -298,6 +340,10 @@ Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe
 stb (https://github.com/nothings/stb)
 Copyright (c) 2017 Sean Barrett
 Licensed under MIT (https://github.com/nothings/stb/blob/master/LICENSE)
+
+tomli (https://pypi.org/project/tomli/)
+Copyright (c) 2021 Taneli Hukkinen
+Licensed under MIT (https://github.com/hukkin/tomli/blob/master/LICENSE)
 
 UCX (https://openucx.org/)
 Copyright (c) 2014-2015      UT-Battelle, LLC. All rights reserved.
@@ -435,3 +481,7 @@ Licensed under MIT (https://www.x.org/releases/X11R7.7/doc/xorg-docs/License.txt
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.
 Licensed under MIT (https://github.com/jbeder/yaml-cpp/blob/yaml-cpp-0.8.0/LICENSE)
+
+zlib (https://zlib.net/)
+(C) 1995-2026 Jean-loup Gailly and Mark Adler
+Licensed under Zlib (https://raw.githubusercontent.com/madler/zlib/9e35567064baded660f61732b247ef5abc809014/LICENSE)

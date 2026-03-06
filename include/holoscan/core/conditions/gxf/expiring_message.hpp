@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_CONDITIONS_GXF_EXPIRING_MESSAGE_HPP
 
 #include <memory>
+#include <utility>
 
 #include <gxf/std/scheduling_terms.hpp>
 
@@ -89,7 +90,7 @@ class ExpiringMessageAvailableCondition : public gxf::GXFCondition {
     return "nvidia::gxf::ExpiringMessageAvailableSchedulingTerm";
   }
 
-  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
   std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   void setup(ComponentSpec& spec) override;

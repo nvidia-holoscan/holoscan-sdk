@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,12 +17,96 @@
 
 #include "holoscan/core/io_spec.hpp"
 
+#include <memory>
 #include <string>
 #include <unordered_map>
+
+#include "holoscan/core/arg.hpp"
+#include "holoscan/core/resources/gxf/pubsub_receiver.hpp"
+#include "holoscan/core/resources/gxf/pubsub_transmitter.hpp"
 
 using std::string_literals::operator""s;
 
 namespace holoscan {
+
+IOSpec& IOSpec::qos(const nvidia::gxf::QoSProfile& profile) {
+  switch (connector_type_) {
+    case ConnectorType::kDefault:
+      // Automatically switch to PubSub.
+      connector_type_ = ConnectorType::kPubSub;
+      break;
+    case ConnectorType::kPubSub:
+      break;
+    default:
+      HOLOSCAN_LOG_WARN(
+          "qos() is ignored for non-PubSub connector on port '{}'. "
+          "QoS profiles are only used with ConnectorType::kPubSub.",
+          name_);
+      return *this;
+  }
+
+  // Ensure the connector exists, then set the QoS profile.
+  if (!connector_) {
+    if (io_type_ == IOType::kInput) {
+      auto rx = std::make_shared<PubSubReceiver>();
+      rx->qos(profile);
+      connector_ = rx;
+    } else {
+      auto tx = std::make_shared<PubSubTransmitter>();
+      tx->qos(profile);
+      connector_ = tx;
+    }
+  } else {
+    // Connector already exists (e.g. from a prior topic() call) — set QoS on it.
+    if (io_type_ == IOType::kInput) {
+      auto rx = std::dynamic_pointer_cast<PubSubReceiver>(connector_);
+      if (rx) {
+        rx->qos(profile);
+      } else {
+        HOLOSCAN_LOG_ERROR("qos(): connector on input port '{}' is not a PubSubReceiver", name_);
+      }
+    } else {
+      auto tx = std::dynamic_pointer_cast<PubSubTransmitter>(connector_);
+      if (tx) {
+        tx->qos(profile);
+      } else {
+        HOLOSCAN_LOG_ERROR("qos(): connector on output port '{}' is not a PubSubTransmitter",
+                           name_);
+      }
+    }
+  }
+  return *this;
+}
+
+IOSpec& IOSpec::topic(const std::string& name) {
+  switch (connector_type_) {
+    case ConnectorType::kDefault:
+      // Automatically switch to PubSub.
+      connector_type_ = ConnectorType::kPubSub;
+      break;
+    case ConnectorType::kPubSub:
+      break;
+    default:
+      HOLOSCAN_LOG_WARN(
+          "topic('{}') is ignored for non-PubSub connector on port '{}'. "
+          "Topic names are only used with ConnectorType::kPubSub.",
+          name,
+          name_);
+      return *this;
+  }
+
+  // Ensure the connector exists and set the topic_name argument.
+  if (!connector_) {
+    if (io_type_ == IOType::kInput) {
+      connector_ = std::make_shared<PubSubReceiver>(Arg("topic_name", name));
+    } else {
+      connector_ = std::make_shared<PubSubTransmitter>(Arg("topic_name", name));
+    }
+  } else {
+    connector_->add_arg(Arg("topic_name", name));
+  }
+  return *this;
+}
 
 YAML::Node IOSpec::to_yaml_node() const {
   YAML::Node node;
@@ -37,6 +121,7 @@ YAML::Node IOSpec::to_yaml_node() const {
       {ConnectorType::kDoubleBuffer, "kDoubleBuffer"s},
       {ConnectorType::kAsyncBuffer, "kAsyncBuffer"s},
       {ConnectorType::kUCX, "kUCX"s},
+      {ConnectorType::kPubSub, "kPubSub"s},
   };
 
   std::unordered_map<ConditionType, std::string> conditiontype_namemap{

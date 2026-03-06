@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -163,6 +163,10 @@ class Logger {
                   const FormatT& format, ArgsT&&... args) {
 // Version number of the fmt library represented as (major * 10000 + minor * 100 + patch)
 #if FMT_VERSION >= 110000
+    // Note: fmt v11's make_format_args requires lvalue references (T&...), so we cannot use
+    // std::forward here. The args are always lvalues within this function body anyway.
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     log_message(file, line, function_name, level, format, fmt::make_format_args(args...));
 #else
     log_message(file,
@@ -177,6 +181,10 @@ class Logger {
   template <typename FormatT, typename... ArgsT>
   static void log(LogLevel level, const FormatT& format, ArgsT&&... args) {
 #if FMT_VERSION >= 110000
+    // Note: fmt v11's make_format_args requires lvalue references (T&...), so we cannot use
+    // std::forward here. The args are always lvalues within this function body anyway.
+
+    // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     log_message(level, format, fmt::make_format_args(args...));
 #else
     log_message(

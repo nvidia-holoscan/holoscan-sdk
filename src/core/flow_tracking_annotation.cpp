@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,15 +17,16 @@
 
 #include "holoscan/core/flow_tracking_annotation.hpp"
 
+#include <fmt/format.h>
+
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
 #include <utility>
 
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/message.hpp"
 #include "holoscan/core/messagelabel.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -33,16 +34,56 @@
 
 namespace holoscan {
 
+namespace {
+
+// Thread-safe one-time initialization of the MessageLabel GXF type ID.
+gxf_tid_t g_message_label_tid = GxfTidNull();
+std::once_flag g_message_label_tid_init_flag;
+
+gxf_tid_t get_message_label_tid(const gxf_context_t& context) {
+  std::call_once(g_message_label_tid_init_flag, [&context]() {
+    HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "holoscan::MessageLabel", &g_message_label_tid));
+  });
+  return g_message_label_tid;
+}
+
+// Striped lock for entity-level synchronisation during annotation operations.
+// This prevents races when adding or modifying MessageLabel components
+// on the same entity from different threads (e.g. async buffers with event-based scheduler).
+constexpr std::size_t kEntityLockStripes = 31;
+std::array<std::mutex, kEntityLockStripes> g_entity_annotation_mutexes;
+
+std::mutex& get_entity_mutex(gxf_uid_t uid) {
+  return g_entity_annotation_mutexes[static_cast<std::size_t>(uid) % kEntityLockStripes];
+}
+
+}  // namespace
+
 gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Operator* op,
                               const char* transmitter_name) {
   HOLOSCAN_LOG_DEBUG("annotate_message");
   if (!op) {
-    HOLOSCAN_LOG_ERROR("Operator is nullptr. Transmitter: {}", transmitter_name);
+    if (transmitter_name) {
+      HOLOSCAN_LOG_ERROR("Operator is nullptr. Transmitter: {}", transmitter_name);
+    } else {
+      HOLOSCAN_LOG_ERROR("Operator is nullptr. Transmitter name is nullptr.");
+    }
     return GXF_FAILURE;
   } else if (op->operator_type() == Operator::OperatorType::kVirtual) {
     HOLOSCAN_LOG_DEBUG("Virtual Operators are not timestamped.");
     return GXF_SUCCESS;
   } else {
+    if (uid == kNullUid) {
+      HOLOSCAN_LOG_WARN(
+          "Invalid message UID received. Not annotating message. Op: {}, Transmitter: {}",
+          op ? op->qualified_name() : "null",
+          transmitter_name ? transmitter_name : "null");
+      return GXF_SUCCESS;
+    }
+    // Update the number of published messages
+    auto op_transmitter_name_pair = fmt::format("{}->{}", op->qualified_name(), transmitter_name);
+    op->update_published_messages(op_transmitter_name_pair);
+
     auto gxf_entity = nvidia::gxf::Entity::Shared(context, uid);
     if (!gxf_entity) {
       HOLOSCAN_LOG_ERROR("Failed to get GXF Entity with uid: {}", uid);
@@ -89,12 +130,16 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
       m.update_last_op_publish();
     }
 
-    HOLOSCAN_LOG_DEBUG("annotate_message: MessageLabel: {}", m.to_string());
+    HOLOSCAN_LOG_DEBUG("annotate_message: op={}, uid={}, MessageLabel: {}",
+                       op->qualified_name(),
+                       uid,
+                       m.to_string());
 
-    static gxf_tid_t message_label_tid = GxfTidNull();
-    if (message_label_tid == GxfTidNull()) {
-      HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid));
-    }
+    gxf_tid_t message_label_tid = get_message_label_tid(context);
+
+    // Lock the entity while we check-then-modify the MessageLabel component.
+    // Without this, concurrent annotate/deannotate calls on the same entity
+    std::lock_guard<std::mutex> entity_lock(get_entity_mutex(uid));
 
     // Check if a message_label component already exists in the entity
     // If a message_label component already exists in the entity, just update the value of the
@@ -137,7 +182,9 @@ void append_old_to_last_op_name(MessageLabel& m) {
 
 gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Operator* op,
                                 const char* receiver_name, bool is_old_message) {
-  HOLOSCAN_LOG_DEBUG("deannotate_message");
+  HOLOSCAN_LOG_DEBUG("deannotate_message: op={}, receiver={}",
+                     op ? op->qualified_name() : "null",
+                     receiver_name ? receiver_name : "null");
   if (!op) {
     HOLOSCAN_LOG_ERROR("Operator is nullptr. Receiver: {}", receiver_name);
     return GXF_FAILURE;
@@ -146,10 +193,21 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
     return GXF_SUCCESS;
   }
 
-  static gxf_tid_t message_label_tid = GxfTidNull();
-  if (message_label_tid == GxfTidNull()) {
-    HOLOSCAN_GXF_CALL(GxfComponentTypeId(context, "holoscan::MessageLabel", &message_label_tid));
+  // No valid message UID received.
+  if (!uid || *uid == kNullUid) {
+    HOLOSCAN_LOG_DEBUG("deannotate_message: op={}, receiver={} - no message (clearing stale label)",
+                       op ? op->qualified_name() : "null",
+                       receiver_name ? receiver_name : "null");
+    op->delete_input_message_label(receiver_name);
+    return GXF_SUCCESS;
   }
+
+  gxf_tid_t message_label_tid = get_message_label_tid(context);
+
+  // Lock the entity while we read the MessageLabel component.  This pairs with
+  // the lock in annotate_message() so that a concurrent annotate on the same
+  // entity cannot modify the component list
+  std::lock_guard<std::mutex> entity_lock(get_entity_mutex(*uid));
 
   if (gxf::has_component(context, *uid, message_label_tid, "message_label")) {
     // Get the GXF entity after confirming that the message label component exists in the entity.

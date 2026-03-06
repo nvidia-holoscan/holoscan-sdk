@@ -28,25 +28,24 @@ namespace inference {
 
 InferStatus ManagerProcessor::initialize(const MultiMappings& process_operations,
                                          const Mappings& custom_kernels, bool use_cuda_graphs,
-                                         const std::string config_path = {}) {
+                                         const std::string& config_path) {
   try {
     infer_data_ = std::make_unique<DataProcessor>();
   } catch (const std::bad_alloc&) {
     return InferStatus(holoinfer_code::H_ERROR,
                        "Process Manager, Holoscan out data core: Memory allocation error");
   }
-  return infer_data_->initialize(
-      process_operations, custom_kernels, use_cuda_graphs, std::move(config_path));
+  return infer_data_->initialize(process_operations, custom_kernels, use_cuda_graphs, config_path);
 }
 
 InferStatus ManagerProcessor::process_multi_tensor_operation(
-    const std::string tensor_name, const std::vector<std::string>& operation_names,
+    const std::string& tensor_name, const std::vector<std::string>& operation_names,
     DataMap& inferred_result_map, const std::map<std::string, std::vector<int>>& dimension_map) {
   InferStatus status = InferStatus(holoinfer_code::H_ERROR);
 
   std::vector<std::string> tensor_tokens;
 
-  if (tensor_name.find(":") != std::string::npos) {
+  if (tensor_name.find(':') != std::string::npos) {
     string_split(tensor_name, tensor_tokens, ':');
   }
 
@@ -70,9 +69,9 @@ InferStatus ManagerProcessor::process_multi_tensor_operation(
         return status;
       }
       void* input_data = inferred_result_map.at(tensor)->host_buffer_->data();
-      std::vector<int> dimensions = dimension_map.at(tensor);
+      const std::vector<int>& dimensions = dimension_map.at(tensor);
       all_tensor_data[tensor] = input_data;
-      all_tensor_dims[tensor] = std::move(dimensions);
+      all_tensor_dims[tensor] = dimensions;
     }
 
     last_result = infer_data_->process_transform(operation_name,
@@ -110,7 +109,7 @@ InferStatus ManagerProcessor::process(const MultiMappings& tensor_oper_map,
     // If the incoming tensor is not present in incoming result map
     // then either the tensor is absent (error) or its a multi_tensor_input case
     if (inferred_result_map.find(tensor_name) == inferred_result_map.end()) {
-      if (tensor_name.find(":") != std::string::npos) {
+      if (tensor_name.find(':') != std::string::npos) {
         // multi-tensors are represented as a string, different tensor names are separated by ':'
         auto status = process_multi_tensor_operation(
             tensor_name, operations, inferred_result_map, dimension_map);
@@ -139,7 +138,7 @@ InferStatus ManagerProcessor::process(const MultiMappings& tensor_oper_map,
         input_data = inferred_result_map.at(tensor_name)->host_buffer_->data();
       }
 
-      const std::vector<int> dimensions = dimension_map.at(tensor_name);
+      const std::vector<int>& dimensions = dimension_map.at(tensor_name);
 
       for (auto& operation : operations) {
         std::vector<int64_t> processed_dims;
@@ -270,9 +269,9 @@ InferStatus ProcessorContext::process(const MultiMappings& tensor_to_oper_map,
 
 InferStatus ProcessorContext::initialize(const MultiMappings& process_operations,
                                          const Mappings& custom_kernels, bool use_cuda_graphs,
-                                         const std::string config_path = {}) {
+                                         const std::string& config_path) {
   return process_manager_->initialize(
-      process_operations, custom_kernels, use_cuda_graphs, std::move(config_path));
+      process_operations, custom_kernels, use_cuda_graphs, config_path);
 }
 
 }  // namespace inference

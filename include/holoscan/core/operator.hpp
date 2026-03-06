@@ -408,7 +408,7 @@ class Operator : public ComponentBase {
    * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
    * @return true if the operator has all virtual operator successors, false otherwise
    */
-  static bool is_all_operator_successor_virtual(OperatorNodeType op, OperatorGraph& graph);
+  static bool is_all_operator_successor_virtual(const OperatorNodeType& op, OperatorGraph& graph);
 
   /**
    * @brief Returns whether all the predecessors of an operator are virtual operators
@@ -417,7 +417,7 @@ class Operator : public ComponentBase {
    * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
    * @return true if the operator has all virtual operator predecessors, false otherwise
    */
-  static bool is_all_operator_predecessor_virtual(OperatorNodeType op, OperatorGraph& graph);
+  static bool is_all_operator_predecessor_virtual(const OperatorNodeType& op, OperatorGraph& graph);
 
   /**
    * @brief Returns the fully qualified name of the operator including the name of the fragment.
@@ -509,6 +509,28 @@ class Operator : public ComponentBase {
   std::shared_ptr<nvidia::gxf::GraphEntity> graph_entity() { return graph_entity_; }
 
   /**
+   * @brief Get the current message label for a given input port.
+   *
+   * This method retrieves the MessageLabel associated with data received on the specified
+   * input port. The MessageLabel contains timing and path information for data flow tracking.
+   *
+   * @param input_port_name The name of the input port.
+   * @return MessageLabel The current message label for the input port. Returns an empty
+   *         MessageLabel if the port does not have a message label or if the port does not exist
+   *         (logs an error in the latter case as well).
+   *
+   * @throws std::runtime_error If the operator backend is not GXF-compatible.
+   * @throws std::runtime_error If fragment is not set.
+   * @throws std::runtime_error If operator spec is not set.
+   * @throws std::runtime_error If fragment flow tracking is not enabled.
+   *
+   * @note This method should ideally be called after receiving data on the input port.
+   * @note If the input_port_name is invalid (not found in the operator's input ports), an error
+   *       is logged and an empty MessageLabel is returned.
+   */
+  MessageLabel get_data_flow_tracking_label(const std::string& input_port_name);
+
+  /**
    * @brief Get a shared pointer to the dynamic metadata of this operator.
    *
    *
@@ -588,10 +610,9 @@ class Operator : public ComponentBase {
       "A default CUDA stream pool is automatically added. To provide a customized CUDA stream "
       "instead, just pass a std::shared_ptr<CudaStreamPool> as created via "
       "Fragment::make_resource<CudaStreamPool> directly as an unnamed positional argument to "
-      "Fragment::make_operator.")]]
-  void add_cuda_stream_pool(int32_t dev_id = 0, uint32_t stream_flags = 0,
-                            int32_t stream_priority = 0, uint32_t reserved_size = 1,
-                            uint32_t max_size = 0);
+      "Fragment::make_operator.")]] void
+  add_cuda_stream_pool(int32_t dev_id = 0, uint32_t stream_flags = 0, int32_t stream_priority = 0,
+                       uint32_t reserved_size = 1, uint32_t max_size = 0);
 
   /**@brief Return the Receiver corresponding to a specific input port.
    *
@@ -822,6 +843,14 @@ class Operator : public ComponentBase {
     }
   }
 
+  /// @name Connector type queries
+  /// @{
+  bool has_ucx_connector();     ///< Check if the operator has any UCX connectors.
+  bool has_pubsub_connector();  ///< Check if the operator has any PubSub connectors.
+  bool
+  has_network_connector();  ///< Check if the operator has any network (UCX or PubSub) connectors.
+                            /// @}
+
  protected:
   // Making the following classes as friend classes to allow them to access
   // get_consolidated_input_label, num_published_messages_map, update_input_message_label,
@@ -953,7 +982,7 @@ class Operator : public ComponentBase {
    *
    * @param output_name The name of the output port
    */
-  void update_published_messages(std::string output_name);
+  void update_published_messages(const std::string& output_name);
 
   /// Initialize the next flows for the operator.
   void initialize_next_flows();
@@ -1002,14 +1031,13 @@ class Operator : public ComponentBase {
 
   /// List of restricted substrings that cannot be used in operator names.
   static inline const std::vector<std::string> kRestrictedSubstrings = {
+      // NOLINT(cert-err58-cpp)
       ".",     // Reserved for port name separation
       "_old",  // Reserved suffix for asynchronous buffer's old message handling
   };
 
   ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();
-
-  bool has_ucx_connector();  ///< Check if the operator has any UCX connectors.
 
   /// The MessageLabel objects corresponding to the input ports indexed by the input port.
   std::unordered_map<std::string, MessageLabel> input_message_labels;

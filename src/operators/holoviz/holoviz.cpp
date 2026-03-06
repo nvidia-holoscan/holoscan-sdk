@@ -477,6 +477,7 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "Instance of gxf::CudaStreamPool.");
 }
 
+// NOLINTBEGIN(cert-err58-cpp)
 /*static*/ const std::array<std::pair<holoscan::ops::HolovizOp::InputType, std::string>, 17>
     HolovizOp::kInputTypeToStr{
         {{holoscan::ops::HolovizOp::InputType::UNKNOWN, "unknown"},
@@ -732,6 +733,7 @@ HolovizOp::chromaLocationFromString(const std::string& string) {
          {holoscan::ops::HolovizOp::ColorSpace::PASS_THROUGH, "pass_through"},
          {holoscan::ops::HolovizOp::ColorSpace::BT709_LINEAR, "bt709_linear"},
          {holoscan::ops::HolovizOp::ColorSpace::AUTO, "auto"}}};
+// NOLINTEND(cert-err58-cpp)
 
 /*static*/ nvidia::gxf::Expected<holoscan::ops::HolovizOp::ColorSpace>
 HolovizOp::colorSpaceFromString(const std::string& string) {
@@ -1069,11 +1071,13 @@ void HolovizOp::render_color_image(const InputSpec& input_spec, BufferInfo& buff
     const void* host_buffer_ptr_plane_2 = nullptr;
     size_t row_pitch_plane_2 = 0;
     if (buffer_info.color_planes.size() >= 2) {
+      // NOLINTNEXTLINE(performance-no-int-to-ptr)
       host_buffer_ptr_plane_1 = reinterpret_cast<const void*>(uintptr_t(host_buffer_ptr) +
                                                               buffer_info.color_planes[1].offset);
       row_pitch_plane_1 = buffer_info.color_planes[1].stride;
     }
     if (buffer_info.color_planes.size() >= 3) {
+      // NOLINTNEXTLINE(performance-no-int-to-ptr)
       host_buffer_ptr_plane_2 = reinterpret_cast<const void*>(uintptr_t(host_buffer_ptr) +
                                                               buffer_info.color_planes[2].offset);
       row_pitch_plane_2 = buffer_info.color_planes[2].stride;
@@ -1171,6 +1175,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
     }
     constexpr uint32_t values_per_coordinate = 3;
     float coords[values_per_coordinate]{0.F, 0.F, 0.05F};
+    // NOLINTBEGIN(performance-no-int-to-ptr)
     for (uint32_t index = 0; index < coordinates; ++index) {
       uint32_t component_index = 0;
       // copy from source array
@@ -1195,6 +1200,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
           input_spec.text_[std::min(index, static_cast<uint32_t>(input_spec.text_.size()) - 1)]
               .c_str());
     }
+    // NOLINTEND(performance-no-int-to-ptr)
   } else {
     viz::PrimitiveTopology topology;
     uint32_t primitive_count;
@@ -1397,6 +1403,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
         std::vector<float> coords;
         coords.reserve(coordinate_count * values_per_coordinate);
 
+        // NOLINTBEGIN(performance-no-int-to-ptr)
         for (uint32_t index = 0; index < coordinate_count; ++index) {
           uint32_t component_index = 0;
           // copy from source array
@@ -1420,6 +1427,7 @@ void HolovizOp::render_geometry(const InputSpec& input_spec, BufferInfo& buffer_
           }
           src_coord += buffer_info.stride[1];
         }
+        // NOLINTEND(performance-no-int-to-ptr)
 
         viz::Primitive(topology, primitive_count, coords.size(), coords.data());
       }
@@ -1883,6 +1891,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
       camera_up_cur_ = camera_up_message.value();
     }
     // set the camera
+    // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
     viz::SetCamera(camera_eye_cur_[0],
                    camera_eye_cur_[1],
                    camera_eye_cur_[2],
@@ -1893,6 +1902,7 @@ void HolovizOp::compute(InputContext& op_input, OutputContext& op_output,
                    camera_up_cur_[1],
                    camera_up_cur_[2],
                    true);
+    // NOLINTEND(cppcoreguidelines-pro-bounds-constant-array-index)
   }
 
   // build the input spec list

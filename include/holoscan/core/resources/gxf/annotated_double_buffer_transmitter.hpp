@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,6 @@
 
 #ifndef HOLOSCAN_CORE_RESOURCES_GXF_ANNOTATED_DOUBLE_BUFFER_TRANSMITTER_HPP
 #define HOLOSCAN_CORE_RESOURCES_GXF_ANNOTATED_DOUBLE_BUFFER_TRANSMITTER_HPP
-
-#include <string>
 
 #include <gxf/core/component.hpp>
 #include <gxf/core/entity.hpp>
@@ -68,10 +66,6 @@ class AnnotatedDoubleBufferTransmitter : public nvidia::gxf::DoubleBufferTransmi
 
  private:
   holoscan::Operator* op_ = nullptr;  ///< The operator that this transmitter is attached to.
-
-  /// The concatenated name of the operator and this transmitter.
-  std::string op_transmitter_name_pair_;
-  int is_op_root_ = -1;  ///< Indicates whether associated operator is a root operator.
 };
 
 }  // namespace holoscan

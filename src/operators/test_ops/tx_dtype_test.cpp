@@ -182,93 +182,93 @@ void DataTypeTxTestOp::compute([[maybe_unused]] InputContext& op_input, OutputCo
     // Vector of basic types
   } else if (dtype == "std::shared_ptr<std::vector<bool>>") {
     auto vec = vector<bool>{true, false, true};
-    op_output.emit(make_shared<vector<bool>>(move(vec)));
+    op_output.emit(make_shared<vector<bool>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<int8_t>>") {
     auto vec = vector<int8_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<int8_t>>(move(vec)));
+    op_output.emit(make_shared<vector<int8_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<int16_t>>") {
     auto vec = vector<int16_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<int16_t>>(move(vec)));
+    op_output.emit(make_shared<vector<int16_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<int32_t>>") {
     auto vec = vector<int32_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<int32_t>>(move(vec)));
+    op_output.emit(make_shared<vector<int32_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<int64_t>>") {
     auto vec = vector<int64_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<int64_t>>(move(vec)));
+    op_output.emit(make_shared<vector<int64_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<uint8_t>>") {
     auto vec = vector<uint8_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<uint8_t>>(move(vec)));
+    op_output.emit(make_shared<vector<uint8_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<uint16_t>>") {
     auto vec = vector<uint16_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<uint16_t>>(move(vec)));
+    op_output.emit(make_shared<vector<uint16_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<uint32_t>>") {
     auto vec = vector<uint32_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<uint32_t>>(move(vec)));
+    op_output.emit(make_shared<vector<uint32_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<uint64_t>>") {
     auto vec = vector<uint64_t>{1, 2, 3};
-    op_output.emit(make_shared<vector<uint64_t>>(move(vec)));
+    op_output.emit(make_shared<vector<uint64_t>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<float>>") {
     auto vec = vector<float>{1.0f, 2.0f, 3.0f};
-    op_output.emit(make_shared<vector<float>>(move(vec)));
+    op_output.emit(make_shared<vector<float>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<double>>") {
     auto vec = vector<double>{1.0, 2.0, 3.0};
-    op_output.emit(make_shared<vector<double>>(move(vec)));
+    op_output.emit(make_shared<vector<double>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::string>>") {
     auto vec = vector<string>{"test1", "test2", "test3"};
-    op_output.emit(make_shared<vector<string>>(move(vec)));
+    op_output.emit(make_shared<vector<string>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::complex<float>>>") {
     auto vec = vector<complex<float>>{{1.0f, 1.0f}, {2.0f, 2.0f}, {3.0f, 3.0f}};
-    op_output.emit(make_shared<vector<complex<float>>>(move(vec)));
+    op_output.emit(make_shared<vector<complex<float>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::complex<double>>>") {
     auto vec = vector<complex<double>>{{1.0, 1.0}, {2.0, 2.0}, {3.0, 3.0}};
-    op_output.emit(make_shared<vector<complex<double>>>(move(vec)));
+    op_output.emit(make_shared<vector<complex<double>>>(std::move(vec)));
     // Vector of vector types
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<bool>>>") {
     auto vec = vector<vector<bool>>{{true, false}, {false, true}};
-    op_output.emit(make_shared<vector<vector<bool>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<bool>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<int8_t>>>") {
     auto vec = vector<vector<int8_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<int8_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<int8_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<int16_t>>>") {
     auto vec = vector<vector<int16_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<int16_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<int16_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<int32_t>>>") {
     auto vec = vector<vector<int32_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<int32_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<int32_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<int64_t>>>") {
     auto vec = vector<vector<int64_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<int64_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<int64_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<uint8_t>>>") {
     auto vec = vector<vector<uint8_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<uint8_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<uint8_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<uint16_t>>>") {
     auto vec = vector<vector<uint16_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<uint16_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<uint16_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<uint32_t>>>") {
     auto vec = vector<vector<uint32_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<uint32_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<uint32_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<uint64_t>>>") {
     auto vec = vector<vector<uint64_t>>{{1, 2}, {3, 4}};
-    op_output.emit(make_shared<vector<vector<uint64_t>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<uint64_t>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<float>>>") {
     auto vec = vector<vector<float>>{{1.0f, 2.0f}, {3.0f, 4.0f}};
-    op_output.emit(make_shared<vector<vector<float>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<float>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<double>>>") {
     auto vec = vector<vector<double>>{{1.0, 2.0}, {3.0, 4.0}};
-    op_output.emit(make_shared<vector<vector<double>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<double>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<std::string>>>") {
     auto vec = vector<vector<std::string>>{{"test1", "test2"}, {"test3", "test4"}};
-    op_output.emit(make_shared<vector<vector<string>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<string>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<std::complex<float>>>>") {
     auto vec =
         vector<vector<complex<float>>>{{{1.0f, 1.0f}, {2.0f, 2.0f}}, {{3.0f, 3.0f}, {4.0f, 4.0f}}};
-    op_output.emit(make_shared<vector<vector<complex<float>>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<complex<float>>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::vector<std::vector<std::complex<double>>>>") {
     auto vec = vector<vector<complex<double>>>{{{1.0, 1.0}, {2.0, 2.0}}, {{3.0, 3.0}, {4.0, 4.0}}};
-    op_output.emit(make_shared<vector<vector<complex<double>>>>(move(vec)));
+    op_output.emit(make_shared<vector<vector<complex<double>>>>(std::move(vec)));
   } else if (dtype == "std::shared_ptr<std::unordered_map<std::string, std::string>>") {
     auto map = unordered_map<string, string>{{"key1", "value1"}, {"key2", "value2"}};
-    op_output.emit(make_shared<unordered_map<string, string>>(move(map)));
+    op_output.emit(make_shared<unordered_map<string, string>>(std::move(map)));
   } else {
     throw std::invalid_argument("Invalid data type: " + dtype);
   }

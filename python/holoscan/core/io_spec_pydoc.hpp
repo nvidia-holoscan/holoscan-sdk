@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -215,6 +215,25 @@ The following IOSpec.QueuePolicy values are supported:
    - QueuePolicy.REJECT : If the queue is full, reject (discard) the new item.
    - QueuePolicy.FAULT : If the queue is full, log a warning and reject the new item.
 
+)doc")
+
+PYDOC(topic, R"doc(
+Set the topic name for this port (publish/subscribe connectors only).
+
+If the connector type is ``DEFAULT``, it is automatically changed to ``PUBSUB`` and the topic is
+applied. If the connector type is already ``PUBSUB``, the topic is set on the existing connector.
+For any other connector type, a warning is logged and the topic is ignored.
+
+Parameters
+----------
+name : str
+    Topic name. The pub/sub backend will use this topic name to discover and automatically connect
+    any matching publisher and subscriber.
+
+Returns
+-------
+IOSpec
+    Reference to this IOSpec (for method chaining).
 )doc")
 
 }  // namespace IOSpec

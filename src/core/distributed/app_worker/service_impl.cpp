@@ -165,6 +165,9 @@ grpc::Status AppWorkerServiceImpl::ExecuteFragments(
         case holoscan::distributed::ConnectorType::UCX:
           connector_type = IOSpec::ConnectorType::kUCX;
           break;
+        case holoscan::distributed::ConnectorType::PUBSUB:
+          connector_type = IOSpec::ConnectorType::kPubSub;
+          break;
         default:
           HOLOSCAN_LOG_ERROR("Unsupported connector type: {}",
                              static_cast<int>(connection_item.connector_type()));

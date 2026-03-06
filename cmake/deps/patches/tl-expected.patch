@@ -1,0 +1,44 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index ddab64e..e346821 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -39,7 +39,7 @@ endif()
+ configure_package_config_file(
+   "${PROJECT_SOURCE_DIR}/cmake/${PROJECT_NAME}-config.cmake.in"
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+-  INSTALL_DESTINATION "share/cmake/${PROJECT_NAME}")
++  INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
+ 
+ write_basic_package_version_file(
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+@@ -48,19 +48,25 @@ write_basic_package_version_file(
+ 
+ install(TARGETS expected
+   EXPORT ${PROJECT_NAME}-targets
+-  INCLUDES DESTINATION "${CMAKE_INSTALL_DATADIR}")
++  INCLUDES DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+ 
+ install(EXPORT ${PROJECT_NAME}-targets
+-  DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}"
++  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
+   NAMESPACE tl::
+-  FILE "${PROJECT_NAME}-targets.cmake")
++  FILE "${PROJECT_NAME}-targets.cmake"
++  COMPONENT tl-expected)
+ 
+ install(FILES
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config-version.cmake"
+   "${PROJECT_BINARY_DIR}/${PROJECT_NAME}-config.cmake"
+-  DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/${PROJECT_NAME}")
++  DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
++  COMPONENT tl-expected)
+ 
+-install(DIRECTORY "include/" TYPE INCLUDE)
++install(DIRECTORY "include/" TYPE INCLUDE COMPONENT tl-expected)
++
++export(TARGETS expected
++  NAMESPACE tl::
++  FILE ${PROJECT_NAME}-targets.cmake)
+ 
+ if(EXPECTED_BUILD_TESTS)
+   set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)

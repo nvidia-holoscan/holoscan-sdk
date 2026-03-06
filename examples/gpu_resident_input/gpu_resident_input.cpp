@@ -264,6 +264,16 @@ bool wait_for_graph_launch(std::shared_ptr<holoscan::Application> app) {
 int main() {
   auto app = holoscan::make_application<GpuResidentApplication>();
 
+  // Compose the graph to create the GPU-resident executor
+  app->compose_graph();
+
+  // Enable performance measurement: collect up to 10000 samples
+  app->gpu_resident().enable_perf_measurement(10000);
+
+  // Note: sync_with_host() is NOT required here because the data ready handler drives
+  // execution entirely on the GPU. The host does not read back results via cudaMemcpy
+  // between iterations, so no system-wide fence is needed.
+
   auto future = app->run_async();
 
   // Wait for the GPU-resident CUDA graph to be launched
@@ -283,6 +293,10 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
   }
   HOLOSCAN_LOG_INFO("GPU-resident fragment is torn down");
+
+  // Print performance metrics
+  app->gpu_resident().print_perf_metrics(100, 100);
+  app->gpu_resident().save_perf_results_as_csv();
 
   return 0;
 }

@@ -32,19 +32,19 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v3.11.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-igpu
   ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -130,7 +130,7 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 3.11 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.0 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -319,38 +319,6 @@ For example, you can define an operator processing input video (as a tensor).You
 
         op_output.emit(out_message, "output_tensor")
     ```
-
-**Q6: Is there support in the Holoscan SDK, particularly for models written as Triton Python backends like NVIDIA's FoundationPose?**
-
-A6: Triton backends are not currently supported.The Inference Operator supports TensorRT (trt), ONNX Runtime (onnxrt), and Torch backends.
-
- For more information on the Inference Operator please refer to the [section](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html) in the User Guide regarding the Inference Operator .
-
-**Q7: Can I directly use a .pth (PyTorch) model file with the Holoscan SDK's inference operator?**
-A7:No, you cannot use a .pth model file directly with the Holoscan SDK. Here's why and what you can do instead:
-
-1. Holoscan SDK's Torch backend is based on libtorch, which requires models to be in TorchScript format.
-1. Converting a .pth model to TorchScript is a manual process and cannot be done automatically within the SDK.
-1. For the best performance and ease of use, it's recommended to: a) Use a TensorRT (TRT) model if available. b) If you have an ONNX model, you can convert it to TRT automatically within the SDK.
-1. Using a TRT model (or converting from ONNX to TRT) will likely provide the fastest inference and be the easiest to set up with the Holoscan SDK.
-
-In summary, while direct .pth file usage isn't supported, converting to TensorRT or using ONNX with automatic TRT conversion are the recommended approaches for optimal performance and compatibility with the Holoscan SDK.
-
-**Q8: Can I use multiple models with the Inference Operator?**
-
-A8: Yes, you can use multiple models by specifying them in the `model_path_map` parameter. For more information, please refer to the [Parameters section](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html\#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
-
-**Q9: How can I enable parallel inference for multiple models?**
-
-A9: Parallel inference is enabled by default. To disable it, set `parallel_inference`: false in the parameter set. For more information, please refer to the [Parameters section](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html\#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
-
-**Q9: Can I use different backends for different models in the same application?**
-
-A9: Yes, you can specify different backends for different models using the `backend_map` parameter.For more information, please refer to the [Parameters section](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html\#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
-
-**Q10: Can I perform inference on the CPU?**
-
-A10: Yes, you can perform inference on the CPU by setting  `infer_on_cpu`: true and use either the ONNX Runtime or PyTorch backend.For more information, please refer to the [Parameters section](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html\#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
 
 **Q11:Can I control where the input and output data is stored (CPU vs GPU memory)?**
 
@@ -673,7 +641,7 @@ A35:They often have similar runtime performance, but the Event-Based Scheduler t
 
 **Q36:Are there scenarios where using multi-thread schedulers might not be beneficial?**
 
-A36: Yes, for linear inference pipelines or applications with minimal computation per operator, multi-thread schedulers might not provide significant benefits and could even introduce overhead.
+A36: Yes, for linear inference pipelines or applications with minimal computation per operator, multi-thread schedulers might not provide significant benefits and could even introduce overhead. See {ref}`performance_considerations` for guidance and a reproducible benchmark.
 
 **Q37: How does the number of worker threads affect performance in multi-thread schedulers?**
 
@@ -712,6 +680,16 @@ A6:You can enable GXF job statistics by setting the environment variable `HOLOSC
 **Q7: Can I save GXF job statistics to a file?**
 
 A7:Yes, you can save GXF job statistics to a JSON file by setting the `HOLOSCAN_GXF_JOB_STATISTICS_PATH` environment variable. For more information on the GXF job statistics, please refer to [this](https://docs.nvidia.com/holoscan/sdk-user-guide/gxf_job_statistics.html) section in the User Guide.
+
+**Q8: What workload size is appropriate for a Holoscan Operator?**
+
+A8: The scheduling and message-passing overhead in Holoscan is approximately 10–20 µs per operator execution. As a rule of thumb:
+
+- If your computation takes **less than ~20 µs**, the overhead may outweigh the computation—consider combining operations into a single operator.
+- If your computation takes **more than ~100 µs**, splitting into separate operators is generally beneficial for modularity and potential parallelism.
+- For **GPU-resident pipelines**, kernel transition latency is much lower (~0.5–2 µs), allowing finer-grained operators.
+
+You can measure the overhead in your environment using the `scripts/scheduler_overhead_benchmark.py` script. For detailed measurements and guidance, see {ref}`performance_considerations`.
 
 **Q11:How do NVTX markers work in Holoscan SDK?**
 
@@ -1004,9 +982,6 @@ if __name__ == "__main__":
 args: Namespace(input='a')
 ```
 
-**Q13:Why is the Inference Operator rejecting the input shape for a CNN-LSTM model with a 5-dimensions input (batch, temporal_dim, channels, width, height) ?**
-A13: In Holoscan SDK v2.4 and earlier, the InferenceOp supports rank only between 2 and 4\.
-
 **Q14: I am attempting to profile a Holoscan application in a container using NVIDIA NSight Systems. I'm following the documentation available at [https://github.com/nvidia-holoscan/holohub/blob/main/doc/developer.md](https://github.com/nvidia-holoscan/holohub/blob/main/doc/developer.md) and using a recent checkout of Holohub with the Holoscan v2.1 NGC image.**
 
 **My process is as follows:**
@@ -1262,56 +1237,6 @@ Set the following environment variables before executing the application to offl
 export __NV_PRIME_RENDER_OFFLOAD=1
 export __GLX_VENDOR_LIBRARY_NAME=nvidia
 ```
-
-**Q29: How do I fix PyTorch CUDA linalg errors on Jetson Orin / JetPack 6 devices?**
-
-A29: When using PyTorch from the [Jetson AI Labs registry](https://pypi.jetson-ai-lab.io) on bare metal JetPack 6 (IGX Orin or AGX Orin), you may encounter errors like:
-
-```text
-RuntimeError: Error in dlopen: .../torch/lib/libtorch_cuda_linalg.so: undefined symbol: cusolverDnXsyevBatched_bufferSize, version libcusolver.so.11
-```
-
-This occurs because the PyTorch distribution requires a newer version of libcusolver (11.7.1.2) than what is available in the default L4T 36.4 repository (11.6.4.69).
-
-**Solution:**
-
-Install the required libcusolver version manually:
-
-```sh
-# Download and install libcusolver 11.7.1.2 for arm64
-curl -fSL -o libcusolver.deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/arm64/libcusolver-12-6_11.7.1.2-1_arm64.deb && \
-sudo apt-get install --no-install-recommends -y ./libcusolver.deb && \
-rm libcusolver.deb
-```
-
-After installing the updated libcusolver package, PyTorch CUDA operations (such as `torch.linalg.inv()`) should work correctly.
-
-**Note:** This is a known compatibility issue when using PyTorch from the Jetson AI Labs registry on bare metal Jetpack 6. The Holoscan SDK container images already include this fix. If you are building your own containers or running on bare metal, you will need to apply this workaround.
-
-**Q30: How do I fix segmentation faults when using PyTorch 2.9.x with Holoscan SDK v3.10 CUDA 12?**
-
-A30: When running Holoscan SDK v3.10 with CUDA 12 and PyTorch 2.9.x, you may encounter segmentation faults during application teardown, particularly when running inference tests. The error typically appears as:
-
-```text
-Fatal Python error: Segmentation fault
-
-Current thread 0x00007f07e53d0740 (most recent call first):
-  File ".../test_inference.py", line 177 in test_inference_torch
-  ...
-```
-
-This occurs because Holoscan SDK v3.10 CUDA 12 binaries are built with libtorch 2.8.0, and there is a compatibility issue with PyTorch 2.9.x that affects application deactivation.
-
-**Solution:**
-
-Downgrade to PyTorch 2.8.x, which maintains full compatibility with Holoscan SDK v3.10 CUDA 12:
-
-```sh
-pip install torch==2.8.0
-```
-
-**Note:** This issue specifically affects the CUDA 12 variant of Holoscan SDK v3.10 when used with PyTorch 2.9.x. The compatibility with PyTorch 2.8.x remains intact. Future releases of Holoscan SDK are expected to include updated libtorch binaries to restore PyTorch 2.9.x compatibility.
-
 
 ## Miscellaneous
 

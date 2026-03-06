@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 
 #include <gxf/cuda/cuda_scheduling_terms.hpp>
 
@@ -60,7 +61,7 @@ class CudaEventCondition : public gxf::GXFCondition {
   const char* gxf_typename() const override { return "nvidia::gxf::CudaEventSchedulingTerm"; }
   void setup(ComponentSpec& spec) override;
 
-  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
   std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   nvidia::gxf::CudaEventSchedulingTerm* get() const;

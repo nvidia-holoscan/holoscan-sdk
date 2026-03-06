@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,8 @@ void init_io_spec(py::module_& m) {
       .value("DEFAULT", IOSpec::ConnectorType::kDefault)
       .value("DOUBLE_BUFFER", IOSpec::ConnectorType::kDoubleBuffer)
       .value("ASYNC_BUFFER", IOSpec::ConnectorType::kAsyncBuffer)
-      .value("UCX", IOSpec::ConnectorType::kUCX);
+      .value("UCX", IOSpec::ConnectorType::kUCX)
+      .value("PUBSUB", IOSpec::ConnectorType::kPubSub);
 
   py::enum_<IOSpec::QueuePolicy>(iospec, "QueuePolicy", doc::QueuePolicy::doc_QueuePolicy)
       .value("POP", IOSpec::QueuePolicy::kPop)
@@ -108,6 +109,11 @@ void init_io_spec(py::module_& m) {
            [](IOSpec& io_spec, std::shared_ptr<Resource> connector) {
              return io_spec.connector(std::move(connector));
            })
+      .def("topic",
+           &IOSpec::topic,
+           py::arg("name"),
+           doc::IOSpec::doc_topic,
+           py::return_value_policy::reference_internal)
       .def_property("queue_size",
                     py::overload_cast<>(&IOSpec::queue_size, py::const_),
                     py::overload_cast<int64_t>(&IOSpec::queue_size),

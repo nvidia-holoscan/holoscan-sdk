@@ -207,7 +207,9 @@ class HoloInferTests {
       {51, "ONNX backend, dynamic input, with incorrect flag"},
       {52, "ONNX backend, dynamic input, with correct flag"},
       {53, "Torch backend, dynamic input, with incorrect flag"},
-      {54, "Torch backend, dynamic input, with correct flag"}};
+      {54, "Torch backend, dynamic input, with correct flag"},
+      {55, "Dependency map: linear plan order"},
+      {56, "Dependency map: cycle detection"}};
 
   std::vector<std::string> failed_tests;
 };

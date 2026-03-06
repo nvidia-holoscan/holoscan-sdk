@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,6 +26,7 @@
 #include "io_context.hpp"
 #include "io_spec.hpp"
 #include "kwarg_handling.hpp"
+#include "messagelabel.hpp"
 #include "operator.hpp"
 #include "subgraph.hpp"
 #include "tensor.hpp"
@@ -50,6 +51,7 @@ PYBIND11_MODULE(_core, m) {
   init_execution_context(m);
   init_io_spec(m);
   init_metadata(m);
+  init_messagelabel(m);
   init_operator(m);
   init_scheduler(m);
   init_network_context(m);

@@ -43,7 +43,8 @@ namespace py = pybind11;
 
 namespace holoscan {
 
-py::tuple vector2pytuple(const std::vector<std::shared_ptr<GILGuardedPyObject>>& vec) {
+// Callers must hold the GIL because this function manipulates Python reference counts.
+inline py::tuple vector2pytuple(const std::vector<std::shared_ptr<GILGuardedPyObject>>& vec) {
   py::tuple result(vec.size());
   int counter = 0;
   for (auto& arg_value : vec) {
@@ -57,7 +58,7 @@ py::tuple vector2pytuple(const std::vector<std::shared_ptr<GILGuardedPyObject>>&
   return result;
 }
 
-py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
+inline py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
   // Create a shared Entity (increase ref count)
   holoscan::PyEntity entity_wrapper(in_entity);
 
@@ -69,7 +70,7 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
     HOLOSCAN_LOG_DEBUG("py_receive: Entity Case");
     if ((n_components == 1) && (components[0]->name()[0] == '#')) {
       // special case for single non-TensorMap tensor
-      // (will have been serialized with a name starting with #numpy, #cupy or #holoscan)
+      // (will have been serialized with a name starting with #numpy, #cupy, #torch or #holoscan)
       HOLOSCAN_LOG_DEBUG("py_receive: SINGLE COMPONENT WITH # NAME");
       auto component = components[0];
       std::string component_name = component->name();
@@ -112,13 +113,37 @@ py::object gxf_entity_to_py_object(holoscan::gxf::Entity in_entity) {
         }
         py::object cupy_array = cupy.attr("asarray")(holoscan_pytensor);
         return cupy_array;
+      } else if (component_name.find("#torch") != std::string::npos) {
+        HOLOSCAN_LOG_DEBUG("py_receive: name starting with #torch");
+        // cast the holoscan::Tensor to a PyTorch tensor via DLPack
+        py::module_ torch;
+        try {
+          torch = py::module_::import("torch");
+        } catch (const pybind11::error_already_set& e) {
+          if (e.matches(PyExc_ImportError)) {
+            throw pybind11::import_error(
+                fmt::format("Failed to import torch to deserialize tensor with "
+                            "DLPack interface: {}",
+                            e.what()));
+          } else {
+            throw;
+          }
+        }
+        py::object torch_tensor;
+        if (py::hasattr(torch, "from_dlpack")) {
+          torch_tensor = torch.attr("from_dlpack")(holoscan_pytensor);
+        } else {
+          // Fallback for older torch versions
+          torch_tensor = torch.attr("utils").attr("dlpack").attr("from_dlpack")(holoscan_pytensor);
+        }
+        return torch_tensor;
       } else if (component_name.find("#holoscan") != std::string::npos) {
         HOLOSCAN_LOG_DEBUG("py_receive: name starting with #holoscan");
         return holoscan_pytensor;
       } else {
         throw std::runtime_error(
             fmt::format("Invalid tensor name (if # is the first character in the name, the "
-                        "name must start with #numpy, #cupy or #holoscan). Found: {}",
+                        "name must start with #numpy, #cupy, #torch or #holoscan). Found: {}",
                         component_name));
       }
     } else {
@@ -199,6 +224,10 @@ struct emitter_receiver<holoscan::gxf::Entity> {
 
 /* Emitter for holoscan.core.Tensor with special handling for 3rd party tensor interoperability.
  *
+ * Names PyTorch tensors as "#torch: tensor". This will cause
+ * ``emitter_receiver<holoscan::gxf::Entity>::receive`` to convert this tensor to a torch.Tensor
+ * via DLPack on receive by a downstream Python operator.
+ *
  * Names any holoscan::Tensor supporting ``__cuda_array_interface__`` as "#cupy: tensor".
  * This will cause ``emitter_receiver<holoscan::gxf::Entity>::receive`` to convert this tensor
  * to a CuPy tensor on receive by a downstream Python operator.
@@ -228,13 +257,24 @@ struct emitter_receiver<holoscan::Tensor> {
     std::shared_ptr<Tensor> tensor =
         std::static_pointer_cast<Tensor>(py::cast<std::shared_ptr<PyTensor>>(py_tensor_obj));
 
-    if (py::hasattr(data, "__cuda_array_interface__")) {
+    // Prefer preserving PyTorch tensors as torch.Tensor on receive.
+    // Torch CUDA tensors implement __cuda_array_interface__, which would otherwise cause them
+    // to be converted to CuPy arrays on receive below.
+    std::string module_name;
+    try {
+      module_name = py::str(data.get_type().attr("__module__"));
+    } catch (...) {
+      module_name = "";
+    }
+    if (module_name.rfind("torch", 0) == 0) {
+      tensor_map["#torch: tensor"] = std::move(tensor);
+    } else if (py::hasattr(data, "__cuda_array_interface__")) {
       // checking with __cuda_array_interface__ instead of
       // if (py::isinstance(value, cupy.attr("ndarray")))
 
       // This way we don't have to add try/except logic around importing the CuPy module.
       // One consequence of this is that Non-CuPy arrays having __cuda_array_interface__ will be
-      // cast to CuPy arrays on deserialization.
+      // cast to CuPy arrays on deserialization, apart from PyTorch tensors handled above.
       tensor_map["#cupy: tensor"] = std::move(tensor);
     } else if (py::hasattr(data, "__array_interface__")) {
       // objects with __array_interface__ defined will be cast to NumPy array on

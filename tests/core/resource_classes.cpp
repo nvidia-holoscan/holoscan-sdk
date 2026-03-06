@@ -40,6 +40,8 @@
 #include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
 #include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
+#include "holoscan/core/resources/gxf/pubsub_receiver.hpp"
+#include "holoscan/core/resources/gxf/pubsub_transmitter.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
 #include "holoscan/core/resources/gxf/rmm_allocator.hpp"
 #include "holoscan/core/resources/gxf/serialization_buffer.hpp"
@@ -228,6 +230,80 @@ TEST_F(ResourceClassesWithGXFContext, TestAsyncBufferTransmitter) {
   EXPECT_EQ(typeid(resource), typeid(std::make_shared<AsyncBufferTransmitter>()));
   EXPECT_EQ(std::string(resource->gxf_typename()), "holoscan::HoloscanAsyncBufferTransmitter"s);
   EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubReceiver) {
+  const std::string name{"pubsub-receiver"};
+  ArgList arglist{
+      Arg{"topic_name", std::string("/test/topic")},
+      Arg{"capacity", 1UL},
+      Arg{"policy", 2UL},
+  };
+  auto resource = F.make_resource<PubSubReceiver>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<PubSubReceiver>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::PubSubReceiver"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubReceiverDefaultConstructor) {
+  auto resource = F.make_resource<PubSubReceiver>();
+  // Verify it was created successfully (no crash)
+  EXPECT_NE(resource, nullptr);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubTransmitter) {
+  const std::string name{"pubsub-transmitter"};
+  ArgList arglist{
+      Arg{"topic_name", std::string("/test/topic")},
+      Arg{"capacity", 1UL},
+      Arg{"policy", 2UL},
+  };
+  auto resource = F.make_resource<PubSubTransmitter>(name, arglist);
+  EXPECT_EQ(resource->name(), name);
+  EXPECT_EQ(typeid(resource), typeid(std::make_shared<PubSubTransmitter>(arglist)));
+  EXPECT_EQ(std::string(resource->gxf_typename()), "nvidia::gxf::PubSubTransmitter"s);
+  EXPECT_TRUE(resource->description().find("name: " + name) != std::string::npos);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubTransmitterDefaultConstructor) {
+  auto resource = F.make_resource<PubSubTransmitter>();
+  // Verify it was created successfully (no crash)
+  EXPECT_NE(resource, nullptr);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubReceiverQosGetterSetter) {
+  auto resource = F.make_resource<PubSubReceiver>("pubsub-receiver");
+
+  EXPECT_FALSE(resource->qos().has_value());
+
+  nvidia::gxf::QoSProfile qos_profile = nvidia::gxf::QoSProfile::Default();
+  qos_profile.set_reliability(nvidia::gxf::ReliabilityPolicy::kReliable)
+      .set_durability(nvidia::gxf::DurabilityPolicy::kTransientLocal)
+      .set_history(nvidia::gxf::HistoryPolicy::kKeepAll, 0);
+  resource->qos(qos_profile);
+
+  ASSERT_TRUE(resource->qos().has_value());
+  EXPECT_EQ(resource->qos()->reliability, nvidia::gxf::ReliabilityPolicy::kReliable);
+  EXPECT_EQ(resource->qos()->durability, nvidia::gxf::DurabilityPolicy::kTransientLocal);
+  EXPECT_EQ(resource->qos()->history, nvidia::gxf::HistoryPolicy::kKeepAll);
+}
+
+TEST_F(ResourceClassesWithGXFContext, TestPubSubTransmitterQosGetterSetter) {
+  auto resource = F.make_resource<PubSubTransmitter>("pubsub-transmitter");
+
+  EXPECT_FALSE(resource->qos().has_value());
+
+  nvidia::gxf::QoSProfile qos_profile = nvidia::gxf::QoSProfile::Default();
+  qos_profile.set_reliability(nvidia::gxf::ReliabilityPolicy::kReliable)
+      .set_durability(nvidia::gxf::DurabilityPolicy::kTransientLocal)
+      .set_history(nvidia::gxf::HistoryPolicy::kKeepAll, 0);
+  resource->qos(qos_profile);
+
+  ASSERT_TRUE(resource->qos().has_value());
+  EXPECT_EQ(resource->qos()->reliability, nvidia::gxf::ReliabilityPolicy::kReliable);
+  EXPECT_EQ(resource->qos()->durability, nvidia::gxf::DurabilityPolicy::kTransientLocal);
+  EXPECT_EQ(resource->qos()->history, nvidia::gxf::HistoryPolicy::kKeepAll);
 }
 
 TEST_F(ResourceClassesWithGXFContext, TestStdComponentSerializer) {
@@ -707,6 +783,8 @@ TEST_F(ResourceClassesWithGXFContext, TestResourceUniqueDefaultNames) {
   auto double_buffer_receiver = F.make_resource<DoubleBufferReceiver>();
   auto double_buffer_transmitter = F.make_resource<DoubleBufferTransmitter>();
   auto gpu_device = F.make_resource<GPUDevice>();
+  auto pubsub_receiver = F.make_resource<PubSubReceiver>();
+  auto pubsub_transmitter = F.make_resource<PubSubTransmitter>();
   auto manual_clock = F.make_resource<ManualClock>();
   auto or_condition_combiner = F.make_resource<OrConditionCombiner>();
   auto realtime_clock = F.make_resource<RealtimeClock>();
@@ -737,6 +815,8 @@ TEST_F(ResourceClassesWithGXFContext, TestResourceUniqueDefaultNames) {
   EXPECT_EQ(double_buffer_transmitter->name(), "double_buffer_transmitter");
   EXPECT_EQ(gpu_device->name(), "gpu_device");
   EXPECT_EQ(manual_clock->name(), "manual_clock");
+  EXPECT_EQ(pubsub_receiver->name(), "pubsub_receiver");
+  EXPECT_EQ(pubsub_transmitter->name(), "pubsub_transmitter");
   EXPECT_EQ(or_condition_combiner->name(), "or_condition_combiner");
   EXPECT_EQ(realtime_clock->name(), "realtime_clock");
   EXPECT_EQ(rmm_allocator->name(), "rmm_pool");

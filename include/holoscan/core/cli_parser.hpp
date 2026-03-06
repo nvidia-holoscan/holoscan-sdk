@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -70,7 +70,7 @@ class CLIParser {
    * @param app_description The description of the application.
    * @param app_version The version of the application.
    */
-  void initialize(std::string app_description = "", std::string app_version = "0.0.0");
+  void initialize(std::string app_description = "", const std::string& app_version = "0.0.0");
 
   /**
    * @brief Parse the command line arguments.

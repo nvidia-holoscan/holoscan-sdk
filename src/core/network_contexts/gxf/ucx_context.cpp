@@ -67,7 +67,7 @@ nvidia::gxf::UcxContext* UcxContext::get() const {
 void UcxContext::initialize() {
   HOLOSCAN_LOG_DEBUG("UcxContext::initialize");
   // Set up prerequisite parameters before calling GXFNetworkContext::initialize()
-  auto frag = fragment();
+  auto* frag = fragment();
 
   // Find if there is an argument for 'serializer'
   auto has_serializer = std::find_if(

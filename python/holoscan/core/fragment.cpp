@@ -253,6 +253,9 @@ void init_fragment(py::module_& m) {
            "is_limited_tracking"_a = false,
            doc::Fragment::doc_track,
            py::return_value_policy::reference_internal)
+      .def("data_flow_tracker",
+           &Fragment::data_flow_tracker,
+           py::return_value_policy::reference_internal)
       .def_property("is_metadata_enabled",
                     py::overload_cast<>(&Fragment::is_metadata_enabled, py::const_),
                     py::overload_cast<bool>(&Fragment::is_metadata_enabled),

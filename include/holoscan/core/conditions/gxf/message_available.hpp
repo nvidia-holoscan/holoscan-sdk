@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,7 @@
 #define HOLOSCAN_CORE_CONDITIONS_GXF_MESSAGE_AVAILABLE_HPP
 
 #include <memory>
+#include <utility>
 
 #include <gxf/std/scheduling_terms.hpp>
 
@@ -62,7 +63,7 @@ class MessageAvailableCondition : public gxf::GXFCondition {
     return "nvidia::gxf::MessageAvailableSchedulingTerm";
   }
 
-  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = receiver; }
+  void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
   std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
 
   void min_size(uint64_t min_size);
