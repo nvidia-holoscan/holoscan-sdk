@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,15 +34,15 @@ from holoscan.core import (
     Config,
     ExecutionContext,
     Executor,
+    FlowGraph,
     Fragment,
-    FragmentGraph,
-    Graph,
+    FragmentFlowGraph,
     InputContext,
     IOSpec,
     MultiMessageConditionInfo,
     NetworkContext,
     Operator,
-    OperatorGraph,
+    OperatorFlowGraph,
     OperatorSpec,
     OutputContext,
     Resource,
@@ -57,7 +57,7 @@ from holoscan.core._core import ComponentSpec as ComponentSpecBase
 from holoscan.core._core import OperatorSpec as OperatorSpecBase
 from holoscan.core._core import ParameterFlag, PyOperatorSpec
 from holoscan.executors import GXFExecutor
-from holoscan.graphs import FlowGraph, OperatorFlowGraph
+from holoscan.flow_graphs import FlowGraphImpl, OperatorFlowGraphImpl
 from holoscan.operators.holoviz import Pose3D  # noqa: F401
 from holoscan.resources import (
     DoubleBufferReceiver,
@@ -712,17 +712,16 @@ class TestFragment:
         fragment.application = app
 
     def test_graph(self, fragment):
-        # first call to fragment.graph constructs a FlowGraph object
+        # first call to fragment.graph constructs a FlowGraphImpl object
         graph = fragment.graph
-        assert isinstance(graph, OperatorGraph)
         assert isinstance(graph, OperatorFlowGraph)
-        assert not isinstance(graph, FragmentGraph)
-        # former Graph and FlowGraph names also still present
-        assert isinstance(graph, Graph)
+        assert isinstance(graph, OperatorFlowGraphImpl)
+        assert not isinstance(graph, FragmentFlowGraph)
         assert isinstance(graph, FlowGraph)
+        assert isinstance(graph, FlowGraphImpl)
 
     def test_executor(self, fragment):
-        # first call to fragment.graph constructs a FlowGraph object
+        # first call to fragment.graph constructs a FlowGraphImpl object
         executor = fragment.executor
         assert isinstance(executor, Executor)
         assert isinstance(executor, GXFExecutor)
@@ -840,8 +839,11 @@ class TestFragment:
         # test add_flow with set of 2-tuple
         fragment.add_flow(op_tx, op_rx, {("tensor", "in2")})
 
-        # using non-existent names doesn't yet raise a Python exception...
-        fragment.add_flow(op_tx, op_rx, {("nonexistent", "in2")})
+        # using non-existent names should now raise a Python exception.
+        with pytest.raises(
+            RuntimeError, match="does not have an output port with label 'nonexistent'"
+        ):
+            fragment.add_flow(op_tx, op_rx, {("nonexistent", "in2")})
 
         captured = capfd.readouterr()
         assert "error" in captured.err
@@ -971,13 +973,13 @@ class TestApplication:
             app.options = 3
 
     def test_graph(self, app):
-        # first call to app.graph constructs a FlowGraph object
+        # first call to app.graph constructs a FlowGraphImpl object
         graph = app.graph
-        assert isinstance(graph, Graph)
         assert isinstance(graph, FlowGraph)
+        assert isinstance(graph, FlowGraphImpl)
 
     def test_executor(self, app):
-        # first call to app.graph constructs a FlowGraph object
+        # first call to app.graph constructs a FlowGraphImpl object
         executor = app.executor
         assert isinstance(executor, Executor)
         assert isinstance(executor, GXFExecutor)
@@ -1036,8 +1038,11 @@ class TestApplication:
         # set of 2-tuples
         app.add_flow(op_tx, op_rx, {("tensor", "in2")})
 
-        # using non-existent names doesn't yet raise a Python exception...
-        app.add_flow(op_tx, op_rx, {("nonexistent", "in2")})
+        # using non-existent names should now raise a Python exception.
+        with pytest.raises(
+            RuntimeError, match="does not have an output port with label 'nonexistent'"
+        ):
+            app.add_flow(op_tx, op_rx, {("nonexistent", "in2")})
 
         captured = capfd.readouterr()
         assert "error" in captured.err
@@ -1071,9 +1076,9 @@ class TestApplication:
         with pytest.raises(TypeError):
             app.add_flow(fragment1, fragment2, {})
 
-        # using empty set shows an error message ('Unable to add fragment flow with empty
-        # port_pairs')
-        app.add_flow(fragment1, fragment2, set())
+        # using empty set should fail fast with an exception.
+        with pytest.raises(RuntimeError, match="Unable to add fragment flow with empty port_pairs"):
+            app.add_flow(fragment1, fragment2, set())
 
         captured = capfd.readouterr()
         assert "error" in captured.err

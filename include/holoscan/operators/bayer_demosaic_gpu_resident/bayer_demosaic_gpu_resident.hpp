@@ -32,7 +32,7 @@ namespace holoscan::ops {
 /**
  * @brief GPU-resident operator class to demosaic the input video stream.
  *
- * This operator is designed for GPU-resident execution mode where:
+ * This operator is designed for GPU-resident graph execution mode where:
  * - All setup and configuration are done once during initialization
  * - The `compute` function is launched only once from the CPU
  * - Subsequent executions are run entirely on the GPU via CUDA graph capture

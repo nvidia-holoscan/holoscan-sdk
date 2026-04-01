@@ -235,7 +235,7 @@ class OperatorSpec : public ComponentSpec {
     auto spec = std::make_shared<IOSpec>(this, name, raw_ptr, IOSpec::IOType::kInput);
     auto [iter, inserted] = inputs_.insert_or_assign(name, std::move(spec));
     if (!inserted) {
-      HOLOSCAN_LOG_ERROR("Input port '{}' already existed and was overwritten", name);
+      HOLOSCAN_LOG_WARN("Input port '{}' already existed and was overwritten", name);
     }
     return *(iter->second.get());
   }
@@ -371,7 +371,7 @@ class OperatorSpec : public ComponentSpec {
     auto spec = std::make_shared<IOSpec>(this, name, raw_ptr, IOSpec::IOType::kOutput);
     auto [iter, inserted] = outputs_.insert_or_assign(name, std::move(spec));
     if (!inserted) {
-      HOLOSCAN_LOG_ERROR("Output port '{}' already existed and was overwritten", name);
+      HOLOSCAN_LOG_WARN("Output port '{}' already existed and was overwritten", name);
     }
     return *(iter->second.get());
   }

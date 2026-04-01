@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -302,7 +302,7 @@ def test_queue_policy_settings(policy_set_mode, threads, capfd):
         min_warn = 12 * (count // 12)
         # many push failed warnings will have been logged
         assert captured.err.count("warning") >= min_warn
-        assert captured.err.count("Push failed on 'in'") >= min_warn
+        assert captured.err.count("Push failed on receiver 'in'") >= min_warn
     elif policy_set_mode == "both":
         # both copies of IncrementOp will have printed a warning about ignored policy
         if threads == 0:
@@ -401,7 +401,7 @@ def test_output_queue_policy(tx_queue_policy, capfd):
     captured = capfd.readouterr()
 
     num_warn = captured.err.count("warning")
-    num_push_failed = captured.err.count("Push failed on 'out'")
+    num_push_failed = captured.err.count("Push failed on transmitter 'out'")
     if tx_queue_policy is None or tx_queue_policy == IOSpec.QueuePolicy.FAULT:
         assert num_push_failed == 1
         assert "exception occurred" in captured.err.lower()

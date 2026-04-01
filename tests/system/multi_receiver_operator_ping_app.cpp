@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -674,11 +674,11 @@ TEST(MultiReceiverOperatorPingApp, TestPingMultiPortSingleSizeFive) {
   // message because the queue size of PingRxOp's input port is 5), PingRxOp will not receive all
   // messages (20 messages).
 
-  EXPECT_TRUE(log_output.find("Push failed on 'receivers'") != std::string::npos)
+  EXPECT_TRUE(log_output.find("Push failed on receiver 'receivers'") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 
-  EXPECT_TRUE(log_output.find("Failure receiving message from input port 'receivers': No message "
+  EXPECT_TRUE(log_output.find("failure receiving message from input port 'receivers': No message "
                               "received from the input port") != std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
@@ -1038,10 +1038,8 @@ TEST(MultiReceiverOperatorPingApp, TestSendingTensorMapDataMultiAnySizeIncorrect
   app->run();
 
   std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(
-      log_output.find(
-          "Unable to cast the received data to the specified type for input 'receivers:0'") !=
-      std::string::npos)
+  EXPECT_TRUE(log_output.find("unable to cast the received data to the specified type") !=
+              std::string::npos)
       << "=== LOG ===\n"
       << log_output << "\n===========\n";
 }

@@ -972,3 +972,267 @@ TEST(SubgraphControlFlowTests, TestNestedExecSubgraph) {
               std::string::npos);
   EXPECT_TRUE(log_output.find("SimpleExecOp: node4 executed") != std::string::npos);
 }
+
+// =======================================================================================
+// add_subgraph ownership tests (factory pattern)
+// =======================================================================================
+
+/**
+ * @brief Factory function returning a base Subgraph pointer (type determined at runtime)
+ */
+std::shared_ptr<holoscan::Subgraph> create_tx_subgraph(holoscan::Fragment* fragment,
+                                                       const std::string& name) {
+  return std::make_shared<PingTxSubgraph>(fragment, name);
+}
+
+std::shared_ptr<holoscan::Subgraph> create_rx_subgraph(holoscan::Fragment* fragment,
+                                                       const std::string& name) {
+  return std::make_shared<PingRxSubgraph>(fragment, name);
+}
+
+/**
+ * @brief Application using add_subgraph with factory-created subgraphs at Fragment level
+ *
+ * Tests that add_subgraph properly takes ownership, registers names, composes,
+ * and supports the factory pattern where concrete types are determined at runtime.
+ */
+class AddSubgraphFactoryApp : public holoscan::Application {
+ public:
+  void compose() override {
+    using namespace holoscan;
+
+    auto tx = create_tx_subgraph(this, "tx1");
+    add_subgraph(tx);
+
+    auto rx = create_rx_subgraph(this, "rx1");
+    add_subgraph(rx);
+
+    add_flow(tx, rx, {{"data_out", "data_in"}});
+  }
+};
+
+/**
+ * @brief Nested subgraph that uses add_subgraph with a factory-created child
+ *
+ * Tests name qualification: the factory creates with unqualified name "inner_tx",
+ * and add_subgraph qualifies it to "outer_inner_tx".
+ */
+class NestedFactorySubgraph : public holoscan::Subgraph {
+ public:
+  NestedFactorySubgraph(holoscan::Fragment* fragment, const std::string& name)
+      : holoscan::Subgraph(fragment, name) {}
+
+  void compose() override {
+    using namespace holoscan;
+
+    // Factory creates with unqualified name; add_subgraph qualifies it
+    auto inner_tx = create_tx_subgraph(fragment(), "inner_tx");
+    add_subgraph(inner_tx);
+
+    add_output_interface_port("data_out", inner_tx, "data_out");
+  }
+};
+
+/**
+ * @brief Application using nested factory subgraphs via add_subgraph
+ */
+class NestedAddSubgraphFactoryApp : public holoscan::Application {
+ public:
+  void compose() override {
+    using namespace holoscan;
+
+    auto outer = make_subgraph<NestedFactorySubgraph>("outer");
+    auto rx = make_subgraph<PingRxSubgraph>("rx1");
+
+    add_flow(outer, rx, {{"data_out", "data_in"}});
+  }
+};
+
+/**
+ * @brief Application that tests duplicate name detection via add_subgraph
+ */
+class DuplicateAddSubgraphApp : public holoscan::Application {
+ public:
+  void compose() override {
+    using namespace holoscan;
+
+    auto tx1 = create_tx_subgraph(this, "tx");
+    add_subgraph(tx1);
+
+    // This should throw because "tx" is already registered
+    auto tx2 = create_tx_subgraph(this, "tx");
+    add_subgraph(tx2);
+  }
+};
+
+TEST(SubgraphTests, TestAddSubgraphFactoryPattern) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<AddSubgraphFactoryApp>();
+
+  testing::internal::CaptureStderr();
+
+  app->compose_graph();
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  std::set<std::string> node_names;
+  for (const auto& node : app->graph().get_nodes()) {
+    node_names.insert(node->name());
+  }
+
+  std::set<std::string> expected_names{"tx1_transmitter", "tx1_forwarding", "rx1_receiver"};
+
+  EXPECT_EQ(node_names, expected_names) << fmt::format(
+      "Node names don't match expected names.\n"
+      "Actual nodes: {}\n"
+      "Expected nodes: {}\n",
+      node_names,
+      expected_names);
+
+  std::string stream_msg = "Rx message value: 8";
+  EXPECT_TRUE(log_output.find(stream_msg) != std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
+}
+
+TEST(SubgraphTests, TestNestedAddSubgraphFactoryPattern) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<NestedAddSubgraphFactoryApp>();
+
+  testing::internal::CaptureStderr();
+
+  app->compose_graph();
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  std::set<std::string> node_names;
+  for (const auto& node : app->graph().get_nodes()) {
+    node_names.insert(node->name());
+  }
+
+  // outer -> inner_tx qualifies to "outer_inner_tx"
+  // inner_tx's operators: transmitter, forwarding -> "outer_inner_tx_transmitter",
+  // "outer_inner_tx_forwarding"
+  std::set<std::string> expected_names{
+      "outer_inner_tx_transmitter", "outer_inner_tx_forwarding", "rx1_receiver"};
+
+  EXPECT_EQ(node_names, expected_names) << fmt::format(
+      "Node names don't match expected names.\n"
+      "Actual nodes: {}\n"
+      "Expected nodes: {}\n",
+      node_names,
+      expected_names);
+
+  std::string stream_msg = "Rx message value: 8";
+  EXPECT_TRUE(log_output.find(stream_msg) != std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
+}
+
+/**
+ * @brief Application that calls make_subgraph then add_subgraph on the same subgraph.
+ *
+ * This must be a no-op (idempotent), not a duplicate-name error.
+ * Regression test for the make_subgraph + add_subgraph ownership pattern.
+ */
+class MakeSubgraphThenAddSubgraphApp : public holoscan::Application {
+ public:
+  void compose() override {
+    using namespace holoscan;
+
+    auto tx = make_subgraph<PingTxSubgraph>("tx1");
+    add_subgraph(tx);  // should be a harmless no-op
+
+    auto rx = make_subgraph<PingRxSubgraph>("rx1");
+    add_subgraph(rx);  // should be a harmless no-op
+
+    add_flow(tx, rx, {{"data_out", "data_in"}});
+  }
+};
+
+TEST(SubgraphTests, TestMakeSubgraphThenAddSubgraphIsIdempotent) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<MakeSubgraphThenAddSubgraphApp>();
+
+  testing::internal::CaptureStderr();
+
+  EXPECT_NO_THROW(app->compose_graph());
+  app->run();
+
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  std::string stream_msg = "Rx message value: 8";
+  EXPECT_TRUE(log_output.find(stream_msg) != std::string::npos) << "=== LOG ===\n"
+                                                                << log_output << "\n===========\n";
+}
+
+TEST(SubgraphTests, TestFragmentSubgraphsAccessor) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<AddSubgraphFactoryApp>();
+  app->compose_graph();
+
+  const auto& subgraphs = app->subgraphs();
+  ASSERT_EQ(subgraphs.size(), 2);
+
+  std::set<std::string> sg_names;
+  for (const auto& sg : subgraphs) {
+    sg_names.insert(sg->name());
+  }
+  std::set<std::string> expected{"tx1", "rx1"};
+  EXPECT_EQ(sg_names, expected);
+}
+
+TEST(SubgraphTests, TestNestedSubgraphsAccessor) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<NestedAddSubgraphFactoryApp>();
+  app->compose_graph();
+
+  // Fragment owns "outer" and "rx1"
+  const auto& top = app->subgraphs();
+  ASSERT_EQ(top.size(), 2);
+
+  std::set<std::string> top_names;
+  for (const auto& sg : top) {
+    top_names.insert(sg->name());
+  }
+  EXPECT_TRUE(top_names.count("outer"));
+  EXPECT_TRUE(top_names.count("rx1"));
+
+  // "outer" has one nested subgraph "outer_inner_tx"
+  const holoscan::Subgraph* outer = nullptr;
+  for (const auto& sg : top) {
+    if (sg->name() == "outer") {
+      outer = sg.get();
+      break;
+    }
+  }
+  ASSERT_NE(outer, nullptr);
+
+  const auto& nested = outer->nested_subgraphs();
+  ASSERT_EQ(nested.size(), 1);
+  EXPECT_EQ(nested[0]->name(), "outer_inner_tx");
+
+  // "rx1" has no nested subgraphs
+  const holoscan::Subgraph* rx = nullptr;
+  for (const auto& sg : top) {
+    if (sg->name() == "rx1") {
+      rx = sg.get();
+      break;
+    }
+  }
+  ASSERT_NE(rx, nullptr);
+  EXPECT_TRUE(rx->nested_subgraphs().empty());
+}
+
+TEST(SubgraphTests, TestAddSubgraphDuplicateNameDetection) {
+  using namespace holoscan;
+
+  auto app = holoscan::make_application<DuplicateAddSubgraphApp>();
+
+  EXPECT_THROW(app->compose_graph(), std::runtime_error);
+}

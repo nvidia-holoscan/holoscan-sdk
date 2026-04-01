@@ -86,9 +86,9 @@
 - {ref}`exhale_class_classholoscan_1_1ExecutionContext`
 - {ref}`exhale_class_classholoscan_1_1ExtensionManager`
 - {ref}`exhale_class_classholoscan_1_1Executor`
-- {ref}`exhale_class_classholoscan_1_1FlowGraph`
+- {ref}`exhale_class_classholoscan_1_1FlowGraphImpl`
 - {ref}`exhale_class_classholoscan_1_1Fragment`
-- {ref}`exhale_class_classholoscan_1_1Graph`
+- {ref}`exhale_class_classholoscan_1_1FlowGraph`
 - {ref}`exhale_class_classholoscan_1_1InputContext`
 - {ref}`exhale_class_classholoscan_1_1IOSpec`
 - {ref}`exhale_class_classholoscan_1_1MessageLabel`

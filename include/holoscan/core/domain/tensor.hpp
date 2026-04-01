@@ -191,14 +191,14 @@ class Tensor {
    *
    * @return A DLManagedTensor* pointer corresponding to the Tensor.
    */
-  DLManagedTensor* to_dlpack();
+  DLManagedTensor* to_dlpack() const;
 
   /**
    * @brief Get a DLPack versioned managed tensor pointer to the Tensor.
    *
    * @return A DLManagedTensorVersioned* pointer corresponding to the Tensor.
    */
-  DLManagedTensorVersioned* to_dlpack_versioned();
+  DLManagedTensorVersioned* to_dlpack_versioned() const;
 
   /**
    * @brief Get the internal DLManagedTensorContext of the Tensor.

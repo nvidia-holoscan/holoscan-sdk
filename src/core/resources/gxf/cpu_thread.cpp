@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,19 +99,21 @@ void CPUThread::initialize() {
       if (YAML::convert<nvidia::gxf::SchedulingPolicy>::decode(YAML::Node(policy_string), policy)) {
         policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy);
       } else {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to decode 'sched_policy' argument to a SchedulingPolicy enum: {}",
-            policy_string);
-        yaml_conversion_failed = true;
+        auto err_msg =
+            fmt::format("Unable to decode 'sched_policy' argument to a SchedulingPolicy enum: {}",
+                        policy_string);
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     } else if (find_it->arg_type().element_type() == ArgElementType::kCustom) {
       try {
         auto policy_enum = std::any_cast<SchedulingPolicy>(find_it->value());
         policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy_enum);
       } catch (const std::bad_any_cast& e) {
-        HOLOSCAN_LOG_ERROR("Unable to cast 'sched_policy' argument to a SchedulingPolicy enum: {}",
-                           e.what());
-        yaml_conversion_failed = true;
+        auto err_msg = fmt::format(
+            "Unable to cast 'sched_policy' argument to a SchedulingPolicy enum: {}", e.what());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     } else if (find_it->arg_type().element_type() == ArgElementType::kYAMLNode) {
       // GXF's CPUThread resource requires YAML nodes to use string values (SCHED_FIFO, SCHED_RR,
@@ -123,10 +125,11 @@ void CPUThread::initialize() {
         // Re-encode to convert numeric YAML values (e.g., "1", "2", "6") to string format.
         policy_node = YAML::convert<nvidia::gxf::SchedulingPolicy>::encode(policy);
       } else {
-        HOLOSCAN_LOG_ERROR(
-            "Unable to decode 'sched_policy' argument to a SchedulingPolicy enum: {}",
-            policy_node.Scalar());
-        yaml_conversion_failed = true;
+        auto err_msg =
+            fmt::format("Unable to decode 'sched_policy' argument to a SchedulingPolicy enum: {}",
+                        policy_node.Scalar());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     }
 

@@ -35,7 +35,7 @@ void BayerDemosaicGpuResidentOp::setup(OperatorSpec& spec) {
   // - Input: width * height * 1 channel * element_size
   // - Output: width * height * (3 or 4 channels) * element_size
   //
-  // Since the memory sizes need to be known at setup time for GPU-resident execution,
+  // Since the memory sizes need to be known at setup time for GPU-resident graph execution,
   // the user must specify width, height, pixel_type, and generate_alpha parameters.
 
   // Note: The actual device_input/device_output ports are created in initialize()

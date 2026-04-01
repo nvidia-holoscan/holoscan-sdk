@@ -29,7 +29,7 @@
 
 #include "./common.hpp"
 #include "./extension_manager.hpp"
-#include "./graph.hpp"
+#include "./flow_graphs/flow_graph.hpp"
 #include "./operator.hpp"
 
 namespace holoscan {
@@ -60,7 +60,7 @@ class Executor {
    *
    * @param graph The reference to the graph.
    */
-  virtual void run(OperatorGraph& graph) { (void)graph; }
+  virtual void run(OperatorFlowGraph& graph) { (void)graph; }
 
   /**
    * @brief Run the graph asynchronously.
@@ -68,7 +68,7 @@ class Executor {
    * @param graph The reference to the graph.
    * @return The future object.
    */
-  virtual std::future<void> run_async(OperatorGraph& graph) {
+  virtual std::future<void> run_async(OperatorFlowGraph& graph) {
     (void)graph;
     return {};
   }

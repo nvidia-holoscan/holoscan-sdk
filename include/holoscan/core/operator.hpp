@@ -18,6 +18,7 @@
 #ifndef HOLOSCAN_CORE_OPERATOR_HPP
 #define HOLOSCAN_CORE_OPERATOR_HPP
 
+#include <fmt/format.h>
 #include <yaml-cpp/yaml.h>
 
 #include <stdio.h>
@@ -39,14 +40,14 @@
 #include "./component.hpp"
 #include "./condition.hpp"
 #include "./forward_def.hpp"
-#include "./graph.hpp"
+#include "./gxf/gxf_cuda.hpp"
 #include "./io_spec.hpp"
 #include "./messagelabel.hpp"
 #include "./metadata.hpp"
+#include "./flow_graphs/flow_graph.hpp"
 #include "./operator_spec.hpp"
 #include "./operator_status.hpp"
 #include "./resource.hpp"
-#include "./gxf/gxf_cuda.hpp"
 
 #include "gxf/app/graph_entity.hpp"
 #include "gxf/core/gxf.h"
@@ -157,11 +158,12 @@ class Operator : public ComponentBase {
    * @brief Operator type used by the executor.
    */
   enum class OperatorType {
-    kNative,   ///< Native operator.
-    kGXF,      ///< GXF operator.
-    kVirtual,  ///< Virtual operator.
-               ///< (for internal use, not intended for use by application authors)
-    kUnknown,  ///< Placeholder for unknown operator type.
+    kNative,       ///< Native operator.
+    kGXF,          ///< GXF operator.
+    kVirtual,      ///< Virtual operator.
+                   ///< (for internal use, not intended for use by application authors)
+    kGPUResident,  ///< GPU-resident operator.
+    kUnknown,      ///< Placeholder for unknown operator type.
   };
 
   /// Default input execution port name.
@@ -314,10 +316,12 @@ class Operator : public ComponentBase {
    */
   void add_arg(const std::shared_ptr<Condition>& arg) {
     if (conditions_.find(arg->name()) != conditions_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Condition '{}' already exists in the operator. Please specify a unique "
           "name when creating a Condition instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       conditions_[arg->name()] = arg;
     }
@@ -330,10 +334,12 @@ class Operator : public ComponentBase {
    */
   void add_arg(std::shared_ptr<Condition>&& arg) {
     if (conditions_.find(arg->name()) != conditions_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Condition '{}' already exists in the operator. Please specify a unique "
           "name when creating a Condition instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       conditions_[arg->name()] = std::move(arg);
     }
@@ -346,10 +352,12 @@ class Operator : public ComponentBase {
    */
   void add_arg(const std::shared_ptr<Resource>& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the operator. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = arg;
     }
@@ -362,10 +370,12 @@ class Operator : public ComponentBase {
    */
   void add_arg(std::shared_ptr<Resource>&& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the operator. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = std::move(arg);
     }
@@ -408,7 +418,8 @@ class Operator : public ComponentBase {
    * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
    * @return true if the operator has all virtual operator successors, false otherwise
    */
-  static bool is_all_operator_successor_virtual(const OperatorNodeType& op, OperatorGraph& graph);
+  static bool is_all_operator_successor_virtual(const OperatorNodeType& op,
+                                                OperatorFlowGraph& graph);
 
   /**
    * @brief Returns whether all the predecessors of an operator are virtual operators
@@ -417,7 +428,8 @@ class Operator : public ComponentBase {
    * @param graph The graph of operators. fragment()->graph() can usually be used to get this graph.
    * @return true if the operator has all virtual operator predecessors, false otherwise
    */
-  static bool is_all_operator_predecessor_virtual(const OperatorNodeType& op, OperatorGraph& graph);
+  static bool is_all_operator_predecessor_virtual(const OperatorNodeType& op,
+                                                  OperatorFlowGraph& graph);
 
   /**
    * @brief Returns the fully qualified name of the operator including the name of the fragment.

@@ -55,7 +55,10 @@ include(CTest)
 
 # C++ only examples
 if(HOLOSCAN_CPP_EXAMPLES)
+  add_subdirectory(benchmark_message_passing)
+  add_subdirectory(benchmark_scheduler_throughput)
   add_subdirectory(gpu_resident_example)
+  add_subdirectory(gpu_resident_multi_io)
   add_subdirectory(gpu_resident_input)
   add_subdirectory(matx)
   add_subdirectory(ping_any)

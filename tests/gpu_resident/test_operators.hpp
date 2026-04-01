@@ -22,6 +22,7 @@
 
 #include <holoscan/core/gpu_resident_operator.hpp>
 #include <holoscan/holoscan.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 #include "test_kernels.cuh"
 
@@ -139,12 +140,13 @@ class DevicePtrSourceOp : public GPUResidentOperator {
 
   ~DevicePtrSourceOp() override {
     if (dev_ptr_) {
-      cudaFree(dev_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaMalloc(&dev_ptr_, alloc_size_);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_, alloc_size_),
+                                   "Failed to allocate device memory");
     spec.device_output("out", reinterpret_cast<CUdeviceptr>(dev_ptr_));
   }
 
@@ -166,12 +168,13 @@ class DevicePtrSinkOp : public GPUResidentOperator {
 
   ~DevicePtrSinkOp() override {
     if (dev_ptr_) {
-      cudaFree(dev_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaMalloc(&dev_ptr_, alloc_size_);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_, alloc_size_),
+                                   "Failed to allocate device memory");
     spec.device_input("in", reinterpret_cast<CUdeviceptr>(dev_ptr_));
   }
 
@@ -193,16 +196,18 @@ class DevicePtrComputeOp : public GPUResidentOperator {
 
   ~DevicePtrComputeOp() override {
     if (in_dev_ptr_) {
-      cudaFree(in_dev_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(in_dev_ptr_));
     }
     if (out_dev_ptr_) {
-      cudaFree(out_dev_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(out_dev_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaMalloc(&in_dev_ptr_, alloc_size_);
-    cudaMalloc(&out_dev_ptr_, alloc_size_);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&in_dev_ptr_, alloc_size_),
+                                   "Failed to allocate input device memory");
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&out_dev_ptr_, alloc_size_),
+                                   "Failed to allocate output device memory");
     spec.device_input("in", reinterpret_cast<CUdeviceptr>(in_dev_ptr_));
     spec.device_output("out", reinterpret_cast<CUdeviceptr>(out_dev_ptr_));
   }
@@ -227,12 +232,13 @@ class HostAllocSourceOp : public GPUResidentOperator {
 
   ~HostAllocSourceOp() override {
     if (host_ptr_) {
-      cudaFreeHost(host_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFreeHost(host_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault),
+                                   "Failed to allocate pinned host memory");
     spec.device_output("out", reinterpret_cast<CUdeviceptr>(host_ptr_));
   }
 
@@ -252,12 +258,13 @@ class ManagedAllocSourceOp : public GPUResidentOperator {
 
   ~ManagedAllocSourceOp() override {
     if (managed_ptr_) {
-      cudaFree(managed_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(managed_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaMallocManaged(&managed_ptr_, alloc_size_);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMallocManaged(&managed_ptr_, alloc_size_),
+                                   "Failed to allocate managed memory");
     spec.device_output("out", reinterpret_cast<CUdeviceptr>(managed_ptr_));
   }
 
@@ -277,12 +284,13 @@ class HostAllocSinkOp : public GPUResidentOperator {
 
   ~HostAllocSinkOp() override {
     if (host_ptr_) {
-      cudaFreeHost(host_ptr_);
+      HOLOSCAN_CUDA_CALL_WARN(cudaFreeHost(host_ptr_));
     }
   }
 
   void setup(OperatorSpec& spec) override {
-    cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaHostAlloc(&host_ptr_, alloc_size_, cudaHostAllocDefault),
+                                   "Failed to allocate pinned host memory");
     spec.device_input("in", reinterpret_cast<CUdeviceptr>(host_ptr_));
   }
 
@@ -327,6 +335,66 @@ class ZeroSizeInputMemoryOp : public GPUResidentOperator {
 
   void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {}
+};
+
+// 3-output source: port 0 = memory block, port 1 = device_ptr, port 2 = memory block
+class MultiPortMixedSourceOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(MultiPortMixedSourceOp, GPUResidentOperator)
+  MultiPortMixedSourceOp() = default;
+
+  ~MultiPortMixedSourceOp() override {
+    if (dev_ptr_1_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_1_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    spec.device_output("out0", kPortSize);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_1_, kPortSize),
+                                   "Failed to allocate device memory");
+    spec.device_output("out1", reinterpret_cast<CUdeviceptr>(dev_ptr_1_));
+    spec.device_output("out2", kPortSize);
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+  void* dev_ptr_1() const { return dev_ptr_1_; }
+
+ private:
+  void* dev_ptr_1_ = nullptr;
+  static constexpr size_t kPortSize = sizeof(int) * 128;
+};
+
+// 3-input sink: port 0 = memory block, port 1 = memory block, port 2 = device_ptr
+class MultiPortMixedSinkOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(MultiPortMixedSinkOp, GPUResidentOperator)
+  MultiPortMixedSinkOp() = default;
+
+  ~MultiPortMixedSinkOp() override {
+    if (dev_ptr_2_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_2_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    spec.device_input("in0", kPortSize);
+    spec.device_input("in1", kPortSize);
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_2_, kPortSize),
+                                   "Failed to allocate device memory");
+    spec.device_input("in2", reinterpret_cast<CUdeviceptr>(dev_ptr_2_));
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+  void* dev_ptr_2() const { return dev_ptr_2_; }
+
+ private:
+  void* dev_ptr_2_ = nullptr;
+  static constexpr size_t kPortSize = sizeof(int) * 128;
 };
 
 // Test operator with invalid port name (containing dot)

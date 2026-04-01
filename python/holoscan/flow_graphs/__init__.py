@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,21 +12,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""This module provides a Python API for the C++ API Graph classes.
+
+"""This module provides a Python API for the C++ `FlowGraph` and `FlowGraphImpl` classes.
 
 .. autosummary::
 
-    holoscan.graphs.FlowGraph
-    holoscan.graphs.FragmentFlowGraph
-    holoscan.graphs.OperatorFlowGraph
+    holoscan.flow_graphs.FlowGraphImpl
+    holoscan.flow_graphs.FragmentFlowGraphImpl
+    holoscan.flow_graphs.OperatorFlowGraphImpl
 """
 
-from ._graphs import FragmentFlowGraph, OperatorFlowGraph
+from ._flow_graphs import (
+    FragmentFlowGraph,
+    FragmentFlowGraphImpl,
+    OperatorFlowGraph,
+    OperatorFlowGraphImpl,
+)
 
-FlowGraph = OperatorFlowGraph  # provide alias for backwards compatibility
+FlowGraphImpl = OperatorFlowGraphImpl
 
 __all__ = [
-    "FlowGraph",
+    "FlowGraphImpl",
+    "FragmentFlowGraphImpl",
     "FragmentFlowGraph",
+    "OperatorFlowGraphImpl",
     "OperatorFlowGraph",
 ]

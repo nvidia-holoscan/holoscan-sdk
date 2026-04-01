@@ -25,9 +25,9 @@ ARG PYTORCH_DGPU_VERSION=2.9.1
 ARG NCCL_VERSION=2.27  # strict compat to match pytorch versions (symbol: ncclCommWindowRegister)
 ARG LIBCUSPARSELT_VERSION=0.8  # strict compat to match pytorch versions
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.4.0_20260213_9fe4995d9_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.4.0_20260213_9fe4995d9_holoscan-sdk-cu13
-ARG DOCA_VERSION=3.0.0
+ARG GXF_CU12_VERSION=5.5.1_20260318_8b9561654_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.5.1_20260318_8b9561654_holoscan-sdk-cu13
+ARG DOCA_VERSION=3.3.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.13
 ARG UCX_VERSION=1.19.0
@@ -148,17 +148,18 @@ FROM base AS python-base-dgpu
 # is currently based on DLFW containers which are now on ubuntu 24.04 / python 3.12.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
-    apt-get update \
-    && apt-get install --no-install-recommends -y \
-        software-properties-common \
-    && add-apt-repository ppa:deadsnakes/ppa \
+    OS_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
+    && curl -fsSL --retry 5 --retry-delay 3 \
+        "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xF23C5A6CF475977595C89F51BA6932366A755776" \
+        | gpg --dearmor -o /etc/apt/trusted.gpg.d/deadsnakes.gpg \
+    && echo "deb https://ppa.launchpadcontent.net/deadsnakes/ppa/ubuntu ${OS_CODENAME} main" \
+        > /etc/apt/sources.list.d/deadsnakes-ppa.list \
     && apt-get update \
     && apt-get install --no-install-recommends -y \
         python3.12 \
         python3.12-dev \
     && apt purge -y \
         python3-pip \
-        software-properties-common \
     && apt-get autoremove --purge -y
 
 # Enforce python 3.12 as system python

@@ -30,7 +30,7 @@
 #include "./core/executor.hpp"
 #include "./core/fragment.hpp"
 #include "./core/gpu_resident_operator.hpp"
-#include "./core/graph.hpp"
+#include "./core/flow_graphs/flow_graph.hpp"
 #include "./core/io_context.hpp"
 #include "./core/message.hpp"
 #include "./core/metadata.hpp"

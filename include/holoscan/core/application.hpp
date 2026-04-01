@@ -220,14 +220,14 @@ class Application : public Fragment {
    * transmitters and receivers to the corresponding Operator instances in the fragment so that
    * the application can be executed in a distributed manner.
    *
-   * @return The reference to the fragment connection graph (`Graph` object.)
+   * @return The reference to the fragment connection graph (`FragmentFlowGraph` object.)
    */
-  FragmentGraph& fragment_graph();
+  FragmentFlowGraph& fragment_graph();
 
   /**
    * @brief Add a fragment to the graph.
    *
-   * The information of the fragment is stored in the Graph object.
+   * The information of the fragment is stored in the `FragmentFlowGraph` object.
    * If the fragment is already added, this method does nothing.
    *
    * @param frag The fragment to be added.
@@ -265,8 +265,8 @@ class Application : public Fragment {
    * Since `blur_image` and `sharpen_image` operators have only one output/input port, the port
    * names are omitted.
    *
-   * The information about the flow (edge) is stored in the Graph object and can be accessed through
-   * the `fragment_graph()` method.
+   * The information about the flow (edge) is stored in the `FragmentFlowGraph` object and can be
+   * accessed through the `fragment_graph()` method.
    *
    * If the upstream fragment or the downstream fragment is not in the graph, it will be added to
    * the graph.
@@ -459,7 +459,7 @@ class Application : public Fragment {
 
   CLIParser cli_parser_;           ///< The command line parser.
   std::vector<std::string> argv_;  ///< The command line arguments after processing flags.
-  std::shared_ptr<FragmentGraph> fragment_graph_;  ///< The fragment connection graph.
+  std::shared_ptr<FragmentFlowGraph> fragment_graph_;  ///< The fragment connection graph.
 
   std::shared_ptr<AppDriver> app_driver_;  ///< The application driver.
   std::shared_ptr<AppWorker> app_worker_;  ///< The application worker.

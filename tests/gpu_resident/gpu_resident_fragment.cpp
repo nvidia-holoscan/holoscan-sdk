@@ -158,10 +158,13 @@ TEST_F(GPUResidentFragmentTest, TestMultipleDeviceInputs) {
 // Test operator type is set correctly
 TEST_F(GPUResidentFragmentTest, TestOperatorType) {
   Fragment fragment;
-  auto op = fragment.make_operator<TestSourceGpuOp>("test_source");
+  auto source = fragment.make_operator<TestSourceGpuOp>("test_source");
+  auto compute = fragment.make_operator<TestComputeGpuOp>("test_compute");
+  auto sink = fragment.make_operator<TestSinkGpuOp>("test_sink");
 
-  // GPU-resident operators should have operator_type set to kUnknown
-  EXPECT_EQ(op->operator_type(), Operator::OperatorType::kUnknown);
+  EXPECT_EQ(source->operator_type(), Operator::OperatorType::kGPUResident);
+  EXPECT_EQ(compute->operator_type(), Operator::OperatorType::kGPUResident);
+  EXPECT_EQ(sink->operator_type(), Operator::OperatorType::kGPUResident);
 }
 
 // ================================================================================================
@@ -920,8 +923,8 @@ TEST_F(GPUResidentFragmentTest, TestStopExecutionSingleOperatorWarning) {
   std::string log_output = testing::internal::GetCapturedStderr();
 
   // Verify warning message was logged
-  EXPECT_TRUE(log_output.find("Stopping execution of a single operator in GPU-resident execution "
-                              "mode is not supported") != std::string::npos)
+  EXPECT_TRUE(log_output.find("Stopping execution of a single operator in GPU-resident graph "
+                              "execution mode is not supported") != std::string::npos)
       << "Expected warning message not found in log output";
 
   // Fragment should still be running

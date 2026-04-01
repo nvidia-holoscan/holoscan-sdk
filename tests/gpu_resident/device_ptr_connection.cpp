@@ -29,7 +29,7 @@
 
 /// This file tests the prepare_data_flow algorithm that decides between
 /// memory-block allocation and device-pointer connection for inter-operator
-/// data flow in GPU-resident execution.
+/// data flow in GPU-resident graph execution.
 ///
 /// The algorithm (implemented in GPUResidentExecutor::prepare_data_flow):
 ///   Case 1: Both sides have memory_block_size > 0  -->  allocate shared buffer
@@ -411,6 +411,63 @@ TEST_F(DevicePtrConnectionTest, MixedChain_MemBlock_DevicePtr_MemBlock) {
 
   // The two connections should use different memory
   EXPECT_NE(source_out, compute_out);
+}
+
+// ============================================================================
+// Multi-port mixed connection types (3 ports)
+// ============================================================================
+
+// Source: out0 = mem_block, out1 = device_ptr, out2 = mem_block
+// Sink:  in0  = mem_block, in1  = mem_block,   in2  = device_ptr
+//
+// Per-port expected behaviour:
+//   out0 (mem) -> in0 (mem)   : Case 1 — allocate shared buffer
+//   out1 (ptr) -> in1 (mem)   : Case 2 — use source device_ptr, warn
+//   out2 (mem) -> in2 (ptr)   : Case 2 — use sink device_ptr, warn
+TEST_F(DevicePtrConnectionTest, MultiPort_MixedConnectionTypes) {
+  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "WARN");
+  Fragment fragment;
+  auto source = fragment.make_operator<MultiPortMixedSourceOp>("source");
+  auto sink = fragment.make_operator<MultiPortMixedSinkOp>("sink");
+  fragment.add_flow(source, sink, {{"out0", "in0"}, {"out1", "in1"}, {"out2", "in2"}});
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  testing::internal::CaptureStderr();
+  EXPECT_TRUE(executor->initialize_fragment());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  // Ports out1->in1 and out2->in2 should each produce a warning about ignoring mem_block
+  EXPECT_TRUE(log_output.find("ignoring the memory block size") != std::string::npos)
+      << "Expected warning about ignoring memory block size not found in:\n"
+      << log_output;
+
+  // --- Port 0: both mem_block → executor-allocated shared buffer ---
+  auto out0 = source->device_memory("out0");
+  auto in0 = sink->device_memory("in0");
+  EXPECT_NE(out0, nullptr);
+  EXPECT_NE(in0, nullptr);
+  EXPECT_EQ(out0, in0);
+
+  // --- Port 1: source device_ptr wins ---
+  auto out1 = source->device_memory("out1");
+  auto in1 = sink->device_memory("in1");
+  EXPECT_NE(out1, nullptr);
+  EXPECT_EQ(out1, source->dev_ptr_1());
+  EXPECT_EQ(out1, in1);
+
+  // --- Port 2: sink device_ptr wins ---
+  auto out2 = source->device_memory("out2");
+  auto in2 = sink->device_memory("in2");
+  EXPECT_NE(in2, nullptr);
+  EXPECT_EQ(in2, sink->dev_ptr_2());
+  EXPECT_EQ(out2, in2);
+
+  // All three connections must use distinct memory
+  EXPECT_NE(out0, out1);
+  EXPECT_NE(out0, out2);
+  EXPECT_NE(out1, out2);
 }
 
 }  // namespace holoscan

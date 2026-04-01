@@ -19,7 +19,12 @@
 #include <cuda_runtime.h>
 #include <sys/utsname.h>
 
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +32,61 @@
 #include <holoscan/holoscan.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
 #include "test_kernel.cu.hpp"
+
+constexpr int kMinCudaDriverVersion = 12040;
+constexpr const char* kHsdkFaqUrl =
+    "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
+
+static std::optional<std::vector<uint32_t>> green_context_partitions_for_current_arch() {
+  struct utsname os_info {};
+  if (uname(&os_info) != 0) {
+    return std::nullopt;
+  }
+  std::string arch(static_cast<const char*>(os_info.machine));
+  if (arch == "x86_64" || arch == "amd64") {
+    return std::vector<uint32_t>{8, 8};
+  }
+  if (arch == "aarch64" || arch == "arm64") {
+    // For reference, Jetson Orin AGX has 16 SMs,
+    //                Jetson Orin Nano has 8 SMs
+    //                Jetson Thor has 22 SMs
+    return std::vector<uint32_t>{4, 4};
+  }
+  return std::nullopt;
+}
+
+// Example requires a certain minimum number of GPU Streaming Multiprocessors (SMs) to run
+static int required_sm_count_for_green_context(const std::vector<uint32_t>& partitions) {
+  int total = 0;
+  for (const auto partition_sm_count : partitions) {
+    total += static_cast<int>(partition_sm_count);
+  }
+  return total;
+}
+
+// Gets the current CUDA Driver API, such as "12040" for 12.4
+static std::optional<int> detect_cuda_driver_version() {
+  int version = 0;
+  if (cudaDriverGetVersion(&version) != cudaSuccess) {
+    return std::nullopt;
+  }
+  return version;
+}
+
+// Green Context APIs are introduced in CUDA Driver 12.4
+static bool green_context_supported_by_cuda_driver() {
+  auto version = detect_cuda_driver_version();
+  return version.has_value() && version.value() >= kMinCudaDriverVersion;
+}
+
+// Detects the number of GPU Streaming Multiprocessors (SMs) available on the device
+static std::optional<int> detect_device_multiprocessor_count() {
+  int sm_count = 0;
+  if (cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0) != cudaSuccess) {
+    return std::nullopt;
+  }
+  return sm_count;
+}
 
 namespace holoscan::ops {
 class PingTxOp : public Operator {
@@ -131,24 +191,15 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     using namespace holoscan;
 
     // Create a cuda green context
-    std::vector<uint32_t> partitions;
-    struct utsname osInfo{};
-    uname(&osInfo);
-    std::string arch(static_cast<const char*>(osInfo.machine));
-    if (arch == "x86_64" || arch == "amd64") {
-      partitions = std::vector<uint32_t>{8, 8};
-    } else if (arch == "aarch64" || arch == "arm64") {
-      // For reference, Jetson Orin AGX has 16 SMs,
-      //                Jetson Orin Nano has 8 SMs
-      //                Jetson Thor has 22 SMs
-      partitions = std::vector<uint32_t>{4, 4};
-    } else {
-      throw std::runtime_error(fmt::format("Unsupported platform architecture: {}", arch));
+    auto partitions = green_context_partitions_for_current_arch();
+    if (!partitions.has_value()) {
+      throw std::runtime_error("Unsupported platform architecture for Green Context sample");
     }
 
     // Create a green context pool which will be used as the default green context pool for the
     // current fragment
-    const auto cuda_green_context_pool = add_default_green_context_pool(0, std::move(partitions));
+    const auto cuda_green_context_pool =
+        add_default_green_context_pool(0, std::move(partitions.value()));
 
     // Use green context 0 from the provided green context pool
     const auto cuda_green_context1 =
@@ -207,7 +258,36 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
   }
 };
 
+// CTest skip return code when Green Context is not available.
+constexpr int kSkipReturnCode = 77;
+
 int main() {
+  if (!green_context_supported_by_cuda_driver()) {
+    auto version = detect_cuda_driver_version();
+    std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
+              << kMinCudaDriverVersion << ", detected: "
+              << (version.has_value() ? std::to_string(version.value()) : "unknown")
+              << "). See " << kHsdkFaqUrl << std::endl;
+    return kSkipReturnCode;
+  }
+
+  auto partitions = green_context_partitions_for_current_arch();
+  if (!partitions.has_value()) {
+    std::cerr << "Green Context sample is not configured for this architecture."
+              << " See " << kHsdkFaqUrl << std::endl;
+    return kSkipReturnCode;
+  }
+
+  const int required_sm_count = required_sm_count_for_green_context(partitions.value());
+  auto sm_count = detect_device_multiprocessor_count();
+  if (!sm_count.has_value() || sm_count.value() < required_sm_count) {
+    std::cerr << "Green Context requires at least " << required_sm_count
+              << " SMs for this sample's partitioning (detected: "
+              << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown")
+              << "). See " << kHsdkFaqUrl << std::endl;
+    return kSkipReturnCode;
+  }
+
   auto app = holoscan::make_application<SampleCudaStreamPoolApp>();
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(

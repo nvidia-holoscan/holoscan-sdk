@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@ limitations under the License.
 """  # noqa: E501
 
 import platform
+import sys
 from argparse import ArgumentParser
 
 import cupy as cp
@@ -24,6 +25,21 @@ from holoscan.conditions import CountCondition, CudaStreamCondition
 from holoscan.core import Application, Operator, OperatorSpec
 from holoscan.operators import PingTensorRxOp
 from holoscan.resources import CudaGreenContext, CudaGreenContextPool, CudaStreamPool
+
+MIN_GREEN_CONTEXT_CUDA_DRIVER_VERSION = 12040
+GREEN_CONTEXT_REQUIREMENT_DOC_URL = "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html"
+
+
+def _cuda_driver_version():
+    try:
+        return int(cp.cuda.runtime.driverGetVersion())
+    except cp.cuda.runtime.CUDARuntimeError:
+        return None
+
+
+def _green_context_supported_by_cuda_driver():
+    version = _cuda_driver_version()
+    return version is not None and version >= MIN_GREEN_CONTEXT_CUDA_DRIVER_VERSION
 
 
 class CuPySourceOp(Operator):
@@ -259,6 +275,16 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.count < 1:
         raise ValueError("count must be a positive integer")
+    if args.green_context and not _green_context_supported_by_cuda_driver():
+        version = _cuda_driver_version()
+        version_display = "unknown" if version is None else str(version)
+        print(
+            "Green Context requires CUDA Driver API >= 12.4 "
+            f"(cudaDriverGetVersion >= {MIN_GREEN_CONTEXT_CUDA_DRIVER_VERSION}, "
+            f"detected: {version_display}). See {GREEN_CONTEXT_REQUIREMENT_DOC_URL}",
+            file=sys.stderr,
+        )
+        sys.exit(77)
 
     app = CuPyExampleApp(
         count=args.count,

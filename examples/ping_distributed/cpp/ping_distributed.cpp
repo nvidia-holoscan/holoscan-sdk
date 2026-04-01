@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <iostream>
 #include <string>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -203,10 +204,25 @@ int main() {
     // run the application
     app->run();
 
-    // print data flow tracking results
-    for (const auto& [name, tracker] : trackers) {
-      std::cout << "Fragment: " << name << '\n';
-      tracker->print();
+    // print data flow tracking results only for fragments that ran locally
+    const auto& opts = app->options();
+    if (opts.run_worker) {
+      // This process ran as a worker; only show trackers for fragments we ran
+      const bool run_all = (opts.worker_targets.size() == 1 && opts.worker_targets[0] == "all");
+      std::unordered_set<std::string> local_fragment_names(opts.worker_targets.begin(),
+                                                           opts.worker_targets.end());
+      for (const auto& [name, tracker] : trackers) {
+        if (run_all || local_fragment_names.count(name)) {
+          std::cout << "Fragment: " << name << '\n';
+          tracker->print();
+        }
+      }
+    } else if (!opts.run_driver) {
+      // Local mode (no driver, no worker): all fragments ran on this process
+      for (const auto& [name, tracker] : trackers) {
+        std::cout << "Fragment: " << name << '\n';
+        tracker->print();
+      }
     }
   } else {
     app->run();

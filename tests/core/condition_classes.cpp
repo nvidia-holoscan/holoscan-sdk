@@ -20,6 +20,7 @@
 
 #include <chrono>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -44,8 +45,8 @@
 #include "holoscan/core/conditions/gxf/periodic.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
 #include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 using namespace std::string_literals;
@@ -152,18 +153,17 @@ TEST(ConditionClasses, TestCountConditionGXFComponentMethods) {
 TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithoutSpec) {
   CountCondition count{10};
   count.fragment(&F);
-  // TODO(unknown): avoid segfault if initialize is called before the fragment is assigned
 
-  // test that an error is logged if initialize is called before a spec as assigned
-  testing::internal::CaptureStderr();
-  count.initialize();
-
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+  // initialize() throws when called before a ComponentSpec has been assigned
+  try {
+    count.initialize();
+    FAIL() << "Expected std::runtime_error to be thrown";
+  } catch (const std::runtime_error& e) {
+    EXPECT_TRUE(std::string(e.what()).find("No component spec") != std::string::npos)
+        << "Exception message: " << e.what();
+  } catch (...) {
+    FAIL() << "Expected std::runtime_error but caught different exception type";
+  }
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestCountConditionInitializeWithUnrecognizedArg) {
@@ -577,18 +577,17 @@ TEST(ConditionClasses, TestPeriodicConditionGXFComponentMethods) {
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithoutSpec) {
   PeriodicCondition periodic{1000000};
   periodic.fragment(&F);
-  // TODO(unknown): avoid segfault if initialize is called before the fragment is assigned
 
-  // test that an error is logged if initialize is called before a spec as assigned
-  testing::internal::CaptureStderr();
-  periodic.initialize();
-
-  std::string log_output = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log_output.find("error") != std::string::npos) << "=== LOG ===\n"
-                                                             << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find("No component spec") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+  // initialize() throws when called before a ComponentSpec has been assigned
+  try {
+    periodic.initialize();
+    FAIL() << "Expected std::runtime_error to be thrown";
+  } catch (const std::runtime_error& e) {
+    EXPECT_TRUE(std::string(e.what()).find("No component spec") != std::string::npos)
+        << "Exception message: " << e.what();
+  } catch (...) {
+    FAIL() << "Expected std::runtime_error but caught different exception type";
+  }
 }
 
 TEST_F(ConditionClassesWithGXFContext, TestPeriodicConditionInitializeWithArg) {

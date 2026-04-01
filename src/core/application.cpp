@@ -45,7 +45,7 @@
 #include "holoscan/core/dataflow_tracker.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 #include "holoscan/core/metadata.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
@@ -431,9 +431,9 @@ CLIOptions& Application::options() {
   return cli_parser_.options();
 }
 
-FragmentGraph& Application::fragment_graph() {
+FragmentFlowGraph& Application::fragment_graph() {
   if (!fragment_graph_) {
-    fragment_graph_ = make_graph<FragmentFlowGraph>();
+    fragment_graph_ = make_graph<FragmentFlowGraphImpl>();
   }
   return *fragment_graph_;
 }
@@ -453,10 +453,11 @@ void Application::add_fragment(const std::shared_ptr<Fragment>& frag) {
 void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
                            const std::shared_ptr<Fragment>& downstream_frag,
                            const std::set<std::pair<std::string, std::string>>& port_pairs) {
-  // If port_pairs is empty, print an error message and return.
+  // If port_pairs is empty, fail fast.
   if (port_pairs.empty()) {
-    HOLOSCAN_LOG_ERROR("Unable to add fragment flow with empty port_pairs");
-    return;
+    auto err_msg = std::string("Unable to add fragment flow with empty port_pairs");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   // if any of the fragments is GPU-resident, then this function should throw an error
@@ -469,7 +470,7 @@ void Application::add_flow(const std::shared_ptr<Fragment>& upstream_frag,
     throw std::runtime_error(err_msg);
   }
 
-  auto port_map = std::make_shared<FragmentGraph::EdgeDataElementType>();
+  auto port_map = std::make_shared<FragmentFlowGraph::EdgeDataElementType>();
 
   // Convert the port name pairs to port map
   // (set<pair<string, string>> -> map<string, set<string>>)
@@ -614,10 +615,11 @@ void Application::run() {
   HOLOSCAN_LOG_DEBUG("Executing Application::run()... (log_func_ptr=0x{:x})",
                      reinterpret_cast<uint64_t>(&nvidia::LoggingFunction));
   if (cli_parser_.has_error()) {
-    HOLOSCAN_LOG_ERROR(
+    auto err_msg = std::string(
         "Application::run() failed to run because of CLI parser errors. "
         "Please check the CLI arguments and try again.");
-    return;
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   set_ucx_env();
@@ -633,10 +635,11 @@ void Application::run() {
 
 std::future<void> Application::run_async() {
   if (cli_parser_.has_error()) {
-    HOLOSCAN_LOG_ERROR(
+    auto err_msg = std::string(
         "Application::run_async() failed to run because of CLI parser errors. "
         "Please check the CLI arguments and try again.");
-    return {};
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   set_ucx_env();

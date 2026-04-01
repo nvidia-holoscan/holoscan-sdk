@@ -96,7 +96,7 @@ class MultiMessageAvailableCondition : public gxf::GXFCondition {
 
   // wrap setters available on the underling nvidia::gxf::MultiMessageAvailableSchedulingTerm
   void min_sum(size_t value);
-  size_t min_sum() { return min_sum_; }
+  size_t min_sum() const { return min_sum_; }
 
   void sampling_mode(SamplingMode value);
   SamplingMode sampling_mode() {
@@ -112,7 +112,7 @@ class MultiMessageAvailableCondition : public gxf::GXFCondition {
 
   void add_min_size(size_t value);
 
-  std::vector<size_t> min_sizes() { return min_sizes_; }
+  std::vector<size_t> min_sizes() const { return min_sizes_; }
 
   nvidia::gxf::MultiMessageAvailableSchedulingTerm* get() const;
 

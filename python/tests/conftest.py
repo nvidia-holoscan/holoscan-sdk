@@ -16,6 +16,9 @@ limitations under the License.
 """  # noqa: E501
 
 import os
+import re
+import subprocess
+from xml.etree import ElementTree
 
 import pytest
 
@@ -69,6 +72,67 @@ def deprecated_extension_config_file():
     yaml_file_dir = os.path.dirname(__file__)
     config_file = os.path.join(yaml_file_dir, "deprecated_stream_playback.yaml")
     return config_file
+
+
+# Cached result for Green Context availability.
+_green_context_available = None
+_cached_nvidia_smi_output = None
+_cached_nvidia_smi_loaded = False
+# Holoscan SDK FAQ prerequisite documents that CUDA Green Context features
+# require CUDA Driver API version >= 12.4.
+# Ref: https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html
+MIN_GREEN_CONTEXT_CUDA_DRIVER_API = 12040
+
+
+def _nvidia_smi_output():
+    global _cached_nvidia_smi_loaded, _cached_nvidia_smi_output
+    if _cached_nvidia_smi_loaded:
+        return _cached_nvidia_smi_output
+    _cached_nvidia_smi_loaded = True
+    try:
+        proc = subprocess.run(
+            ["nvidia-smi", "-q", "-x"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        _cached_nvidia_smi_output = None
+        return None
+    _cached_nvidia_smi_output = proc.stdout
+    return _cached_nvidia_smi_output
+
+
+def _cuda_driver_api_version():
+    output = _nvidia_smi_output()
+    if not output:
+        return None
+    try:
+        root = ElementTree.fromstring(output)
+    except ElementTree.ParseError:
+        return None
+    cuda_version = root.findtext("cuda_version")
+    if not cuda_version:
+        return None
+    match = re.search(r"(\d+)\.(\d+)", cuda_version)
+    if not match:
+        return None
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    return major * 1000 + minor * 10
+
+
+def green_context_available():
+    """Return True if Green Context is supported in this environment.
+
+    Tests that require it should skip when this returns False.
+    """
+    global _green_context_available
+    if _green_context_available is not None:
+        return _green_context_available
+    version = _cuda_driver_api_version()
+    _green_context_available = version is not None and version >= MIN_GREEN_CONTEXT_CUDA_DRIVER_API
+    return _green_context_available
 
 
 def pytest_configure(config):  # noqa: ARG001

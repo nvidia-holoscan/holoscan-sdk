@@ -1337,3 +1337,165 @@ def test_one_to_many_connection(capfd):
         f"Actual nodes: {node_names}\n"
         f"Expected nodes: {expected_names}\n"
     )
+
+
+# =======================================================================================
+# add_subgraph ownership tests (factory pattern)
+# =======================================================================================
+
+
+def _create_tx_subgraph(parent, name):
+    """Factory function simulating runtime type selection."""
+    return PingTxSubgraph(parent, name)
+
+
+def _create_rx_subgraph(parent, name):
+    """Factory function simulating runtime type selection."""
+    return PingRxSubgraph(parent, name)
+
+
+class AddSubgraphFactoryApp(Application):
+    """Application using add_subgraph with factory-created subgraphs at Fragment level."""
+
+    def compose(self):
+        tx = _create_tx_subgraph(self, "tx1")
+        self.add_subgraph(tx)
+
+        rx = _create_rx_subgraph(self, "rx1")
+        self.add_subgraph(rx)
+
+        self.add_flow(tx, rx, {("data_out", "data_in")})
+
+
+def test_add_subgraph_factory_pattern(capfd):
+    """Test add_subgraph with factory-created subgraphs at Fragment level."""
+    app = AddSubgraphFactoryApp()
+    app.run()
+
+    captured = capfd.readouterr()
+
+    node_names = {node.name for node in app.graph.get_nodes()}
+    expected_names = {"tx1_transmitter", "tx1_forwarding", "rx1_receiver"}
+
+    assert node_names == expected_names, (
+        f"Node names don't match expected names.\n"
+        f"Actual nodes: {node_names}\n"
+        f"Expected nodes: {expected_names}\n"
+    )
+    assert captured.out.count("Rx message value: 8") == 1
+
+
+class NestedFactorySubgraph(Subgraph):
+    """Subgraph that uses add_subgraph with a factory-created child."""
+
+    def compose(self):
+        inner_tx = _create_tx_subgraph(self, "inner_tx")
+        self.add_subgraph(inner_tx)
+
+        self.add_output_interface_port("data_out", inner_tx, "data_out")
+
+
+class NestedAddSubgraphFactoryApp(Application):
+    """Application using nested factory subgraphs via add_subgraph."""
+
+    def compose(self):
+        outer = NestedFactorySubgraph(self, name="outer")
+        rx = PingRxSubgraph(self, name="rx1")
+
+        self.add_flow(outer, rx, {("data_out", "data_in")})
+
+
+def test_nested_add_subgraph_factory_pattern(capfd):
+    """Test add_subgraph with factory-created nested subgraphs (name qualification)."""
+    app = NestedAddSubgraphFactoryApp()
+    app.run()
+
+    captured = capfd.readouterr()
+
+    node_names = {node.name for node in app.graph.get_nodes()}
+    # outer -> inner_tx qualifies to "outer_inner_tx"
+    # inner_tx's operators: transmitter, forwarding -> "outer_inner_tx_transmitter", etc.
+    expected_names = {"outer_inner_tx_transmitter", "outer_inner_tx_forwarding", "rx1_receiver"}
+
+    assert node_names == expected_names, (
+        f"Node names don't match expected names.\n"
+        f"Actual nodes: {node_names}\n"
+        f"Expected nodes: {expected_names}\n"
+    )
+    assert captured.out.count("Rx message value: 8") == 1
+
+
+class AddSubgraphIdempotentApp(Application):
+    """Calling add_subgraph twice with the same object must be a harmless no-op."""
+
+    def compose(self):
+        tx = PingTxSubgraph(self, name="tx1")
+        self.add_subgraph(tx)
+        self.add_subgraph(tx)  # same object again -- should not throw
+
+        rx = PingRxSubgraph(self, name="rx1")
+        self.add_subgraph(rx)
+        self.add_subgraph(rx)
+
+        self.add_flow(tx, rx, {("data_out", "data_in")})
+
+
+def test_add_subgraph_idempotent(capfd):
+    """Test that calling add_subgraph twice with the same subgraph is a no-op."""
+    app = AddSubgraphIdempotentApp()
+    app.run()
+
+    captured = capfd.readouterr()
+    assert captured.out.count("Rx message value: 8") == 1
+
+
+def test_fragment_subgraphs_accessor():
+    """Test Fragment.subgraphs returns the top-level subgraphs."""
+    app = AddSubgraphFactoryApp()
+    app.run()
+
+    sg_names = {sg.name for sg in app.subgraphs}
+    assert sg_names == {"tx1", "rx1"}
+
+
+def test_nested_subgraphs_accessor():
+    """Test Subgraph.nested_subgraphs returns direct children.
+
+    NestedAddSubgraphFactoryApp does NOT call add_subgraph explicitly.
+    Fragment::add_flow auto-registers subgraph args via add_subgraph.
+    """
+    app = NestedAddSubgraphFactoryApp()
+    app.run()
+
+    # Fragment owns "outer" and "rx1"
+    top = {sg.name: sg for sg in app.subgraphs}
+    assert set(top.keys()) == {"outer", "rx1"}
+
+    # "outer" has one nested subgraph "outer_inner_tx"
+    nested = top["outer"].nested_subgraphs
+    assert len(nested) == 1
+    assert nested[0].name == "outer_inner_tx"
+
+    # "rx1" has no nested subgraphs
+    assert len(top["rx1"].nested_subgraphs) == 0
+
+
+class DuplicateAddSubgraphApp(Application):
+    """Application that tests duplicate name detection via add_subgraph."""
+
+    def compose(self):
+        tx1 = _create_tx_subgraph(self, "tx")
+        self.add_subgraph(tx1)
+
+        # In Python, subgraphs auto-compose during __init__, so creating a second
+        # subgraph with the same name will hit the graph's duplicate operator name
+        # check before add_subgraph's duplicate subgraph name check.
+        tx2 = _create_tx_subgraph(self, "tx")
+        self.add_subgraph(tx2)
+
+
+def test_add_subgraph_duplicate_name_detection():
+    """Test that creating two subgraphs with the same name raises an error."""
+    app = DuplicateAddSubgraphApp()
+    with pytest.raises(RuntimeError, match="Duplicate name"):
+        app.run()

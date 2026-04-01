@@ -34,7 +34,7 @@
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/network_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/scheduler.hpp"

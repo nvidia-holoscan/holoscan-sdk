@@ -16,6 +16,7 @@
  */
 
 #include <string>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -28,6 +29,11 @@
 namespace holoscan::gxf {
 
 void GXFNetworkContext::set_parameters() {
+  if (!spec_) {
+    auto err_msg = fmt::format("No component spec for GXFNetworkContext '{}'", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   update_params_from_args();
 
   // Set Handler parameters

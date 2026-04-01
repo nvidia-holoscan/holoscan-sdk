@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -105,6 +105,12 @@ class EntityIndex:
         else:
             reader.seek(offset, whence)
             buffer = reader.read(self.HEADER_SIZE)
+            if len(buffer) < self.HEADER_SIZE:
+                raise ValueError(
+                    f"GXF index file is empty or truncated: expected "
+                    f"{self.HEADER_SIZE} bytes, got {len(buffer)}. "
+                    "The recording may contain no entities."
+                )
             header_data = self.HEADER_STRUCT.unpack(buffer)
 
             log_time = header_data[0]
@@ -996,6 +1002,17 @@ class EntityReader:
         Returns:
             The frame in the form of a numpy array.
         """
+        num_entities = self.num_entities
+        if num_entities == 0:
+            raise ValueError(
+                "Recording has no entities. The GXF index file is empty or "
+                "missing. Ensure the application produced render output."
+            )
+        if index < 0 or index >= num_entities:
+            raise ValueError(
+                f"Frame index {index} is out of range; recording has "
+                f"{num_entities} entit{'y' if num_entities == 1 else 'ies'}."
+            )
         entity = self.get_entity(index)
         return entity.components[0].tensor.array
 

@@ -46,7 +46,7 @@
 #include "holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 #include "holoscan/core/gxf/entity_group.hpp"
 #include "holoscan/core/gxf/gxf_network_context.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
@@ -216,13 +216,13 @@ std::shared_ptr<Config> Fragment::config_shared() {
   return config_;
 }
 
-OperatorGraph& Fragment::graph() {
+OperatorFlowGraph& Fragment::graph() {
   return *graph_shared();
 }
 
-std::shared_ptr<OperatorGraph> Fragment::graph_shared() {
+std::shared_ptr<OperatorFlowGraph> Fragment::graph_shared() {
   if (!graph_) {
-    graph_ = make_graph<OperatorFlowGraph>();
+    graph_ = make_graph<OperatorFlowGraphImpl>();
   }
   return graph_;
 }
@@ -373,12 +373,33 @@ void Fragment::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
     return;
   }
 
+  // If this exact subgraph is already owned (e.g. make_subgraph then add_subgraph), no-op.
+  for (const auto& existing : subgraphs_) {
+    if (existing == subgraph) {
+      return;
+    }
+  }
+
+  const auto& name = subgraph->name();
+
+  // Register name for duplicate detection (consistent with make_subgraph)
+  if (subgraph_names_.find(name) != subgraph_names_.end()) {
+    throw std::runtime_error(
+        fmt::format("Fragment::add_subgraph: Duplicate subgraph name '{}'. "
+                    "Each subgraph must have a unique name within the same fragment.",
+                    name));
+  }
+  subgraph_names_.insert(name);
+
   // Compose the subgraph if not already composed
   // This will add all operators and flows to the fragment's graph
   if (!subgraph->is_composed()) {
     subgraph->compose();
     subgraph->set_composed(true);
   }
+
+  // Take ownership so the subgraph stays alive for the fragment's lifetime
+  subgraphs_.push_back(subgraph);
 }
 
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
@@ -547,14 +568,15 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
   // Verify that the upstream & downstream operators have the input and output ports specified by
   // the port_map
   if (op_outputs.size() == 1 && output_labels.size() != 1) {
-    HOLOSCAN_LOG_ERROR(
+    auto err_msg = fmt::format(
         "The upstream operator({}) has only one port with label '{}' but port_map "
         "specifies {} labels({}) to the upstream operator's output port",
         upstream_op->name(),
         (*op_outputs.begin()).first,
         output_labels.size(),
         fmt::join(output_labels, ", "));
-    return;
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
   }
 
   for (const auto& output_label : output_labels) {
@@ -568,12 +590,13 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
         break;
       }
       if (op_outputs.empty()) {
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = fmt::format(
             "The upstream operator({}) does not have any output port but '{}' was specified in "
             "port_map",
             upstream_op->name(),
             output_label);
-        return;
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
       }
 
       auto msg_buf = fmt::memory_buffer();
@@ -584,28 +607,30 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
           fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
         }
       }
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "The upstream operator({}) does not have an output port with label '{}'. It should be "
           "one of ({:.{}})",
           upstream_op->name(),
           output_label,
           msg_buf.data(),
           msg_buf.size());
-      return;
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
     }
   }
 
   for (const auto& output_label : output_labels) {
     auto& input_labels = (*port_map)[output_label];
     if (op_inputs.size() == 1 && input_labels.size() != 1) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "The downstream operator({}) has only one port with label '{}' but port_map "
           "specifies {} labels({}) to the downstream operator's input port",
           downstream_op->name(),
           (*op_inputs.begin()).first,
           input_labels.size(),
           fmt::join(input_labels, ", "));
-      return;
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
     }
 
     // Create a vector to maintain the final input labels
@@ -667,22 +692,24 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
             bool succeed = executor().add_receivers(
                 downstream_op, input_receivers_label, new_input_labels, iospec_vector);
             if (!succeed) {
-              HOLOSCAN_LOG_ERROR(
+              auto err_msg = fmt::format(
                   "Failed to add receivers to the downstream operator({}) with label '{}'",
                   downstream_op->name(),
                   input_receivers_label);
-              return;
+              HOLOSCAN_LOG_ERROR(err_msg);
+              throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
             }
             continue;
           }
         }
         if (op_inputs.empty()) {
-          HOLOSCAN_LOG_ERROR(
+          auto err_msg = fmt::format(
               "The downstream operator({}) does not have any input port but '{}' was "
               "specified in the port_map",
               downstream_op->name(),
               input_receivers_label);
-          return;
+          HOLOSCAN_LOG_ERROR(err_msg);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
         }
 
         auto msg_buf = fmt::memory_buffer();
@@ -693,14 +720,15 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
             fmt::format_to(std::back_inserter(msg_buf), ", {}", label);
           }
         }
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = fmt::format(
             "The downstream operator({}) does not have an input port with label '{}'. It should "
             "be one of ({:.{}})",
             downstream_op->name(),
             input_receivers_label,
             msg_buf.data(),
             msg_buf.size());
-        return;
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
       }
 
       // Insert the input label as it is to the new_input_labels
@@ -923,11 +951,12 @@ void Fragment::compose_graph() {
 
   // Protect against the case where no add_operator or add_flow calls were made
   if (!graph_) {
-    HOLOSCAN_LOG_ERROR(fmt::format(
+    auto err_msg = fmt::format(
         "Fragment '{}' does not have any operators. Please check that there is at least one call to"
         "`add_operator` or `add_flow` during `Fragment::compose`.",
-        name()));
-    graph();
+        name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
   }
 }
 
@@ -980,7 +1009,7 @@ void Fragment::stop_execution(const std::string& op_name) {
   if (is_gpu_resident_) {
     if (!op_name.empty()) {
       HOLOSCAN_LOG_WARN(
-          "Stopping execution of a single operator in GPU-resident execution mode is not "
+          "Stopping execution of a single operator in GPU-resident graph execution mode is not "
           "supported.");
     } else {
       // tear down the GPU-resident CUDA graph
@@ -1086,6 +1115,7 @@ void Fragment::reset_state() {
   // Reset the graph to recreate it on the next run
   graph_.reset();
   subgraph_names_.clear();
+  subgraphs_.clear();
 
   // Skip resetting the scheduler since it is shared between run() method calls.
   // scheduler_.reset();  // DO NOT RESET THIS.
@@ -1783,6 +1813,8 @@ void Fragment::resolve_and_create_subgraph_to_subgraph_flows(
 void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  add_subgraph(downstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_operator_output_ports(upstream_op);
@@ -1808,10 +1840,11 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
       if (!exec_input_ports.empty()) {
         // This is a control flow connection
         if (upstream_op->operator_type() != Operator::OperatorType::kNative) {
-          HOLOSCAN_LOG_ERROR(
+          auto err_msg = fmt::format(
               "Upstream operator '{}' must be a Native operator for control flow connections",
               upstream_op->name());
-          return;
+          HOLOSCAN_LOG_ERROR(err_msg);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
         }
 
         if (exec_input_ports.size() > 1) {
@@ -1833,7 +1866,7 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
             upstream_op->name(),
             downstream_subgraph->name());
         HOLOSCAN_LOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
       }
     }
   }
@@ -1846,6 +1879,8 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  add_subgraph(upstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_subgraph_output_ports(upstream_subgraph);
@@ -1872,10 +1907,11 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
           (downstream_ports.empty() || downstream_op->input_exec_spec())) {
         // This is a control flow connection
         if (downstream_op->operator_type() != Operator::OperatorType::kNative) {
-          HOLOSCAN_LOG_ERROR(
+          auto err_msg = fmt::format(
               "Downstream operator '{}' must be a Native operator for control flow connections",
               downstream_op->name());
-          return;
+          HOLOSCAN_LOG_ERROR(err_msg);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
         }
 
         if (exec_output_ports.size() > 1) {
@@ -1892,10 +1928,12 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
         // Auto-connect to the single exec port
         port_pairs.emplace(exec_output_ports[0], Operator::kInputExecPortName);
       } else {
-        HOLOSCAN_LOG_ERROR("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
-                           upstream_subgraph->name(),
-                           downstream_op->name());
-        return;
+        auto err_msg =
+            fmt::format("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
+                        upstream_subgraph->name(),
+                        downstream_op->name());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
       }
     }
   }
@@ -1908,6 +1946,9 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  add_subgraph(upstream_subgraph);
+  add_subgraph(downstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_subgraph_output_ports(upstream_subgraph);
@@ -1942,21 +1983,24 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
       if (!exec_output_ports.empty() && !exec_input_ports.empty()) {
         // This is a control flow connection
         if (exec_output_ports.size() > 1 || exec_input_ports.size() > 1) {
-          HOLOSCAN_LOG_ERROR(
+          auto err_msg = fmt::format(
               "Cannot auto-connect '{}' to '{}': multiple execution ports found, "
               "so port mapping must be specified explicitly",
               upstream_subgraph->name(),
               downstream_subgraph->name());
-          return;
+          HOLOSCAN_LOG_ERROR(err_msg);
+          throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
         }
 
         // Auto-connect to the single exec ports
         port_pairs.emplace(exec_output_ports[0], exec_input_ports[0]);
       } else {
-        HOLOSCAN_LOG_ERROR("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
-                           upstream_subgraph->name(),
-                           downstream_subgraph->name());
-        return;
+        auto err_msg =
+            fmt::format("Cannot auto-connect '{}' to '{}': no compatible interface ports found",
+                        upstream_subgraph->name(),
+                        downstream_subgraph->name());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
       }
     }
   }
@@ -1989,6 +2033,8 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  add_subgraph(downstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_operator_output_ports(upstream_op);
@@ -2026,6 +2072,8 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  add_subgraph(upstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_subgraph_output_ports(upstream_subgraph);
@@ -2063,6 +2111,9 @@ void Fragment::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  add_subgraph(upstream_subgraph);
+  add_subgraph(downstream_subgraph);
+
   // If port_pairs is empty, attempt auto-resolution
   if (port_pairs.empty()) {
     auto upstream_ports = get_subgraph_output_ports(upstream_subgraph);

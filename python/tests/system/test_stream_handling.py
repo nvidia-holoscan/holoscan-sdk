@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,6 +30,7 @@ from holoscan.conditions import CountCondition
 from holoscan.core import Application, ConditionType, Operator, OperatorSpec
 from holoscan.operators import PingTensorTxOp
 from holoscan.resources import CudaGreenContext, CudaGreenContextPool, CudaStreamPool
+from tests.conftest import green_context_available
 
 
 class StreamRxOp(Operator):
@@ -291,6 +292,8 @@ def test_stream_pool_methods(rx_enable_pool):
         cp.cuda.Device()
     except RuntimeError:
         pytest.skip("no available CUDA device: skipping stream test")
+    if not green_context_available():
+        pytest.skip("Green Context not available in this environment.")
     app = MyStreamTestApp(rx_enable_pool=rx_enable_pool)
     app.run()
 
@@ -311,6 +314,8 @@ def test_cupy_external_stream_with_green_context():
         cp.cuda.Device()
     except RuntimeError:
         pytest.skip("no available CUDA device: skipping stream test")
+    if not green_context_available():
+        pytest.skip("Green Context not available in this environment.")
     app = MyCuPyExternalStreamWithGreenContextApp()
     app.run()
 

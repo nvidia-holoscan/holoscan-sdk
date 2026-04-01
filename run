@@ -1278,8 +1278,7 @@ launch() {
     #   Start in the build or install directory
     #
     # --runtime=nvidia \
-    # --gpus all
-    #   Enable GPU acceleration and access to all GPUs
+    #   Enable GPU acceleration with access to all GPUs by default
     #
     # ${display_server_opt}
     #   Enable graphical applications (X11 or Wayland)
@@ -1344,7 +1343,6 @@ launch() {
         -v ${mount_point}:${container_mount} \
         -w ${container_top}/${working_dir} \
         --runtime=nvidia \
-        --gpus all \
         ${display_server_opt} \
         ${mount_device_opt} \
         -e LD_LIBRARY_PATH=${ld_library_path} \

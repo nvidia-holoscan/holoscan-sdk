@@ -9,7 +9,7 @@
         "dockerfile": "Dockerfile",
         "args": {
             "BUILDKIT_INLINE_CACHE": "1", // Enable Docker BuildKit cache
-            "HOLOSCAN_BUILD_IMAGE": "${localEnv:HOLOSCAN_BUILD_IMAGE}" // Base image name
+            "HOLOSCAN_BUILD_IMAGE": "${localEnv:HOLOSCAN_BUILD_IMAGE:holoscan-sdk-build-vscode-devcontainer}" // Base image name
         }
         // buildcontainer.json doesn't support build.secrets field
         // (https://github.com/microsoft/vscode-remote-release/issues/4841)

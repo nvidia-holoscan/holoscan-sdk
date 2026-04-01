@@ -109,8 +109,9 @@ std::unordered_set<std::string> Subgraph::config_keys() {
 
 void Subgraph::add_operator(const std::shared_ptr<Operator>& op) {
   if (!op) {
-    HOLOSCAN_LOG_ERROR("Cannot add null operator to subgraph");
-    return;
+    auto err_msg = std::string("Cannot add null operator to subgraph");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   // Set qualified name and add directly to Fragment's main graph
@@ -135,14 +136,82 @@ void Subgraph::add_operator(const std::shared_ptr<Operator>& op) {
 }
 
 void Subgraph::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
-  if (fragment_) {
-    fragment_->add_subgraph(subgraph);
+  if (!subgraph) {
+    HOLOSCAN_LOG_ERROR("Cannot add null subgraph to subgraph '{}'", name_);
+    return;
+  }
+
+  // If this exact subgraph is already owned (e.g. make_subgraph then add_subgraph), no-op.
+  for (const auto& existing : nested_subgraphs_) {
+    if (existing == subgraph) {
+      return;
+    }
+  }
+
+  const std::string& current_name = subgraph->name();
+
+  if (subgraph->is_composed()) {
+    // Already composed (e.g. Python subgraphs auto-compose during __init__).
+    // The name should already be qualified. Verify the prefix and extract the child name.
+    std::string expected_prefix = name_ + "_";
+    std::string child_name;
+    if (current_name.size() >= expected_prefix.size() &&
+        current_name.substr(0, expected_prefix.size()) == expected_prefix) {
+      child_name = current_name.substr(expected_prefix.size());
+    }
+    if (child_name.empty()) {
+      throw std::runtime_error(fmt::format(
+          "Subgraph::add_subgraph: subgraph '{}' is already composed but its name does not "
+          "start with the expected prefix '{}' followed by a non-empty child name. "
+          "When adding an already-composed subgraph, it must have been constructed with this "
+          "subgraph as the parent so the name is properly qualified.",
+          current_name,
+          expected_prefix));
+    }
+
+    if (nested_subgraph_names_.find(child_name) != nested_subgraph_names_.end()) {
+      throw std::runtime_error(
+          fmt::format("Subgraph::add_subgraph: Duplicate nested subgraph name '{}' in subgraph "
+                      "'{}'. Each nested subgraph must have a unique name within the same parent "
+                      "subgraph.",
+                      child_name,
+                      name_));
+    }
+
+    nested_subgraphs_.push_back(subgraph);
+    nested_subgraph_names_.insert(child_name);
+  } else {
+    // Not yet composed -- qualify the name and compose.
+    // This is the C++ factory pattern path.
+    if (nested_subgraph_names_.find(current_name) != nested_subgraph_names_.end()) {
+      throw std::runtime_error(
+          fmt::format("Subgraph::add_subgraph: Duplicate nested subgraph name '{}' in subgraph "
+                      "'{}'. Each nested subgraph must have a unique name within the same parent "
+                      "subgraph.",
+                      current_name,
+                      name_));
+    }
+
+    std::string qualified_name = get_qualified_name(current_name, "subgraph");
+    subgraph->name_ = std::move(qualified_name);
+
+    subgraph->compose();
+    subgraph->set_composed(true);
+
+    nested_subgraphs_.push_back(subgraph);
+    nested_subgraph_names_.insert(current_name);
   }
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream,
                         const std::shared_ptr<Operator>& downstream,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  if (!upstream || !downstream) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream or downstream operator is null", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   // update operator names and add them to the graph
   add_operator(downstream);
   add_operator(upstream);
@@ -152,6 +221,13 @@ void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream,
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  if (!upstream_op || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream operator or downstream subgraph is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(upstream_op);
   fragment_->add_flow(upstream_op, downstream_subgraph, std::move(port_pairs));
 }
@@ -159,6 +235,13 @@ void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  if (!upstream_subgraph || !downstream_op) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream subgraph or downstream operator is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(downstream_op);
   fragment_->add_flow(upstream_subgraph, downstream_op, std::move(port_pairs));
 }
@@ -166,12 +249,25 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs) {
+  if (!upstream_subgraph || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream or downstream subgraph is null", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   fragment_->add_flow(upstream_subgraph, downstream_subgraph, std::move(port_pairs));
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_op || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream operator or downstream subgraph is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(upstream_op);
   fragment_->add_flow(upstream_op, downstream_subgraph, connector_type);
 }
@@ -180,6 +276,13 @@ void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_op || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream operator or downstream subgraph is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(upstream_op);
   fragment_->add_flow(upstream_op, downstream_subgraph, std::move(port_pairs), connector_type);
 }
@@ -187,6 +290,13 @@ void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_subgraph || !downstream_op) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream subgraph or downstream operator is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(downstream_op);
   fragment_->add_flow(upstream_subgraph, downstream_op, connector_type);
 }
@@ -195,6 +305,13 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Operator>& downstream_op,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_subgraph || !downstream_op) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream subgraph or downstream operator is null",
+        name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   add_operator(downstream_op);
   fragment_->add_flow(upstream_subgraph, downstream_op, std::move(port_pairs), connector_type);
 }
@@ -202,6 +319,12 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
 void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_subgraph || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream or downstream subgraph is null", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   fragment_->add_flow(upstream_subgraph, downstream_subgraph, connector_type);
 }
 
@@ -209,6 +332,12 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
                         const std::shared_ptr<Subgraph>& downstream_subgraph,
                         std::set<std::pair<std::string, std::string>> port_pairs,
                         const IOSpec::ConnectorType connector_type) {
+  if (!upstream_subgraph || !downstream_subgraph) {
+    auto err_msg = fmt::format(
+        "Cannot add flow in subgraph '{}': upstream or downstream subgraph is null", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   fragment_->add_flow(
       upstream_subgraph, downstream_subgraph, std::move(port_pairs), connector_type);
 }

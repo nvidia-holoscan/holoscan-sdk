@@ -64,13 +64,13 @@ class MessageAvailableCondition : public gxf::GXFCondition {
   }
 
   void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
-  std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
+  std::shared_ptr<Receiver> receiver() const { return receiver_.get(); }
 
   void min_size(uint64_t min_size);
-  uint64_t min_size() { return min_size_; }
+  uint64_t min_size() const { return min_size_; }
 
   void front_stage_max_size(size_t front_stage_max_size);
-  size_t front_stage_max_size() { return front_stage_max_size_; }
+  size_t front_stage_max_size() const { return front_stage_max_size_; }
 
   void setup(ComponentSpec& spec) override;
 

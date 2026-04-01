@@ -17,8 +17,12 @@
 
 #include "texture.hpp"
 
+#include <fmt/format.h>
+
 #include <memory>
 #include <utility>
+
+#include <magic_enum.hpp>
 
 #include "../cuda/convert.hpp"
 #include "format_util.hpp"
@@ -168,8 +172,10 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
 
       if (channels != hw_channels) {
         // three channel texture data is not hardware natively supported, convert to four channel
-        if ((channels != 3) || (hw_channels != 4) || (component_size != 1)) {
-          throw std::runtime_error("Unhandled conversion.");
+        if (!((channels == 3) && (hw_channels == 4) &&
+              ((component_size == 1) || (component_size == 2) || (component_size == 4)))) {
+          throw std::runtime_error(
+              fmt::format("Conversion of {} is not supported.", magic_enum::enum_name(format_)));
         }
 
         // if the source CUDA memory is on a different device, allocate temporary memory, copy from
@@ -201,26 +207,45 @@ void Texture::upload(CUstream ext_stream, const std::array<CUdeviceptr, 3>& devi
           src_pitch = tmp_pitch;
         }
 
-        uint8_t alpha;
-        switch (format_) {
-          case ImageFormat::R8G8B8_UNORM:
-          case ImageFormat::R8G8B8_SRGB:
-            alpha = 0xFf;
+        switch (component_size) {
+          case 1: {
+            const uint8_t alpha = GetAlphaValueForFormat<uint8_t>(format_);
+            ConvertR8G8B8ToR8G8B8A8(width,
+                                    height,
+                                    tmp_device_ptr ? tmp_device_ptr.get().first : device_ptr[plane],
+                                    src_pitch,
+                                    array,
+                                    stream,
+                                    alpha);
             break;
-          case ImageFormat::R8G8B8_SNORM:
-            alpha = 0x7f;
+          }
+          case 2: {
+            const uint16_t alpha = GetAlphaValueForFormat<uint16_t>(format_);
+            ConvertR16G16B16ToR16G16B16A16(
+                width,
+                height,
+                tmp_device_ptr ? tmp_device_ptr.get().first : device_ptr[plane],
+                src_pitch,
+                array,
+                stream,
+                alpha);
             break;
+          }
+          case 4: {
+            const uint32_t alpha = GetAlphaValueForFormat<uint32_t>(format_);
+            ConvertR32G32B32ToR32G32B32A32(
+                width,
+                height,
+                tmp_device_ptr ? tmp_device_ptr.get().first : device_ptr[plane],
+                src_pitch,
+                array,
+                stream,
+                alpha);
+            break;
+          }
           default:
-            throw std::runtime_error("Unhandled format.");
+            throw std::runtime_error(fmt::format("Unhandled component size {}.", component_size));
         }
-
-        ConvertR8G8B8ToR8G8B8A8(width,
-                                height,
-                                tmp_device_ptr ? tmp_device_ptr.get().first : device_ptr[plane],
-                                src_pitch,
-                                array,
-                                stream,
-                                alpha);
       } else {
         // else just copy
         CUDA_MEMCPY2D memcpy_2d{};

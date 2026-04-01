@@ -41,7 +41,7 @@ namespace holoscan {
 // DataEntry constructors
 DataEntry::DataEntry(std::any data_arg, const std::string& id, int64_t acq_time, int64_t emit_time,
                      IOSpec::IOType io_type_arg, std::shared_ptr<MetadataDictionary> meta,
-                     std::optional<cudaStream_t> stream_arg)
+                     std::optional<cudaStream_t> stream_arg, std::any source_owner_arg)
     : type(Generic),
       unique_id(id),
       acquisition_timestamp(acq_time),
@@ -49,7 +49,8 @@ DataEntry::DataEntry(std::any data_arg, const std::string& id, int64_t acq_time,
       io_type(io_type_arg),
       metadata(std::move(meta)),
       stream(stream_arg),
-      data(std::move(data_arg)) {}
+      data(std::move(data_arg)),
+      source_owner(std::move(source_owner_arg)) {}
 
 DataEntry::DataEntry(std::shared_ptr<holoscan::Tensor> tensor, const std::string& id,
                      int64_t acq_time, int64_t emit_time, IOSpec::IOType io_type_arg,

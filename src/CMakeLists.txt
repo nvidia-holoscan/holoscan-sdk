@@ -224,7 +224,7 @@ add_holoscan_library(core
     core/fragment_scheduler.cpp
     core/fragment_service.cpp
     core/gpu_resident_operator.cpp
-    core/graphs/flow_graph.cpp
+    core/flow_graphs/flow_graph_impl.cpp
     core/gxf/endpoint.cpp
     core/gxf/entity.cpp
     core/gxf/entity_group.cpp

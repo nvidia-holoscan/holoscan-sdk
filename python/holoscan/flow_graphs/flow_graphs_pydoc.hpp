@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef PYHOLOSCAN_GRAPHS_PYDOC_HPP
-#define PYHOLOSCAN_GRAPHS_PYDOC_HPP
+#ifndef PYHOLOSCAN_FLOW_GRAPHS_PYDOC_HPP
+#define PYHOLOSCAN_FLOW_GRAPHS_PYDOC_HPP
 
 #include <string>
 
@@ -24,20 +24,20 @@
 
 namespace holoscan::doc {
 
-namespace Graph {
-
-// Constructor
-PYDOC(Graph, R"doc(
-Abstract base class for all graphs
-)doc")
-
-}  // namespace Graph
-
 namespace FlowGraph {
 
 // Constructor
 PYDOC(FlowGraph, R"doc(
-Directed graph class.
+Abstract base class for all flow graphs
+)doc")
+
+}  // namespace FlowGraph
+
+namespace FlowGraphImpl {
+
+// Constructor
+PYDOC(FlowGraphImpl, R"doc(
+Directed flow graph implementation.
 )doc")
 
 PYDOC(add_node, R"doc(
@@ -50,7 +50,7 @@ node : holoscan.core.Operator | holoscan.core.Fragment
 )doc")
 
 PYDOC(remove_node, R"doc(
-Remove the node to the graph.
+Remove the node from the graph.
 
 Parameters
 ----------
@@ -189,7 +189,7 @@ Returns a tuple of two dictionaries:
 2. Output ports to connected input ports mapping
 
 Each port is identified by a unique string in the format "fragment.operator.port"
-(or "fragment.port" for FragmentFlowGraph).
+(or "fragment.port" for FragmentFlowGraphImpl).
 
 Returns
 -------
@@ -211,8 +211,8 @@ str
     A YAML-formatted string describing the port connectivity maps
 )doc")
 
-}  // namespace FlowGraph
+}  // namespace FlowGraphImpl
 
 }  // namespace holoscan::doc
 
-#endif /* PYHOLOSCAN_GRAPHS_PYDOC_HPP */
+#endif /* PYHOLOSCAN_FLOW_GRAPHS_PYDOC_HPP */

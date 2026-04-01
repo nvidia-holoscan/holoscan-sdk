@@ -272,6 +272,74 @@ index ef739bd1..77d1327c 100644
          )
          demosaic_left = holoscan.operators.BayerDemosaicOp(
              self,
+diff --git a/examples/vb1940_player.cpp b/examples/vb1940_player.cpp
+index 9d3ab6ec..cdbe9c31 100644
+--- a/examples/vb1940_player.cpp
++++ b/examples/vb1940_player.cpp
+@@ -17,6 +17,7 @@
+ 
+ #include <chrono>
+ #include <cstdint>
++#include <filesystem>
+ #include <iostream>
+ #include <memory>
+ #include <string>
+@@ -65,6 +66,18 @@ public:
+         , camera_mode_(camera_mode)
+         , frame_limit_(frame_limit)
+     {
++        if (ibv_name_.empty()) {
++            // Select the first available device to be the default
++            auto infiniband_devices = hololink::infiniband_devices();
++            if (!infiniband_devices.empty()) {
++                ibv_name_ = infiniband_devices[0];
++                HOLOSCAN_LOG_INFO("Using IBV device: {}", ibv_name_);
++            } else {
++                throw std::runtime_error(
++                    "No InfiniBand devices found. Please specify a device using --ibv-name or ensure "
++                    "an InfiniBand device is configured.");
++            }
++        }
+     }
+ 
+     void compose() override
+@@ -162,11 +175,11 @@ int main(int argc, char** argv)
+     using namespace hololink::args;
+     OptionsDescription options_description("Allowed options");
+ 
+-    // Select the first available device to be the default
+-    std::string default_ibv_name;
+-    auto infiniband_devices = hololink::infiniband_devices();
+-    if (!infiniband_devices.empty())
+-        default_ibv_name = infiniband_devices[0];
++    std::string default_config = "example_configuration.yaml";
++    if (argc > 0 && argv[0] && std::string(argv[0]).find('/') != std::string::npos) {
++        auto abs = std::filesystem::absolute(argv[0]);
++        default_config = (abs.parent_path() / "example_configuration.yaml").string();
++    }
+ 
+     // clang-format off
+     options_description.add_options()
+@@ -174,9 +187,9 @@ int main(int argc, char** argv)
+         ("headless", bool_switch()->default_value(false), "Run in headless mode")
+         ("fullscreen", bool_switch()->default_value(false), "Run in fullscreen mode")
+         ("frame-limit", value<int>()->default_value(0), "Exit after receiving this many frames")
+-        ("configuration", value<std::string>()->default_value("example_configuration.yaml"), "Configuration file")
++        ("configuration", value<std::string>()->default_value(default_config), "Configuration file")
+         ("hololink", value<std::string>()->default_value("192.168.0.2"), "IP address of Hololink board")
+-        ("ibv-name", value<std::string>()->default_value(default_ibv_name), "IBV device to use")
++        ("ibv-name", value<std::string>()->default_value(""), "IBV device to use (default: first available device)")
+         ("ibv-port", value<uint32_t>()->default_value(1), "Port number of IBV device (default: 1)")
+         ("use-sensor", value<uint32_t>()->default_value(0), "Use the specific sensor (0 or 1, default=0)")
+         ;
+@@ -199,6 +212,7 @@ int main(int argc, char** argv)
+         cuDevicePrimaryCtxRetain(&cu_context, cu_device);
+ 
+         // Get a handle to the Hololink device
++        HOLOSCAN_LOG_INFO("Finding Hololink channel for IP: {}", variables_map["hololink"].as<std::string>());
+         auto channel_metadata = hololink::Enumerator::find_channel(variables_map["hololink"].as<std::string>());
+         hololink::DataChannel::use_sensor(channel_metadata, use_sensor);
+         hololink::DataChannel hololink_channel(channel_metadata);
 diff --git a/python/CMakeLists.txt b/python/CMakeLists.txt
 index b0834e00..d108f216 100644
 --- a/python/CMakeLists.txt

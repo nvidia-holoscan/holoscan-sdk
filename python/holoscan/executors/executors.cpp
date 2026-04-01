@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

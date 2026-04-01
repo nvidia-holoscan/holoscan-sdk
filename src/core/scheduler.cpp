@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,9 @@
 
 #include "holoscan/core/scheduler.hpp"
 
+#include <stdexcept>
+#include <string>
+
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/fragment.hpp"
 
@@ -27,9 +30,15 @@ void Scheduler::initialize() {
   auto fragment_ptr = fragment();
   if (fragment_ptr) {
     auto& executor = fragment_ptr->executor();
-    executor.initialize_scheduler(this);
+    if (!executor.initialize_scheduler(this)) {
+      auto err_msg = std::string("Failed to initialize scheduler in executor");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
   } else {
-    HOLOSCAN_LOG_WARN("Scheduler::initialize() - Fragment is not set");
+    auto err_msg = std::string("Scheduler::initialize() - Fragment is not set");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 }
 

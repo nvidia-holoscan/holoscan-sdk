@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019-2025, NVIDIA CORPORATION.  All rights reserved.
+ * Copyright (c) 2019-2026, NVIDIA CORPORATION.  All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * SPDX-FileCopyrightText: Copyright (c) 2019-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2019-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -170,8 +170,13 @@ Image ResourceAllocator::createImage(const VkImageCreateInfo& info_,
     memoryRequirements.push_back(memReqs.memoryRequirements);
   }
 
+  bool isTilingOptimal = true;
+  if (info_.tiling == VkImageTiling::VK_IMAGE_TILING_LINEAR) {
+    isTilingOptimal = false;
+  }
+
   // Build up allocation info
-  MemAllocateInfo allocInfo(memoryRequirements, memUsage_, true);
+  MemAllocateInfo allocInfo(memoryRequirements, memUsage_, isTilingOptimal);
   if (dedicatedRegs.requiresDedicatedAllocation) { allocInfo.setDedicatedImage(resultImage.image); }
 
   // Allocate and bind memory

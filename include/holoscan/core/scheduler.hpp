@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,11 +18,13 @@
 #ifndef HOLOSCAN_CORE_SCHEDULER_HPP
 #define HOLOSCAN_CORE_SCHEDULER_HPP
 
+#include <fmt/format.h>
 #include <yaml-cpp/yaml.h>
 
 #include <stdio.h>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -201,10 +203,12 @@ class Scheduler : public Component {
    */
   void add_arg(const std::shared_ptr<Resource>& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the scheduler. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = arg;
     }
@@ -217,10 +221,12 @@ class Scheduler : public Component {
    */
   void add_arg(std::shared_ptr<Resource>&& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the scheduler. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = std::move(arg);
     }

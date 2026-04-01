@@ -45,6 +45,83 @@ The event-based scheduler is also a multi-thread scheduler, but it is event-base
 
 For this scheduler, there is no `strict_job_thread_pinning` option (see description for the Multithread Scheduler above). The thread pinning is always strict.
 
+### Advanced Performance-Tuning Parameters
+
+The event-based scheduler exposes several advanced parameters that control internal scheduling strategies. These parameters are tuned to reasonable defaults and most users will not need to change them. They are primarily useful when profiling high-throughput, many-operator pipelines with large worker thread counts.
+
+#### Work Stealing and Queue Assignment
+
+Each worker thread in the default pool owns a private ready-queue. Operators are assigned to queues via a fixed, deterministic assignment computed once at graph launch. When a worker's own queue is empty, **work stealing** allows it to scan other workers' queues and take ("steal") a ready job instead of blocking. This reduces idle time when the workload is unevenly distributed across queues.
+
+It is generally recommended to try enabling this for applications using the default worker pool, but the default has been kept as `false` in this release to avoid any unexpected change in default scheduling behavior.
+
+- **`enable_queue_stealing`** (`bool`, default `false`) — Enables work stealing for default-pool workers.
+- **`steal_scan_limit`** (`int`, default `0`) — Maximum number of other queues a worker scans per steal attempt. `0` means scan all queues.
+
+#### Internal Event Sharding
+
+The dispatcher receives notifications from workers and external events through internal queues. **Sharding** partitions these queues to reduce lock contention when many workers notify concurrently. There are two independent sets of sharded lists:
+
+- The **internal notification shards** are the queues through which workers (and other internal paths) tell the dispatcher that an operator needs to be re-evaluated. These carry entity IDs for operators transitioning *into* any scheduling state (READY, WAIT, WAIT_TIME, WAIT_EVENT, or NEVER). The `internal_event_shard_count` and `dispatcher_internal_pop_batch_size` parameters control these queues.
+- The **wait-state tracking shards** are lists that track which operators are currently in the WAIT_EVENT or WAIT scheduling states. These are the operators waiting on an asynchronous event (e.g., `AsynchronousCondition`) or a custom condition with no known ready time. The `wait_state_shard_count` parameter controls these lists. Note that WAIT_TIME operators (those with a known ready time, e.g., from `PeriodicCondition`) are tracked separately via a timed job list and are *not* affected by this parameter.
+
+The sharding of notifications and batch pop are enabled by default for performance, but can optionally be disabled by setting `internal_event_shard_count=1`, `wait_state_shard_count=1` and `dispatcher_internal_pop_batch_size=1` to go back to the prior behavior in Holoscan<=v4.0.
+
+Parameters:
+
+- **`internal_event_shard_count`** (`int`, default `0`) — Number of shards for the dispatcher's internal notification queue. `0` selects one shard per worker thread automatically.
+- **`dispatcher_internal_pop_batch_size`** (`int`, default `32`) — Maximum notifications the dispatcher drains from a single shard per pop step.
+- **`wait_state_shard_count`** (`int`, default `1`) — Number of shards for the WAIT_EVENT and WAIT tracking lists.
+
+#### Worker Post-Check Fast Path
+
+After executing an operator, a worker can immediately re-check that operator's scheduling condition instead of sending it back through the dispatcher. This **post-check fast path** allows a worker to re-enqueue a still-READY operator directly into its own queue, avoiding a dispatcher round-trip and reducing latency.
+
+When the post-check determines the operator is *not* ready, the worker falls back to notifying the dispatcher. A periodic fallback wake-up mechanism prevents rare edge cases where the dispatcher might miss a state change.
+
+This optimization is currently disabled by default as it is still pending additional testing in real-world scenarios such as those involving thread priority (e.g. SCHED_FIFO for real-time threads).
+
+- **`enable_worker_postcheck_fastpath`** (`bool`, default `false`) — Enables the worker-side post-check optimization.
+- **`postcheck_fallback_notify_interval`** (`int`, default `256`) — Every N non-ready post-check results per worker, a periodic dispatcher wake-up is sent. `0` means only notify when no other workers are running.
+- **`postcheck_fallback_notify_min_workers`** (`int`, default `8`) — The periodic fallback notification is only active when `worker_thread_number` is at least this value.
+- **`postcheck_fallback_notify_min_period_ns`** (`int`, default `100000`) — Minimum wall-clock spacing (in nanoseconds) between periodic fallback dispatcher wake-ups.
+
+#### Reverting to Holoscan 4.0 Scheduling Behavior
+
+The optimizations above (work stealing, event sharding, and the post-check fast path) are new in Holoscan 4.1. As noted above, work-stealing and the post-check fast path are not currently enabled by default. A summary of the settings disabling all new scheduling feaetures is to set
+
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+  auto scheduler = make_resource<EventBasedScheduler>("scheduler",
+      Arg("enable_queue_stealing", false),
+      Arg("enable_worker_postcheck_fastpath", false),
+      Arg("internal_event_shard_count", static_cast<int64_t>(1)),
+      Arg("dispatcher_internal_pop_batch_size", static_cast<int64_t>(1)),
+      Arg("wait_state_shard_count", static_cast<int64_t>(1)));
+```
+````
+````{tab-item} Python
+```python
+scheduler = EventBasedScheduler(
+    fragment,
+    enable_queue_stealing=False,
+    enable_worker_postcheck_fastpath=False,
+    internal_event_shard_count=1,
+    dispatcher_internal_pop_batch_size=1,
+    wait_state_shard_count=1,
+)
+```
+````
+`````
+
+Setting `internal_event_shard_count=1` and `wait_state_shard_count=1` disables sharding (all notifications go through a single queue). Setting `dispatcher_internal_pop_batch_size=1` disables batch popping so the dispatcher drains one notification at a time.
+
+#### Diagnostics
+
+- **`log_perf_stats`** (`bool`, default `false`) — When enabled, the scheduler logs internal instrumentation counters at shutdown. The report includes dispatcher loop and notification statistics, per-worker wait and execution times (with averages), work-steal attempt and success counts, and post-check fast-path/fallback hit rates. This is useful for diagnosing scheduling bottlenecks without requiring an external profiler.
+
 (operator-granularity-scheduling-overhead)=
 ## Operator Granularity and Scheduling Overhead
 

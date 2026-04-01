@@ -18,11 +18,13 @@
 #ifndef HOLOSCAN_CORE_NETWORK_CONTEXT_HPP
 #define HOLOSCAN_CORE_NETWORK_CONTEXT_HPP
 
+#include <fmt/format.h>
 #include <yaml-cpp/yaml.h>
 
 #include <stdio.h>
 #include <iostream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
@@ -197,10 +199,12 @@ class NetworkContext : public Component {
    */
   void add_arg(const std::shared_ptr<Resource>& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the network context. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = arg;
     }
@@ -213,10 +217,12 @@ class NetworkContext : public Component {
    */
   void add_arg(std::shared_ptr<Resource>&& arg) {
     if (resources_.find(arg->name()) != resources_.end()) {
-      HOLOSCAN_LOG_ERROR(
+      auto err_msg = fmt::format(
           "Resource '{}' already exists in the network context. Please specify a unique "
           "name when creating a Resource instance.",
           arg->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     } else {
       resources_[arg->name()] = std::move(arg);
     }

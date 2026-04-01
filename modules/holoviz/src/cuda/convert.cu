@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,21 +24,23 @@ namespace holoscan::viz {
 namespace {
 
 /**
- * Convert from R8G8B8 to R8G8B8A8 (set alpha to provided value)
+ * Convert from RGB to RGBA (set alpha to provided value)
  */
-__global__ void ConvertR8G8B8ToR8G8B8A8Kernel(uint32_t width, uint32_t height, const uint8_t* src,
-                                              size_t src_pitch, CUsurfObject dst_surface,
-                                              uint8_t alpha) {
+template <typename TYPE, typename PACKED_TYPE>
+__global__ void ConvertRGBToRGBAKernel(uint32_t width, uint32_t height, const TYPE* src,
+                                       size_t src_pitch, CUsurfObject dst_surface, TYPE alpha) {
   const uint2 launch_index =
       make_uint2(blockIdx.x * blockDim.x + threadIdx.x, blockIdx.y * blockDim.y + threadIdx.y);
   if ((launch_index.x >= width) || (launch_index.y >= height)) {
     return;
   }
 
-  const size_t src_offset = launch_index.x * 3 + launch_index.y * src_pitch;
+  src =
+      reinterpret_cast<const TYPE*>(reinterpret_cast<uintptr_t>(src) +
+                                    launch_index.x * 3 * sizeof(TYPE) + launch_index.y * src_pitch);
 
-  const uchar4 data{src[src_offset + 0], src[src_offset + 1], src[src_offset + 2], alpha};
-  surf2Dwrite(data, dst_surface, launch_index.x * sizeof(uchar4), launch_index.y);
+  const PACKED_TYPE data{src[0], src[1], src[2], alpha};
+  surf2Dwrite(data, dst_surface, launch_index.x * sizeof(PACKED_TYPE), launch_index.y);
 }
 
 }  // namespace
@@ -59,8 +61,52 @@ void ConvertR8G8B8ToR8G8B8A8(uint32_t width, uint32_t height, CUdeviceptr src, s
   const dim3 block_dim(32, 32);
   const dim3 launch_grid((width + (block_dim.x - 1)) / block_dim.x,
                          (height + (block_dim.y - 1)) / block_dim.y);
-  ConvertR8G8B8ToR8G8B8A8Kernel<<<launch_grid, block_dim, 0, stream>>>(
+  ConvertRGBToRGBAKernel<uint8_t, uchar4><<<launch_grid, block_dim, 0, stream>>>(
       width, height, reinterpret_cast<const uint8_t*>(src), src_pitch, dst_surface.get(), alpha);
+  CudaRTCheck(cudaPeekAtLastError());
+}
+
+void ConvertR16G16B16ToR16G16B16A16(uint32_t width, uint32_t height, CUdeviceptr src,
+                                    size_t src_pitch, CUarray dst, CUstream stream,
+                                    uint16_t alpha) {
+  UniqueCUsurfObject dst_surface;
+
+  dst_surface.reset([dst] {
+    CUDA_RESOURCE_DESC res_desc{};
+    res_desc.resType = CU_RESOURCE_TYPE_ARRAY;
+    res_desc.res.array.hArray = dst;
+    CUsurfObject surf_object;
+    CudaCheck(cuSurfObjectCreate(&surf_object, &res_desc));
+    return surf_object;
+  }());
+
+  const dim3 block_dim(32, 32);
+  const dim3 launch_grid((width + (block_dim.x - 1)) / block_dim.x,
+                         (height + (block_dim.y - 1)) / block_dim.y);
+  ConvertRGBToRGBAKernel<uint16_t, ushort4><<<launch_grid, block_dim, 0, stream>>>(
+      width, height, reinterpret_cast<const uint16_t*>(src), src_pitch, dst_surface.get(), alpha);
+  CudaRTCheck(cudaPeekAtLastError());
+}
+
+void ConvertR32G32B32ToR32G32B32A32(uint32_t width, uint32_t height, CUdeviceptr src,
+                                    size_t src_pitch, CUarray dst, CUstream stream,
+                                    uint32_t alpha) {
+  UniqueCUsurfObject dst_surface;
+
+  dst_surface.reset([dst] {
+    CUDA_RESOURCE_DESC res_desc{};
+    res_desc.resType = CU_RESOURCE_TYPE_ARRAY;
+    res_desc.res.array.hArray = dst;
+    CUsurfObject surf_object;
+    CudaCheck(cuSurfObjectCreate(&surf_object, &res_desc));
+    return surf_object;
+  }());
+
+  const dim3 block_dim(32, 32);
+  const dim3 launch_grid((width + (block_dim.x - 1)) / block_dim.x,
+                         (height + (block_dim.y - 1)) / block_dim.y);
+  ConvertRGBToRGBAKernel<uint32_t, uint4><<<launch_grid, block_dim, 0, stream>>>(
+      width, height, reinterpret_cast<const uint32_t*>(src), src_pitch, dst_surface.get(), alpha);
   CudaRTCheck(cudaPeekAtLastError());
 }
 

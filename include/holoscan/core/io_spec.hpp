@@ -176,7 +176,7 @@ class IOSpec {
 
   /**
    * @brief Construct a new IOSpec object with memory block size. This type of IOSpec is used for
-   * GPU-resident execution. We don't allow queue_size or queue_policy for this type of IOSpec.
+   * GPU-resident graph execution. We don't allow queue_size or queue_policy for this type of IOSpec.
    *
    * @param op_spec The pointer to the operator specification that contains this input/output.
    * @param name The name of this input/output.
@@ -200,7 +200,7 @@ class IOSpec {
 
   /**
    * @brief Construct a new IOSpec object with device pointer. This type of IOSpec is used for
-   * GPU-resident execution when a memory block is allocated in a customized way by the operator.
+   * GPU-resident graph execution when a memory block is allocated in a customized way by the operator.
    * We don't allow queue_size or queue_policy for this type of IOSpec.
    *
    * @param op_spec The pointer to the operator specification that contains this input/output.
@@ -327,9 +327,12 @@ class IOSpec {
       case ConditionType::kNone:
         conditions_.emplace_back(type, nullptr);
         break;
-      default:
-        HOLOSCAN_LOG_ERROR("Unsupported condition type for IOSpec: {}", static_cast<int>(type));
-        break;
+      default: {
+        auto err_msg =
+            fmt::format("Unsupported condition type for IOSpec: {}", static_cast<int>(type));
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
     }
 
     if (queue_size_ == kAnySize) {
@@ -429,9 +432,11 @@ class IOSpec {
           connector_ = std::make_shared<PubSubTransmitter>(std::forward<ArgsT>(args)...);
         }
         break;
-      default:
-        HOLOSCAN_LOG_ERROR("Unknown connector type {}", static_cast<int>(type));
-        break;
+      default: {
+        auto err_msg = fmt::format("Unknown connector type {}", static_cast<int>(type));
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
     }
 
     if (queue_size_ == kAnySize) {

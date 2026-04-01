@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -153,6 +153,16 @@ class TestEventBasedScheduler:
             max_duration_ms=10000,
             stop_on_deadlock_timeout=10,
             pin_cores=[0, 1],
+            enable_queue_stealing=False,
+            steal_scan_limit=4,
+            enable_worker_postcheck_fastpath=False,
+            postcheck_fallback_notify_interval=128,
+            postcheck_fallback_notify_min_workers=4,
+            postcheck_fallback_notify_min_period_ns=50000,
+            internal_event_shard_count=2,
+            dispatcher_internal_pop_batch_size=16,
+            wait_state_shard_count=2,
+            log_perf_stats=True,
             name=name,
         )
         assert isinstance(scheduler, GXFScheduler)
@@ -192,3 +202,53 @@ class TestEventBasedScheduler:
         with pytest.raises(RuntimeError):
             # value will only be initialized by executor once app.run() is called
             scheduler.stop_on_deadlock_timeout  # noqa: B018
+
+    def test_enable_queue_stealing(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.enable_queue_stealing  # noqa: B018
+
+    def test_steal_scan_limit(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.steal_scan_limit  # noqa: B018
+
+    def test_enable_worker_postcheck_fastpath(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.enable_worker_postcheck_fastpath  # noqa: B018
+
+    def test_postcheck_fallback_notify_interval(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.postcheck_fallback_notify_interval  # noqa: B018
+
+    def test_postcheck_fallback_notify_min_workers(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.postcheck_fallback_notify_min_workers  # noqa: B018
+
+    def test_postcheck_fallback_notify_min_period_ns(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.postcheck_fallback_notify_min_period_ns  # noqa: B018
+
+    def test_internal_event_shard_count(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.internal_event_shard_count  # noqa: B018
+
+    def test_dispatcher_internal_pop_batch_size(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.dispatcher_internal_pop_batch_size  # noqa: B018
+
+    def test_wait_state_shard_count(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.wait_state_shard_count  # noqa: B018
+
+    def test_log_perf_stats(self, app):
+        scheduler = EventBasedScheduler(app)
+        with pytest.raises(RuntimeError):
+            scheduler.log_perf_stats  # noqa: B018

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -51,6 +51,7 @@ message(STATUS "HOLOSCAN_BUILD_EXAMPLES          : ${HOLOSCAN_BUILD_EXAMPLES}")
 message(STATUS "HOLOSCAN_BUILD_TESTS             : ${HOLOSCAN_BUILD_TESTS}")
 message(STATUS "HOLOSCAN_ENABLE_CLANG_TIDY       : ${HOLOSCAN_ENABLE_CLANG_TIDY}")
 message(STATUS "HOLOSCAN_ENABLE_GOOGLE_SANITIZER : ${HOLOSCAN_ENABLE_GOOGLE_SANITIZER}")
+message(STATUS "HOLOSCAN_USE_CACHE_DIR           : ${HOLOSCAN_USE_CACHE_DIR}")
 message(STATUS "HOLOSCAN_USE_CCACHE              : ${HOLOSCAN_USE_CCACHE}")
 message(STATUS "HOLOSCAN_USE_CCACHE_SKIPPED      : ${HOLOSCAN_USE_CCACHE_SKIPPED}")
 message(STATUS "HOLOSCAN_USE_SCCACHE             : ${HOLOSCAN_USE_SCCACHE}")

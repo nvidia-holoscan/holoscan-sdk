@@ -17,6 +17,7 @@
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index) test code
 
+#include <cuda_fp16.h>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -136,6 +137,10 @@ std::ostream& operator<<(std::ostream& os, const ImageFormat& format) {
     CASE(ImageFormat::Y16_U16V16_2PLANE_422_UNORM)
     CASE(ImageFormat::Y16_U16_V16_3PLANE_420_UNORM)
     CASE(ImageFormat::Y16_U16_V16_3PLANE_422_UNORM)
+    CASE(ImageFormat::R16G16B16_UNORM)
+    CASE(ImageFormat::R16G16B16_SNORM)
+    CASE(ImageFormat::R16G16B16_SFLOAT)
+    CASE(ImageFormat::R32G32B32_SFLOAT)
     default:
       os.setstate(std::ios_base::failbit);
   }
@@ -212,6 +217,10 @@ TEST_P(ImageLayer, Image) {
     case viz::ImageFormat::B8G8R8A8_SRGB:
     case viz::ImageFormat::A8B8G8R8_UNORM_PACK32:
     case viz::ImageFormat::A8B8G8R8_SRGB_PACK32:
+    case viz::ImageFormat::R16G16B16_UNORM:
+    case viz::ImageFormat::R16G16B16_SNORM:
+    case viz::ImageFormat::R16G16B16_SFLOAT:
+    case viz::ImageFormat::R32G32B32_SFLOAT:
       convert_color = true;
       break;
     case viz::ImageFormat::Y8U8Y8V8_422_UNORM:
@@ -608,6 +617,10 @@ TEST_P(ImageLayer, Image) {
         break;
       case viz::ImageFormat::R8G8B8_SNORM:
       case viz::ImageFormat::R8G8B8_SRGB:
+      case viz::ImageFormat::R16G16B16_UNORM:
+      case viz::ImageFormat::R16G16B16_SNORM:
+      case viz::ImageFormat::R16G16B16_SFLOAT:
+      case viz::ImageFormat::R32G32B32_SFLOAT:
         components = 3;
         break;
       case viz::ImageFormat::R8G8B8A8_SNORM:
@@ -639,17 +652,24 @@ TEST_P(ImageLayer, Image) {
           break;
         case viz::ImageFormat::R16_UNORM:
         case viz::ImageFormat::R16G16B16A16_UNORM:
+        case viz::ImageFormat::R16G16B16_UNORM:
           converted_data[index] = uint8_t(
               (float(reinterpret_cast<uint16_t*>(color_data_.data())[index]) / 65535.F) * 255.F +
               0.5F);
           break;
         case viz::ImageFormat::R16_SNORM:
         case viz::ImageFormat::R16G16B16A16_SNORM:
+        case viz::ImageFormat::R16G16B16_SNORM:
           converted_data[index] = uint8_t(
               (float(reinterpret_cast<int16_t*>(color_data_.data())[index]) / 32767.F) * 255.F +
               0.5F);
           break;
+        case viz::ImageFormat::R16G16B16_SFLOAT:
+          converted_data[index] = uint8_t(
+              __half2float(reinterpret_cast<__half*>(color_data_.data())[index]) * 255.F + 0.5F);
+          break;
         case viz::ImageFormat::R32_SFLOAT:
+        case viz::ImageFormat::R32G32B32_SFLOAT:
           converted_data[index] =
               uint8_t(reinterpret_cast<float*>(color_data_.data())[index] * 255.F + 0.5F);
           break;
@@ -875,7 +895,11 @@ INSTANTIATE_TEST_SUITE_P(ImageLayerConvert, ImageLayer,
                                           testing::Values(UseLut::DISABLE),
                                           testing::Values(viz::ImageFormat::R8G8B8_UNORM,
                                                           viz::ImageFormat::R8G8B8_SNORM,
-                                                          viz::ImageFormat::R8G8B8_SRGB),
+                                                          viz::ImageFormat::R8G8B8_SRGB,
+                                                          viz::ImageFormat::R16G16B16_UNORM,
+                                                          viz::ImageFormat::R16G16B16_SNORM,
+                                                          viz::ImageFormat::R16G16B16_SFLOAT,
+                                                          viz::ImageFormat::R32G32B32_SFLOAT),
                                           testing::Values(viz::YuvModelConversion::YUV_601),
                                           testing::Values(viz::YuvRange::ITU_FULL)));
 

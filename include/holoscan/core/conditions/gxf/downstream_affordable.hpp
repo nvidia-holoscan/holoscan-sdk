@@ -66,10 +66,10 @@ class DownstreamMessageAffordableCondition : public gxf::GXFCondition {
   void transmitter(std::shared_ptr<Transmitter> transmitter) {
     transmitter_ = std::move(transmitter);
   }
-  std::shared_ptr<Transmitter> transmitter() { return transmitter_; }
+  std::shared_ptr<Transmitter> transmitter() const { return transmitter_; }
 
   void min_size(uint64_t min_size);
-  uint64_t min_size() { return min_size_; }
+  uint64_t min_size() const { return min_size_; }
 
   void initialize() override { GXFCondition::initialize(); }
 

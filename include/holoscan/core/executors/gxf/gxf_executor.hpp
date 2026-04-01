@@ -20,6 +20,7 @@
 
 #include <gxf/core/gxf.h>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <future>
@@ -31,13 +32,12 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include <atomic>
 
 #include "../../app_driver.hpp"
 #include "../../codec_registry.hpp"
 #include "../../executor.hpp"
-#include "../../graph.hpp"
 #include "../../gxf/gxf_extension_manager.hpp"
+#include "../../flow_graphs/flow_graph.hpp"
 #include "gxf/app/graph_entity.hpp"
 
 namespace holoscan {
@@ -73,7 +73,7 @@ class GXFExecutor : public holoscan::Executor {
    *
    * @param graph The reference to the graph.
    */
-  void run(OperatorGraph& graph) override;
+  void run(OperatorFlowGraph& graph) override;
 
   /**
    * @brief Initialize the graph and run the graph asynchronously.
@@ -84,7 +84,7 @@ class GXFExecutor : public holoscan::Executor {
    * @param graph The reference to the graph.
    * @return The future object.
    */
-  std::future<void> run_async(OperatorGraph& graph) override;
+  std::future<void> run_async(OperatorFlowGraph& graph) override;
 
   /**
    * @brief Interrupt the execution.
@@ -315,7 +315,7 @@ class GXFExecutor : public holoscan::Executor {
   friend class holoscan::AppDriver;
   friend class holoscan::AppWorker;
 
-  bool initialize_gxf_graph(OperatorGraph& graph);
+  bool initialize_gxf_graph(OperatorFlowGraph& graph);
   void activate_gxf_graph();
   void run_gxf_graph();
   bool connection_items(std::vector<std::shared_ptr<holoscan::ConnectionItem>>& connection_items);
@@ -358,12 +358,12 @@ class GXFExecutor : public holoscan::Executor {
  private:
   // Map of connections indexed by source port uid and stores a pair of the target operator name
   // and target port name
-  using TargetPort = std::pair<holoscan::OperatorGraph::NodeType, std::string>;
+  using TargetPort = std::pair<holoscan::OperatorFlowGraph::NodeType, std::string>;
   using TargetsInfo = std::tuple<std::string, IOSpec::ConnectorType, std::set<TargetPort>>;
   using TargetConnectionsMapType = std::unordered_map<gxf_uid_t, TargetsInfo>;
 
   using BroadcastEntityMapType = std::unordered_map<
-      holoscan::OperatorGraph::NodeType,
+      holoscan::OperatorFlowGraph::NodeType,
       std::unordered_map<std::string, std::shared_ptr<nvidia::gxf::GraphEntity>>>;
 
   /** @brief Initialize all GXF Resources in the map and assign them to graph_entity.
@@ -407,7 +407,7 @@ class GXFExecutor : public holoscan::Executor {
    * @param broadcast_entities The mapping of broadcast graph entities.
    * @param connections TODO
    */
-  void create_broadcast_components(const holoscan::OperatorGraph::NodeType& op,
+  void create_broadcast_components(const holoscan::OperatorFlowGraph::NodeType& op,
                                    BroadcastEntityMapType& broadcast_entities,
                                    const TargetConnectionsMapType& connections);
 
@@ -425,10 +425,11 @@ class GXFExecutor : public holoscan::Executor {
    * on the broadcasted output port of this operator.
    * @param port_map_val The port mapping between prev_op and op.
    */
-  void connect_broadcast_to_previous_op(const BroadcastEntityMapType& broadcast_entities,
-                                        const holoscan::OperatorGraph::NodeType& op,
-                                        const holoscan::OperatorGraph::NodeType& prev_op,
-                                        const holoscan::OperatorGraph::EdgeDataType& port_map_val);
+  void connect_broadcast_to_previous_op(
+      const BroadcastEntityMapType& broadcast_entities,
+      const holoscan::OperatorFlowGraph::NodeType& op,
+      const holoscan::OperatorFlowGraph::NodeType& prev_op,
+      const holoscan::OperatorFlowGraph::EdgeDataType& port_map_val);
 
   /// Helper function that adds a GXF Condition to the specified graph entity
   bool add_condition_to_graph_entity(const std::shared_ptr<Condition>& condition,

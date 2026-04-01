@@ -479,8 +479,8 @@ class InputContext {
       const std::type_info& value_type = value.type();
 
       if (value_type == typeid(kNoReceivedMessage)) {
-        error_message =
-            fmt::format("No data is received from the input port with name '{}'", port_name);
+        error_message = fmt::format(
+            "{}: no data is received from the input port with name '{}'", op_->name(), port_name);
         return false;
       }
 
@@ -509,8 +509,8 @@ class InputContext {
 
       if (value_type == typeid(kNoReceivedMessage)) {
         if (index == 0) {
-          error_message =
-              fmt::format("No data is received from the input port with name '{}'", name);
+          error_message = fmt::format(
+              "{}: no data is received from the input port with name '{}'", op_->name(), name);
           return false;
         }
         break;
@@ -579,14 +579,16 @@ class InputContext {
   }
 
   inline bool populate_tensor_map(const holoscan::gxf::Entity& gxf_entity,
-                                  holoscan::TensorMap& tensor_map) {
+                                  holoscan::TensorMap& tensor_map, const char* port_name) {
     auto tensor_components_expected = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
     for (const auto& gxf_tensor : tensor_components_expected.value()) {
       // Do zero-copy conversion to holoscan::Tensor (as in gxf_entity.get<holoscan::Tensor>())
       auto maybe_dl_ctx = (*gxf_tensor->get()).toDLManagedTensorContext();
       if (!maybe_dl_ctx) {
         HOLOSCAN_LOG_ERROR(
-            "Failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor");
+            "{}.{}: failed to get std::shared_ptr<DLManagedTensorContext> from nvidia::gxf::Tensor",
+            op_->name(),
+            port_name);
         return false;
       }
       auto dl_ctx = maybe_dl_ctx.value();
@@ -604,7 +606,6 @@ class InputContext {
                                      std::string& error_message) {
     // Assume that the received data is not of type NoMessageType
     // (this case should be handled by the caller)
-
     if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
       HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
@@ -630,8 +631,9 @@ class InputContext {
         return handle_bad_any_cast<DataT>(value, port_name, input_vector, error_message);
       } catch (const std::exception& e) {
         error_message = fmt::format(
-            "Unable to cast the received data to the specified type for input '{}' of "
+            "{}: unable to cast the received data to the specified type for input '{}' of "
             "type {}: {}",
+            op_->name(),
             port_name,
             value_type.name(),
             e.what());
@@ -655,9 +657,10 @@ class InputContext {
                                   std::string& error_message) {
     if constexpr (is_one_of_derived_v<typename DataT::value_type, nvidia::gxf::Entity>) {
       error_message = fmt::format(
-          "Unable to cast the received data to the specified type (holoscan::gxf::Entity) for "
+          "{}: unable to cast the received data to the specified type (holoscan::gxf::Entity) for "
           "input "
           "'{}'",
+          op_->name(),
           port_name);
       HOLOSCAN_LOG_DEBUG(error_message);
       return false;
@@ -665,10 +668,11 @@ class InputContext {
       TensorMap tensor_map;
       try {
         auto gxf_entity = std::any_cast<holoscan::gxf::Entity>(value);
-        bool is_tensor_map_populated = populate_tensor_map(gxf_entity, tensor_map);
+        bool is_tensor_map_populated = populate_tensor_map(gxf_entity, tensor_map, port_name);
         if (!is_tensor_map_populated) {
           error_message = fmt::format(
-              "Unable to populate the TensorMap from the received GXF Entity for input '{}'",
+              "{}: unable to populate the TensorMap from the received GXF Entity for input '{}'",
+              op_->name(),
               port_name);
           HOLOSCAN_LOG_DEBUG(error_message);
           return false;
@@ -680,9 +684,10 @@ class InputContext {
         }
       } catch (const std::bad_any_cast& e) {
         error_message = fmt::format(
-            "Unable to cast the received data to the specified type (holoscan::TensorMap) for "
+            "{}: unable to cast the received data to the specified type (holoscan::TensorMap) for "
             "input "
             "'{}'",
+            op_->name(),
             port_name);
         HOLOSCAN_LOG_DEBUG(error_message);
         return false;
@@ -690,7 +695,9 @@ class InputContext {
       input_vector.push_back(std::move(tensor_map));
     } else {
       error_message = fmt::format(
-          "Unable to cast the received data to the specified type for input '{}' of type {}: {}",
+          "{}: unable to cast the received data to the specified type for input '{}' of type {}: "
+          "{}",
+          op_->name(),
           port_name,
           value.type().name(),
           error_message);
@@ -734,10 +741,12 @@ class InputContext {
         // Handle holoscan::TensorMap
         TensorMap tensor_map;
         bool is_tensor_map_populated =
-            populate_tensor_map(std::any_cast<holoscan::gxf::Entity>(value), tensor_map);
+            populate_tensor_map(std::any_cast<holoscan::gxf::Entity>(value), tensor_map, name);
         if (!is_tensor_map_populated) {
           auto error_message = fmt::format(
-              "Unable to populate the TensorMap from the received GXF Entity for input '{}'", name);
+              "{}: unable to populate the TensorMap from the received GXF Entity for input '{}'",
+              op_->name(),
+              name);
           HOLOSCAN_LOG_DEBUG(error_message);
           return make_unexpected<holoscan::RuntimeError>(
               create_receive_error(name, error_message.c_str()));
@@ -755,7 +764,8 @@ class InputContext {
       }
     } catch (const std::bad_any_cast& e) {
       auto error_message = fmt::format(
-          "Unable to cast the received data to the specified type for input '{}' of type {}",
+          "{}: unable to cast the received data to the specified type for input '{}' of type {}",
+          op_->name(),
           name,
           value.type().name());
       HOLOSCAN_LOG_DEBUG(error_message);
@@ -766,8 +776,8 @@ class InputContext {
   }
 
   inline holoscan::RuntimeError create_receive_error(const char* name, const char* message) {
-    auto error_message =
-        fmt::format("Failure receiving message from input port '{}': {}", name, message);
+    auto error_message = fmt::format(
+        "{}: failure receiving message from input port '{}': {}", op_->name(), name, message);
     HOLOSCAN_LOG_TRACE(error_message);
     return holoscan::RuntimeError(holoscan::ErrorCode::kReceiveError, error_message.c_str());
   }

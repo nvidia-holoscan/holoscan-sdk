@@ -479,8 +479,10 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     if (!received_streams.empty() && received_streams[0].has_value()) {
       if (received_streams.size() > 1) {
         HOLOSCAN_LOG_DEBUG(
-            "Multiple CUDA streams ({}) received on input port '{}', using first stream for data "
+            "{}: Multiple CUDA streams ({}) received on input port '{}', using first stream for "
+            "data "
             "logging",
+            op_->name(),
             received_streams.size(),
             port_name);
       }
@@ -538,8 +540,8 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
   auto io_spec = it->second;
   auto receiver = get_gxf_receiver(io_spec);
   if (!receiver) {
-    auto no_accessible_error_message = NoAccessibleMessageType(
-        fmt::format("Invalid receiver found for the input port with name {}", input_name));
+    auto no_accessible_error_message = NoAccessibleMessageType(fmt::format(
+        "{}: Invalid receiver found for the input port with name {}", op_->name(), input_name));
 
     return no_accessible_error_message;
   }
@@ -591,12 +593,15 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     int64_t gxf_acquisition_timestamp = 0;
     if (!timestamp_components || 0 == timestamp_components->size()) {
       // Requires Timestamp instance for message age
-      HOLOSCAN_LOG_TRACE("Message received on input port '{}' carries no Timestamp.", input_name);
+      HOLOSCAN_LOG_TRACE(
+          "{}: message received on input port '{}' carries no Timestamp.", op_->name(), input_name);
     } else {
       gxf_acquisition_timestamp = timestamp_components->front().value()->acqtime;
-      HOLOSCAN_LOG_TRACE("Message received on input port '{}' has GXF Timestamp with acqtime: {}.",
-                         input_name,
-                         gxf_acquisition_timestamp);
+      HOLOSCAN_LOG_TRACE(
+          "{}: message received on input port '{}' has GXF Timestamp with acqtime: {}.",
+          op_->name(),
+          input_name,
+          gxf_acquisition_timestamp);
       // Truncate the port name to the base name without :0, etc. in the multi-receiver case.
       auto colon_pos = input_name.find(':');
       if (colon_pos != std::string::npos) {
@@ -636,7 +641,9 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
                                               IOSpec::IOType::kInput,
                                               stream_for_logging);
           } else {
-            HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+            HOLOSCAN_LOG_ERROR("{}.{}: failed to create shared entity for logging",
+                               op_->name(),
+                               input_name,
                                GxfResultStr(shared_entity_expected.error()));
           }
         }
@@ -679,7 +686,9 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
                                               IOSpec::IOType::kInput,
                                               stream_for_logging);
           } else {
-            HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+            HOLOSCAN_LOG_ERROR("{}.{}: failed to create shared entity for logging: {}",
+                               op_->name(),
+                               input_name,
                                GxfResultStr(shared_entity_expected.error()));
           }
         }
@@ -877,7 +886,7 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
 
   auto gxf_resource = std::dynamic_pointer_cast<GXFResource>(connector);
   if (gxf_resource == nullptr) {
-    HOLOSCAN_LOG_ERROR("Invalid resource type");
+    HOLOSCAN_LOG_ERROR("Invalid resource type for connector {}.{}", op_->name(), output_name);
     return;
   }
 
@@ -906,14 +915,18 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
           // is_new_entity=true: skip get() check since entity was just created via Entity::New()
           auto stream_result = add_stream_id_to_entity(gxf_entity.value(), stream_cid, true, true);
           if (stream_result != GXF_SUCCESS) {
-            throw std::runtime_error(fmt::format("Failed to add CUDA stream to output message: {}",
-                                                 GxfResultStr(stream_result)));
+            throw std::runtime_error(
+                fmt::format("{}.{}: failed to add CUDA stream to output message: {}",
+                            op_->name(),
+                            output_name,
+                            GxfResultStr(stream_result)));
           }
         }
       }
       if (!omit_data_logging) {
         auto& data_loggers = op_->fragment()->data_loggers();
-        HOLOSCAN_LOG_TRACE("number of data loggers: {}", data_loggers.size());
+        HOLOSCAN_LOG_TRACE(
+            "{}.{}: number of data loggers: {}", op_->name(), output_name, data_loggers.size());
 
         if (!data_loggers.empty()) {
           PROF_SCOPED_EVENT(op_->id(), event_data_logging);
@@ -950,7 +963,9 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
             static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity.value()));
       }
       if (!gxf_result) {
-        auto error_msg = fmt::format("Failed to publish output message with error: {}",
+        auto error_msg = fmt::format("{}.{}: Failed to publish output message with error: {}",
+                                     op_->name(),
+                                     output_name,
                                      GxfResultStr(gxf_result.error()));
         HOLOSCAN_LOG_ERROR(error_msg);
         throw std::runtime_error(error_msg);
@@ -977,8 +992,11 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
             auto stream_result =
                 add_stream_id_to_entity(gxf_entity, stream_cid, true, is_new_entity);
             if (stream_result != GXF_SUCCESS) {
-              throw std::runtime_error(fmt::format(
-                  "Failed to add CUDA stream to output message: {}", GxfResultStr(stream_result)));
+              throw std::runtime_error(
+                  fmt::format("{}.{}: Failed to add CUDA stream to output message: {}",
+                              op_->name(),
+                              output_name,
+                              GxfResultStr(stream_result)));
             }
             // Propagate stream to memory buffers for stream-aware deallocation
             // Skip if caller already set the stream (e.g., via Entity::add with stream parameter)
@@ -1013,7 +1031,9 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
                                                     IOSpec::IOType::kOutput,
                                                     stream_for_logging);
                 } else {
-                  HOLOSCAN_LOG_ERROR("Failed to create shared entity for logging: {}",
+                  HOLOSCAN_LOG_ERROR("{}.{}: Failed to create shared entity for logging: {}",
+                                     op_->name(),
+                                     output_name,
                                      GxfResultStr(shared_entity_expected.error()));
                 }
               }
@@ -1030,13 +1050,16 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
               static_cast<nvidia::gxf::Transmitter*>(tx_ptr)->publish(std::move(gxf_entity));
         }
         if (!gxf_result) {
-          auto error_msg = fmt::format("Failed to publish output message with error: {}",
+          auto error_msg = fmt::format("{}.{}: failed to publish output message with error: {}",
+                                       op_->name(),
+                                       output_name,
                                        GxfResultStr(gxf_result.error()));
           HOLOSCAN_LOG_ERROR(error_msg);
           throw std::runtime_error(error_msg);
         }
       } catch (const std::bad_any_cast& e) {
-        HOLOSCAN_LOG_ERROR("Unable to cast to gxf::Entity: {}", e.what());
+        HOLOSCAN_LOG_ERROR(
+            "{}.{}: unable to cast to gxf::Entity: {}", op_->name(), output_name, e.what());
       }
       break;
     }

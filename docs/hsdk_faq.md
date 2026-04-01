@@ -32,19 +32,19 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-igpu
   ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -130,7 +130,7 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.0 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.1 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -147,7 +147,7 @@ A2: The prerequisites include:
 * Tested with [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/) and [NVIDIA RTX ADA 6000](https://www.nvidia.com/en-us/products/workstations/rtx-6000/)
 * [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above.
     * x86 workstations: Tested with [OpenRM drivers](https://github.com/NVIDIA/open-gpu-kernel-modules) >= R550.
-    * [CUDA Green Context](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html) features require 560 or above.
+    * [CUDA Green Context](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html) features require CUDA Driver API version >= 12.4 (where Green Context was introduced). This typically requires either CUDA display driver >=R560 or else configuring [CUDA forward compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
 
 **Q3: Are there any additional setup steps required?**
 

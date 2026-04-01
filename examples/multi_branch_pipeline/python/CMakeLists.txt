@@ -52,7 +52,7 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'receiver rx2 received value: 90' \
         --pass-pattern 'receiver rx1 received value: 0' \
-        --fail-pattern 'Push failed on in'"
+        --fail-pattern 'Push failed on receiver in'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 
@@ -62,7 +62,7 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'receiver rx2 received value: 90' \
         --pass-pattern 'receiver rx1 received value: 0' \
-        --fail-pattern 'Push failed on in'"
+        --fail-pattern 'Push failed on receiver in'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
 endif()

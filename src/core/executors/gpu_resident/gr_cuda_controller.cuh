@@ -41,7 +41,7 @@ __device__ unsigned long long gettime_ns();
  *
  * If sync_with_host is true, then a system-wide fence is performed after the end of the WHILE loop.
  * This ensures that all the data is visible to the host. However, this can slow down the compute
- * pipeline, and is recommended only when host is controlling the GPU-resident execution, i.e., for
+ * pipeline, and is recommended only when host is controlling the GPU-resident graph execution, i.e., for
  * debugging, development and testing purposes.
  *
  * @param data_ready_device Pointer to the data ready flag in device memory.

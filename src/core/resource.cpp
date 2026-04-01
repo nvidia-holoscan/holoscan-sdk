@@ -34,8 +34,9 @@ void Resource::initialize() {
   Component::initialize();
 
   if (!spec_) {
-    HOLOSCAN_LOG_ERROR("No component spec for Resource '{}'", name());
-    return;
+    auto err_msg = fmt::format("No component spec for Resource '{}'", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   HOLOSCAN_LOG_TRACE("Resource {}: calling set_parameters()", name());

@@ -50,9 +50,9 @@ class GPUResidentExecutor : public Executor {
 
   ~GPUResidentExecutor();
 
-  void run(OperatorGraph& graph) override;
+  void run(OperatorFlowGraph& graph) override;
 
-  std::future<void> run_async(OperatorGraph& graph) override;
+  std::future<void> run_async(OperatorFlowGraph& graph) override;
 
   void context([[maybe_unused]] void* context) override {
     throw std::runtime_error("GPUResidentExecutor does not support context");
@@ -81,11 +81,11 @@ class GPUResidentExecutor : public Executor {
    *
    * @param graph The operator graph
    */
-  void prepare_data_flow(std::shared_ptr<OperatorGraph> graph);
+  void prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph);
 
   /**
    * @brief This function initializes CUDA. Currently, it sets the device to 0 by default.
-   * Setting a different GPU device for GPU-resident execution is not yet supported.
+   * Setting a different GPU device for GPU-resident graph execution is not yet supported.
    */
   void initialize_cuda();
 
@@ -101,14 +101,14 @@ class GPUResidentExecutor : public Executor {
   void* device_memory(std::shared_ptr<Operator> op, const std::string& port_name);
 
   /**
-   * @brief This function verifies the graph topology is supported by the GPU-resident execution.
+   * @brief This function verifies the graph topology is supported by the GPU-resident graph execution.
    * Currently, it checks if the graph is a linear chain of operators.
    *
    * @param graph The operator graph
-   * @return True if the graph topology is supported by the GPU-resident execution, false otherwise
+   * @return True if the graph topology is supported by the GPU-resident graph execution, false otherwise
    */
   virtual bool verify_graph_topology(
-      std::shared_ptr<OperatorGraph> graph,
+      std::shared_ptr<OperatorFlowGraph> graph,
       std::vector<std::shared_ptr<Operator>>& topo_ordered_operators);
 
   void timeout_ms(unsigned long long timeout_ms);
@@ -139,7 +139,7 @@ class GPUResidentExecutor : public Executor {
    */
   bool is_launched();
 
-  /// Get the execution context - currently, this has no meaning for GPU-resident execution
+  /// Get the execution context - currently, this has no meaning for GPU-resident graph execution
   /// When we need to store something for execution context, we will store a pointer in the
   /// exec_context_ for a ExecutionContext object
   std::shared_ptr<ExecutionContext> execution_context() { return exec_context_; }
@@ -228,8 +228,22 @@ class GPUResidentExecutor : public Executor {
   std::pair<unsigned int*, unsigned int> execution_times_us();
 
  private:
-  void allocate_io_device_buffer(std::shared_ptr<Operator> downstream_op,
-                                 std::shared_ptr<Operator> upstream_op,
+  /**
+   * @brief Inspect the port specs of a single source_port -> destination_port connection and
+   * either allocate a shared device buffer or wire an externally-owned device pointer.
+   *
+   * @param source_op   The upstream operator  (owns the output port).
+   * @param dest_op     The downstream operator (owns the input port).
+   * @param source_port Name of the output port on source_op.
+   * @param destination_port Name of the input port on dest_op.
+   */
+  void connect_ports(std::shared_ptr<Operator> source_op,
+                     std::shared_ptr<Operator> dest_op,
+                     const std::string& source_port,
+                     const std::string& destination_port);
+
+  void allocate_io_device_buffer(std::shared_ptr<Operator> source_op,
+                                 std::shared_ptr<Operator> dest_op,
                                  const std::string& source_port, const std::string& target_port,
                                  size_t memory_block_size);
 

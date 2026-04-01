@@ -841,6 +841,11 @@ def test_async_logger_small_entry_fallback(
     count = 25
     value = 3
     max_elements = 5000  # log many elements to increase likelihood of queue overflow
+    # Exclude the pre-transform CPU tensor ports from this test. PingTensorTxOp leaves the
+    # system-memory tensor contents uninitialized, while the downstream CuPy tensor is filled with
+    # `value`. Restricting logging to the post-transform ports keeps the fallback assertions
+    # deterministic across scheduler timing differences.
+    logged_ports = ["rx.in", "value-setter.out_tensor"]
     app = TensorConsoleLoggingApp(
         count=count,
         value=value,
@@ -852,6 +857,7 @@ def test_async_logger_small_entry_fallback(
             large_data_max_queue_size=large_data_max_queue_size,
             large_data_queue_policy=large_data_queue_policy,
             shutdown_wait_period_ms=ASYNC_LOGGER_SHUTDOWN_TIMEOUT_MS,
+            allowlist_patterns=[rf".*{port}$" for port in logged_ports],
         ),
     )
     scheduler_kwargs = {"worker_thread_number": 3} if scheduler_class != GreedyScheduler else {}
@@ -864,12 +870,10 @@ def test_async_logger_small_entry_fallback(
     # assert that the expected logging data was recorded
     captured = capfd.readouterr()
 
-    # BasicConsoleLogger doesn't log GXF entities so only message and metadata on rx.in will be
-    # logged in that case.
     assert captured.err.count("[ID:rx.in]") == count
-    assert captured.err.count("[ID:tx.out]") == count
-    assert captured.err.count("[ID:value-setter.in_tensor]") == count
     assert captured.err.count("[ID:value-setter.out_tensor]") == count
+    assert "[ID:tx.out]" not in captured.err
+    assert "[ID:value-setter.in_tensor]" not in captured.err
 
     assert "constant_tensor" in captured.err
     assert "#cupy: tensor" not in captured.err
@@ -881,14 +885,11 @@ def test_async_logger_small_entry_fallback(
     expected_data = "data=[" + ", ".join([f"{value}"] * max_elements) + ", ..."
     assert expected_data in captured.err
 
-    # tx operator will have logged empty metadata
-    assert "MetadataDictionary(size=0)" in captured.err
-
     # metadata value added by 'mx' operator was logged
     assert f"MetadataDictionary(size=1) {{'value': Python(int): {value}}}" in captured.err
 
-    # all ports should be logging tensor data
-    num_ports = 4  # tx.out, value-setter.in_tensor, value-setter.out_tensor, rx.in
+    # Only the deterministic post-transform ports are logged in this test.
+    num_ports = len(logged_ports)
     num_large_entries = count * num_ports
     if large_data_max_queue_size == 1:
         # Likely that at least some large data entries to the log_entry code path instead due to

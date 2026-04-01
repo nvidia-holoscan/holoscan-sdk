@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,12 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+cmake_minimum_required(VERSION 3.20)
+
 list(APPEND CMAKE_MESSAGE_CONTEXT "cache")
 
 message(STATUS "Configuring Cache for CPM and Compiler Cache (CCache/SCCache)")
 
 function(check_cache_dir cache_dir_name)
     list(APPEND CMAKE_MESSAGE_CONTEXT "check_cache_dir")
+
+    if(cache_dir_name STREQUAL "")
+        message(FATAL_ERROR "cache_dir_name is empty")
+    endif()
 
     cmake_path(IS_RELATIVE ${cache_dir_name} is_relative)
 
@@ -57,6 +63,10 @@ endfunction()
 function(configure_cpm cache_dir_name)
     list(APPEND CMAKE_MESSAGE_CONTEXT "configure_cpm")
 
+    if(cache_dir_name STREQUAL "")
+        message(FATAL_ERROR "cache_dir_name is empty")
+    endif()
+
     # Set the CPM_SOURCE_CACHE environment
     set(ENV{CPM_SOURCE_CACHE} "${${cache_dir_name}}/cpm")
 
@@ -65,12 +75,11 @@ endfunction()
 
 # This function requires the following arguments:
 # - LANGUAGE: The language to be configured
-# - TEMP_DIR: The temporary directory to be used for the cache (default: /tmp)
 # - LAUNCHER_TYPE: The type of launcher (ccache or sccache)
 function(gen_cache_launcher)
     list(APPEND CMAKE_MESSAGE_CONTEXT "gen_cache_launcher")
     set(options "")
-    set(one_value LANGUAGE TEMP_DIR LAUNCHER_TYPE)
+    set(one_value LANGUAGE LAUNCHER_TYPE)
     set(multi_value "")
     cmake_parse_arguments(GEN_BIN "${options}" "${one_value}" "${multi_value}" ${ARGN})
 
@@ -88,11 +97,6 @@ function(gen_cache_launcher)
 
     if(NOT DEFINED GEN_BIN_LAUNCHER_TYPE)
         set(GEN_BIN_LAUNCHER_TYPE "ccache")
-    endif()
-
-    if(NOT DEFINED GEN_BIN_TEMP_DIR)
-        # TODO(gbae): Update this implementation if we support other platforms (such as Windows)
-        set(GEN_BIN_TEMP_DIR "/tmp")
     endif()
 
     # Set GEN_BIN_LANGUAGE to the uppercase of LANGUAGE.
@@ -116,14 +120,9 @@ function(gen_cache_launcher)
 
     set(GEN_BIN_EXECUTABLE_PATH "${CMAKE_CURRENT_BINARY_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}")
 
-    configure_file("${CMAKE_CURRENT_LIST_DIR}/ccache/launch_${GEN_BIN_LAUNCHER_TYPE}.sh.in" "${GEN_BIN_TEMP_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}" @ONLY)
-
-    # Since 'file(CHMOD)' is supported since later CMake versions(>=3.19), we use 'file(COPY)' instead to add permission(+x), using the temporary file
-    file(
-        COPY "${GEN_BIN_TEMP_DIR}/launch_${GEN_BIN_LAUNCHER_TYPE}_${GEN_BIN_LANGUAGE_LOWERCASE}"
-        DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
-        FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-    )
+    configure_file("${CMAKE_CURRENT_LIST_DIR}/ccache/launch_${GEN_BIN_LAUNCHER_TYPE}.sh.in" "${GEN_BIN_EXECUTABLE_PATH}" @ONLY)
+    file(CHMOD "${GEN_BIN_EXECUTABLE_PATH}" PERMISSIONS
+        OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
     # Expose the executable path to the caller
     set(GEN_BIN_EXECUTABLE_PATH "${GEN_BIN_EXECUTABLE_PATH}" PARENT_SCOPE)
@@ -137,6 +136,10 @@ endfunction()
 
 function(configure_ccache cache_dir_name)
     list(APPEND CMAKE_MESSAGE_CONTEXT "configure_ccache")
+
+    if(cache_dir_name STREQUAL "")
+        message(FATAL_ERROR "configure_ccache: cache_dir_name is empty")
+    endif()
 
     find_program(CCACHE_BIN_PATH ccache DOC "Path of ccache executable")
 
@@ -173,6 +176,10 @@ endfunction()
 function(configure_sccache cache_dir_name)
     list(APPEND CMAKE_MESSAGE_CONTEXT "configure_sccache")
 
+    if(cache_dir_name STREQUAL "")
+        message(FATAL_ERROR "configure_sccache: cache_dir_name is empty")
+    endif()
+
     find_program(SCCACHE_BIN_PATH sccache DOC "Path of sccache executable")
 
     if(NOT SCCACHE_BIN_PATH)
@@ -202,20 +209,35 @@ function(configure_sccache cache_dir_name)
 endfunction()
 
 # ##############################################################################
-if(${HOLOSCAN_CACHE_DIR} STREQUAL " ")
-    message(STATUS " HOLOSCAN_CACHE_DIR is not set. Defaulting to '${CMAKE_SOURCE_DIR}/.cache' ... ")
-    set(HOLOSCAN_CACHE_DIR "${CMAKE_SOURCE_DIR}/.cache" CACHE)
+# Default HOLOSCAN_USE_CACHE_DIR and HOLOSCAN_CACHE_DIR when this module is reused and
+# variables are not set.
+
+if(NOT DEFINED HOLOSCAN_USE_CACHE_DIR)
+    set(HOLOSCAN_USE_CACHE_DIR ON)
+    message(STATUS "HOLOSCAN_USE_CACHE_DIR is not set. Defaulting to '${HOLOSCAN_USE_CACHE_DIR}'")
 endif()
 
-check_cache_dir(HOLOSCAN_CACHE_DIR)
-configure_cpm(HOLOSCAN_CACHE_DIR)
-
-if(HOLOSCAN_USE_CCACHE)
-    configure_ccache(HOLOSCAN_CACHE_DIR)
+if(NOT DEFINED HOLOSCAN_CACHE_DIR)
+    set(HOLOSCAN_CACHE_DIR ".cache")
+    message(STATUS "HOLOSCAN_CACHE_DIR is not set. Defaulting to '${HOLOSCAN_CACHE_DIR}'")
 endif()
 
-if(HOLOSCAN_USE_SCCACHE)
-    configure_sccache(HOLOSCAN_CACHE_DIR)
+if(HOLOSCAN_USE_CACHE_DIR)
+    check_cache_dir(HOLOSCAN_CACHE_DIR)
+    configure_cpm(HOLOSCAN_CACHE_DIR)
+
+    if(HOLOSCAN_USE_CCACHE)
+        configure_ccache(HOLOSCAN_CACHE_DIR)
+    endif()
+
+    if(HOLOSCAN_USE_SCCACHE)
+        configure_sccache(HOLOSCAN_CACHE_DIR)
+    endif()
+    if(NOT HOLOSCAN_USE_CCACHE AND NOT HOLOSCAN_USE_SCCACHE)
+        message(STATUS "Neither CCache nor SCCache is enabled. Skipping compiler cache configuration.")
+    endif()
+else()
+    message(STATUS "Cache disabled (HOLOSCAN_USE_CACHE_DIR=OFF). Skipping CPM and compiler cache setup.")
 endif()
 
 list(POP_BACK CMAKE_MESSAGE_CONTEXT)

@@ -111,7 +111,7 @@ The set of keys present in the fragment's configuration file.
 )doc")
 
 PYDOC(graph, R"doc(
-Get the computation graph (Graph node is an Operator) associated with the fragment.
+Get the operator flow graph associated with the fragment.
 )doc")
 
 PYDOC(executor, R"doc(
@@ -189,11 +189,15 @@ op : holoscan.core.Operator
 )doc")
 
 PYDOC(add_subgraph, R"doc(
-Add a subgraph to the fragment.
+Add a subgraph to the fragment, taking ownership.
 
-This method ensures the subgraph is composed and its operators are added to the fragment.
-Use this method when a subgraph has no interface ports and doesn't need to be connected
-to other operators or subgraphs via add_flow.
+This method takes ownership of the subgraph by storing the shared pointer, registers the
+subgraph name for duplicate detection, and ensures the subgraph is composed.
+
+This is also called automatically by ``add_flow`` when subgraph arguments are passed,
+so explicit calls are only needed for self-contained subgraphs that have no flows.
+
+Calling this on a subgraph that is already owned is a safe no-op.
 
 Parameters
 ----------
@@ -389,6 +393,19 @@ Returns
 -------
 list[holoscan.core.DataLogger]
     A list of data loggers associated with this fragment.
+)doc")
+
+PYDOC(subgraphs, R"doc(
+Get the top-level subgraphs owned by this fragment.
+
+Returns subgraphs added via ``make_subgraph`` (C++) or the ``Subgraph`` constructor (Python),
+as well as subgraphs added via ``add_subgraph``. Nested subgraphs within these are accessible
+via ``Subgraph.nested_subgraphs``.
+
+Returns
+-------
+list[holoscan.core.Subgraph]
+    The top-level subgraphs owned by this fragment.
 )doc")
 
 PYDOC(register_service, R"doc(

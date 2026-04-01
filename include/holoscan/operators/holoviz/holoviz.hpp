@@ -707,6 +707,27 @@ class HolovizOp : public Operator {
                                    ///  to the image dimensions. This format only supports images
                                    ///  with a width that is a multiple of two.
 
+    R16G16B16_UNORM,   ///< specifies a three-component,
+                       ///  48-bit unsigned normalized format that has
+                       ///  a 16-bit R component in bytes 0..1,
+                       ///  a 16-bit G component in bytes 2..3,
+                       ///  and a 16-bit B component in bytes 4..5
+    R16G16B16_SNORM,   ///< specifies a three-component,
+                       ///  48-bit signed normalized format that has
+                       ///  a 16-bit R component in bytes 0..1,
+                       ///  a 16-bit G component in bytes 2..3,
+                       ///  and a 16-bit B component in bytes 4..5
+    R16G16B16_SFLOAT,  ///< specifies a three-component,
+                       ///  48-bit signed floating-point format that has
+                       ///  a 16-bit R component in bytes 0..1,
+                       ///  a 16-bit G component in bytes 2..3,
+                       ///  and a 16-bit B component in bytes 4..5
+    R32G32B32_SFLOAT,  ///< specifies a three-component,
+                       ///  96-bit signed floating-point format that has
+                       ///  a 32-bit R component in bytes 0..3,
+                       ///  a 32-bit G component in bytes 4..7,
+                       ///  and a 32-bit B component in bytes 8..11
+
     AUTO_DETECT = -1  ///< Auto detect the image format. If the input is a video buffer the format
                       ///  of the video buffer is used, if the input is a tensor then the format
                       ///  depends on the component count
@@ -963,7 +984,7 @@ class HolovizOp : public Operator {
   static std::string inputTypeToString(holoscan::ops::HolovizOp::InputType input_type);
 
   /// table to convert image format to string
-  static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 41>
+  static const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 45>
       kImageFormatToStr;
 
   /**
@@ -1527,17 +1548,15 @@ struct YAML::convert<holoscan::ops::HolovizOp::ColorSpace> {
  *
  * @tparam TYPE
  */
-#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                 \
-  template <>                                                                        \
-  struct YAML::convert<TYPE> {                                                       \
-    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */ \
-    static Node encode(TYPE&) {                                                      \
-      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
-    }                                                                                \
-    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */ \
-    static bool decode(const Node&, TYPE&) {                                         \
-      throw std::runtime_error(#TYPE " is unsupported in YAML");                     \
-    }                                                                                \
+#define HOLOVIZ_YAML_CONVERTER(TYPE)                                                         \
+  template <>                                                                                \
+  struct YAML::convert<TYPE> {                                                               \
+    /** @brief Throws runtime error as encoding this type is unsupported in YAML. */         \
+    static Node encode(TYPE&) { throw std::runtime_error(#TYPE " is unsupported in YAML"); } \
+    /** @brief Throws runtime error as decoding this type is unsupported in YAML. */         \
+    static bool decode(const Node&, TYPE&) {                                                 \
+      throw std::runtime_error(#TYPE " is unsupported in YAML");                             \
+    }                                                                                        \
   };
 
 HOLOVIZ_YAML_CONVERTER(holoscan::ops::HolovizOp::KeyCallbackFunction);

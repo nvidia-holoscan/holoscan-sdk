@@ -17,8 +17,14 @@
 
 #include <getopt.h>
 
+#include <cuda_runtime.h>
+#include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <iostream>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -27,6 +33,11 @@
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/inference_processor/inference_processor.hpp>
 #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
+
+// Example will partition CUDA Streaming Multiprocessors (SMs) into three
+// partitions (4, 4, 8 SMs) with Green Context.
+// Requires GPU hardware with minimum of 16 SMs.
+constexpr std::array<uint32_t, 3> kGreenContextPartitions = {4, 4, 8};
 
 class App : public holoscan::Application {
  public:
@@ -58,7 +69,8 @@ class App : public holoscan::Application {
     if (enable_green_context_) {
       // Create a global CUDA Green context pool
       // Use the default min_sm_count=2, create partitions with 3 green contexts
-      std::vector<uint32_t> partitions = {4, 4, 8};
+      std::vector<uint32_t> partitions(
+        kGreenContextPartitions.begin(), kGreenContextPartitions.end());
       auto cuda_green_context_pool = make_resource<CudaGreenContextPool>(
           "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
       auto cuda_green_context1 =
@@ -149,6 +161,44 @@ class App : public holoscan::Application {
   bool enable_green_context_ = false;
 };
 
+constexpr int kSkipReturnCode = 77;
+constexpr int kMinCudaDriverVersion = 12040;
+constexpr const char* kHsdkFaqUrl =
+    "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
+
+// Gets the current CUDA Driver API, such as "12040" for 12.4
+static std::optional<int> detect_cuda_driver_version() {
+  int version = 0;
+  if (cudaDriverGetVersion(&version) != cudaSuccess) {
+    return std::nullopt;
+  }
+  return version;
+}
+
+// Green Context APIs are introduced in CUDA Driver 12.4
+static bool green_context_supported_by_cuda_driver() {
+  auto version = detect_cuda_driver_version();
+  return version.has_value() && version.value() >= kMinCudaDriverVersion;
+}
+
+// Example requires a certain minimum number of GPU Streaming Multiprocessors (SMs) to run
+static int required_sm_count_for_green_context() {
+  int total = 0;
+  for (const auto partition_sms : kGreenContextPartitions) {
+    total += static_cast<int>(partition_sms);
+  }
+  return total;
+}
+
+// Detects the number of GPU Streaming Multiprocessors (SMs) available on the device
+static std::optional<int> detect_device_multiprocessor_count() {
+  int sm_count = 0;
+  if (cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, 0) != cudaSuccess) {
+    return std::nullopt;
+  }
+  return sm_count;
+}
+
 int main(int argc, char** argv) {
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path += "/custom_cuda_kernel_multi_sample.yaml";
@@ -194,6 +244,27 @@ int main(int argc, char** argv) {
   }
   // NOLINTEND(cppcoreguidelines-avoid-c-arrays,hicpp-avoid-c-arrays,modernize-avoid-c-arrays)
 
+  if (green_context && !green_context_supported_by_cuda_driver()) {
+    auto version = detect_cuda_driver_version();
+    std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
+              << kMinCudaDriverVersion << ", detected: "
+              << (version.has_value() ? std::to_string(version.value()) : "unknown")
+              << "). See " << kHsdkFaqUrl << std::endl;
+    return kSkipReturnCode;
+  }
+
+  if (green_context) {
+    const int required_sm_count = required_sm_count_for_green_context();
+    auto sm_count = detect_device_multiprocessor_count();
+    if (!sm_count.has_value() || sm_count.value() < required_sm_count) {
+      std::cerr << "Green Context requires at least " << required_sm_count
+                << " SMs for this sample's partitioning (detected: "
+                << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown")
+                << "). See " << kHsdkFaqUrl << std::endl;
+      return kSkipReturnCode;
+    }
+  }
+
   auto app = holoscan::make_application<App>(green_context);
 
   // EventBasedScheduler is required for CUDA context switching to run the application
@@ -203,7 +274,6 @@ int main(int argc, char** argv) {
   app->scheduler(scheduler);
 
   app->config(config_path);
-
   app->run();
 
   return 0;

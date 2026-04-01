@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -89,10 +89,13 @@ class App : public holoscan::Application {
     // Define conditional routing based on pixel format metadata
     set_dynamic_flows(source, [format_converter, passthrough](const std::shared_ptr<Operator>& op) {
       auto pixel_format = op->metadata()->get<std::string>("V4L2_pixel_format", "");
+      const bool is_yuyv =
+          !pixel_format.empty() &&
+          (pixel_format.find("YUYV") != std::string::npos ||
+           pixel_format.find("yuyv") != std::string::npos);
 
       // Route based on pixel format
-      if (!pixel_format.empty() && (pixel_format.find("YUYV") != std::string::npos ||
-                                    pixel_format.find("yuyv") != std::string::npos)) {
+      if (is_yuyv) {
         op->add_dynamic_flow(format_converter);
       } else {
         op->add_dynamic_flow(passthrough);

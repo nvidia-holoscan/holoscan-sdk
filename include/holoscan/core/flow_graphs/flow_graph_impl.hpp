@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,36 +15,36 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_GRAPHS_FLOW_GRAPH_HPP
-#define HOLOSCAN_CORE_GRAPHS_FLOW_GRAPH_HPP
+#ifndef HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_IMPL_HPP
+#define HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_IMPL_HPP
 
 #include <functional>
 #include <list>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
-#include <map>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "../graph.hpp"
+#include "./flow_graph.hpp"
 
 namespace holoscan {
 
 // Forward declarations
-template <typename NodeT, typename EdgeDataElementT>
-class FlowGraph;
+template <typename NodeT = OperatorNodeType,
+typename EdgeDataElementT = OperatorEdgeDataElementType>
+class FlowGraphImpl;
 
 // Graph type aliases
 //   for operator graph
-using OperatorFlowGraph = FlowGraph<OperatorNodeType, OperatorEdgeDataElementType>;
+using OperatorFlowGraphImpl = FlowGraphImpl<OperatorNodeType, OperatorEdgeDataElementType>;
 //   for fragment graph
-using FragmentFlowGraph = FlowGraph<FragmentNodeType, FragmentEdgeDataElementType>;
+using FragmentFlowGraphImpl = FlowGraphImpl<FragmentNodeType, FragmentEdgeDataElementType>;
 
-template <typename NodeT = OperatorNodeType,
-          typename EdgeDataElementT = OperatorEdgeDataElementType>
-class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
+template <typename NodeT, typename EdgeDataElementT>
+class FlowGraphImpl : public FlowGraph<NodeT, EdgeDataElementT> {
  public:
   using NodeType = NodeT;
   using NodePredicate = std::function<bool(const NodeType&)>;
@@ -74,8 +74,8 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
     }
   };
 
-  using Graph<NodeT, EdgeDataElementT>::Graph;
-  ~FlowGraph() override = default;
+  using FlowGraph<NodeT, EdgeDataElementT>::FlowGraph;
+  ~FlowGraphImpl() override = default;
 
   void add_node(const NodeType& node) override;
   void add_flow(const NodeType& node_u, const NodeType& node_v,
@@ -159,11 +159,11 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
    * For multi-receiver ports, each individual port (e.g., "in:0", "in:1", "in:2") is listed as
    * a separate key.
    *
-   * For `OperatorFlowGraph` the unique ID has format:
+   * For `OperatorFlowGraphImpl` the unique ID has format:
    *     "<fragment_name>.<operator_name>.<port_name>"
    *     (or just <operator_name>.<port_name> if no fragment name was assigned).
    *
-   * For `FragmentGraph` the unique ID has format: "<fragment_name>.<port_name>".
+   * For `FragmentFlowGraphImpl` the unique ID has format: "<fragment_name>.<port_name>".
    *
    * @return A pair containing (input_to_output_map, output_to_input_map)
    */
@@ -227,4 +227,4 @@ class FlowGraph : public Graph<NodeT, EdgeDataElementT> {
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_GRAPHS_FLOW_GRAPH_HPP */
+#endif /* HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_IMPL_HPP */

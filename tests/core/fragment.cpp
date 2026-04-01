@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -39,8 +39,8 @@
 #include "holoscan/core/conditions/gxf/message_available.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
-#include "holoscan/core/graph.hpp"
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/operator_spec.hpp"
 #include "holoscan/core/resource.hpp"
@@ -179,13 +179,13 @@ TEST(Fragment, TestFragmentConfigNonexistentFile) {
       RuntimeError);
 }
 
-TEST(Fragment, TestFragmentGraph) {
+TEST(Fragment, TestFragmentFlowGraph) {
   Fragment F;
 
-  // First call to graph creates a FlowGraph object
-  // F.graph() returns a reference to the abstract Graph base class so use
+  // First call to graph() creates a FlowGraphImpl object
+  // graph() returns a reference to the abstract FlowGraph base class so use
   // static_cast here
-  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraphImpl& G = static_cast<OperatorFlowGraphImpl&>(F.graph());
 }
 
 TEST(Fragment, TestAddOperator) {
@@ -194,10 +194,10 @@ TEST(Fragment, TestAddOperator) {
 
   F.add_operator(op);
 
-  // First call to graph creates a FlowGraph object
-  // F.graph() returns a reference to the abstract Graph base class so use
+  // First call to graph() creates a FlowGraphImpl object
+  // graph() returns a reference to the abstract FlowGraph base class so use
   // static_cast here
-  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraphImpl& G = static_cast<OperatorFlowGraphImpl&>(F.graph());
 
   // verify that the operator was added to the graph
   auto nodes = G.get_nodes();
@@ -290,10 +290,10 @@ TEST(Fragment, TestAddFlow) {
 
   F.add_flow(tx, rx, {{"out", "in"}});
 
-  // First call to graph creates a FlowGraph object
-  // F.graph() returns a reference to the abstract Graph base class so use
+  // First call to graph() creates a FlowGraphImpl object
+  // graph() returns a reference to the abstract FlowGraph base class so use
   // static_cast here
-  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraphImpl& G = static_cast<OperatorFlowGraphImpl&>(F.graph());
 
   // verify that the operators and edges were added to the graph
   auto nodes = G.get_nodes();
@@ -403,7 +403,7 @@ TEST(Fragment, TestOperatorOrder) {
   F.add_flow(tx, rx, {{"out", "in"}});
   F.add_flow(tx2, rx2, {{"out", "in"}});
 
-  OperatorFlowGraph& G = static_cast<OperatorFlowGraph&>(F.graph());
+  OperatorFlowGraphImpl& G = static_cast<OperatorFlowGraphImpl&>(F.graph());
   auto order = G.get_nodes();
 
   const std::vector<std::string> expected_order = {"tx2", "tx", "rx", "rx2"};

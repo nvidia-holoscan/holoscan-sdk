@@ -1369,7 +1369,7 @@ It is not supported to define an input interface port with the same name as an o
 
 #### Instantiating and Connecting Subgraphs
 
-Once defined, subgraphs are instantiated from a `Fragment` or `Application` using `make_subgraph` and connected like regular operators using `add_flow`.
+Once defined, subgraphs are instantiated from a `Fragment` or `Application` using `make_subgraph` (C++) or the `Subgraph` constructor (Python) and connected like regular operators using `add_flow`. For cases where the concrete subgraph type is determined at runtime (e.g., via a factory), `add_subgraph` can be used instead—see {ref}`Factory Pattern with add_subgraph <holoscan-subgraph-factory-cpp>` below.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -1714,7 +1714,7 @@ When data flows into the `"data_in"` interface port, it is delivered to all thre
 
 #### Subgraphs Without Interface Ports
 
-Some subgraphs may not need external connections. Use `add_subgraph` to add such subgraphs to the application without using `add_flow`.
+Some subgraphs may not need external connections—they are self-contained pipelines. These subgraphs can be created normally; since `make_subgraph` (C++) and the `Subgraph` constructor (Python) compose the subgraph immediately and take ownership, no `add_flow` call is needed.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -1737,8 +1737,8 @@ class SelfContainedSubgraph : public holoscan::Subgraph {
 
 // In application compose()
 void compose() override {
+  // make_subgraph composes and takes ownership automatically; no add_subgraph needed
   auto self_contained = make_subgraph<SelfContainedSubgraph>("standalone");
-  add_subgraph(self_contained);  // Add without add_flow
 }
 ```
 
@@ -1761,12 +1761,114 @@ class SelfContainedSubgraph(Subgraph):
 
 # In application compose()
 def compose(self):
+    # Subgraph is composed automatically during construction; no add_subgraph needed
     self_contained = SelfContainedSubgraph(self, "standalone")
-    self.add_subgraph(self_contained)  # Add without add_flow
 ```
 
 ````
 `````
+
+#### Factory Pattern with `add_subgraph`
+
+When the concrete subgraph type is determined at runtime (e.g., via a factory method), use `add_subgraph` instead of the templated `make_subgraph`. The `add_subgraph` method takes ownership of the subgraph, registers its name for duplicate detection, and composes it if not already composed.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-factory-cpp
+
+// Factory function returning base Subgraph pointer (type chosen at runtime)
+std::shared_ptr<holoscan::Subgraph> create_camera(
+    holoscan::Fragment* fragment, const std::string& name, const std::string& type) {
+  if (type == "usb") {
+    return std::make_shared<UsbCameraSubgraph>(fragment, name);
+  } else {
+    return std::make_shared<GigECameraSubgraph>(fragment, name);
+  }
+}
+
+// In application compose()
+void compose() override {
+  auto camera = create_camera(this, "camera1", config_type);
+  add_subgraph(camera);  // composes and takes ownership
+
+  auto visualizer = make_operator<HolovizOp>("visualizer");
+  add_flow(camera, visualizer, {{"video_out", "receivers"}});
+}
+```
+
+Within a nested subgraph's `compose()`, `add_subgraph` also handles name qualification automatically. The factory should construct the subgraph with an unqualified name, and `add_subgraph` will qualify it with the parent's prefix:
+
+```{code-block} cpp
+:name: holoscan-subgraph-nested-factory-cpp
+
+class CameraPipeline : public holoscan::Subgraph {
+ public:
+  CameraPipeline(holoscan::Fragment* fragment, const std::string& name,
+                 const std::string& camera_type)
+      : holoscan::Subgraph(fragment, name), camera_type_(camera_type) {}
+
+  void compose() override {
+    // Factory creates with unqualified name "camera"
+    auto camera = create_camera(fragment(), "camera", camera_type_);
+    // add_subgraph qualifies to "pipeline1_camera", composes, takes ownership
+    add_subgraph(camera);
+
+    add_output_interface_port("video_out", camera, "video_out");
+  }
+
+ private:
+  std::string camera_type_;
+};
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-factory-python
+
+# Factory function returning Subgraph (type chosen at runtime)
+def create_camera(parent, name, camera_type):
+    if camera_type == "usb":
+        return UsbCameraSubgraph(parent, name)
+    else:
+        return GigECameraSubgraph(parent, name)
+
+# In application compose()
+def compose(self):
+    camera = create_camera(self, "camera1", config_type)
+    self.add_subgraph(camera)  # takes ownership
+
+    visualizer = HolovizOp(self, name="visualizer")
+    self.add_flow(camera, visualizer, {("video_out", "receivers")})
+```
+
+Within a nested subgraph's `compose()`, `add_subgraph` stores the child for interface port resolution. Name qualification is handled automatically when the child is constructed with `self` (the parent subgraph) as the first argument:
+
+```{code-block} python
+:name: holoscan-subgraph-nested-factory-python
+
+class CameraPipeline(Subgraph):
+    def __init__(self, fragment, name, *, camera_type="usb"):
+        self.camera_type = camera_type
+        super().__init__(fragment, name)
+
+    def compose(self):
+        camera = create_camera(self, "camera", self.camera_type)
+        self.add_subgraph(camera)  # stores for interface port resolution
+
+        self.add_output_interface_port("video_out", camera, "video_out")
+```
+
+````
+`````
+
+:::{note}
+In C++, `add_subgraph` within a subgraph's `compose()` expects the subgraph to **not** yet be composed—it will qualify the name and call `compose()` automatically. In Python, subgraphs are composed during construction, so `add_subgraph` accepts already-composed subgraphs and validates that the name is properly qualified.
+:::
 
 #### Accessing Subgraph Operators
 
@@ -1799,6 +1901,42 @@ subgraph = MySubgraph(self, "my_sg")
 # Get all operators in the subgraph
 for op in subgraph.operators():
     print(f"Operator: {op.name}")
+```
+
+````
+`````
+
+#### Listing Subgraphs
+
+`Fragment::subgraphs()` (C++) / `Fragment.subgraphs` (Python) returns the top-level subgraphs owned by the fragment. Each subgraph in turn exposes `Subgraph::nested_subgraphs()` / `Subgraph.nested_subgraphs` for its direct children. Together these allow walking the subgraph hierarchy—for example, to build a collapsible view in a graph visualization tool.
+
+`````{tab-set}
+````{tab-item} C++
+
+```{code-block} cpp
+:name: holoscan-subgraph-listing-cpp
+
+// After compose
+for (const auto& sg : subgraphs()) {
+  HOLOSCAN_LOG_INFO("Top-level subgraph: {}", sg->name());
+  for (const auto& child : sg->nested_subgraphs()) {
+    HOLOSCAN_LOG_INFO("  Nested subgraph: {}", child->name());
+  }
+}
+```
+
+````
+
+````{tab-item} Python
+
+```{code-block} python
+:name: holoscan-subgraph-listing-python
+
+# After compose
+for sg in self.subgraphs:
+    print(f"Top-level subgraph: {sg.name}")
+    for child in sg.nested_subgraphs:
+        print(f"  Nested subgraph: {child.name}")
 ```
 
 ````

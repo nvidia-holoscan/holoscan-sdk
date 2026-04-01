@@ -123,7 +123,7 @@ void init_multi_message_available(py::module_& m) {
                         &MultiMessageAvailableCondition::receivers),
                     doc::MultiMessageAvailableCondition::doc_receivers)
       .def_property("min_sum",
-                    py::overload_cast<>(&MultiMessageAvailableCondition::min_sum),
+                    py::overload_cast<>(&MultiMessageAvailableCondition::min_sum, py::const_),
                     py::overload_cast<size_t>(&MultiMessageAvailableCondition::min_sum),
                     doc::MultiMessageAvailableCondition::doc_min_sum)
       .def_property_readonly("min_sizes",

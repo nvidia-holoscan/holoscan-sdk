@@ -65,7 +65,9 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
   }
 
   auto leaf_op_opt = data_flow_tracker_->is_leaf_codelet(codelet_id);
-  if (leaf_op_opt && *leaf_op_opt && (*leaf_op_opt)->has_input_message_labels() &&
+  auto root_op_opt = data_flow_tracker_->is_root_codelet(codelet_id);
+  if (leaf_op_opt && *leaf_op_opt &&
+      ((*leaf_op_opt)->has_input_message_labels() || (root_op_opt && *root_op_opt)) &&
       codelet.value()->getExecutionCount() > leaf_last_execution_count_[codelet_id]) {
     leaf_last_execution_count_[codelet_id] = codelet.value()->getExecutionCount();
 
@@ -106,7 +108,7 @@ gxf_result_t DFFTCollector::on_execute_abi(gxf_uid_t eid, uint64_t timestamp, gx
     }
   }
   // leaf can also be root, especially for distributed app
-  if (auto root_op_opt = data_flow_tracker_->is_root_codelet(codelet_id)) {
+  if (root_op_opt) {
     holoscan::Operator* cur_op = *root_op_opt;
     for (auto& it : cur_op->num_published_messages_map()) {
       data_flow_tracker_->update_source_messages_number(it.first, it.second);

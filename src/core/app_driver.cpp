@@ -40,7 +40,7 @@
 #include "holoscan/core/distributed/common/network_constants.hpp"
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"  // for FragmentNodeType
+#include "holoscan/core/flow_graphs/flow_graph.hpp"  // for FragmentNodeType
 #include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
 #include "holoscan/core/schedulers/greedy_fragment_allocation.hpp"
 #include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
@@ -197,8 +197,9 @@ AppDriver::~AppDriver() {
 void AppDriver::run() {
   // Compose graph and setup configuration
   if (!check_configuration()) {
-    HOLOSCAN_LOG_ERROR("Application configuration is invalid");
-    return;
+    auto err_msg = std::string("Application configuration is invalid");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   auto& fragment_graph = app_->fragment_graph();
@@ -223,7 +224,7 @@ void AppDriver::run() {
     if (fragment->is_gpu_resident()) {
       throw std::runtime_error(
           fmt::format("Fragment ({}) has a GPU-resident operator."
-                      "GPU-resident execution is only supported in local mode.",
+                      "GPU-resident graph execution is only supported in local mode.",
                       fragment->name()));
     }
   }
@@ -271,8 +272,9 @@ void AppDriver::run() {
 
 std::future<void> AppDriver::run_async() {
   if (!check_configuration()) {
-    HOLOSCAN_LOG_ERROR("Application configuration is invalid");
-    return std::async(std::launch::async, []() {});
+    auto err_msg = std::string("Application configuration is invalid");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   if (need_driver_) {
@@ -625,7 +627,7 @@ bool AppDriver::update_port_names(
  * @param fragment_graph The fragment graph to collect connections from.
  * @return true if all connections are collected successfully.
  */
-bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
+bool AppDriver::collect_connections(holoscan::FragmentFlowGraph& fragment_graph) {
   if (!connection_map_.empty()) {
     HOLOSCAN_LOG_DEBUG("Connections are already collected");
     return true;
@@ -633,11 +635,11 @@ bool AppDriver::collect_connections(holoscan::FragmentGraph& fragment_graph) {
   auto fragments = fragment_graph.get_nodes();
 
   // Create a list of nodes in the graph to iterate in topological order
-  std::deque<holoscan::FragmentGraph::NodeType> worklist;
+  std::deque<holoscan::FragmentFlowGraph::NodeType> worklist;
   // Create a list of the indegrees of all the nodes in the graph
-  std::unordered_map<holoscan::FragmentGraph::NodeType, int> indegrees;
+  std::unordered_map<holoscan::FragmentFlowGraph::NodeType, int> indegrees;
   // Create a set of visited nodes to avoid visiting the same node more than once.
-  std::unordered_set<holoscan::FragmentGraph::NodeType> visited_nodes;
+  std::unordered_set<holoscan::FragmentFlowGraph::NodeType> visited_nodes;
   visited_nodes.reserve(fragments.size());
 
   // Initialize connection_map_ for each fragment, regardless of whether it has connections
@@ -868,7 +870,7 @@ bool AppDriver::check_configuration() {
 }
 
 void AppDriver::collect_resource_requirements(const Config& app_config,
-                                              holoscan::FragmentGraph& fragment_graph) {
+                                              holoscan::FragmentFlowGraph& fragment_graph) {
   auto& yaml_nodes = app_config.yaml_nodes();
 
   // Create a set of fragment nodes from the vector of fragment nodes
@@ -1291,7 +1293,7 @@ void AppDriver::check_worker_execution(const AppWorkerTerminationStatus& termina
   }
 }
 
-void AppDriver::update_root_fragments(const FragmentGraph& graph,
+void AppDriver::update_root_fragments(const FragmentFlowGraph& graph,
                                       const std::unordered_set<std::string>& terminated_fragments) {
   // Remove workers whose fragments have been terminated from root tracking.
   // Note: terminated_fragments contains fragment names, but current_root_workers_ contains

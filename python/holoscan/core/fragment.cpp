@@ -34,7 +34,7 @@
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/network_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/core/resource.hpp"
@@ -275,6 +275,10 @@ void init_fragment(py::module_& m) {
       .def_property_readonly("data_loggers",
                              &Fragment::data_loggers,
                              doc::Fragment::doc_data_loggers,
+                             py::return_value_policy::reference_internal)
+      .def_property_readonly("subgraphs",
+                             &Fragment::subgraphs,
+                             doc::Fragment::doc_subgraphs,
                              py::return_value_policy::reference_internal)
       .def("make_thread_pool",
            &Fragment::make_thread_pool,

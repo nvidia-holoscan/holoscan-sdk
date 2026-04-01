@@ -271,7 +271,8 @@ bool Operator::is_leaf() {
   return fragment()->graph().is_leaf(self_shared());
 }
 
-bool Operator::is_all_operator_successor_virtual(const OperatorNodeType& op, OperatorGraph& graph) {
+bool Operator::is_all_operator_successor_virtual(const OperatorNodeType& op,
+                                                 OperatorFlowGraph& graph) {
   auto next_nodes = graph.get_next_nodes(op);
   for (auto& next_node : next_nodes) {
     if (next_node->operator_type() != Operator::OperatorType::kVirtual) {
@@ -282,7 +283,7 @@ bool Operator::is_all_operator_successor_virtual(const OperatorNodeType& op, Ope
 }
 
 bool Operator::is_all_operator_predecessor_virtual(const OperatorNodeType& op,
-                                                   OperatorGraph& graph) {
+                                                   OperatorFlowGraph& graph) {
   auto prev_nodes = graph.get_previous_nodes(op);
   for (auto& prev_node : prev_nodes) {
     if (prev_node->operator_type() != Operator::OperatorType::kVirtual) {
@@ -443,6 +444,9 @@ void Operator::set_op_backend() {
                operator_type_ == Operator::OperatorType::kVirtual) {
       ops::GXFOperator* gxf_op = static_cast<ops::GXFOperator*>(this);
       codelet_typename = gxf_op->gxf_typename();
+    } else if (operator_type_ == Operator::OperatorType::kGPUResident) {
+      // GPU-resident operators are not backed by a GXF Codelet.
+      return;
     } else {
       HOLOSCAN_LOG_WARN("Unrecognized operator type: {}", static_cast<int>(operator_type_));
       return;
@@ -510,6 +514,8 @@ YAML::Node Operator::to_yaml_node() const {
       {OperatorType::kGXF, "kGXF"s},
       {OperatorType::kNative, "kNative"s},
       {OperatorType::kVirtual, "kVirtual"s},
+      {OperatorType::kGPUResident, "kGPUResident"s},
+      {OperatorType::kUnknown, "kUnknown"s},
   };
 
   YAML::Node node = ComponentBase::to_yaml_node();
@@ -553,11 +559,13 @@ void Operator::initialize_conditions() {
                                        resource->args().end(),
                                        [](const auto& arg) { return (arg.name() == "terms"); });
       if (terms_arg_it == resource->args().end()) {
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = fmt::format(
             "ConditionCombiner '{}' did not have a 'terms' argument. There are no conditions to "
             "add as arguments to operator '{}'.",
             name,
             this->name());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       } else {
         HOLOSCAN_LOG_DEBUG(
             "Found ConditionCombiner resource '{}' with terms argument (for operator '{}')",

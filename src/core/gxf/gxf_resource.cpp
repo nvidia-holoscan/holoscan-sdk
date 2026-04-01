@@ -64,8 +64,9 @@ void GXFResource::initialize() {
   auto& executor = fragment()->executor();
   auto gxf_executor = dynamic_cast<GXFExecutor*>(&executor);
   if (gxf_executor == nullptr) {
-    HOLOSCAN_LOG_ERROR("GXFResource '{}' is not initialized with a GXFExecutor", name());
-    return;
+    auto err_msg = fmt::format("GXFResource '{}' is not initialized with a GXFExecutor", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
   gxf_context_ = executor.context();
 
@@ -97,8 +98,9 @@ void GXFResource::initialize() {
   id_ = gxf_cid_;
 
   if (!spec_) {
-    HOLOSCAN_LOG_ERROR("No component spec for GXFResource '{}'", name());
-    return;
+    auto err_msg = fmt::format("No component spec for GXFResource '{}'", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   // Resource::initialize() is called after GXFComponent::gxf_initialize() to ensure that the

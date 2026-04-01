@@ -39,8 +39,9 @@ void Condition::initialize() {
   Component::initialize();
 
   if (!spec_) {
-    HOLOSCAN_LOG_ERROR("No component spec for Resource '{}'", name());
-    return;
+    auto err_msg = fmt::format("No component spec for Condition '{}'", name());
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 
   set_parameters();

@@ -23,6 +23,7 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <cuda_fp16.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -54,6 +55,17 @@ void Fill(void* data, size_t elements, float min, float max) {
     // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - test code, crypto-quality not needed
     reinterpret_cast<float*>(data)[index] =
         std::max(min, std::min(max, static_cast<float>(std::rand()) / RAND_MAX));
+  }
+}
+
+template <>
+void Fill(void* data, size_t elements, __half min, __half max) {
+  // fill volume with random data
+  for (size_t index = 0; index < elements; ++index) {
+    // NOLINTNEXTLINE(cert-msc30-c,cert-msc50-cpp) - test code, crypto-quality not needed
+    reinterpret_cast<__half*>(data)[index] = __float2half(
+        std::max(__half2float(min),
+                 std::min(__half2float(max), static_cast<float>(std::rand()) / RAND_MAX)));
   }
 }
 
@@ -208,6 +220,31 @@ void TestBase::SetupData(viz::ImageFormat format, uint32_t rand_seed) {
       color_data_.resize(width_ * height_ * channels * component_size);
       Fill<uint32_t>(
           color_data_.data(), width_ * height_, 0b1100'0000'0000'0000'0000'0000'0000'0000);
+      break;
+    case viz::ImageFormat::R16G16B16_UNORM:
+      channels = 3;
+      component_size = sizeof(uint16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<uint16_t>(color_data_.data(), width_ * height_ * channels);
+      break;
+    case viz::ImageFormat::R16G16B16_SNORM:
+      channels = 3;
+      component_size = sizeof(int16_t);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<int16_t>(color_data_.data(), width_ * height_ * channels);
+      break;
+    case viz::ImageFormat::R16G16B16_SFLOAT:
+      channels = 3;
+      component_size = sizeof(__half);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<__half>(
+          color_data_.data(), width_ * height_ * channels, __float2half(0.F), __float2half(1.F));
+      break;
+    case viz::ImageFormat::R32G32B32_SFLOAT:
+      channels = 3;
+      component_size = sizeof(float);
+      color_data_.resize(width_ * height_ * channels * component_size);
+      Fill<float>(color_data_.data(), width_ * height_ * channels, 0.F, 1.F);
       break;
     default:
       ASSERT_TRUE(false) << "Unsupported image format " << static_cast<int>(format);

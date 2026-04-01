@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,3 +44,10 @@ fi
 # as an initialization command.
 docker buildx use default
 ${TOP}/run build_image
+
+# Tag the built image with a fixed alias so devcontainer.json can reference it
+# without requiring the HOLOSCAN_BUILD_IMAGE env var to be set mandatorily.
+# This alias always points to whatever was just built for the current platform.
+BUILT_IMG_NAME=$(${TOP}/run get_build_img_name)
+BUILT_IMG_SHA=$(${TOP}/run get_git_sha)
+docker tag "${BUILT_IMG_NAME}:${BUILT_IMG_SHA}" "holoscan-sdk-build-vscode-devcontainer"

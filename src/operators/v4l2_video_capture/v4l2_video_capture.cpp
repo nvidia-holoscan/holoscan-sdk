@@ -20,13 +20,15 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <jpeglib.h>
-#include <libv4l2.h>
+#include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <list>
 #include <map>
 #include <memory>
@@ -544,14 +546,14 @@ void V4L2VideoCaptureOp::stop() {
   // close FD
   {
     std::lock_guard<std::mutex> lock(fd_mutex_);
-    POSIX_CALL(v4l2_close(fd_));
+    POSIX_CALL(close(fd_));
     fd_ = -1;
   }
 }
 
 void V4L2VideoCaptureOp::v4l2_initialize() {
   // Initialise V4L2 device
-  fd_ = v4l2_open(device_.get().c_str(), O_RDWR | O_NONBLOCK);
+  fd_ = POSIX_CALL(open(device_.get().c_str(), O_RDWR | O_NONBLOCK));
   if (fd_ < 0) {
     throw std::runtime_error(
         "Failed to open device! Possible permission issue with accessing the device.");

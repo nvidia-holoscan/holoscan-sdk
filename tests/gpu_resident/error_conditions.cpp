@@ -108,7 +108,7 @@ TEST_F(GPUResidentErrorConditionsTest, TestSingleOperatorFragment) {
   std::string log_output = testing::internal::GetCapturedStderr();
 
   // Verify that the warning about empty workload graph is present
-  EXPECT_TRUE(log_output.find("Graph of GPU-resident execution is empty.") != std::string::npos)
+  EXPECT_TRUE(log_output.find("GPU-resident graph is empty.") != std::string::npos)
       << "Expected warning not found in log output:\n"
       << log_output;
 

@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,6 +67,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_CPP_CUDA_GREEN_CONTEXT_TEST PROPERTIES
     ENVIRONMENT "HOLOSCAN_LOG_LEVEL=DEBUG"
     PASS_REGULAR_EXPRESSION "Rx message value: 25"
+    SKIP_RETURN_CODE 77  # indicates Green Context is not supported
   )
 endif()
 

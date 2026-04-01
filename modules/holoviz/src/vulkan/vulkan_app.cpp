@@ -43,6 +43,8 @@
 #include <utility>
 #include <vector>
 
+#include <magic_enum.hpp>
+
 #include "resource.hpp"
 
 #include "../cuda/convert.hpp"
@@ -1113,17 +1115,17 @@ void Vulkan::Impl::create_render_pass() {
         std::underlying_type<RenderFlags>::type(RenderFlags::DONT_CLEAR_COLOR |
                                                 RenderFlags::DONT_CLEAR_DEPTH)}) {
     if (flag & RenderFlags::DONT_CLEAR_COLOR) {
-      attachments[0].initialLayout = vk::ImageLayout::ePresentSrcKHR;
+      // when using `eLoad` the initial layout must set
+      attachments[0].initialLayout = vk::ImageLayout::eColorAttachmentOptimal;
       attachments[0].loadOp = vk::AttachmentLoadOp::eLoad;
     } else {
-      attachments[0].initialLayout = vk::ImageLayout::eUndefined;
       attachments[0].loadOp = vk::AttachmentLoadOp::eClear;
     }
     if (flag & RenderFlags::DONT_CLEAR_DEPTH) {
+      // when using `eLoad` the initial layout must set
       attachments[1].initialLayout = vk::ImageLayout::eDepthStencilAttachmentOptimal;
       attachments[1].loadOp = vk::AttachmentLoadOp::eLoad;
     } else {
-      attachments[1].initialLayout = vk::ImageLayout::eUndefined;
       attachments[1].loadOp = vk::AttachmentLoadOp::eClear;
     }
 
@@ -1456,6 +1458,18 @@ std::unique_ptr<Texture> Vulkan::Impl::create_texture(Vulkan* vulkan,
   if (is_multi_planar_format(args.format_)) {
     image_create_info.flags = vk::ImageCreateFlagBits::eDisjoint;
   }
+
+  // some formats are only supported in linear tiling, so we need to check the format properties
+  const vk::FormatProperties format_properties = physical_device_.getFormatProperties(vk_format);
+  if (format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage) {
+    image_create_info.tiling = vk::ImageTiling::eOptimal;
+  } else if (format_properties.linearTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage) {
+    image_create_info.tiling = vk::ImageTiling::eLinear;
+  } else {
+    throw std::runtime_error(fmt::format("Format {} is not supported in linear or optimal tiling.",
+                                         vk::to_string(vk_format)));
+  }
+
   nvvk::Image image;
   nvvk::ResourceAllocator* allocator;
   if (args.cuda_interop_) {
@@ -1598,6 +1612,34 @@ void Vulkan::Impl::set_viewport(float x, float y, float width, float height) {
   cmd_buf.setScissor(0, scissor);
 }
 
+/**
+ * Convert RGB to RGBA (set alpha to provided value)
+ *
+ * @tparam T The type of one source data element (e.g. uint8_t, uint16_t, uint32_t, float)
+ * @tparam U The type of the destination data element (e.g. uchar4, ushort4, uint4)
+ * @param width The width of the image
+ * @param height The height of the image
+ * @param src The source pointer
+ * @param src_pitch The source pitch in bytes
+ * @param dst The destination pointer
+ * @param alpha The value to set for the alpha channel
+ */
+template <typename T, typename U>
+void ConvertRGBToRGBA(uint32_t width, uint32_t height, const T* src, size_t src_pitch, U* dst,
+                      T alpha) {
+  for (uint32_t y = 0; y < height; ++y) {
+    for (uint32_t x = 0; x < width; ++x) {
+      *dst = U{src[0], src[1], src[2], alpha};
+      src += 3;
+      ++dst;
+    }
+    if (src_pitch != 0) {
+      const size_t src_row_size = 3 * sizeof(T) * width;
+      src = reinterpret_cast<const T*>(reinterpret_cast<uintptr_t>(src) - src_row_size + src_pitch);
+    }
+  }
+}
+
 void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const void*, 3>& host_ptr,
                                      const std::array<size_t, 3>& row_pitch) {
   if (transfer_jobs_.empty()) {
@@ -1684,33 +1726,44 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
 
     if (channels != hw_channels) {
       // three channel texture data is not hardware natively supported, convert to four channel
-      if ((channels != 3) || (hw_channels != 4) || (component_size != 1)) {
-        throw std::runtime_error("Unhandled conversion.");
+      if (!((channels == 3) && (hw_channels == 4) &&
+            ((component_size == 1) || (component_size == 2) || (component_size == 4)))) {
+        throw std::runtime_error(fmt::format("Conversion of {} is not supported.",
+                                             magic_enum::enum_name(texture->format_)));
       }
-      const uint8_t* src = reinterpret_cast<const uint8_t*>(host_ptr[plane]);
-      uint32_t* dst = reinterpret_cast<uint32_t*>(mapping);
-      uint8_t alpha;
-      switch (texture->format_) {
-        case ImageFormat::R8G8B8_UNORM:
-        case ImageFormat::R8G8B8_SRGB:
-          alpha = 0xFf;
+      switch (component_size) {
+        case 1: {
+          const uint8_t alpha = GetAlphaValueForFormat<uint8_t>(texture->format_);
+          ConvertRGBToRGBA<uint8_t, uchar4>(width,
+                                            height,
+                                            reinterpret_cast<const uint8_t*>(host_ptr[plane]),
+                                            row_pitch[plane],
+                                            reinterpret_cast<uchar4*>(mapping),
+                                            alpha);
           break;
-        case ImageFormat::R8G8B8_SNORM:
-          alpha = 0x7f;
+        }
+        case 2: {
+          const uint16_t alpha = GetAlphaValueForFormat<uint16_t>(texture->format_);
+          ConvertRGBToRGBA<uint16_t, ushort4>(width,
+                                              height,
+                                              reinterpret_cast<const uint16_t*>(host_ptr[plane]),
+                                              row_pitch[plane],
+                                              reinterpret_cast<ushort4*>(mapping),
+                                              alpha);
           break;
+        }
+        case 4: {
+          const uint32_t alpha = GetAlphaValueForFormat<uint32_t>(texture->format_);
+          ConvertRGBToRGBA<uint32_t, uint4>(width,
+                                            height,
+                                            reinterpret_cast<const uint32_t*>(host_ptr[plane]),
+                                            row_pitch[plane],
+                                            reinterpret_cast<uint4*>(mapping),
+                                            alpha);
+          break;
+        }
         default:
-          throw std::runtime_error("Unhandled format.");
-      }
-      for (uint32_t y = 0; y < height; ++y) {
-        for (uint32_t x = 0; x < width; ++x) {
-          const uint8_t data[4]{src[0], src[1], src[2], alpha};
-          *dst = *reinterpret_cast<const uint32_t*>(&data);
-          src += 3;
-          ++dst;
-        }
-        if (row_pitch[plane] != 0) {
-          src += row_pitch[plane] - src_pitch;
-        }
+          throw std::runtime_error(fmt::format("Unhandled component size {}.", component_size));
       }
     } else {
       if ((row_pitch[plane] == 0) || (row_pitch[plane] == dst_pitch)) {

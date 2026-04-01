@@ -23,6 +23,12 @@ set(version 1.14.1)
 
 include(FetchContent)
 
+# We will ignore the default value of BUILD_SHARED_LIBS for spdlog and
+# always build as static with hidden symbols to avoid symbol conflicts
+# with other downstream libraries such as ROS.
+set(_PREV_BUILD_SHARED_LIBS "${BUILD_SHARED_LIBS}")
+set(BUILD_SHARED_LIBS OFF)
+
 set(SPDLOG_GITHUB_REPOSITORY "https://github.com/gabime/spdlog.git")
 set(SPDLOG_TAG "v${version}")
 
@@ -39,7 +45,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(spdlog)
 
+set(BUILD_SHARED_LIBS "${_PREV_BUILD_SHARED_LIBS}")
+
 if(spdlog_ADDED)
+    # Hide public spdlog symbols in any Holoscan SDK library to mitigate
+    # downstream symbol conflicts.
+    target_link_options(spdlog INTERFACE "LINKER:--exclude-libs,libspdlog")
+
     set(spdlog_SOURCE_DIR "${spdlog_SOURCE_DIR}" PARENT_SCOPE)
     set(spdlog_BINARY_DIR "${spdlog_BINARY_DIR}" PARENT_SCOPE)
     set(spdlog_ADDED "${spdlog_ADDED}" PARENT_SCOPE)

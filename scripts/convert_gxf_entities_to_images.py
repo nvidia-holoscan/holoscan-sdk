@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,12 @@ def iter_output_frames(entity_iter):
 
 def convert_gxf_entity_to_images(entity_dir, entity_basename, output_dir, output_name):
     with EntityReader(directory=entity_dir, basename=entity_basename) as reader:
+        if reader.num_entities == 0:
+            raise ValueError(
+                f"No entities in GXF recording (directory={entity_dir!r}, "
+                f"basename={entity_basename!r}). Index file is empty or missing. "
+                "Ensure the application produced render output."
+            )
         frame_shape = reader.get_frame(0).shape
         print(
             f"Frame array shape: {frame_shape[0]}x{frame_shape[1]}x{frame_shape[2]}"

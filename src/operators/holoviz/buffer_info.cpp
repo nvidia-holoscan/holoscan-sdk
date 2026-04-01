@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -136,6 +136,10 @@ component_and_swizzle(HolovizOp::ImageFormat image_format) {
     case HolovizOp::ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
     case HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
     case HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
+    case HolovizOp::ImageFormat::R16G16B16_UNORM:
+    case HolovizOp::ImageFormat::R16G16B16_SNORM:
+    case HolovizOp::ImageFormat::R16G16B16_SFLOAT:
+    case HolovizOp::ImageFormat::R32G32B32_SFLOAT:
       components = 3;
       component_swizzle[0] = viz::ComponentSwizzle::IDENTITY;
       component_swizzle[1] = viz::ComponentSwizzle::IDENTITY;
@@ -185,13 +189,19 @@ static constexpr TensorFormat supported_tensor_formats[] = {
     {nvidia::gxf::PrimitiveType::kInt16, 1, HolovizOp::ImageFormat::R16_SNORM},
     {nvidia::gxf::PrimitiveType::kUnsigned32, 1, HolovizOp::ImageFormat::R32_UINT},
     {nvidia::gxf::PrimitiveType::kInt32, 1, HolovizOp::ImageFormat::R32_SINT},
+    {nvidia::gxf::PrimitiveType::kFloat16, 1, HolovizOp::ImageFormat::R16_SFLOAT},
     {nvidia::gxf::PrimitiveType::kFloat32, 1, HolovizOp::ImageFormat::R32_SFLOAT},
     {nvidia::gxf::PrimitiveType::kUnsigned8, 3, HolovizOp::ImageFormat::R8G8B8_UNORM},
     {nvidia::gxf::PrimitiveType::kInt8, 3, HolovizOp::ImageFormat::R8G8B8_SNORM},
+    {nvidia::gxf::PrimitiveType::kUnsigned16, 3, HolovizOp::ImageFormat::R16G16B16_UNORM},
+    {nvidia::gxf::PrimitiveType::kInt16, 3, HolovizOp::ImageFormat::R16G16B16_SNORM},
+    {nvidia::gxf::PrimitiveType::kFloat16, 3, HolovizOp::ImageFormat::R16G16B16_SFLOAT},
+    {nvidia::gxf::PrimitiveType::kFloat32, 3, HolovizOp::ImageFormat::R32G32B32_SFLOAT},
     {nvidia::gxf::PrimitiveType::kUnsigned8, 4, HolovizOp::ImageFormat::R8G8B8A8_UNORM},
     {nvidia::gxf::PrimitiveType::kInt8, 4, HolovizOp::ImageFormat::R8G8B8A8_SNORM},
     {nvidia::gxf::PrimitiveType::kUnsigned16, 4, HolovizOp::ImageFormat::R16G16B16A16_UNORM},
     {nvidia::gxf::PrimitiveType::kInt16, 4, HolovizOp::ImageFormat::R16G16B16A16_SNORM},
+    {nvidia::gxf::PrimitiveType::kFloat16, 4, HolovizOp::ImageFormat::R16G16B16A16_SFLOAT},
     {nvidia::gxf::PrimitiveType::kFloat32, 4, HolovizOp::ImageFormat::R32G32B32A32_SFLOAT}};
 
 /*static*/ std::string BufferInfo::get_supported_tensor_formats_str(
@@ -252,6 +262,22 @@ static constexpr VideoBufferFormat supported_video_buffer_formats[] = {
      nvidia::gxf::PrimitiveType::kUnsigned8,
      3,
      HolovizOp::ImageFormat::R8G8B8_UNORM,
+     {viz::ComponentSwizzle::B,
+      viz::ComponentSwizzle::G,
+      viz::ComponentSwizzle::R,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_RGB16,
+     nvidia::gxf::PrimitiveType::kUnsigned16,
+     3,
+     HolovizOp::ImageFormat::R16G16B16_UNORM,
+     {viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY,
+      viz::ComponentSwizzle::IDENTITY}},
+    {nvidia::gxf::VideoFormat::GXF_VIDEO_FORMAT_BGR16,
+     nvidia::gxf::PrimitiveType::kUnsigned16,
+     3,
+     HolovizOp::ImageFormat::R16G16B16_UNORM,
      {viz::ComponentSwizzle::B,
       viz::ComponentSwizzle::G,
       viz::ComponentSwizzle::R,

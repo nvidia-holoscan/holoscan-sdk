@@ -70,7 +70,7 @@ bool Tensor::is_contiguous() const {
   return true;
 }
 
-DLManagedTensor* Tensor::to_dlpack() {
+DLManagedTensor* Tensor::to_dlpack() const {
   auto dl_managed_tensor_ctx = std::make_unique<DLManagedTensorContext>();
   auto& dl_managed_tensor = dl_managed_tensor_ctx->tensor;
 
@@ -89,7 +89,7 @@ DLManagedTensor* Tensor::to_dlpack() {
   return &dl_managed_tensor;
 }
 
-DLManagedTensorVersioned* Tensor::to_dlpack_versioned() {
+DLManagedTensorVersioned* Tensor::to_dlpack_versioned() const {
   auto dl_managed_tensor_ver = std::make_unique<DLManagedTensorVersioned>();
 
   // Set version info

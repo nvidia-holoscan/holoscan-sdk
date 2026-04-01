@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -122,8 +122,9 @@ void PeriodicCondition::initialize() {
           policy_string == "NoCatchUpMissedTicks") {
         policy_node = YAML::Node(policy_string);
       } else {
-        HOLOSCAN_LOG_ERROR("Unrecognized policy string value: {}", policy_string);
-        yaml_conversion_failed = true;
+        auto err_msg = fmt::format("Unrecognized policy string value: {}", policy_string);
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     } else {
       try {
@@ -139,13 +140,16 @@ void PeriodicCondition::initialize() {
             policy_node = YAML::Node("NoCatchUpMissedTicks");
             break;
           default:
-            HOLOSCAN_LOG_ERROR("Unrecognized policy enum value: {}", static_cast<int>(policy_enum));
-            yaml_conversion_failed = true;
+            auto err_msg =
+                fmt::format("Unrecognized policy enum value: {}", static_cast<int>(policy_enum));
+            HOLOSCAN_LOG_ERROR(err_msg);
+            throw std::runtime_error(err_msg);
         }
       } catch (const std::bad_any_cast& e) {
-        HOLOSCAN_LOG_ERROR("Unable to cast 'policy' argument to a PeriodicConditionPolicy enum: {}",
-                           e.what());
-        yaml_conversion_failed = true;
+        auto err_msg = fmt::format(
+            "Unable to cast 'policy' argument to a PeriodicConditionPolicy enum: {}", e.what());
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     }
 

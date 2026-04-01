@@ -27,7 +27,7 @@
 #include "holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp"
 #include "holoscan/core/fragment.hpp"
 #include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/io_context.hpp"
 #include "holoscan/core/operator.hpp"
 #include "holoscan/logger/logger.hpp"
@@ -66,14 +66,14 @@ GPUResidentExecutor::~GPUResidentExecutor() {
   }
 }
 
-void GPUResidentExecutor::run([[maybe_unused]] OperatorGraph& graph) {
+void GPUResidentExecutor::run([[maybe_unused]] OperatorFlowGraph& graph) {
   HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::run()");
-  HOLOSCAN_LOG_WARN(
-      "GPU-resident execution is asynchronous by design. Even run() is not a blocking operation.");
+  HOLOSCAN_LOG_WARN("GPU-resident graph execution is asynchronous by design. Even run() is not a "
+                    "blocking operation.");
   run_async(graph);
 }
 
-std::future<void> GPUResidentExecutor::run_async([[maybe_unused]] OperatorGraph& graph) {
+std::future<void> GPUResidentExecutor::run_async([[maybe_unused]] OperatorFlowGraph& graph) {
   if (!initialize_fragment()) {
     throw std::runtime_error("Failed to initialize fragment");
   }
@@ -115,7 +115,7 @@ void GPUResidentExecutor::set_unique_ids(std::shared_ptr<Operator> op) {
   }
 }
 
-void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph) {
+void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph) {
   auto operators = graph->get_nodes();
 
   // For chain of operators, this is the following we will do:
@@ -144,111 +144,121 @@ void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorGraph> graph
     }
     const auto& port_map_val = port_map.value();
 
-    // For one-to-one connection, get the first key-value pair
-    auto port_connection = port_map_val->begin();
-    const auto& source_port = port_connection->first;  // source port name (key)
-    const auto& destination_port =
-        *(port_connection->second.begin());  // destination port name (first element from set)
-
-    // Get memory block size from the source operator's output spec
-    auto& outputs = current_op->spec()->outputs();
-    auto output_memory_block_size = outputs[source_port]->memory_block_size();
-    auto input_memory_block_size = next_op->spec()->inputs()[destination_port]->memory_block_size();
-    auto output_device_ptr = outputs[source_port]->device_ptr();
-    auto input_device_ptr = next_op->spec()->inputs()[destination_port]->device_ptr();
-
-    // The algorithm to decide between memory block and device pointer is as follows:
-    // 1. if both source and destination have valid non-zero memory block size, then use the memory
-    //    block size to allocate the memory for their connection
-    // 2. if either source or destination has a valid non-null device pointer, then use the device
-    //    pointer to connect the operators. LOG warning if the other has a valid non-zero memory
-    //    block size.
-    // 3. if both source and destination have valid non-null device pointers, then LOG ERROR and use
-    //    the source device pointer
-    // 4. if either source or destination has a valid non-zero memory block size, then use the valid
-    //    memory size to allocate the memory for their connection. Log a warning if the other
-    //    object has neither a valid memory block size nor a valid non-null device pointer.
-
-    bool has_output_mem = (output_memory_block_size > 0);
-    bool has_input_mem = (input_memory_block_size > 0);
-    bool has_output_ptr = (output_device_ptr != nullptr);
-    bool has_input_ptr = (input_device_ptr != nullptr);
-
-    if (has_output_mem && has_input_mem) {
-      // Case 1: Both have memory block sizes - allocate a shared buffer
-      if (output_memory_block_size != input_memory_block_size) {
-        throw std::runtime_error(
-            fmt::format("Output memory block size ({}) does not match input memory block size ({}) "
-                        "for connection {}.{} -> {}.{}",
-                        output_memory_block_size,
-                        input_memory_block_size,
-                        current_op->name(),
-                        source_port,
-                        next_op->name(),
-                        destination_port));
+    // GPU-resident add_flow enforces 1:1 port mapping (no fan-out, no receivers).
+    // Iterate each source_port -> destination_port pair and allocate/connect the device buffer.
+    for (const auto& [source_port, destination_ports] : *port_map_val) {
+      if (destination_ports.size() != 1) {
+        throw std::runtime_error(fmt::format(
+            "GPU-resident connection {}.{} has {} destination ports; expected exactly 1",
+            current_op->name(), source_port, destination_ports.size()));
       }
-      allocate_io_device_buffer(
-          current_op, next_op, source_port, destination_port, output_memory_block_size);
-    } else if (has_output_ptr || has_input_ptr) {
-      // Cases 2 & 3: At least one side has a device pointer
-      if (has_output_ptr && has_input_ptr) {
-        // Case 3: Both have device pointers - LOG ERROR, use the source device pointer
-        HOLOSCAN_LOG_ERROR(
-            "Both source ({}.{}) and destination ({}.{}) have device pointers. "
-            "Using the source device pointer.",
-            current_op->name(),
-            source_port,
-            next_op->name(),
-            destination_port);
-        connect_io_device_ptr(
-            current_op, next_op, source_port, destination_port, output_device_ptr);
-      } else {
-        // Case 2: Only one side has a device pointer
-        void* device_ptr = has_output_ptr ? output_device_ptr : input_device_ptr;
-        if (has_output_mem || has_input_mem) {
-          HOLOSCAN_LOG_WARN(
-              "Using device pointer for connection {}.{} -> {}.{}, "
-              "ignoring the memory block size specified on the other end.",
-              current_op->name(),
-              source_port,
-              next_op->name(),
-              destination_port);
-        }
-        connect_io_device_ptr(
-            current_op, next_op, source_port, destination_port, device_ptr);
-      }
-    } else if (has_output_mem || has_input_mem) {
-      // Case 4: Only one side has a memory block size, the other has nothing
-      size_t mem_size = has_output_mem ? output_memory_block_size : input_memory_block_size;
-      const auto& mem_op_name = has_output_mem ? current_op->name() : next_op->name();
-      const auto& no_mem_op_name = has_output_mem ? next_op->name() : current_op->name();
-      HOLOSCAN_LOG_WARN(
-          "Only operator '{}' has a valid memory block size for connection {}.{} -> {}.{}. "
-          "Operator '{}' has neither a valid memory block size nor a valid device pointer.",
-          mem_op_name,
-          current_op->name(),
-          source_port,
-          next_op->name(),
-          destination_port,
-          no_mem_op_name);
-      allocate_io_device_buffer(
-          current_op, next_op, source_port, destination_port, mem_size);
-    } else {
-      // Neither side has a memory block size or a device pointer
-      throw std::runtime_error(
-          fmt::format("Neither source ({}.{}) nor destination ({}.{}) has a valid "
-                      "memory block size or device pointer for their connection.",
-                      current_op->name(),
-                      source_port,
-                      next_op->name(),
-                      destination_port));
+      const auto& destination_port = *destination_ports.begin();
+
+      connect_ports(current_op, next_op, source_port, destination_port);
     }
     current_op = std::move(next_op);
   }
 }
 
-void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> downstream_op,
-                                                    std::shared_ptr<Operator> upstream_op,
+void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
+                                                   std::shared_ptr<Operator> dest_op,
+                                                   const std::string& source_port,
+                                                   const std::string& destination_port) {
+  auto output_memory_block_size = source_op->spec()->outputs()[source_port]->memory_block_size();
+  auto input_memory_block_size = dest_op->spec()->inputs()[destination_port]->memory_block_size();
+  auto output_device_ptr = source_op->spec()->outputs()[source_port]->device_ptr();
+  auto input_device_ptr = dest_op->spec()->inputs()[destination_port]->device_ptr();
+
+  // The algorithm to decide between memory block and device pointer is as follows:
+  // 1. if both source and destination have valid non-zero memory block size, then use the
+  //    memory block size to allocate the memory for their connection
+  // 2. if either source or destination has a valid non-null device pointer, then use the
+  //    device pointer to connect the operators. LOG warning if the other has a valid non-zero
+  //    memory block size.
+  // 3. if both source and destination have valid non-null device pointers, then LOG ERROR and
+  //    use the source device pointer
+  // 4. if either source or destination has a valid non-zero memory block size, then use the
+  //    valid memory size to allocate the memory for their connection. Log a warning if the
+  //    other object has neither a valid memory block size nor a valid non-null device pointer.
+
+  bool has_output_mem = (output_memory_block_size > 0);
+  bool has_input_mem = (input_memory_block_size > 0);
+  bool has_output_ptr = (output_device_ptr != nullptr);
+  bool has_input_ptr = (input_device_ptr != nullptr);
+
+  if (has_output_mem && has_input_mem) {
+    // Case 1: Both have memory block sizes - allocate a shared buffer
+    if (output_memory_block_size != input_memory_block_size) {
+      throw std::runtime_error(
+          fmt::format("Output memory block size ({}) does not match input memory block size "
+                      "({}) for connection {}.{} -> {}.{}",
+                      output_memory_block_size,
+                      input_memory_block_size,
+                      source_op->name(),
+                      source_port,
+                      dest_op->name(),
+                      destination_port));
+    }
+    allocate_io_device_buffer(
+        source_op, dest_op, source_port, destination_port, output_memory_block_size);
+  } else if (has_output_ptr || has_input_ptr) {
+    // Cases 2 & 3: At least one side has a device pointer
+    if (has_output_ptr && has_input_ptr) {
+      // Case 3: Both have device pointers - LOG ERROR, use the source device pointer
+      HOLOSCAN_LOG_ERROR(
+          "Both source ({}.{}) and destination ({}.{}) have device pointers. "
+          "Using the source device pointer.",
+          source_op->name(),
+          source_port,
+          dest_op->name(),
+          destination_port);
+      connect_io_device_ptr(
+          source_op, dest_op, source_port, destination_port, output_device_ptr);
+    } else {
+      // Case 2: Only one side has a device pointer
+      void* device_ptr = has_output_ptr ? output_device_ptr : input_device_ptr;
+      if (has_output_mem || has_input_mem) {
+        HOLOSCAN_LOG_WARN(
+            "Using device pointer for connection {}.{} -> {}.{}, "
+            "ignoring the memory block size specified on the other end.",
+            source_op->name(),
+            source_port,
+            dest_op->name(),
+            destination_port);
+      }
+      connect_io_device_ptr(
+          source_op, dest_op, source_port, destination_port, device_ptr);
+    }
+  } else if (has_output_mem || has_input_mem) {
+    // Case 4: Only one side has a memory block size, the other has nothing
+    size_t mem_size = has_output_mem ? output_memory_block_size : input_memory_block_size;
+    const auto& mem_op_name = has_output_mem ? source_op->name() : dest_op->name();
+    const auto& no_mem_op_name = has_output_mem ? dest_op->name() : source_op->name();
+    HOLOSCAN_LOG_WARN(
+        "Only operator '{}' has a valid memory block size for connection {}.{} -> {}.{}. "
+        "Operator '{}' has neither a valid memory block size nor a valid device pointer.",
+        mem_op_name,
+        source_op->name(),
+        source_port,
+        dest_op->name(),
+        destination_port,
+        no_mem_op_name);
+    allocate_io_device_buffer(
+        source_op, dest_op, source_port, destination_port, mem_size);
+  } else {
+    // Neither side has a memory block size or a device pointer
+    throw std::runtime_error(
+        fmt::format("Neither source ({}.{}) nor destination ({}.{}) has a valid "
+                    "memory block size or device pointer for their connection.",
+                    source_op->name(),
+                    source_port,
+                    dest_op->name(),
+                    destination_port));
+  }
+}
+
+void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> source_op,
+                                                    std::shared_ptr<Operator> dest_op,
                                                     const std::string& source_port,
                                                     const std::string& target_port,
                                                     size_t memory_block_size) {
@@ -256,23 +266,23 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> do
     throw std::runtime_error(
         fmt::format("The memory block size must be non zero before allocating device memory for "
                     "the port {}.{}/{}.{}",
-                    downstream_op->name(),
+                    source_op->name(),
                     source_port,
-                    upstream_op->name(),
+                    dest_op->name(),
                     target_port));
   }
   std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> device_buffer =
       std::make_shared<holoscan::utils::cuda::DeviceBuffer>(memory_block_size);
 
-  if (!downstream_op->spec() || !upstream_op->spec()) {
+  if (!source_op->spec() || !dest_op->spec()) {
     throw std::runtime_error(
         fmt::format("One of the operator ({} or {}) specifications is not available",
-                    downstream_op->name(),
-                    upstream_op->name()));
+                    source_op->name(),
+                    dest_op->name()));
   }
   // check if the port names already exist in the io_device_buffers_
-  auto& source_port_unique_id = downstream_op->spec()->outputs()[source_port]->unique_id();
-  auto& target_port_unique_id = upstream_op->spec()->inputs()[target_port]->unique_id();
+  auto& source_port_unique_id = source_op->spec()->outputs()[source_port]->unique_id();
+  auto& target_port_unique_id = dest_op->spec()->inputs()[target_port]->unique_id();
 
   if (io_device_buffers_.find(source_port_unique_id) != io_device_buffers_.end()) {
     throw std::runtime_error(
@@ -366,7 +376,7 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
 }
 
 bool GPUResidentExecutor::verify_graph_topology(
-    std::shared_ptr<OperatorGraph> graph,
+    std::shared_ptr<OperatorFlowGraph> graph,
     std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
   auto operators = graph->get_nodes();
   // Check if the graph has a cycle
@@ -374,7 +384,7 @@ bool GPUResidentExecutor::verify_graph_topology(
   if (cycle.size() > 0) {
     // throw error
     auto err_msg = fmt::format(
-        "Fragment graph has a cycle. GPU-resident execution only supports a "
+        "Fragment graph has a cycle. GPU-resident graph execution only supports a "
         "linear chain of operators");
     HOLOSCAN_LOG_ERROR(err_msg);
     return false;
@@ -385,7 +395,7 @@ bool GPUResidentExecutor::verify_graph_topology(
   if (root_nodes.size() != 1) {
     // throw error
     auto err_msg = fmt::format(
-        "Fragment graph has ({}) root operators. GPU-resident execution only supports a "
+        "Fragment graph has ({}) root operators. GPU-resident graph execution only supports a "
         "linear chain of operators.",
         root_nodes.size());
     HOLOSCAN_LOG_ERROR(err_msg);
@@ -401,8 +411,8 @@ bool GPUResidentExecutor::verify_graph_topology(
     if (next_nodes.size() > 1) {
       // throw error
       auto err_msg = fmt::format(
-          "Operator ({}) has ({}) downstream operators. GPU-resident execution only supports a "
-          "linear chain of operators.",
+          "Operator ({}) has ({}) downstream operators. GPU-resident graph execution only supports "
+          "a linear chain of operators.",
           current_node->name(),
           next_nodes.size());
       HOLOSCAN_LOG_ERROR(err_msg);
@@ -411,7 +421,7 @@ bool GPUResidentExecutor::verify_graph_topology(
       if (visited_nodes < operators.size()) {
         // throw error
         auto err_msg = fmt::format(
-            "Fragment graph has disconnected operators. GPU-resident execution only "
+            "Fragment graph has disconnected operators. GPU-resident graph execution only "
             "supports a linear chain of operators.");
         HOLOSCAN_LOG_ERROR(err_msg);
         return false;
@@ -463,7 +473,7 @@ void GPUResidentExecutor::create_cuda_graph_from_operators(
                                  "Failed to get the number of nodes in the workload graph");
   HOLOSCAN_LOG_DEBUG("Number of nodes in the graph: {}", num_nodes);
   if (num_nodes <= 0) {
-    HOLOSCAN_LOG_WARN("Graph of GPU-resident execution is empty.");
+    HOLOSCAN_LOG_WARN("GPU-resident graph is empty.");
   } else {
     // save the main workload graph as a dot file
     if (AppDriver::get_bool_env_var("HOLOSCAN_GPU_RESIDENT_SAVE_GRAPH", false)) {
@@ -492,13 +502,14 @@ bool GPUResidentExecutor::initialize_fragment() {
     auto drh_fragment_graph = data_ready_handler_fragment_->graph_shared();
     if (!verify_graph_topology(std::move(drh_fragment_graph), topo_ordered_drh_operators_)) {
       throw std::runtime_error(
-          "Data ready handler graph topology is not valid for GPU-resident execution.");
+          "Data ready handler graph topology is not valid for GPU-resident graph execution.");
     }
   }
 
   auto main_fragment_graph = fragment_->graph_shared();
   if (!verify_graph_topology(std::move(main_fragment_graph), topo_ordered_main_operators_)) {
-    throw std::runtime_error("Application graph topology is not valid for GPU-resident execution.");
+    throw std::runtime_error(
+        "Application graph topology is not valid for GPU-resident graph execution.");
   }
 
   if (data_ready_handler_fragment_ && !verify_distinct_operator_names()) {
@@ -736,7 +747,7 @@ void GPUResidentExecutor::initialize_cuda() {
   if (gpu_count > 1) {
     HOLOSCAN_LOG_WARN(
         "Found more than one CUDA device. Choosing Device 0. Setting a different device for "
-        "GPU-resident execution is not yet supported.");
+        "GPU-resident graph execution is not yet supported.");
   }
 
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaSetDevice(0), "Failed to set device to 0");
@@ -1017,7 +1028,7 @@ std::pair<unsigned int*, unsigned int> GPUResidentExecutor::execution_times_us()
                                    "Failed to synchronize the default stream");
     return result;
   } else {
-    HOLOSCAN_LOG_ERROR("Performance measurement is not enabled for GPU-resident execution.");
+    HOLOSCAN_LOG_ERROR("Performance measurement is not enabled for GPU-resident graph execution.");
     return std::make_pair(nullptr, 0);
   }
 }

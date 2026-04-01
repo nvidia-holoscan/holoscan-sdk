@@ -191,18 +191,31 @@ bool AsyncConsoleLogger::log_backend_specific(const std::any& data, const std::s
         return false;
       }
       if (!video_buffer_components_expected->empty()) {
+        const int64_t emit_timestamp = get_timestamp();
         for (const auto& maybe_buffer_handle : video_buffer_components_expected.value()) {
           if (!maybe_buffer_handle) {
             continue;
           }
           auto buffer_handle = maybe_buffer_handle.value();
-          if (!log_data(buffer_handle,
-                        unique_id,
-                        acquisition_timestamp,
-                        metadata_copy,
-                        io_type,
-                        stream)) {
-            HOLOSCAN_LOG_ERROR("{}: Logging of VideoBuffer data from Entity failed", name());
+
+          try {
+            DataEntry data_entry(buffer_handle,
+                                 unique_id,
+                                 acquisition_timestamp,
+                                 emit_timestamp,
+                                 io_type,
+                                 metadata_copy,
+                                 stream,
+                                 gxf_entity);
+            if (!enqueue_data_entry(std::move(data_entry))) {
+              HOLOSCAN_LOG_ERROR("{}: Logging of VideoBuffer data from Entity failed", name());
+              return false;
+            }
+          } catch (const std::exception& e) {
+            HOLOSCAN_LOG_ERROR("{}: Exception during VideoBuffer enqueueing for {}: {}",
+                               name(),
+                               unique_id,
+                               e.what());
             return false;
           }
         }

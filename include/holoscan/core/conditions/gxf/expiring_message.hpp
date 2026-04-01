@@ -91,14 +91,14 @@ class ExpiringMessageAvailableCondition : public gxf::GXFCondition {
   }
 
   void receiver(std::shared_ptr<Receiver> receiver) { receiver_ = std::move(receiver); }
-  std::shared_ptr<Receiver> receiver() { return receiver_.get(); }
+  std::shared_ptr<Receiver> receiver() const { return receiver_.get(); }
 
   void setup(ComponentSpec& spec) override;
 
   void initialize() override;
 
   void max_batch_size(int64_t max_batch_size);
-  int64_t max_batch_size() { return max_batch_size_; }
+  int64_t max_batch_size() const { return max_batch_size_; }
 
   /**
    * @brief Set max delay.

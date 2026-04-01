@@ -425,6 +425,10 @@ The details of the dictionary is as follows:
    - `"y16_u16v16_2plane_422_unorm"`
    - `"y16_u16_v16_3plane_420_unorm"`
    - `"y16_u16_v16_3plane_422_unorm"`
+   - `"r16g16b16_unorm"`
+   - `"r16g16b16_snorm"`
+   - `"r16g16b16_sfloat"`
+   - `"r32g32b32_sfloat"`
 
    When the ``type`` parameter is set to ``color_lut`` the final color is looked up using the values
    from the ``color_lut`` parameter. For color lookups these image formats are supported

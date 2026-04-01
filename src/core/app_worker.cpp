@@ -93,7 +93,7 @@ std::vector<FragmentNodeType>& AppWorker::target_fragments() {
   return target_fragments_;
 }
 
-FragmentGraph& AppWorker::fragment_graph() {
+FragmentFlowGraph& AppWorker::fragment_graph() {
   return *fragment_graph_;
 }
 
@@ -133,8 +133,9 @@ bool AppWorker::execute_fragments(
   for (auto& [fragment_name, connection_list] : name_connection_list_map) {
     auto fragment = fragment_graph_->find_node(fragment_name);
     if (!fragment) {
-      HOLOSCAN_LOG_ERROR("Fragment {} not found in the fragment graph", fragment_name);
-      continue;
+      auto err_msg = fmt::format("Fragment {} not found in the fragment graph", fragment_name);
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     }
     scheduled_fragments.push_back(fragment);
     connection_map[fragment] = connection_list;
@@ -198,15 +199,21 @@ bool AppWorker::execute_fragments(
   for (auto& fragment : scheduled_fragments) {
     auto gxf_executor = dynamic_cast<gxf::GXFExecutor*>(&fragment->executor());
     if (gxf_executor == nullptr) {
-      HOLOSCAN_LOG_ERROR("Cannot cast executor to GXFExecutor");
-      return false;
+      auto err_msg = std::string("Cannot cast executor to GXFExecutor");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     }
     // Set the connection items
     if (connection_map.find(fragment) != connection_map.end()) {
       gxf_executor->connection_items(connection_map[fragment]);
     }
     // Initialize the operator graph
-    gxf_executor->initialize_gxf_graph(fragment->graph());
+    if (!gxf_executor->initialize_gxf_graph(fragment->graph())) {
+      auto err_msg =
+          fmt::format("Failed to initialize GXF graph for fragment '{}'", fragment->name());
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
   }
 
   // Launch fragments
@@ -580,7 +587,7 @@ bool AppWorker::terminate_scheduled_fragments() {
   return true;
 }
 
-std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentGraph& fragment_graph) {
+std::vector<FragmentNodeType> AppWorker::get_target_fragments(FragmentFlowGraph& fragment_graph) {
   std::vector<FragmentNodeType> target_fragments;
 
   auto& app_options = *options_;

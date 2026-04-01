@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,23 +54,31 @@ class MyPingApp(Application):
 def test_ping_app_invalid_add_flow(ports_arg, invalid_port, capfd):
     count = 5
     app = MyPingApp(count=count, ports_arg=ports_arg)
-    app.run()
+    if invalid_port is None:
+        app.run()
+    else:
+        with pytest.raises(RuntimeError) as exc_info:
+            app.run()
 
-    # assert that no errors were logged
+    # assert expected logs / exception messages
     captured = capfd.readouterr()
 
     if invalid_port is None:
         assert "error" not in captured.err
         assert "Exception occurred" not in captured.err
     else:
+        err_msg = str(exc_info.value)
         assert "error" in captured.err
         err_msg_upstream = "does not have an output port with label"
         err_msg_downstream = "does not have an input port with label"
         if invalid_port in ["upstream"]:
+            assert err_msg_upstream in err_msg
             assert err_msg_upstream in captured.err
         elif invalid_port in ["downstream"]:
+            assert err_msg_downstream in err_msg
             assert err_msg_downstream in captured.err
         elif invalid_port in ["both"]:
-            # In pracitce, the app terminates after the upstream error is printed, but I didn't
+            # In practice, the app terminates after the upstream error is printed, but I didn't
             # want to guarantee which error would be printed first.
+            assert err_msg_upstream in err_msg or err_msg_downstream in err_msg
             assert err_msg_upstream in captured.err or err_msg_downstream in captured.err

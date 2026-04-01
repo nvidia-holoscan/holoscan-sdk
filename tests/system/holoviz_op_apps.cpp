@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -377,7 +377,7 @@ class SourceFormatOp : public Operator {
         break;
       case InputType::UNSUPPORTED_TENSOR_FORMAT:
         // `kFloat16` is not supported
-        add_tensor(entity, 3, nvidia::gxf::PrimitiveType::kFloat16);
+        add_tensor(entity, 2, nvidia::gxf::PrimitiveType::kFloat16);
         break;
       case InputType::FAIL_VIDEO_BUFFER_INPUT_TYPE_DETECT:
       case InputType::UNSUPPORTED_VIDEO_BUFFER_FORMAT:

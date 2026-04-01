@@ -6,7 +6,10 @@ Holoscan SDK's GPU-resident graphs enable deterministic, real-time and low-laten
 
 For sensor inputs and actuation outputs, Holoscan SDK GPU-resident graphs are combined with devices and mechanisms using GPU-direct RDMA technologies such as [Holoscan Sensor Bridge](https://www.nvidia.com/en-us/technologies/holoscan-sensor-bridge/), [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca-gpunetio/index.html). Holoscan SDK GPU-resident graphs also support low-latency, highly responsive and predictable visualization outputs, especially on [NVIDIA G-SYNC](https://developer.nvidia.com/g-sync) supported monitors.
 
-The GPU-resident graphs do not follow the traditional Holoscan SDK execution workflow and cannot be interconnected with a traditional Holoscan SDK fragment and operator. It is a standalone and unique execution model, supported by a separate Holoscan SDK executor backend.
+The GPU-resident graphs do not follow the traditional Holoscan SDK execution
+workflow with GXF backend and cannot be interconnected with a GXF-backend
+fragment and operator. It is a standalone and unique execution model, supported
+by a separate Holoscan SDK executor backend.
 
 :::{note}
 GPU-resident graphs are only supported in C++. Python support is planned for the future.
@@ -57,6 +60,10 @@ class MyGpuResidentFragment : public holoscan::Fragment {
     // Connect them in a linear chain
     add_flow(source, compute);
     add_flow(compute, sink);
+
+    // For operators with multiple ports, specify the port mapping explicitly
+    // add_flow(source, compute, {{"out0", "in0"}, {"out1", "in1"}});
+    // add_flow(compute, sink, {{"sum", "in_sum"}, {"diff", "in_diff"}});
   }
 };
 
@@ -139,7 +146,7 @@ class MyGpuOp : public holoscan::GPUResidentOperator {
 };
 ```
 
-Use `device_input()` and `device_output()` with a `size_t` or integer literal to declare ports with executor-allocated device memory. The executor will allocate a shared device buffer for each connection. Connected ports map to the same device memory address.
+Use `device_input()` and `device_output()` with a `size_t` or integer literal to declare ports with executor-allocated device memory. The executor will allocate a shared device buffer for each connection. Connected ports map to the same device memory address. Operators may declare multiple input and/or output ports; each port is connected independently via the port map in `add_flow()`.
 
 **Device pointer (operator-managed)**
 
@@ -169,7 +176,7 @@ Integer literals (e.g. `0`) always resolve to the memory block size overload, no
 
 #### Connection Strategy
 
-When two operators are connected, the executor decides how to set up shared device memory based on what each port declares:
+When two operators are connected, the executor decides how to set up shared device memory for each port pair independently based on what each port declares:
 
 1. **Both ports declare a memory block size** -- the executor allocates a shared buffer (sizes must match).
 2. **One port declares a device pointer** -- the executor uses that pointer for both ports. If the other port has a memory block size, it is ignored (with a warning).
@@ -358,7 +365,7 @@ In the execution phase, there is no CPU-driven graph execution unless explicitly
 1. **Graph Launch**: The GPU-resident CUDA graph is launched on a dedicated stream
 2. **Iteration Loop** (on the GPU): 
    - The graph polls the data ready signal and tear down signal
-   - If data is not ready, the GPU sleeps for the configured interval (default 500 μs) before checking again
+   - If data is not ready, the GPU sleeps for the configured interval (default 500 microseconds) before checking again
    - When data ready signal is set, executes all operators
    - Sets result ready signal when processing is complete
    - When tear down signal is set, the graph is torn down
@@ -393,6 +400,7 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 
 **`public/examples/gpu_resident_example/gpu_resident_example.cpp`**
 **`public/examples/gpu_resident_input/gpu_resident_input.cpp`**
+**`public/examples/gpu_resident_multi_io/gpu_resident_multi_io.cpp`** — operators with multiple input/output ports
 
 
 ## Best Practices
@@ -400,7 +408,7 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 ### Operator Design
 
 - **Keep compute() lightweight**: Only launch CUDA kernels; avoid CPU work as CPU calls won't be repeated in the graph execution phase.
-- **Operator granularity**: GPU-resident graph execution captures the workflow into a CUDA Graph and replays it on the GPU. This typically has much lower per-operator scheduling overhead (~0.5–2 µs kernel transition latency) than CPU-driven graph execution, making finer-grained operator decomposition more practical. See {ref}`performance_considerations` for comparison with CPU-based scheduling.
+- **Operator granularity**: GPU-resident graph execution captures the workflow into a CUDA Graph and replays it on the GPU. This typically has much lower per-operator scheduling overhead (~0.5-2 microseconds kernel transition latency) than CPU-driven graph execution, making finer-grained operator decomposition more practical. See {ref}`performance_considerations` for comparison with CPU-based scheduling.
 - **Use provided streams**: Always use `cuda_stream()` for kernel launches in the main workload and `data_ready_handler_cuda_stream()` for kernel launches in the data ready handler.
 - **Pre-calculate sizes**: Determine buffer sizes at setup time, not runtime
 - **Avoid CPU-driven GPU Controls**: Avoid explicit CUDA synchronization and other CPU-driven GPU controls to get the most deterministic performance.
@@ -408,9 +416,9 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 ### Performance Tuning
 
 - **Tune sleep interval**: Adjust `data_not_ready_sleep_interval_us()` based on your application needs:
-  - **Low latency applications** (e.g., high-speed sensors): Use shorter intervals (e.g., 100-250 μs) for faster response to new data
-  - **Power-constrained applications**: Use longer intervals (e.g., 500-1000 μs) to reduce GPU polling overhead
-  - **Default (500 μs)**: Provides a balanced trade-off between latency and GPU utilization
+  - **Low latency applications** (e.g., high-speed sensors): Use shorter intervals (e.g., 100-250 microseconds) for faster response to new data
+  - **Power-constrained applications**: Use longer intervals (e.g., 500-1000 microseconds) to reduce GPU polling overhead
+  - **Default (500 microseconds)**: Provides a balanced trade-off between latency and GPU utilization
   - **Compute Requirements**: Depending on the rest of the application pipeline's compute requirements, the sleep interval must be adjusted to ensure expected Quality-of-service and power usage trade-off.
 - **Monitor GPU utilization**: Use NVIDIA tools (nvidia-smi, Nsight Systems) to verify GPU usage patterns match expectations
 

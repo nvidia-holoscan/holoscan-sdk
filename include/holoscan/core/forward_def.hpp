@@ -47,7 +47,7 @@ class ExtensionManager;
 class Executor;
 class Fragment;
 template <typename NodeT, typename EdgeDataElementT>
-class Graph;
+class FlowGraph;
 class GPUResidentOperator;
 class GPUResidentExecutor;
 class GXFParameterAdaptor;

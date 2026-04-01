@@ -523,7 +523,7 @@ HolovizOp::inputTypeFromString(const std::string& string) {
   return "invalid";
 }
 
-/*static*/ const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 41>
+/*static*/ const std::array<std::pair<holoscan::ops::HolovizOp::ImageFormat, std::string>, 45>
     HolovizOp::kImageFormatToStr{
         {{holoscan::ops::HolovizOp::ImageFormat::AUTO_DETECT, "auto_detect"},
          {holoscan::ops::HolovizOp::ImageFormat::R8_UINT, "r8_uint"},
@@ -574,7 +574,11 @@ HolovizOp::inputTypeFromString(const std::string& string) {
          {holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_420_UNORM,
           "y16_u16_v16_3plane_420_unorm"},
          {holoscan::ops::HolovizOp::ImageFormat::Y16_U16_V16_3PLANE_422_UNORM,
-          "y16_u16_v16_3plane_422_unorm"}}};
+          "y16_u16_v16_3plane_422_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16_UNORM, "r16g16b16_unorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16_SNORM, "r16g16b16_snorm"},
+         {holoscan::ops::HolovizOp::ImageFormat::R16G16B16_SFLOAT, "r16g16b16_sfloat"},
+         {holoscan::ops::HolovizOp::ImageFormat::R32G32B32_SFLOAT, "r32g32b32_sfloat"}}};
 
 /*static*/ nvidia::gxf::Expected<holoscan::ops::HolovizOp::ImageFormat>
 HolovizOp::imageFormatFromString(const std::string& string) {

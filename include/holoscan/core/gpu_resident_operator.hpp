@@ -42,7 +42,7 @@ class GPUResidentOperator : public holoscan::Operator {
   GPUResidentOperator() { set_operator_type(); }
   ~GPUResidentOperator();
 
-  void set_operator_type() { operator_type_ = OperatorType::kUnknown; }
+  void set_operator_type() { operator_type_ = OperatorType::kGPUResident; }
 
   std::shared_ptr<ExecutionContext> initialize_execution_context() override;
 
@@ -78,7 +78,7 @@ class GPUResidentOperator : public holoscan::Operator {
    * @brief Get the CUDA device pointer for the data_ready signal.
    *
    * This address can be used in CUDA kernels to signal that data is ready for processing
-   * in the GPU-resident execution pipeline. The data ready handler GPU-resident
+   * in the GPU-resident graph execution pipeline. The data ready handler GPU-resident
    * operators can use this address to atomically signal the data is now ready
    * for processing.
    *
@@ -90,7 +90,7 @@ class GPUResidentOperator : public holoscan::Operator {
    * @brief Get the CUDA device pointer for the result_ready signal.
    *
    * This address can be used in CUDA kernels to signal that results from the
-   * GPU-resident execution are ready for consumption.
+   * GPU-resident graph execution are ready for consumption.
    *
    * @return Pointer to the device memory location for the result_ready signal.
    */

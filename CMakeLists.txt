@@ -147,7 +147,8 @@ rapids_cmake_install_lib_dir(HOLOSCAN_INSTALL_LIB_DIR)
 # # Setup Cache
 # ##############################################################################
 
-set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory to use for caching data for CPM and CCache.\
+option(HOLOSCAN_USE_CACHE_DIR "Use CPM and compiler cache directory (set OFF for e.g. OpenEmbedded)" ON)
+set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory for CPM and compiler caches (used when HOLOSCAN_USE_CACHE_DIR is ON).\
                                             If relative, it is relative to the source directory (CMAKE_SOURCE_DIR).")
 mark_as_advanced(HOLOSCAN_CACHE_DIR)
 

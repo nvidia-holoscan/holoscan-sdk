@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,6 +14,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
+
+import pytest
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Fragment
@@ -54,7 +56,8 @@ class MyPingApp(Application):
 def test_distributed_app_invalid_fragment_compose(capfd):
     count = 5
     app = MyPingApp(count=count)
-    app.run()
+    with pytest.raises(RuntimeError, match="Fragment 'rx_fragment' does not have any operators"):
+        app.run()
 
     # assert that no errors were logged
     captured = capfd.readouterr()

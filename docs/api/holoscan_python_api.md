@@ -9,7 +9,7 @@ python/holoscan_python_api_core
 python/holoscan_python_api_data_loggers
 python/holoscan_python_api_decorator
 python/holoscan_python_api_executors
-python/holoscan_python_api_graphs
+python/holoscan_python_api_flow_graphs
 python/holoscan_python_api_gxf
 python/holoscan_python_api_logger
 python/holoscan_python_api_operators

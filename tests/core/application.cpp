@@ -25,7 +25,7 @@
 #include <holoscan/holoscan.hpp>
 
 #include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 
 namespace holoscan {
 
@@ -180,10 +180,10 @@ TEST(Application, TestAddFragment) {
 
   app->add_fragment(fragment);
 
-  // First call to graph creates a FlowGraph object
-  // F.graph() returns a reference to the abstract Graph base class so use
+  // First call to fragment_graph() creates a FlowGraphImpl object
+  // fragment_graph() returns a reference to the abstract FlowGraph base class so use
   // static_cast here
-  FragmentFlowGraph& G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
+  FragmentFlowGraphImpl& G = static_cast<FragmentFlowGraphImpl&>(app->fragment_graph());
 
   // verify that the operator was added to the graph
   auto nodes = G.get_nodes();
@@ -199,10 +199,10 @@ TEST(Application, TestAddFlow) {
 
   app->add_flow(fragment1, fragment2, {{"blur_image", "sharpen_image"}});
 
-  // First call to graph creates a FlowGraph object
-  // F.graph() returns a reference to the abstract Graph base class so use
+  // First call to fragment_graph() creates a FlowGraphImpl object
+  // fragment_graph() returns a reference to the abstract FlowGraph base class so use
   // static_cast here
-  FragmentFlowGraph& G = static_cast<FragmentFlowGraph&>(app->fragment_graph());
+  FragmentFlowGraphImpl& G = static_cast<FragmentFlowGraphImpl&>(app->fragment_graph());
 
   // verify that the fragments and edges were added to the graph
   auto nodes = G.get_nodes();

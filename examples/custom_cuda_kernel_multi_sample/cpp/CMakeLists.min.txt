@@ -68,5 +68,6 @@ if(BUILD_TESTING)
   )
   set_tests_properties(EXAMPLE_CPP_CUSTOM_CUDA_MULTI_SAMPLE_GREEN_CONTEXT_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
+    SKIP_RETURN_CODE 77  # indicates Green Context is not supported
   )
 endif()

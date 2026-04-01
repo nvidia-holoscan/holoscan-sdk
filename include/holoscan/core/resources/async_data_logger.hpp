@@ -152,6 +152,10 @@ struct DataEntry {
   std::optional<cudaStream_t> stream;  ///< optional CUDA stream for GPU operations
 
   std::variant<std::any, std::shared_ptr<holoscan::Tensor>, holoscan::TensorMap> data;
+  // Optional owner used to keep backend-specific component storage alive while the entry is
+  // waiting in the async queue (for example, a cloned GXF entity that owns a VideoBuffer
+  // component).
+  std::any source_owner{};
 
   // Default constructor
   DataEntry()
@@ -165,7 +169,7 @@ struct DataEntry {
   // Constructors for different types
   DataEntry(std::any data_arg, const std::string& id, int64_t acq_time, int64_t emit_time,
             IOSpec::IOType io_type, std::shared_ptr<MetadataDictionary> meta = nullptr,
-            std::optional<cudaStream_t> stream = std::nullopt);
+            std::optional<cudaStream_t> stream = std::nullopt, std::any source_owner = {});
 
   DataEntry(std::shared_ptr<holoscan::Tensor> tensor, const std::string& id, int64_t acq_time,
             int64_t emit_time, IOSpec::IOType io_type,

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,7 +35,7 @@
 
 #include "holoscan/core/application.hpp"
 #include "holoscan/core/fragment_scheduler.hpp"
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 #include "holoscan/core/io_spec.hpp"
 
 namespace holoscan {
@@ -241,7 +241,7 @@ class AppDriver {
   /// Collect fragment connections.
   /// Port names of the fragment graph edges are corrected during this process
   /// (via update_port_names).
-  bool collect_connections(holoscan::FragmentGraph& fragment_graph);
+  bool collect_connections(holoscan::FragmentFlowGraph& fragment_graph);
 
   /// Correct connection map.
   /// `connection_map_` is initialized with the default IP (0.0.0.0) and port (zero-based index).
@@ -250,7 +250,7 @@ class AppDriver {
   void correct_connection_map();
 
   /// Connect target fragments with UCX connector.
-  void connect_fragments(holoscan::FragmentGraph& fragment_graph,
+  void connect_fragments(holoscan::FragmentFlowGraph& fragment_graph,
                          std::vector<holoscan::FragmentNodeType>& target_fragments);
 
   /// Check the configuration of the application.
@@ -261,7 +261,7 @@ class AppDriver {
 
   /// Get the system resource requirement of the fragment.
   void collect_resource_requirements(const Config& app_config,
-                                     holoscan::FragmentGraph& fragment_graph);
+                                     holoscan::FragmentFlowGraph& fragment_graph);
 
   /// Parse the system resource requirement from the given YAML node.
   SystemResourceRequirement parse_resource_requirement(const YAML::Node& node);
@@ -341,7 +341,7 @@ class AppDriver {
   std::mutex scheduling_mutex_;  ///< Mutex for fragment scheduling.
 
   /// Helper method to update root fragments after a fragment is terminated
-  void update_root_fragments(const FragmentGraph& graph,
+  void update_root_fragments(const FragmentFlowGraph& graph,
                              const std::unordered_set<std::string>& terminated_fragments);
 };
 

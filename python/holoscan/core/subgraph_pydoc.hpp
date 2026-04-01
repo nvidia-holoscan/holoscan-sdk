@@ -123,6 +123,20 @@ op : Operator
     The operator to add
 )doc")
 
+PYDOC(add_subgraph, R"doc(
+Add a pre-constructed subgraph as a nested subgraph, taking ownership.
+
+This method stores the subgraph for lifetime management and interface port resolution.
+The subgraph's name must already be qualified with this parent subgraph's name prefix
+(which happens automatically when the subgraph is constructed with this subgraph as
+the parent argument).
+
+Parameters
+----------
+subgraph : Subgraph
+    The subgraph to add.
+)doc")
+
 // Configuration methods
 PYDOC(config_kwargs, R"doc(
 Get the configuration object for this subgraph.
@@ -443,6 +457,19 @@ Returns
 -------
 list of Operator
     List of operators belonging to this subgraph.
+)doc")
+
+PYDOC(nested_subgraphs, R"doc(
+Get the nested subgraphs directly owned by this subgraph.
+
+Returns subgraphs added via ``make_subgraph`` (C++) or the ``Subgraph`` constructor (Python),
+as well as subgraphs added via ``add_subgraph``. Does not recursively include subgraphs
+nested further down the hierarchy.
+
+Returns
+-------
+list of Subgraph
+    The direct child subgraphs of this subgraph.
 )doc")
 
 }  // namespace Subgraph

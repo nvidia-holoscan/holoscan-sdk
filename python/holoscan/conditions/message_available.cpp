@@ -87,16 +87,17 @@ void init_message_available(py::module_& m) {
            doc::MessageAvailableCondition::doc_MessageAvailableCondition)
       .def_property(
           "receiver",
-          py::overload_cast<>(&MessageAvailableCondition::receiver),
+          py::overload_cast<>(&MessageAvailableCondition::receiver, py::const_),
           py::overload_cast<std::shared_ptr<Receiver>>(&MessageAvailableCondition::receiver),
           doc::MessageAvailableCondition::doc_receiver)
       .def_property("min_size",
-                    py::overload_cast<>(&MessageAvailableCondition::min_size),
+                    py::overload_cast<>(&MessageAvailableCondition::min_size, py::const_),
                     py::overload_cast<size_t>(&MessageAvailableCondition::min_size),
                     doc::MessageAvailableCondition::doc_min_size)
-      .def_property("front_stage_max_size",
-                    py::overload_cast<>(&MessageAvailableCondition::front_stage_max_size),
-                    py::overload_cast<size_t>(&MessageAvailableCondition::front_stage_max_size),
-                    doc::MessageAvailableCondition::doc_front_stage_max_size);
+      .def_property(
+          "front_stage_max_size",
+          py::overload_cast<>(&MessageAvailableCondition::front_stage_max_size, py::const_),
+          py::overload_cast<size_t>(&MessageAvailableCondition::front_stage_max_size),
+          doc::MessageAvailableCondition::doc_front_stage_max_size);
 }
 }  // namespace holoscan

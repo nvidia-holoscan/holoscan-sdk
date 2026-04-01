@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#ifndef HOLOSCAN_CORE_GRAPH_HPP
-#define HOLOSCAN_CORE_GRAPH_HPP
+#ifndef HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_HPP
+#define HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_HPP
 
 #include <functional>
 #include <iostream>
@@ -29,43 +29,48 @@
 #include <utility>
 #include <vector>
 
-#include "./common.hpp"
+#include "../common.hpp"
+
 namespace holoscan {
 
 // Forward declarations
 class Operator;
 
+template <typename NodeT = std::shared_ptr<Operator>,
+typename EdgeDataElementT =
+std::unordered_map<std::string, std::set<std::string, std::less<>>>>
+class FlowGraph;
+
 // Graph type aliases
 //   for operator graph
 using OperatorNodeType = std::shared_ptr<Operator>;
 using OperatorEdgeDataElementType =
-    std::unordered_map<std::string, std::set<std::string, std::less<>>>;
-using OperatorGraph = Graph<OperatorNodeType, OperatorEdgeDataElementType>;
+std::unordered_map<std::string, std::set<std::string, std::less<>>>;
+using OperatorFlowGraph = FlowGraph<OperatorNodeType, OperatorEdgeDataElementType>;
 
 //   for fragment graph
 using FragmentNodeType = std::shared_ptr<Fragment>;
 using FragmentEdgeDataElementType =
-    std::unordered_map<std::string, std::set<std::string, std::less<>>>;
-using FragmentGraph = Graph<FragmentNodeType, FragmentEdgeDataElementType>;
+std::unordered_map<std::string, std::set<std::string, std::less<>>>;
+using FragmentFlowGraph = FlowGraph<FragmentNodeType, FragmentEdgeDataElementType>;
 
 /**
- * @brief Abstract base class for all graphs.
+ * @brief Abstract base class for all flow graphs.
  */
-template <typename NodeT = OperatorNodeType,
-          typename EdgeDataElementT = OperatorEdgeDataElementType>
-class Graph {
+template <typename NodeT, typename EdgeDataElementT>
+class FlowGraph {
  public:
   using NodeType = NodeT;
   using NodePredicate = std::function<bool(const NodeT&)>;
   using EdgeDataElementType = EdgeDataElementT;
   using EdgeDataType = std::shared_ptr<EdgeDataElementT>;
 
-  Graph() = default;
-  virtual ~Graph() = default;
+  FlowGraph() = default;
+  virtual ~FlowGraph() = default;
 
   // Delete the copy constructor and assignment operator to prevent copying.
-  Graph(const Graph&) = delete;
-  Graph& operator=(const Graph&) = delete;
+  FlowGraph(const FlowGraph&) = delete;
+  FlowGraph& operator=(const FlowGraph&) = delete;
 
   /**
    * @brief Add the node to the graph.
@@ -263,4 +268,4 @@ class Graph {
 
 }  // namespace holoscan
 
-#endif /* HOLOSCAN_CORE_GRAPH_HPP */
+#endif /* HOLOSCAN_CORE_FLOW_GRAPHS_FLOW_GRAPH_HPP */

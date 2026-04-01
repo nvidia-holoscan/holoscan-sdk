@@ -24,6 +24,7 @@ third_party_hw_setup
 :name: holoscan-user-overview
 
 holoscan_core
+gpu_resident
 holoscan_by_example
 holoscan_create_app
 holoscan_create_distributed_app

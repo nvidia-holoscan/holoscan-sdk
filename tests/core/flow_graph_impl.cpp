@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +22,7 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 
 namespace holoscan {
 
@@ -75,13 +75,13 @@ class MultiOutputOp : public Operator {
   void compute(InputContext&, OutputContext&, ExecutionContext&) override {}
 };
 
-// Test fixture for FlowGraph tests
-class FlowGraphTest : public ::testing::Test {
+// Test fixture for FlowGraphImpl tests
+class FlowGraphImplTest : public ::testing::Test {
  protected:
   void SetUp() override {}
 };
 
-TEST_F(FlowGraphTest, TestCycleDetectionNoCycle) {
+TEST_F(FlowGraphImplTest, TestCycleDetectionNoCycle) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -89,13 +89,13 @@ TEST_F(FlowGraphTest, TestCycleDetectionNoCycle) {
 
   app->add_flow(op1, op2);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
   auto cyclic_roots = graph.has_cycle();
 
   EXPECT_EQ(cyclic_roots.size(), 0);
 }
 
-TEST_F(FlowGraphTest, TestCycleDetectionWithCycle) {
+TEST_F(FlowGraphImplTest, TestCycleDetectionWithCycle) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -105,20 +105,20 @@ TEST_F(FlowGraphTest, TestCycleDetectionWithCycle) {
   app->add_flow(op1, op2);
   app->add_flow(op2, op1);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
   auto cyclic_roots = graph.has_cycle();
 
   EXPECT_GT(cyclic_roots.size(), 0);
 }
 
-TEST_F(FlowGraphTest, TestCacheCycleInvalidationOnAddFlow) {
+TEST_F(FlowGraphImplTest, TestCacheCycleInvalidationOnAddFlow) {
   auto app = make_application<Application>();
 
   // Step 1: Add two graph nodes (n1, n2)
   auto n1 = app->make_operator<TestOp>("n1");
   auto n2 = app->make_operator<TestOp>("n2");
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // Step 2: add_flow(n1, n2)
   app->add_flow(n1, n2);
@@ -136,7 +136,7 @@ TEST_F(FlowGraphTest, TestCacheCycleInvalidationOnAddFlow) {
       << "Graph should have a cycle after second add_flow, cache must be invalidated";
 }
 
-TEST_F(FlowGraphTest, TestCacheInvalidationOnAddNode) {
+TEST_F(FlowGraphImplTest, TestCacheInvalidationOnAddNode) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -145,7 +145,7 @@ TEST_F(FlowGraphTest, TestCacheInvalidationOnAddNode) {
   app->add_flow(op1, op2);
   app->add_flow(op2, op1);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // First call to has_cycle should detect the cycle and cache it
   auto cyclic_roots_before = graph.has_cycle();
@@ -161,7 +161,7 @@ TEST_F(FlowGraphTest, TestCacheInvalidationOnAddNode) {
   EXPECT_GT(cyclic_roots_after.size(), 0) << "Cycle should still be detected after adding a node";
 }
 
-TEST_F(FlowGraphTest, TestCacheInvalidationOnRemoveNode) {
+TEST_F(FlowGraphImplTest, TestCacheInvalidationOnRemoveNode) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -173,7 +173,7 @@ TEST_F(FlowGraphTest, TestCacheInvalidationOnRemoveNode) {
   app->add_flow(op2, op3);
   app->add_flow(op3, op1);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // First call to has_cycle should detect the cycle
   auto cyclic_roots_before = graph.has_cycle();
@@ -188,13 +188,13 @@ TEST_F(FlowGraphTest, TestCacheInvalidationOnRemoveNode) {
       << "Cycle should be broken after removing a node from the cycle";
 }
 
-TEST_F(FlowGraphTest, TestMultipleCycleDetectionCalls) {
+TEST_F(FlowGraphImplTest, TestMultipleCycleDetectionCalls) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
   auto op2 = app->make_operator<TestOp>("op2");
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   app->add_flow(op1, op2);
 
@@ -222,7 +222,7 @@ TEST_F(FlowGraphTest, TestMultipleCycleDetectionCalls) {
   EXPECT_EQ(result5.size(), result6.size());
 }
 
-TEST_F(FlowGraphTest, TestIsUserDefinedRootNoCycle) {
+TEST_F(FlowGraphImplTest, TestIsUserDefinedRootNoCycle) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -231,14 +231,14 @@ TEST_F(FlowGraphTest, TestIsUserDefinedRootNoCycle) {
   // op1 -> op2 (no cycle)
   app->add_flow(op1, op2);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // op1 is the first node added, but there's no cycle, so it's not a user-defined root
   EXPECT_FALSE(graph.is_user_defined_root(op1));
   EXPECT_FALSE(graph.is_user_defined_root(op2));
 }
 
-TEST_F(FlowGraphTest, TestIsUserDefinedRootWithCycle) {
+TEST_F(FlowGraphImplTest, TestIsUserDefinedRootWithCycle) {
   auto app = make_application<Application>();
 
   auto op1 = app->make_operator<TestOp>("op1");
@@ -248,7 +248,7 @@ TEST_F(FlowGraphTest, TestIsUserDefinedRootWithCycle) {
   app->add_flow(op1, op2);
   app->add_flow(op2, op1);
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // op1 is the first node added AND there's a cycle, so it's a user-defined root
   EXPECT_TRUE(graph.is_user_defined_root(op1));
@@ -256,9 +256,9 @@ TEST_F(FlowGraphTest, TestIsUserDefinedRootWithCycle) {
   EXPECT_FALSE(graph.is_user_defined_root(op2));
 }
 
-TEST_F(FlowGraphTest, TestIsUserDefinedRootWithNullptr) {
+TEST_F(FlowGraphImplTest, TestIsUserDefinedRootWithNullptr) {
   auto app = make_application<Application>();
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // Capture warnings
   testing::internal::CaptureStderr();
@@ -269,7 +269,7 @@ TEST_F(FlowGraphTest, TestIsUserDefinedRootWithNullptr) {
   EXPECT_TRUE(log_output.find("Calling is_user_defined_root() with nullptr") != std::string::npos);
 }
 
-TEST_F(FlowGraphTest, TestFragmentFlowGraphCycleDetection) {
+TEST_F(FlowGraphImplTest, TestFragmentFlowGraphImplCycleDetection) {
   auto app = make_application<Application>();
 
   auto frag1 = app->make_fragment<Fragment>("frag1");
@@ -279,7 +279,7 @@ TEST_F(FlowGraphTest, TestFragmentFlowGraphCycleDetection) {
   app->add_flow(frag1, frag2, {{"out", "in"}});
   app->add_flow(frag2, frag1, {{"out", "in"}});
 
-  auto& graph = static_cast<FragmentFlowGraph&>(app->fragment_graph());
+  auto& graph = static_cast<FragmentFlowGraphImpl&>(app->fragment_graph());
   auto cyclic_roots = graph.has_cycle();
 
   EXPECT_GT(cyclic_roots.size(), 0) << "Fragment graph should detect cycles";
@@ -287,7 +287,7 @@ TEST_F(FlowGraphTest, TestFragmentFlowGraphCycleDetection) {
 
 // ==================== get_indegree tests ====================
 
-TEST_F(FlowGraphTest, TestGetIndegreeSimpleConnection) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeSimpleConnection) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<TestOp>("tx");
@@ -296,7 +296,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeSimpleConnection) {
   // tx.out -> rx.in
   app->add_flow(tx, rx, {{"out", "in"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // rx.in should have indegree of 1
   EXPECT_EQ(graph.get_indegree(rx, "in"), 1) << "rx.in should have indegree of 1";
@@ -309,7 +309,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeSimpleConnection) {
       << "tx.out is an output port, should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeMultipleConnectionsToSamePort) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeMultipleConnectionsToSamePort) {
   auto app = make_application<Application>();
 
   auto tx1 = app->make_operator<MultiOutputOp>("tx1");
@@ -322,7 +322,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeMultipleConnectionsToSamePort) {
   // tx2.out1 -> rx.in1 (same input port)
   app->add_flow(tx2, rx, {{"out1", "in1"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // rx.in1 should have indegree of 2 (two incoming connections)
   EXPECT_EQ(graph.get_indegree(rx, "in1"), 2)
@@ -332,7 +332,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeMultipleConnectionsToSamePort) {
   EXPECT_EQ(graph.get_indegree(rx, "in2"), 0) << "rx.in2 should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeSamePredecessorMultiplePorts) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeSamePredecessorMultiplePorts) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<MultiOutputOp>("tx");
@@ -346,7 +346,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeSamePredecessorMultiplePorts) {
   // tx.out3 -> rx.in3
   app->add_flow(tx, rx, {{"out3", "in3"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // Each input port should have indegree of 1
   EXPECT_EQ(graph.get_indegree(rx, "in1"), 1) << "rx.in1 should have indegree of 1";
@@ -354,7 +354,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeSamePredecessorMultiplePorts) {
   EXPECT_EQ(graph.get_indegree(rx, "in3"), 1) << "rx.in3 should have indegree of 1";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeNonexistentPort) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeNonexistentPort) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<TestOp>("tx");
@@ -363,14 +363,14 @@ TEST_F(FlowGraphTest, TestGetIndegreeNonexistentPort) {
   // tx.out -> rx.in
   app->add_flow(tx, rx, {{"out", "in"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // Query a port that doesn't exist
   EXPECT_EQ(graph.get_indegree(rx, "nonexistent_port"), 0)
       << "Nonexistent port should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeNodeNotInGraph) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeNodeNotInGraph) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<TestOp>("tx");
@@ -380,13 +380,13 @@ TEST_F(FlowGraphTest, TestGetIndegreeNodeNotInGraph) {
   // Only connect tx and rx, isolated is not in the graph
   app->add_flow(tx, rx, {{"out", "in"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // Query a node that's not in the graph's edges (but might be added as a node)
   EXPECT_EQ(graph.get_indegree(isolated, "in"), 0) << "Node not in graph should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeDifferentPortNames) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeDifferentPortNames) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<MultiOutputOp>("tx");
@@ -396,7 +396,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeDifferentPortNames) {
   app->add_flow(tx, rx, {{"out1", "in1"}});
   app->add_flow(tx, rx, {{"out2", "in2"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // When searching for indegree of "in1", we should find it even though
   // the predecessor's port is named "out1"
@@ -414,7 +414,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeDifferentPortNames) {
       << "rx doesn't have a port named 'out1', should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeComplex) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeComplex) {
   auto app = make_application<Application>();
 
   auto tx1 = app->make_operator<MultiOutputOp>("tx1");
@@ -431,7 +431,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeComplex) {
   app->add_flow(tx2, rx, {{"out1", "in1"}});
   app->add_flow(tx2, rx, {{"out2", "in2"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // rx.in1 has 3 incoming connections
   EXPECT_EQ(graph.get_indegree(rx, "in1"), 3)
@@ -444,7 +444,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeComplex) {
   EXPECT_EQ(graph.get_indegree(rx, "in3"), 0) << "rx.in3 should have indegree of 0";
 }
 
-TEST_F(FlowGraphTest, TestGetIndegreeOutdegreeConsistency) {
+TEST_F(FlowGraphImplTest, TestGetIndegreeOutdegreeConsistency) {
   auto app = make_application<Application>();
 
   auto tx = app->make_operator<TestOp>("tx");
@@ -457,7 +457,7 @@ TEST_F(FlowGraphTest, TestGetIndegreeOutdegreeConsistency) {
   app->add_flow(tx, rx1, {{"out", "in"}});
   app->add_flow(tx, rx2, {{"out", "in"}});
 
-  auto& graph = static_cast<OperatorFlowGraph&>(app->graph());
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
 
   // The outdegree of tx.out should be 2
   EXPECT_EQ(graph.get_outdegree(tx, "out"), 2)

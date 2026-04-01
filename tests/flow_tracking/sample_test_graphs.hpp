@@ -465,6 +465,44 @@ class ThreePathsOneRootOneLeaf : public holoscan::Application {
   }
 };
 
+class NoPortOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(NoPortOp)
+
+  NoPortOp() = default;
+
+  void setup(OperatorSpec& spec) override {}
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    HOLOSCAN_LOG_INFO("{} count {}", name(), count_++);
+  }
+
+ private:
+  int count_ = 1;
+};
+
+/* SingleOperatorApp
+ *
+ * no connections -- both root and leaf
+ *
+ * Tests that flow tracking works when a single operator is both root and leaf
+ * in the graph. This is the simplest case of a root+leaf operator, which also
+ * arises in distributed apps where a fragment contains a single "real" operator
+ * with only virtual (UCX) predecessors/successors.
+ */
+class SingleOperatorApp : public holoscan::Application {
+ public:
+  using Application::Application;
+
+  void compose() override {
+    using namespace holoscan;
+    auto solo =
+        make_operator<NoPortOp>("solo", make_condition<CountCondition>("count-condition", 5));
+    add_operator(solo);
+  }
+};
+
 }  // namespace
 }  // namespace holoscan
 

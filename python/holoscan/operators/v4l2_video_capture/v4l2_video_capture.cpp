@@ -59,21 +59,25 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
 
   // Define a constructor that fully initializes the object.
   PyV4L2VideoCaptureOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                       const py::args& args, std::shared_ptr<::holoscan::Allocator> allocator,
+                       const py::args& args,
+                       std::optional<std::shared_ptr<::holoscan::Allocator>> allocator =
+                           std::nullopt,
                        const std::string& device = "/dev/video0"s, uint32_t width = 0,
                        uint32_t height = 0, float frame_rate = 0, uint32_t num_buffers = 4,
                        const std::string& pixel_format = "auto", bool pass_through = false,
                        const std::string& name = operator_default_name_v<ops::V4L2VideoCaptureOp>,
                        std::optional<uint32_t> exposure_time = std::nullopt,
                        std::optional<uint32_t> gain = std::nullopt)
-      : V4L2VideoCaptureOp(ArgList{Arg{"allocator", allocator},
-                                   Arg{"device", device},
+      : V4L2VideoCaptureOp(ArgList{Arg{"device", device},
                                    Arg{"width", width},
                                    Arg{"height", height},
                                    Arg{"frame_rate", frame_rate},
                                    Arg{"numBuffers", num_buffers},
                                    Arg{"pixel_format", pixel_format},
                                    Arg{"pass_through", pass_through}}) {
+    if (allocator.has_value()) {
+      this->add_arg(Arg{"allocator", allocator.value()});
+    }
     if (exposure_time.has_value()) {
       this->add_arg(Arg{"exposure_time", exposure_time.value()});
     }
@@ -99,7 +103,7 @@ PYBIND11_MODULE(_v4l2_video_capture, m) {
       m, "V4L2VideoCaptureOp", doc::V4L2VideoCaptureOp::doc_V4L2VideoCaptureOp)
       .def(py::init<std::variant<Fragment*, Subgraph*>,
                     const py::args&,
-                    std::shared_ptr<::holoscan::Allocator>,
+                    std::optional<std::shared_ptr<::holoscan::Allocator>>,
                     const std::string&,
                     uint32_t,
                     uint32_t,

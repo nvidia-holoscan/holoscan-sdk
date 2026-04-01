@@ -17,6 +17,9 @@
 
 #include "holoscan/core/network_context.hpp"
 
+#include <stdexcept>
+#include <string>
+
 #include "holoscan/core/fragment.hpp"
 
 namespace holoscan {
@@ -26,9 +29,15 @@ void NetworkContext::initialize() {
   auto* fragment_ptr = fragment();
   if (fragment_ptr) {
     auto& executor = fragment_ptr->executor();
-    executor.initialize_network_context(this);
+    if (!executor.initialize_network_context(this)) {
+      auto err_msg = std::string("Failed to initialize network context in executor");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
+    }
   } else {
-    HOLOSCAN_LOG_WARN("NetworkContext::initialize() - Fragment is not set");
+    auto err_msg = std::string("NetworkContext::initialize() - Fragment is not set");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 }
 

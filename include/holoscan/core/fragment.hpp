@@ -25,8 +25,9 @@
 #include <memory>        // for std::shared_ptr
 #include <set>           // for std::set
 #include <shared_mutex>  // for std::shared_mutex
-#include <string>        // for std::string
-#include <string_view>   // for std::string_view
+#include <stdexcept>
+#include <string>       // for std::string
+#include <string_view>  // for std::string_view
 #include <tuple>
 #include <type_traits>  // for std::enable_if_t, std::is_constructible
 #include <typeinfo>     // for std::type_info
@@ -42,7 +43,7 @@
 #include "dataflow_tracker.hpp"
 #include "executor.hpp"
 #include "fragment_service_provider.hpp"
-#include "graph.hpp"
+#include "flow_graphs/flow_graph.hpp"
 #include "io_spec.hpp"
 #include "network_context.hpp"
 #include "network_contexts/gxf/pubsub_context.hpp"
@@ -113,9 +114,9 @@ class Fragment : public FragmentServiceProvider {
     explicit GPUResidentAccessor(Fragment* fragment) : fragment_(fragment) {}
 
     /**
-     * @brief Set the timeout for GPU-resident execution.
+     * @brief Set the timeout for GPU-resident graph execution.
      *
-     * GPU-resident execution occurs asynchronously. This sets the timeout so that
+     * GPU-resident graph execution occurs asynchronously. This sets the timeout so that
      * execution is stopped after it exceeds the specified duration.
      *
      * @param timeout_ms The timeout in milliseconds.
@@ -225,7 +226,7 @@ class Fragment : public FragmentServiceProvider {
      * writes are globally visible to the host before the
      * result-ready flag is observed.
      *
-     * This option is intended for scenarios where the host controls the GPU-resident execution
+     * This option is intended for scenarios where the host controls the GPU-resident graph execution
      * loop and reads back results between iterations (e.g., via `cudaMemcpy`). It is recommended
      * for debugging, development, and testing purposes.
      *
@@ -243,7 +244,7 @@ class Fragment : public FragmentServiceProvider {
      * streaming data iteration and the end of the same iteration. Execution time is not measured
      * when the data is not marked as ready.
      *
-     * It is important to note that the GPU-resident execution can continue longer than the number
+     * It is important to note that the GPU-resident graph execution can continue longer than the number
      * of samples to collect. However, the execution times are only collected for the provided
      * number of samples. Since the execution times are stored in device memory, they are not
      * collected for unbounded number of iterations.
@@ -407,16 +408,16 @@ class Fragment : public FragmentServiceProvider {
   /**
    * @brief Get the graph of the fragment.
    *
-   * @return The reference to the graph of the fragment (`Graph` object.)
+   * @return The reference to the graph of the fragment (`OperatorFlowGraph` object.)
    */
-  OperatorGraph& graph();
+  OperatorFlowGraph& graph();
 
   /**
    * @brief Get the shared pointer to the graph of the fragment.
    *
    * @return The shared pointer to the graph of the fragment.
    */
-  std::shared_ptr<OperatorGraph> graph_shared();
+  std::shared_ptr<OperatorFlowGraph> graph_shared();
 
   /**
    * @brief Set the executor of the fragment.
@@ -820,8 +821,9 @@ class Fragment : public FragmentServiceProvider {
                   "ServiceT must inherit from Resource or FragmentService");
 
     if (!svc) {
-      HOLOSCAN_LOG_ERROR("Cannot register null pointer to fragment service");
-      return false;
+      auto err_msg = std::string("Cannot register null pointer to fragment service");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw std::runtime_error(err_msg);
     }
 
     bool is_service = true;
@@ -850,19 +852,21 @@ class Fragment : public FragmentServiceProvider {
     // If the resource is available, we use resource's name for id and the id should be empty
     if (resource) {
       if (!id.empty()) {
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = std::string(
             "If the Holoscan Resource is registered as a service, the id should be empty");
-        return false;
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
       id = resource->name();
 
       if (fragment_resource_services_by_name_.find(std::string(id)) !=
           fragment_resource_services_by_name_.end()) {
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = fmt::format(
             "Resource service '{}' already exists in the fragment. Please specify a unique "
             "name when creating a Resource instance.",
             id);
-        return false;
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     }
 
@@ -1051,7 +1055,7 @@ class Fragment : public FragmentServiceProvider {
   /**
    * @brief Add an operator to the graph.
    *
-   * The information of the operator is stored in the Graph object.
+   * The information of the operator is stored in the `OperatorFlowGraph` object.
    * If the operator is already added, this method does nothing.
    *
    * @param op The operator to be added.
@@ -1059,15 +1063,21 @@ class Fragment : public FragmentServiceProvider {
   virtual void add_operator(const std::shared_ptr<Operator>& op);
 
   /**
-   * @brief Add a subgraph to the fragment.
+   * @brief Add a subgraph to the fragment, taking ownership.
    *
-   * This method ensures the subgraph is composed and its operators are added to the fragment.
-   * Use this method when a subgraph has no interface ports and doesn't need to be connected
-   * to other operators or subgraphs via add_flow.
+   * This method takes ownership of the subgraph by storing the shared pointer, registers the
+   * subgraph name for duplicate detection, and ensures the subgraph is composed.
    *
-   * If the subgraph is already composed, this method does nothing.
+   * This is the recommended way to add a pre-constructed subgraph (e.g. from a factory method)
+   * to a Fragment. The Fragment will keep the subgraph alive for the duration of its lifetime.
+   *
+   * This method is also called automatically by add_flow() overloads that take Subgraph arguments,
+   * so explicit calls are only needed when a subgraph has no flows (self-contained).
+   *
+   * Calling this on a subgraph that is already owned (e.g. after make_subgraph) is a safe no-op.
    *
    * @param subgraph The subgraph to be added.
+   * @throws std::runtime_error if a subgraph with the same name has already been added.
    */
   virtual void add_subgraph(const std::shared_ptr<Subgraph>& subgraph);
 
@@ -1076,7 +1086,7 @@ class Fragment : public FragmentServiceProvider {
    *
    * An output port of the upstream operator is connected to an input port of the
    * downstream operator.
-   * The information about the flow (edge) is stored in the Graph object.
+   * The information about the flow (edge) is stored in the `OperatorFlowGraph` object.
    *
    * If the upstream operator or the downstream operator is not in the graph, it will be added to
    * the graph.
@@ -1095,7 +1105,7 @@ class Fragment : public FragmentServiceProvider {
    *
    * An output port of the upstream operator is connected to an input port of the
    * downstream operator.
-   * The information about the flow (edge) is stored in the Graph object.
+   * The information about the flow (edge) is stored in the `OperatorFlowGraph` object.
    *
    * If the upstream operator or the downstream operator is not in the graph, it will be added to
    * the graph.
@@ -1254,6 +1264,9 @@ class Fragment : public FragmentServiceProvider {
       subgraph->compose();
       subgraph->set_composed(true);
     }
+
+    // Take ownership so the subgraph stays alive for the fragment's lifetime
+    subgraphs_.push_back(subgraph);
 
     return subgraph;
   }
@@ -1521,6 +1534,16 @@ class Fragment : public FragmentServiceProvider {
   const std::vector<std::shared_ptr<DataLogger>>& data_loggers() const { return data_loggers_; }
 
   /**
+   * @brief Get the top-level subgraphs owned by this fragment.
+   *
+   * Returns subgraphs added via make_subgraph() or add_subgraph().
+   * Nested subgraphs within these are accessible via Subgraph::nested_subgraphs().
+   *
+   * @return A const reference to the vector of owned subgraphs.
+   */
+  const std::vector<std::shared_ptr<Subgraph>>& subgraphs() const { return subgraphs_; }
+
+  /**
    * @brief Check if the fragment has GPU-resident operators.
    *
    * @return True if the fragment has GPU-resident operators, false otherwise.
@@ -1717,7 +1740,7 @@ class Fragment : public FragmentServiceProvider {
   Application* app_ = nullptr;            ///< The application that this fragment belongs to.
   std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
   std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
-  std::shared_ptr<OperatorGraph> graph_;  ///< The graph of the fragment.
+  std::shared_ptr<OperatorFlowGraph> graph_;  ///< The graph of the fragment.
   mutable std::shared_ptr<Scheduler>
       scheduler_;  ///< Lazily initialized scheduler (mutable for const access).
   std::shared_ptr<NetworkContext> network_context_;  ///< The network_context used by the executor
@@ -1750,6 +1773,9 @@ class Fragment : public FragmentServiceProvider {
 
   // Track subgraph names to detect duplicates
   std::unordered_set<std::string> subgraph_names_;
+
+  // Owned subgraphs added via add_subgraph()
+  std::vector<std::shared_ptr<Subgraph>> subgraphs_;
 
  private:
   bool verify_gpu_resident_connections(const std::shared_ptr<Operator>& upstream_op,

@@ -72,7 +72,7 @@ void init_count(py::module_& m) {
            "name"_a = std::string(condition_default_name_v<CountCondition>),
            doc::CountCondition::doc_CountCondition)
       .def_property("count",
-                    py::overload_cast<>(&CountCondition::count),
+                    py::overload_cast<>(&CountCondition::count, py::const_),
                     py::overload_cast<int64_t>(&CountCondition::count),
                     doc::CountCondition::doc_count);
 }

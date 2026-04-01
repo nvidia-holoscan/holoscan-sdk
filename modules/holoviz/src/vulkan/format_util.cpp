@@ -17,7 +17,11 @@
 
 #include "format_util.hpp"
 
+#include <fmt/format.h>
+
 #include <vector>
+
+#include <magic_enum.hpp>
 
 namespace holoscan::viz {
 
@@ -115,7 +119,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *height_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint8_t);
       break;
@@ -128,7 +133,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *width_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint8_t);
       break;
@@ -144,7 +150,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *height_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       break;
     case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
@@ -156,7 +163,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *width_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       break;
     case ImageFormat::Y16_U16V16_2PLANE_420_UNORM:
@@ -171,7 +179,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *height_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint16_t);
       break;
@@ -184,7 +193,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *width_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint16_t);
       break;
@@ -200,7 +210,8 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *height_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       break;
     case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
@@ -212,11 +223,25 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
           *width_divisor = 2;
         }
       } else {
-        throw std::invalid_argument("Unhandled plane index");
+        throw std::invalid_argument(fmt::format(
+            "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       break;
+    case ImageFormat::R16G16B16_UNORM:
+    case ImageFormat::R16G16B16_SNORM:
+    case ImageFormat::R16G16B16_SFLOAT:
+      *channels = 3U;
+      *hw_channels = 4U;
+      *component_size = sizeof(uint16_t);
+      break;
+    case ImageFormat::R32G32B32_SFLOAT:
+      *channels = 3U;
+      *hw_channels = 4U;
+      *component_size = sizeof(float);
+      break;
     default:
-      throw std::runtime_error("Unhandled image format.");
+      throw std::runtime_error(
+          fmt::format("Format {}: unhandled image format", magic_enum::enum_name(format)));
   }
 }
 
@@ -353,8 +378,25 @@ vk::Format to_vulkan_format(ImageFormat format) {
     case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
       vk_format = vk::Format::eG16B16R163Plane422Unorm;
       break;
+    case ImageFormat::R16G16B16_UNORM:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR16G16B16A16Unorm;
+      break;
+    case ImageFormat::R16G16B16_SNORM:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR16G16B16A16Snorm;
+      break;
+    case ImageFormat::R16G16B16_SFLOAT:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR16G16B16A16Sfloat;
+      break;
+    case ImageFormat::R32G32B32_SFLOAT:
+      // there is no rgb format in Vulkan, use rgba instead; data is converted on upload/download
+      vk_format = vk::Format::eR32G32B32A32Sfloat;
+      break;
     default:
-      throw std::runtime_error("Unhandled image format.");
+      throw std::runtime_error(
+          fmt::format("Format {}: unhandled image format", magic_enum::enum_name(format)));
   }
 
   return vk_format;
@@ -480,7 +522,8 @@ vk::ColorSpaceKHR to_vulkan_color_space(ColorSpace color_space) {
       vk_color_space = vk::ColorSpaceKHR::eBt709LinearEXT;
       break;
     default:
-      throw std::runtime_error("Unhandled color space.");
+      throw std::runtime_error(
+          fmt::format("Color space {}: unhandled color space", magic_enum::enum_name(color_space)));
   }
 
   return vk_color_space;
@@ -534,7 +577,8 @@ bool is_format_supported(vk::PhysicalDevice physical_device, ImageFormat fmt) {
 
   // Check if the format supports sampling
   // We check for sampling since that's what we typically use for texture sampling
-  if (!(format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)) {
+  if (!(format_properties.optimalTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage) &&
+      !(format_properties.linearTilingFeatures & vk::FormatFeatureFlagBits::eSampledImage)) {
     return false;
   }
 
@@ -600,7 +644,11 @@ const std::vector<ImageFormat>& get_formats() {
                                                        ImageFormat::Y16_U16V16_2PLANE_420_UNORM,
                                                        ImageFormat::Y16_U16V16_2PLANE_422_UNORM,
                                                        ImageFormat::Y16_U16_V16_3PLANE_420_UNORM,
-                                                       ImageFormat::Y16_U16_V16_3PLANE_422_UNORM};
+                                                       ImageFormat::Y16_U16_V16_3PLANE_422_UNORM,
+                                                       ImageFormat::R16G16B16_UNORM,
+                                                       ImageFormat::R16G16B16_SNORM,
+                                                       ImageFormat::R16G16B16_SFLOAT,
+                                                       ImageFormat::R32G32B32_SFLOAT};
 
   return all_formats;
 }

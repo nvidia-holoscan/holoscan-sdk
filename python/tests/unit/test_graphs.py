@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +17,8 @@ limitations under the License.
 
 import pytest
 
-from holoscan.core import Graph, Operator, OperatorGraph
-from holoscan.graphs import FlowGraph, OperatorFlowGraph
+from holoscan.core import FlowGraph, Operator, OperatorFlowGraph
+from holoscan.flow_graphs import FlowGraphImpl, OperatorFlowGraphImpl
 from holoscan.operators import PingRxOp, PingTxOp
 
 
@@ -32,27 +32,26 @@ class ForwardOp(Operator):
         op_output.emit(msg, "out")
 
 
-class TestOperatorGraph:
+class TestOperatorFlowGraph:
     def _get_tx_rx_ops(self, fragment):
         op_tx = PingTxOp(fragment, name="op_tx")
         op_rx = PingRxOp(fragment, name="op_rx")
         return op_tx, op_rx
 
     def test_name_alias(self):
-        assert FlowGraph is OperatorFlowGraph
+        assert FlowGraphImpl is OperatorFlowGraphImpl
 
     def test_init(self):
-        graph = OperatorFlowGraph()
-        assert isinstance(graph, OperatorGraph)
-        # Graph is also available as an alias for OperatorGraph for backwards compatibility
-        assert isinstance(graph, Graph)
+        graph = OperatorFlowGraphImpl()
+        assert isinstance(graph, OperatorFlowGraph)
+        assert isinstance(graph, FlowGraph)
 
     def test_context(self):
-        graph = OperatorFlowGraph()
+        graph = OperatorFlowGraphImpl()
         assert graph.context is None
 
     def test_add_node(self, fragment):
-        graph = OperatorFlowGraph()
+        graph = OperatorFlowGraphImpl()
         op_tx, op_rx = self._get_tx_rx_ops(fragment)
 
         graph.add_node(op_tx)
@@ -66,7 +65,7 @@ class TestOperatorGraph:
         assert graph.is_leaf(op_rx)
 
     def test_get_port_map(self, fragment):
-        graph = OperatorFlowGraph()
+        graph = OperatorFlowGraphImpl()
         op_tx, op_rx = self._get_tx_rx_ops(fragment)
 
         fragment.add_flow(op_tx, op_rx)
@@ -253,6 +252,6 @@ class TestOperatorGraph:
         assert not graph.is_root(op_rx)
 
     def test_dynamic_attribute_not_allowed(self):
-        obj = OperatorFlowGraph()
+        obj = OperatorFlowGraphImpl()
         with pytest.raises(AttributeError):
             obj.custom_attribute = 5

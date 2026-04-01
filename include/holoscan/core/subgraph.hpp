@@ -304,13 +304,31 @@ class Subgraph {
   void add_operator(const std::shared_ptr<Operator>& op);
 
   /**
-   * @brief Add a subgraph to the Fragment
+   * @brief Add a pre-constructed subgraph as a nested subgraph, taking ownership.
    *
-   * This method ensures the subgraph is composed and its operators are added to the fragment.
-   * Use this method when a nested subgraph has no interface ports and doesn't need to be
-   * connected to other operators or subgraphs via add_flow.
+   * This method stores the subgraph in nested_subgraphs_ for lifetime management and
+   * interface port resolution.
+   *
+   * Two paths are supported:
+   * - **Not yet composed** (C++ factory pattern): The subgraph's name is qualified with
+   *   this parent's name prefix, then compose() is called. The subgraph should be
+   *   constructed with an unqualified name.
+   * - **Already composed** (Python path): The name must already be qualified with this
+   *   parent's prefix (e.g. constructed with this subgraph as the parent). The subgraph
+   *   is stored as-is.
+   *
+   * Example (C++ factory pattern):
+   * @code
+   *   void compose() override {
+   *     auto camera = camera_factory(fragment(), "camera1", config);
+   *     add_subgraph(camera);  // qualifies name to "parent_camera1", composes, takes ownership
+   *     add_output_interface_port("video_out", camera, "video_out");
+   *   }
+   * @endcode
    *
    * @param subgraph The subgraph to be added.
+   * @throws std::runtime_error if a nested subgraph with the same name already exists.
+   * @throws std::runtime_error if already composed but the name is not properly qualified.
    */
   void add_subgraph(const std::shared_ptr<Subgraph>& subgraph);
 
@@ -667,6 +685,18 @@ class Subgraph {
    */
   std::vector<std::shared_ptr<Operator>> operators() const;
 
+  /**
+   * @brief Get the nested subgraphs directly owned by this subgraph.
+   *
+   * Returns subgraphs added via make_subgraph() or add_subgraph() within this subgraph.
+   * Does not recursively include subgraphs nested further down the hierarchy.
+   *
+   * @return A const reference to the vector of nested subgraphs.
+   */
+  const std::vector<std::shared_ptr<Subgraph>>& nested_subgraphs() const {
+    return nested_subgraphs_;
+  }
+
   // ========== Configuration Methods (Getters) ==========
 
   /**
@@ -741,7 +771,7 @@ class Subgraph {
       nested_subgraph_names_;  ///< Track nested child names to detect duplicates
   bool is_composed_ = false;
   Fragment* fragment_;              ///< Target fragment for direct operator/flow addition
-  const std::string name_;          ///< Name for this subgraph
+  std::string name_;                ///< Name for this subgraph
   std::shared_ptr<Config> config_;  ///< Subgraph-specific configuration
 
   /**

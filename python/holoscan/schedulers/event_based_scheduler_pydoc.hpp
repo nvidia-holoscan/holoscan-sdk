@@ -62,6 +62,34 @@ pin_cores : list of int, optional
     same set of specified cores. Note: This only affects the default pool; to control CPU affinity
     for user-defined thread pools, use the pin_cores parameter in ThreadPool.add(). If not
     specified, the default pool's worker threads will not be pinned to any cores.
+enable_queue_stealing : bool, optional
+    If true, default worker threads attempt to steal ready jobs from other default worker queues
+    before blocking on their own queue. Default is False.
+steal_scan_limit : int, optional
+    Maximum number of victim queues scanned per steal attempt (0 means scan all queues).
+    Default is 0.
+enable_worker_postcheck_fastpath : bool, optional
+    If true, workers perform a fresh checkEntity() after executeEntity() and directly update
+    READY/WAIT_TIME conditions without routing that entity through the dispatcher. Default is False.
+postcheck_fallback_notify_interval : int, optional
+    When worker postcheck returns a non-ready state, send a periodic dispatcher wake-up every N
+    fallbacks per worker. Set to 0 to only notify when no workers are running. Default is 256.
+postcheck_fallback_notify_min_workers : int, optional
+    Periodic fallback notify is enabled only when worker_thread_number is at least this value.
+    Default is 8.
+postcheck_fallback_notify_min_period_ns : int, optional
+    Minimum global time spacing (in nanoseconds) between periodic fallback dispatcher wake-ups.
+    Default is 100000.
+internal_event_shard_count : int, optional
+    Number of internal notification shards used by the dispatcher (0 = auto =
+    worker_thread_number). Default is 0.
+dispatcher_internal_pop_batch_size : int, optional
+    Maximum number of internal notifications drained from one shard per dispatcher pop step.
+    Default is 32.
+wait_state_shard_count : int, optional
+    Number of shards used for WAIT_EVENT and WAIT tracking lists. Default is 1.
+log_perf_stats : bool, optional
+    If true, logs scheduler instrumentation counters during deinitialize(). Default is False.
 name : str, optional
     The name of the scheduler.
 )doc")

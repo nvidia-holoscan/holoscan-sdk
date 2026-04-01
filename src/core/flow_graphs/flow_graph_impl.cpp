@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/graphs/flow_graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 
 #include <yaml-cpp/yaml.h>
 
@@ -64,17 +64,18 @@ std::string get_node_name(const NodeType& node) {
 }  // namespace
 
 // Explicit instantiation
-//   for OperatorFlowGraph
-template class FlowGraph<OperatorNodeType, OperatorEdgeDataElementType>;
-//   for FragmentFlowGraph
-template class FlowGraph<FragmentNodeType, FragmentEdgeDataElementType>;
+//   for OperatorFlowGraphImpl
+template class FlowGraphImpl<OperatorNodeType, OperatorEdgeDataElementType>;
+//   for FragmentFlowGraphImpl
+template class FlowGraphImpl<FragmentNodeType, FragmentEdgeDataElementType>;
 
 template <typename NodeT, typename EdgeDataElementT>
-void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
+void FlowGraphImpl<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
   if (succ_.find(node) == succ_.end()) {
     if (!node) {
-      HOLOSCAN_LOG_ERROR("Calling add_node() with nullptr");
-      return;
+      auto err_msg = std::string("Calling add_node() with nullptr");
+      HOLOSCAN_LOG_ERROR(err_msg);
+      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
     }
     // If there is already a node with the same name, it will raise an error.
     if (name_map_.find(node->name()) != name_map_.end()) {
@@ -96,8 +97,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_node(const NodeT& node) {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const NodeType& node_v,
-                                                  const EdgeDataType& port_map) {
+void FlowGraphImpl<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u,
+                                                      const NodeType& node_v,
+                                                      const EdgeDataType& port_map) {
   // Note: add_node does nothing if the node was already added
   add_node(node_u);
   add_node(node_v);
@@ -134,7 +136,7 @@ void FlowGraph<NodeT, EdgeDataElementT>::add_flow(const NodeType& node_u, const 
 
 /// Remove a node and all its edges from the graph
 template <typename NodeT, typename EdgeDataElementT>
-void FlowGraph<NodeT, EdgeDataElementT>::remove_node(const NodeType& node) {
+void FlowGraphImpl<NodeT, EdgeDataElementT>::remove_node(const NodeType& node) {
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) {
     HOLOSCAN_LOG_WARN("Node with name '{}' not found in graph: no node was removed.", node->name());
@@ -171,9 +173,9 @@ void FlowGraph<NodeT, EdgeDataElementT>::remove_node(const NodeType& node) {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::optional<typename FlowGraph<NodeT, EdgeDataElementT>::EdgeDataType>
-FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u,
-                                                 const NodeType& node_v) const {
+std::optional<typename FlowGraphImpl<NodeT, EdgeDataElementT>::EdgeDataType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u,
+                                                     const NodeType& node_v) const {
   auto it_u = succ_.find(node_u);
   if (it_u == succ_.end()) {
     return std::nullopt;
@@ -186,7 +188,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_map(const NodeType& node_u,
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
+bool FlowGraphImpl<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
   if (!node) {
     HOLOSCAN_LOG_WARN("Calling is_root() with nullptr");
     return false;
@@ -205,7 +207,7 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_root(const NodeType& node) const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
+bool FlowGraphImpl<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
   if (!node) {
     HOLOSCAN_LOG_WARN("Calling is_leaf() with nullptr");
     return false;
@@ -223,7 +225,7 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_leaf(const NodeType& node) const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-bool FlowGraph<NodeT, EdgeDataElementT>::is_user_defined_root(const NodeType& node) const {
+bool FlowGraphImpl<NodeT, EdgeDataElementT>::is_user_defined_root(const NodeType& node) const {
   if (!node) {
     HOLOSCAN_LOG_WARN("Calling is_user_defined_root() with nullptr");
     return false;
@@ -241,8 +243,8 @@ bool FlowGraph<NodeT, EdgeDataElementT>::is_user_defined_root(const NodeType& no
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
+std::vector<typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::has_cycle() const {
   // Return cached result if available
   if (cached_cyclic_roots_.has_value()) {
     return cached_cyclic_roots_.value();
@@ -260,7 +262,9 @@ FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
     // There is no implicit root. Therefore, we need to start from somewhere.
     // Start from the first added node which is user-defined root.
     // FIXME Currently, this function is not supported for a disconnected graph.
-    root_nodes.push_back(ordered_nodes_.front());
+    if (!ordered_nodes_.empty()) {
+      root_nodes.push_back(ordered_nodes_.front());
+    }
   }
 
   for (const auto& node : root_nodes) {
@@ -302,8 +306,8 @@ FlowGraph<NodeT, EdgeDataElementT>::has_cycle() const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() const {
+std::vector<typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_root_nodes() const {
   std::vector<NodeType> roots;
   for (const auto& node : ordered_nodes_) {
     if (is_root(node)) {
@@ -314,8 +318,8 @@ FlowGraph<NodeT, EdgeDataElementT>::get_root_nodes() const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_nodes() const {
+std::vector<typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_nodes() const {
   std::vector<NodeType> nodes;
   nodes.reserve(ordered_nodes_.size());  // pre-allocate memory
   for (const auto& node : ordered_nodes_) {
@@ -325,8 +329,8 @@ FlowGraph<NodeT, EdgeDataElementT>::get_nodes() const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) const {
+std::vector<typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) const {
   std::vector<NodeType> nodes;
   auto it_succ = succ_.find(node);
   if (it_succ == succ_.end()) {
@@ -340,8 +344,8 @@ FlowGraph<NodeT, EdgeDataElementT>::get_next_nodes(const NodeType& node) const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::vector<typename FlowGraph<NodeT, EdgeDataElementT>::NodeType>
-FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) const {
+std::vector<typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) const {
   std::vector<NodeType> nodes;
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) {
@@ -355,8 +359,8 @@ FlowGraph<NodeT, EdgeDataElementT>::get_previous_nodes(const NodeType& node) con
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-size_t FlowGraph<NodeT, EdgeDataElementT>::get_outdegree(const NodeType& node,
-                                                         const std::string& port_name) const {
+size_t FlowGraphImpl<NodeT, EdgeDataElementT>::get_outdegree(const NodeType& node,
+                                                             const std::string& port_name) const {
   auto it_succ = succ_.find(node);
   if (it_succ == succ_.end()) {
     HOLOSCAN_LOG_DEBUG("Node was not found in the successor map of the graph");
@@ -382,8 +386,8 @@ size_t FlowGraph<NodeT, EdgeDataElementT>::get_outdegree(const NodeType& node,
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-size_t FlowGraph<NodeT, EdgeDataElementT>::get_indegree(const NodeType& node,
-                                                        const std::string& port_name) const {
+size_t FlowGraphImpl<NodeT, EdgeDataElementT>::get_indegree(const NodeType& node,
+                                                            const std::string& port_name) const {
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) {
     HOLOSCAN_LOG_DEBUG("Node was not found in the predecessor map of the graph");
@@ -408,8 +412,8 @@ size_t FlowGraph<NodeT, EdgeDataElementT>::get_indegree(const NodeType& node,
 
 template <typename NodeT, typename EdgeDataElementT>
 std::pair<std::map<std::string, std::vector<std::string>>,
-          std::map<std::string, std::vector<std::string>>>
-FlowGraph<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
+std::map<std::string, std::vector<std::string>>>
+FlowGraphImpl<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
   std::map<std::string, std::vector<std::string>> input_to_output_map;
   std::map<std::string, std::vector<std::string>> output_to_input_map;
 
@@ -440,7 +444,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
           input_to_output_map[input_port_unique_id].push_back(output_port_unique_id);
 
           // For output-to-input map: output port connects to this input port
-          output_to_input_map[output_port_unique_id].push_back(std::move(input_port_unique_id));
+          output_to_input_map[output_port_unique_id].push_back(input_port_unique_id);
         }
       }
     }
@@ -462,7 +466,7 @@ FlowGraph<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-std::string FlowGraph<NodeT, EdgeDataElementT>::port_map_description() const {
+std::string FlowGraphImpl<NodeT, EdgeDataElementT>::port_map_description() const {
   auto [input_to_output_map, output_to_input_map] = get_port_connectivity_maps();
 
   // Create YAML node structure
@@ -498,8 +502,8 @@ std::string FlowGraph<NodeT, EdgeDataElementT>::port_map_description() const {
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    const NodePredicate& pred) const {
+typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType
+FlowGraphImpl<NodeT, EdgeDataElementT>::find_node(const NodePredicate& pred) const {
   for (const auto& [node, _] : succ_) {
     if (pred(node)) {
       return node;
@@ -509,8 +513,8 @@ typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataE
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    const NodeType& node) const {
+typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType
+FlowGraphImpl<NodeT, EdgeDataElementT>::find_node(const NodeType& node) const {
   auto it_prev = pred_.find(node);
   if (it_prev == pred_.end()) {
     return nullptr;
@@ -519,8 +523,8 @@ typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataE
 }
 
 template <typename NodeT, typename EdgeDataElementT>
-typename FlowGraph<NodeT, EdgeDataElementT>::NodeType FlowGraph<NodeT, EdgeDataElementT>::find_node(
-    const std::string& name) const {
+typename FlowGraphImpl<NodeT, EdgeDataElementT>::NodeType
+FlowGraphImpl<NodeT, EdgeDataElementT>::find_node(const std::string& name) const {
   auto it = name_map_.find(name);
   if (it == name_map_.end()) {
     return nullptr;

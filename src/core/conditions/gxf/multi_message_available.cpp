@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -102,8 +102,9 @@ void MultiMessageAvailableCondition::initialize() {
       } else if (mode_string == "PerReceiver") {
         sampling_mode = YAML::Node("PerReceiver");
       } else {
-        HOLOSCAN_LOG_ERROR("Unrecognized sampling mode string value: {}", mode_string);
-        yaml_conversion_failed = true;
+        auto err_msg = fmt::format("Unrecognized sampling mode string value: {}", mode_string);
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     } else {
       try {
@@ -114,16 +115,18 @@ void MultiMessageAvailableCondition::initialize() {
         } else if (mode_enum == MultiMessageAvailableCondition::SamplingMode::kPerReceiver) {
           sampling_mode = YAML::Node("PerReceiver");
         } else {
-          HOLOSCAN_LOG_ERROR("Unrecognized sampling mode enum value: {}",
-                             static_cast<int>(mode_enum));
-          yaml_conversion_failed = true;
+          auto err_msg =
+              fmt::format("Unrecognized sampling mode enum value: {}", static_cast<int>(mode_enum));
+          HOLOSCAN_LOG_ERROR(err_msg);
+          throw std::runtime_error(err_msg);
         }
       } catch (const std::bad_any_cast& e) {
-        HOLOSCAN_LOG_ERROR(
+        auto err_msg = fmt::format(
             "Unable to cast 'sampling_mode' argument to a "
             "MultiMessageAvailableCondition::SamplingMode enum: {}",
             e.what());
-        yaml_conversion_failed = true;
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
       }
     }
     if (!yaml_conversion_failed) {

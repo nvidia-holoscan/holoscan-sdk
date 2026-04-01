@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -60,7 +60,8 @@ __global__ void GenDepthMapIndicesKernel(uint32_t width, uint32_t height, uint32
         return;
       }
 
-      const size_t offset = launch_index.x * 4 + launch_index.y * ((width - 1) * 4 + 2);
+      const size_t offset = launch_index.x * ((launch_index.y != height - 1) ? 4 : 2) +
+                            launch_index.y * ((width - 1) * 4 + 2);
       dst += offset;
 
       // line right to next column (except last column)
@@ -81,7 +82,7 @@ __global__ void GenDepthMapIndicesKernel(uint32_t width, uint32_t height, uint32
         return;
       }
 
-      const size_t offset = (launch_index.x + launch_index.y * width) * 6;
+      const size_t offset = (launch_index.x + launch_index.y * (width - 1)) * 6;
       dst += offset;
 
       dst[0] = index;

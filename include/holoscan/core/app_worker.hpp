@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@
 #include <vector>
 
 #include "holoscan/core/common.hpp"
-#include "holoscan/core/graph.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 
 namespace holoscan {
 
@@ -71,7 +71,7 @@ class AppWorker {
 
   std::vector<FragmentNodeType>& target_fragments();
 
-  FragmentGraph& fragment_graph();
+  FragmentFlowGraph& fragment_graph();
 
   distributed::AppWorkerServer* server(std::unique_ptr<distributed::AppWorkerServer>&& server);
 
@@ -111,14 +111,14 @@ class AppWorker {
   friend class distributed::AppWorkerServer;  ///< Allow AppWorkerServer to access private members.
 
   /// Get target fragments from the options.
-  std::vector<FragmentNodeType> get_target_fragments(FragmentGraph& fragment_graph);
+  std::vector<FragmentNodeType> get_target_fragments(FragmentFlowGraph& fragment_graph);
 
   Application* app_ = nullptr;     ///< The application to run.
   CLIOptions* options_ = nullptr;  ///< The command line options.
 
   std::unique_ptr<distributed::AppWorkerServer> worker_server_;
 
-  FragmentGraph* fragment_graph_ = nullptr;
+  FragmentFlowGraph* fragment_graph_ = nullptr;
   std::vector<FragmentNodeType> target_fragments_;
 
   std::vector<FragmentNodeType> scheduled_fragments_;

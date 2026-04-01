@@ -28,8 +28,8 @@
 #include "holoscan/core/component_spec.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
 #include "holoscan/core/gxf/gxf_scheduler.hpp"
 #include "holoscan/core/resources/gxf/manual_clock.hpp"
 #include "holoscan/core/resources/gxf/realtime_clock.hpp"
@@ -131,6 +131,16 @@ TEST_F(SchedulerClassesWithGXFContext, TestEventBasedSchedulerWithArgs) {
       Arg{"max_duration_ms", 10000L},
       Arg{"stop_on_deadlock_timeout", 100LL},
       Arg{"pin_cores", std::vector<uint32_t>{0, 1, 2, 3}},
+      Arg{"enable_queue_stealing", false},
+      Arg{"steal_scan_limit", int64_t(4)},
+      Arg{"enable_worker_postcheck_fastpath", false},
+      Arg{"postcheck_fallback_notify_interval", int64_t(128)},
+      Arg{"postcheck_fallback_notify_min_workers", int64_t(4)},
+      Arg{"postcheck_fallback_notify_min_period_ns", int64_t(50000)},
+      Arg{"internal_event_shard_count", int64_t(2)},
+      Arg{"dispatcher_internal_pop_batch_size", int64_t(16)},
+      Arg{"wait_state_shard_count", int64_t(2)},
+      Arg{"log_perf_stats", true},
   };
   auto scheduler = F.make_scheduler<EventBasedScheduler>(name, arglist);
   EXPECT_TRUE(scheduler->description().find("name: " + name) != std::string::npos);

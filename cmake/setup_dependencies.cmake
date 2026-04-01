@@ -69,7 +69,7 @@ superbuild_depend(nvtx3)
 
 # populate spdlog, rapids_logger, RMM in transitive dependency order
 # to control fetch, patch, and export behavior
-superbuild_depend(spdlog_rapids)
+superbuild_depend(spdlog)
 superbuild_depend(rapids_logger)
 superbuild_depend(rmm)
 

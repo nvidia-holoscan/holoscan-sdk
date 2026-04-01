@@ -187,6 +187,7 @@ void init_subgraph(py::module_& m) {
       // Note: `set_dynamic_flows` is not added here, but as a Python method to dispatch to
       // `Fragment.set_dynamic_flows` which will handle the operator lifetime.
       .def("add_operator", &Subgraph::add_operator, "op"_a, doc::Subgraph::doc_add_operator)
+      .def("add_subgraph", &Subgraph::add_subgraph, "subgraph"_a, doc::Subgraph::doc_add_subgraph)
       .def("add_data_logger",
            &Subgraph::add_data_logger,
            "logger"_a,
@@ -302,6 +303,10 @@ void init_subgraph(py::module_& m) {
            "port_name"_a,
            doc::Subgraph::doc_get_exec_interface_operator_port)
       .def("operators", &Subgraph::operators, doc::Subgraph::doc_operators)
+      .def_property_readonly("nested_subgraphs",
+                             &Subgraph::nested_subgraphs,
+                             doc::Subgraph::doc_nested_subgraphs,
+                             py::return_value_policy::reference_internal)
       .def(
           "__repr__",
           [](const py::object& obj) {

@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -110,11 +110,25 @@ def main(on_gpu=False, count=10, shape=(64, 32), dtype=np.uint8, data_flow_track
             # set separate log files for each fragment
             for fragment_name, tracker in trackers.items():
                 tracker.enable_logging(fragment_name + "_logger.log")
+
+            # run the application
             app.run()
-            print(f"{type(trackers)=}, {trackers=}")
-            for fragment_name, tracker in trackers.items():
-                print(f"Fragment: {fragment_name}")
-                tracker.print()
+
+            # print data flow tracking results only for fragments that ran locally
+            opts = app.options
+            if opts.run_worker:
+                # This process ran as a worker; only show trackers for fragments we ran
+                run_all = len(opts.worker_targets) == 1 and opts.worker_targets[0] == "all"
+                local_fragment_names = set(opts.worker_targets)
+                for fragment_name, tracker in trackers.items():
+                    if run_all or fragment_name in local_fragment_names:
+                        print(f"Fragment: {fragment_name}")
+                        tracker.print()
+            elif not opts.run_driver:
+                # Local mode (no driver, no worker): all fragments ran on this process
+                for fragment_name, tracker in trackers.items():
+                    print(f"Fragment: {fragment_name}")
+                    tracker.print()
     else:
         app.run()
 

@@ -142,7 +142,7 @@ class DataFlowTracker {
    * @return true if limited tracking is enabled.
    * @return false if limited tracking is not enabled.
    */
-  bool limited_tracking() { return is_limited_tracking; }
+  bool limited_tracking() const { return is_limited_tracking; }
 
   /**
    * @brief Enable message logging at the end of the every execution of a leaf

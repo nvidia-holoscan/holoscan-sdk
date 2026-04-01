@@ -87,14 +87,16 @@ void init_downstream_message_affordable(py::module_& m) {
            "transmitter"_a = py::none(),
            "name"_a = std::string(condition_default_name_v<DownstreamMessageAffordableCondition>),
            doc::DownstreamMessageAffordableCondition::doc_DownstreamMessageAffordableCondition)
-      .def_property("min_size",
-                    py::overload_cast<>(&DownstreamMessageAffordableCondition::min_size),
-                    py::overload_cast<uint64_t>(&DownstreamMessageAffordableCondition::min_size),
-                    doc::DownstreamMessageAffordableCondition::doc_min_size)
-      .def_property("transmitter",
-                    py::overload_cast<>(&DownstreamMessageAffordableCondition::transmitter),
-                    py::overload_cast<std::shared_ptr<Transmitter>>(
-                        &DownstreamMessageAffordableCondition::transmitter),
-                    doc::DownstreamMessageAffordableCondition::doc_transmitter);
+      .def_property(
+          "min_size",
+          py::overload_cast<>(&DownstreamMessageAffordableCondition::min_size, py::const_),
+          py::overload_cast<uint64_t>(&DownstreamMessageAffordableCondition::min_size),
+          doc::DownstreamMessageAffordableCondition::doc_min_size)
+      .def_property(
+          "transmitter",
+          py::overload_cast<>(&DownstreamMessageAffordableCondition::transmitter, py::const_),
+          py::overload_cast<std::shared_ptr<Transmitter>>(
+              &DownstreamMessageAffordableCondition::transmitter),
+          doc::DownstreamMessageAffordableCondition::doc_transmitter);
 }
 }  // namespace holoscan

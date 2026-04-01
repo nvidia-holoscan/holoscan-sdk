@@ -146,14 +146,15 @@ void init_expiring_message_available(py::module_& m) {
            "name"_a = std::string(condition_default_name_v<ExpiringMessageAvailableCondition>),
            doc::ExpiringMessageAvailableCondition::doc_ExpiringMessageAvailableCondition)
       .def_property("receiver",
-                    py::overload_cast<>(&ExpiringMessageAvailableCondition::receiver),
+                    py::overload_cast<>(&ExpiringMessageAvailableCondition::receiver, py::const_),
                     py::overload_cast<std::shared_ptr<Receiver>>(
                         &ExpiringMessageAvailableCondition::receiver),
                     doc::ExpiringMessageAvailableCondition::doc_receiver)
-      .def_property("max_batch_size",
-                    py::overload_cast<>(&ExpiringMessageAvailableCondition::max_batch_size),
-                    py::overload_cast<int64_t>(&ExpiringMessageAvailableCondition::max_batch_size),
-                    doc::ExpiringMessageAvailableCondition::doc_max_batch_size)
+      .def_property(
+          "max_batch_size",
+          py::overload_cast<>(&ExpiringMessageAvailableCondition::max_batch_size, py::const_),
+          py::overload_cast<int64_t>(&ExpiringMessageAvailableCondition::max_batch_size),
+          doc::ExpiringMessageAvailableCondition::doc_max_batch_size)
       .def("max_delay",
            static_cast<void (ExpiringMessageAvailableCondition::*)(int64_t)>(
                &ExpiringMessageAvailableCondition::max_delay),

@@ -301,7 +301,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_output_device, output_size * sizeof(uint8_t)),
                                  "Failed to allocate reference output buffer");
 
-  // Run two iterations to verify GPU-resident execution
+  // Run two iterations to verify GPU-resident graph execution
   for (int iter = 0; iter < 2; ++iter) {
     // Generate new random input for each iteration
     for (size_t i = 0; i < input_size; ++i) {
@@ -343,7 +343,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
                                               cudaMemcpyDeviceToHost),
                                    "Failed to copy reference output to host");
 
-    // Trigger GPU-resident execution
+    // Trigger GPU-resident graph execution
     fragment.gpu_resident().data_ready();
 
     // Wait for result
@@ -462,7 +462,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_output_device, output_size * sizeof(uint16_t)),
                                  "Failed to allocate reference output buffer");
 
-  // Run two iterations to verify GPU-resident execution
+  // Run two iterations to verify GPU-resident graph execution
   for (int iter = 0; iter < 2; ++iter) {
     // Generate new random input for each iteration
     for (size_t i = 0; i < input_size; ++i) {
@@ -504,7 +504,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
                                               cudaMemcpyDeviceToHost),
                                    "Failed to copy reference output to host");
 
-    // Trigger GPU-resident execution
+    // Trigger GPU-resident graph execution
     fragment.gpu_resident().data_ready();
 
     // Wait for result
@@ -738,7 +738,7 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
       << "Failed to save reference output image";
   HOLOSCAN_LOG_INFO("Saved reference output image to {}/output_reference.png", output_dir);
 
-  // Trigger GPU-resident execution
+  // Trigger GPU-resident graph execution
   fragment.gpu_resident().data_ready();
 
   // Wait for result

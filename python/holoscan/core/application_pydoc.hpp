@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,7 +101,7 @@ options : holoscan.core.CLIOptions
 )doc")
 
 PYDOC(fragment_graph, R"doc(
-Get the computation graph (Graph node is a Fragment) associated with the application.
+Get the fragment connection flow graph associated with the application.
 )doc")
 
 PYDOC(add_operator, R"doc(

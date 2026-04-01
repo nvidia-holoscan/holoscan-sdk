@@ -675,6 +675,10 @@ def test_holoviz_input_types(type_str):
         "y16_u16v16_2plane_422_unorm",
         "y16_u16_v16_3plane_420_unorm",
         "y16_u16_v16_3plane_422_unorm",
+        "r16g16b16_unorm",
+        "r16g16b16_snorm",
+        "r16g16b16_sfloat",
+        "r32g32b32_sfloat",
     ],
 )
 def test_holoviz_image_formats(image_format_str):
@@ -1304,7 +1308,7 @@ class TestV4L2VideoCaptureOp:
             gain=100,
         )
         assert isinstance(op, OperatorBase)
-        assert len(op.args) == 10
+        assert len(op.args) == 9
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1320,7 +1324,7 @@ class TestV4L2VideoCaptureOp:
             name=name,
         )
         assert isinstance(op, OperatorBase)
-        assert len(op.args) == 8  # No hardcoded defaults for exposure and gain
+        assert len(op.args) == 7  # No allocator unless provided; no exposure/gain defaults
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 
@@ -1338,7 +1342,7 @@ class TestV4L2VideoCaptureOp:
             **app.kwargs("v4l2_video_capture"),
         )
         assert isinstance(op, OperatorBase)
-        assert len(op.args) == 10
+        assert len(op.args) == 9
         assert op.operator_type == Operator.OperatorType.NATIVE
         assert f"name: {name}" in repr(op)
 

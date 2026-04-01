@@ -103,7 +103,6 @@ The following examples illustrate the use of specific resource classes that can 
 ## Inference
 * [**Activation-map**](activation_map): A simple inference pipeline demonstrates selecting a subset of models.
 * [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications.
-* [**GPU-Resident-Inference**](gpu_resident_inference_example): a simple inference sample to demonstrate usage of GPUResidentInferenceOp.
 
 ### Working with third-party frameworks
 
@@ -128,3 +127,10 @@ The following examples demonstrate how sensors can be used as input streams to y
 * [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
 * [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications
 * [**Wrap Holoscan as GXF Extension**](wrap_holoscan_as_gxf_extension): wrap Holoscan native operators and resources as GXF codelets and components within a single GXF extension for use in GXF applications
+
+## GPU-Resident Execution
+
+* [**GPU-Resident**](gpu_resident_example): basic GPU-resident operator pipeline
+* [**GPU-Resident Input**](gpu_resident_input): GPU-resident operators with a data-ready handler for external sensor inputs
+* [**GPU-Resident Multi-IO**](gpu_resident_multi_io): GPU-resident pipeline with multiple input/output ports per operator
+* [**GPU-Resident-Inference**](gpu_resident_inference_example): a simple inference sample to demonstrate usage of GPUResidentInferenceOp.

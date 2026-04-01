@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -94,6 +94,10 @@ _holoviz_str_to_image_format = {
     "y16_u16v16_2plane_422_unorm": _HolovizOp.ImageFormat.Y16_U16V16_2PLANE_422_UNORM,
     "y16_u16_v16_3plane_420_unorm": _HolovizOp.ImageFormat.Y16_U16_V16_3PLANE_420_UNORM,
     "y16_u16_v16_3plane_422_unorm": _HolovizOp.ImageFormat.Y16_U16_V16_3PLANE_422_UNORM,
+    "r16g16b16_unorm": _HolovizOp.ImageFormat.R16G16B16_UNORM,
+    "r16g16b16_snorm": _HolovizOp.ImageFormat.R16G16B16_SNORM,
+    "r16g16b16_sfloat": _HolovizOp.ImageFormat.R16G16B16_SFLOAT,
+    "r32g32b32_sfloat": _HolovizOp.ImageFormat.R32G32B32_SFLOAT,
 }
 
 _holoviz_str_to_depth_map_render_mode = {

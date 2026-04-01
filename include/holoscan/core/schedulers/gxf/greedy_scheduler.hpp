@@ -59,12 +59,14 @@ class GreedyScheduler : public gxf::GXFScheduler {
   void initialize() override;
 
   // Parameter getters used for printing scheduler description (e.g. for Python __repr__)
-  bool stop_on_deadlock() { return stop_on_deadlock_; }
-  double check_recession_period_ms() { return check_recession_period_ms_; }
-  int64_t stop_on_deadlock_timeout() { return stop_on_deadlock_timeout_; }
-  int64_t network_connection_timeout() { return network_connection_timeout_; }
+  bool stop_on_deadlock() const { return stop_on_deadlock_; }
+  double check_recession_period_ms() const { return check_recession_period_ms_; }
+  int64_t stop_on_deadlock_timeout() const { return stop_on_deadlock_timeout_; }
+  int64_t network_connection_timeout() const { return network_connection_timeout_; }
   // could return std::optional<int64_t>, but just using int64_t simplifies the Python bindings
-  int64_t max_duration_ms() { return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1; }
+  int64_t max_duration_ms() const {
+    return max_duration_ms_.has_value() ? max_duration_ms_.get() : -1;
+  }
 
   nvidia::gxf::GreedyScheduler* get() const;
 

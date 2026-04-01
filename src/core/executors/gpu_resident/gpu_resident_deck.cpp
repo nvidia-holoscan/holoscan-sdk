@@ -95,7 +95,7 @@ std::future<void> GPUResidentDeck::launch_cuda_graph(cudaGraphExec_t graph_exec)
       std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms_));
       tear_down();
     } else {
-      HOLOSCAN_LOG_DEBUG("GPU-resident execution stream is being synchronized.");
+      HOLOSCAN_LOG_DEBUG("GPU-resident graph execution stream is being synchronized.");
       HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(execution_stream_),
                                      "Failed to synchronize execution stream");
     }

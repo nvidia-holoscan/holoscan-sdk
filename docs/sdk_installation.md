@@ -94,15 +94,15 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.0.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -235,21 +235,23 @@ See [PyPI][pypi] for details and troubleshooting.
 Install via `conda`:
 
 ```bash
-conda install -c rapidsai -c conda-forge holoscan=4.0.0 rmm cuda-version=12.6
+conda install holoscan libholoscan-dev rmm ucxx cuda-version=12.6 -c rapidsai -c conda-forge
 ```
 
 :::{note}
 **CUDA 12.x only** - CUDA 13 support not yet available.
 :::
 
-See [conda-forge][conda-forge] for details and troubleshooting.
+See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-libholoscan-dev] (C++) on [conda-forge][conda-forge] for details and troubleshooting.
 ````
 
 `````
 
 [container]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan
 [pypi]: https://pypi.org/project/holoscan
-[conda-forge]: https://anaconda.org/conda-forge/holoscan
+[conda-forge]: https://conda-forge.org/
+[conda-forge-holoscan]: https://anaconda.org/conda-forge/holoscan
+[conda-forge-libholoscan-dev]: https://anaconda.org/conda-forge/libholoscan-dev
 
 ### Not sure what to choose?
 
@@ -258,7 +260,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
   - standard inconvenience that exist when using Docker, such as more complex run instructions for proper configuration.
 - If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are on Ubuntu 22.04 or Ubuntu 24.04.
 - If you are not interested in the C++ API but just need to work in Python, you can use the [**Holoscan python wheels**][pypi] on PyPI. While they are the easiest solution to install the SDK, it might require the most work to setup your environment with extra dependencies based on your needs. Finally, they are only formally supported on Ubuntu 22.04 and Ubuntu 24.04, though should support other linux distributions with glibc 2.35 or above.
-- If you are developing in Python, the **Holoscan Conda package** should provide capabilities needed to use the Holoscan SDK.
+- If you are developing with C++ and/or Python languages and targeting CUDA 12, the **Holoscan Conda packages** should provide capabilities needed to use the Holoscan SDK.
 
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
@@ -299,7 +301,7 @@ See [conda-forge][conda-forge] for details and troubleshooting.
 [^8]: To install LibTorch on baremetal, either build it from source, or point to a PyTorch wheel installation. See instructions in the [Inference](./inference.md#libtorch-installation) section.
 [^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
 [^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).
-[^11]: Tested with DOCA 3.0.0.
+[^11]: Tested with DOCA 3.3.0.
 [^12]: Tested with Holoscan Sensor Bridge [`2.5.0-PB6`](https://github.com/nvidia-holoscan/holoscan-sensor-bridge/tree/2.5.0-PB6) tag
 
 ### Need more control over the SDK?

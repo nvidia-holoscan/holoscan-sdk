@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,8 @@
 #pragma once
 
 #include <holoscan/holoscan.hpp>
+#include <gxf/multimedia/video.hpp>
+#include <gxf/std/tensor.hpp>
 
 namespace holoscan::ops {
 
@@ -46,7 +48,9 @@ class V4L2CameraPassthroughOp : public Operator {
       HOLOSCAN_LOG_ERROR("Failed to receive message - {}", maybe_entity.error().what());
       return;
     }
+
     auto entity = maybe_entity.value();
+
     op_output.emit(entity, "output");
   }
 };

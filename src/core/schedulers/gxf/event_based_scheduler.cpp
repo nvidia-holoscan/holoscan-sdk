@@ -74,6 +74,64 @@ void EventBasedScheduler::setup(ComponentSpec& spec) {
              "set of specified cores. If not specified, the worker threads will not be pinned to "
              "any cores.",
              ParameterFlag::kOptional);
+  spec.param(enable_queue_stealing_,
+             "enable_queue_stealing",
+             "Enable Queue Stealing",
+             "If true, default worker threads attempt to steal ready jobs from other default "
+             "worker queues before blocking on their own queue.",
+             false);
+  spec.param(steal_scan_limit_,
+             "steal_scan_limit",
+             "Steal Scan Limit",
+             "Maximum number of victim queues scanned per steal attempt (0 means scan all "
+             "queues).",
+             int64_t(0));
+  spec.param(enable_worker_postcheck_fastpath_,
+             "enable_worker_postcheck_fastpath",
+             "Enable Worker Postcheck Fast Path",
+             "If true, workers perform a fresh checkEntity() after executeEntity() and directly "
+             "update READY/WAIT_TIME conditions without routing that entity through dispatcher.",
+             false);
+  spec.param(postcheck_fallback_notify_interval_,
+             "postcheck_fallback_notify_interval",
+             "Postcheck Fallback Notify Interval",
+             "When worker postcheck returns a non-ready state, send a periodic dispatcher "
+             "wake-up every N fallbacks per worker. Set to 0 to only notify when no workers are "
+             "running.",
+             int64_t(256));
+  spec.param(postcheck_fallback_notify_min_workers_,
+             "postcheck_fallback_notify_min_workers",
+             "Postcheck Fallback Notify Min Workers",
+             "Periodic fallback notify is enabled only when worker_thread_number is at least "
+             "this value.",
+             int64_t(8));
+  spec.param(postcheck_fallback_notify_min_period_ns_,
+             "postcheck_fallback_notify_min_period_ns",
+             "Postcheck Fallback Notify Min Period [ns]",
+             "Minimum global time spacing between periodic fallback dispatcher wake-ups.",
+             int64_t(100000));
+  spec.param(internal_event_shard_count_,
+             "internal_event_shard_count",
+             "Internal Event Shard Count",
+             "Number of internal notification shards used by notifyDispatcher (0 = auto = "
+             "worker_thread_number).",
+             int64_t(0));
+  spec.param(dispatcher_internal_pop_batch_size_,
+             "dispatcher_internal_pop_batch_size",
+             "Dispatcher Internal Pop Batch Size",
+             "Maximum number of internal notifications drained from one shard per dispatcher pop "
+             "step.",
+             int64_t(32));
+  spec.param(wait_state_shard_count_,
+             "wait_state_shard_count",
+             "Wait State Shard Count",
+             "Number of shards used for WAIT_EVENT and WAIT tracking lists.",
+             int64_t(1));
+  spec.param(log_perf_stats_,
+             "log_perf_stats",
+             "Log Perf Stats",
+             "If true, logs scheduler instrumentation counters during deinitialize().",
+             false);
 }
 
 nvidia::gxf::EventBasedScheduler* EventBasedScheduler::get() const {

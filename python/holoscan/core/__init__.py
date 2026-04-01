@@ -49,7 +49,7 @@ create a custom application.
     holoscan.core.Fragment
     holoscan.core.FlowInfo
     holoscan.core.Fragment
-    holoscan.core.Graph
+    holoscan.core.FlowGraph
     holoscan.core.FragmentService
     holoscan.core.InputContext
     holoscan.core.InterfacePort
@@ -123,7 +123,7 @@ except (ImportError, OSError, ValueError):
     pass
 
 # Import statements for the C++ API classes
-from ..graphs._graphs import FragmentGraph, OperatorGraph
+from ..flow_graphs._flow_graphs import FragmentFlowGraph, OperatorFlowGraph
 from ._core import Application as _Application
 from ._core import (
     Arg,
@@ -188,7 +188,8 @@ from ._core import register_types as _register_types
 # Get a logger instance for this module
 logger = logging.getLogger(__name__)
 
-Graph = OperatorGraph  # define alias for backward compatibility
+FlowGraph = OperatorFlowGraph
+
 
 __all__ = [
     "Application",
@@ -221,9 +222,9 @@ __all__ = [
     "Executor",
     "FlowInfo",
     "Fragment",
-    "FragmentGraph",
+    "FragmentFlowGraph",
     "FragmentService",
-    "Graph",
+    "FlowGraph",
     "InputContext",
     "InterfacePort",
     "InterfacePortMapping",
@@ -236,9 +237,9 @@ __all__ = [
     "NetworkContext",
     "Operator",
     "OperatorBase",
+    "OperatorFlowGraph",
     "OperatorSpec",
     "OperatorStatus",
-    "OperatorGraph",
     "OutputContext",
     "ParameterFlag",
     "Resource",
@@ -691,18 +692,20 @@ class Subgraph(_Subgraph):
         return self.fragment.register_service(service, service_id)
 
     def add_subgraph(self, subgraph):
-        """Add a subgraph to the fragment.
+        """Add a pre-constructed subgraph as a nested subgraph, taking ownership.
 
-        This method ensures the subgraph is composed and its operators are added to the fragment.
-        Use this method when a nested subgraph has no interface ports and doesn't need to be
-        connected to other operators or subgraphs via add_flow.
+        This stores the subgraph for lifetime management and interface port resolution.
+        The subgraph's name must already be qualified with this parent subgraph's name
+        prefix (which happens automatically when the subgraph is constructed with this
+        subgraph as the parent argument).
 
         Parameters
         ----------
         subgraph : Subgraph
             The subgraph to add.
         """
-        return self.fragment.add_subgraph(subgraph)
+        _Subgraph.add_subgraph(self, subgraph)
+        return subgraph
 
 
 # copy docstrings defined in core_pydoc.hpp

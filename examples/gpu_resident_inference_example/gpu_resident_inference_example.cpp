@@ -200,7 +200,7 @@ bool wait_for_result(const std::shared_ptr<holoscan::Fragment>& gr_fragment, int
   return false;
 }
 
-// Helper function to run a single iteration of the GPU resident execution
+// Helper function to run a single iteration of the GPU resident graph execution
 bool run_iteration(holoscan::GPUResidentOperator* source_op,
                    holoscan::GPUResidentOperator* destination_op,
                    const std::shared_ptr<holoscan::Fragment>& gr_fragment, int iteration) {
@@ -233,7 +233,7 @@ bool run_iteration(holoscan::GPUResidentOperator* source_op,
 
   // synchronize the default stream
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(0), "Failed to synchronize default stream");
-  // Make data ready for GPU resident execution
+  // Make data ready for GPU resident graph execution
   gr_fragment->gpu_resident().data_ready();
 
   // Wait for result to be ready
@@ -345,7 +345,7 @@ int main(int argc, char** argv) {
     }
 
     bool all_iterations_succeeded = true;
-    // Run 10 iterations to test the GPU resident execution
+    // Run 10 iterations to test the GPU resident graph execution
     for (int iteration = 0; iteration < 10; ++iteration) {
       if (!run_iteration(source_op, destination_op, gr_fragment, iteration)) {
         all_iterations_succeeded = false;

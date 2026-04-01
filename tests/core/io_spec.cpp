@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +30,8 @@
 #include "holoscan/core/condition.hpp"
 #include "holoscan/core/config.hpp"
 #include "holoscan/core/executor.hpp"
+#include "holoscan/core/flow_graphs/flow_graph.hpp"
 #include "holoscan/core/fragment.hpp"
-#include "holoscan/core/graph.hpp"
 #include "holoscan/core/gxf/entity.hpp"
 #include "holoscan/core/io_spec.hpp"
 #include "holoscan/core/operator_spec.hpp"
@@ -105,13 +105,12 @@ TEST(IOSpec, TestIOSpecConditionCount) {
   IOSpec spec =
       IOSpec(&op_spec, std::string("a"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
 
-  // kCount with no params
-  spec.condition(ConditionType::kCount);
-
-  // kCount with one param
-  spec.condition(ConditionType::kCount, Arg("a", static_cast<int64_t>(5)));
+  // kCount is unsupported for IOSpec and should fail fast.
+  EXPECT_THROW(spec.condition(ConditionType::kCount), std::runtime_error);
+  EXPECT_THROW(spec.condition(ConditionType::kCount, Arg("a", static_cast<int64_t>(5))),
+               std::runtime_error);
   auto condition_pairs = spec.conditions();
-  // count condition will log an error and not actually be added to conditions
+  // Unsupported condition types should not be added.
   EXPECT_EQ(condition_pairs.size(), 0);
 }
 
@@ -120,13 +119,12 @@ TEST(IOSpec, TestIOSpecConditionBoolean) {
   IOSpec spec =
       IOSpec(&op_spec, std::string("a"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
 
-  // kBoolean with no params
-  spec.condition(ConditionType::kBoolean);
-
-  // kBoolean with one param
-  spec.condition(ConditionType::kBoolean, Arg("a", static_cast<bool>(true)));
+  // kBoolean is unsupported for IOSpec and should fail fast.
+  EXPECT_THROW(spec.condition(ConditionType::kBoolean), std::runtime_error);
+  EXPECT_THROW(spec.condition(ConditionType::kBoolean, Arg("a", static_cast<bool>(true))),
+               std::runtime_error);
   auto condition_pairs = spec.conditions();
-  // boolean condition will log an error and not actually be added to conditions
+  // Unsupported condition types should not be added.
   EXPECT_EQ(condition_pairs.size(), 0);
 }
 

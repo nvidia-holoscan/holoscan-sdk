@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,7 @@ class PyExecutor : public Executor {
   using Executor::Executor;
 
   /* Trampolines (need one for each virtual function) */
-  void run(OperatorGraph& graph) override {
+  void run(OperatorFlowGraph& graph) override {
     /* <Return type>, <Parent Class>, <Name of C++ function>, <Argument(s)> */
     PYBIND11_OVERRIDE(void, Executor, run, graph);
   }

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,9 +18,15 @@
 #ifndef MODULES_HOLOVIZ_SRC_VULKAN_FORMAT_UTIL_HPP
 #define MODULES_HOLOVIZ_SRC_VULKAN_FORMAT_UTIL_HPP
 
+#include <cuda_fp16.h>
+#include <fmt/format.h>
+
+#include <cstring>
 #include <optional>
+#include <type_traits>
 #include <vector>
 
+#include <magic_enum.hpp>
 #include <vulkan/vulkan.hpp>
 
 #include "../holoviz/color_space.hpp"
@@ -85,6 +91,62 @@ std::vector<ImageFormat> get_supported_formats(vk::PhysicalDevice physical_devic
 
 /// @return list of all available formats
 const std::vector<ImageFormat>& get_formats();
+
+/**
+ * Get the alpha value for a given format when converting RGB to RGBA.
+ *
+ * This function returns the appropriate alpha channel value (representing full opacity)
+ * for RGB formats when converting them to RGBA formats.
+ *
+ * @tparam T The type of the alpha value (uint8_t, uint16_t, or uint32_t)
+ * @param format The image format
+ * @return The alpha value appropriate for the format
+ * @throws std::runtime_error if the format is not supported for the given type
+ */
+template <typename T>
+T GetAlphaValueForFormat(ImageFormat format) {
+  if constexpr (std::is_same_v<T, uint8_t>) {
+    switch (format) {
+      case ImageFormat::R8G8B8_UNORM:
+      case ImageFormat::R8G8B8_SRGB:
+        return 0xFF;
+      case ImageFormat::R8G8B8_SNORM:
+        return 0x7F;
+      default:
+        throw std::runtime_error(
+            fmt::format("Unhandled format {}.", magic_enum::enum_name(format)));
+    }
+  } else if constexpr (std::is_same_v<T, uint16_t>) {
+    switch (format) {
+      case ImageFormat::R16G16B16_UNORM:
+        return 0xFFFF;
+      case ImageFormat::R16G16B16_SNORM:
+        return 0x7FFF;
+      case ImageFormat::R16G16B16_SFLOAT:
+        return __half_as_ushort(__float2half(1.0f));
+      default:
+        throw std::runtime_error(
+            fmt::format("Unhandled format {}.", magic_enum::enum_name(format)));
+    }
+  } else if constexpr (std::is_same_v<T, uint32_t>) {
+    switch (format) {
+      case ImageFormat::R32G32B32_SFLOAT: {
+        float one = 1.0f;
+        uint32_t alpha;
+        static_assert(sizeof(alpha) == sizeof(one), "alpha and one have different sizes");
+        std::memcpy(&alpha, &one, sizeof(alpha));
+        return alpha;
+      }
+      default:
+        throw std::runtime_error(
+            fmt::format("Unhandled format {}.", magic_enum::enum_name(format)));
+    }
+  } else {
+    static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
+                      std::is_same_v<T, uint32_t>,
+                  "GetAlphaValueForFormat only supports uint8_t, uint16_t, or uint32_t");
+  }
+}
 
 }  // namespace holoscan::viz
 

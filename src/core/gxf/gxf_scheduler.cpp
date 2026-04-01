@@ -16,6 +16,7 @@
  */
 
 #include <gxf/core/gxf.h>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -32,12 +33,18 @@ nvidia::gxf::Clock* GXFScheduler::gxf_clock() {
   if (this->clock()) {
     return static_cast<nvidia::gxf::Clock*>(this->clock_gxf_cptr());
   } else {
-    HOLOSCAN_LOG_ERROR("GXFScheduler clock is not set");
-    return nullptr;
+    auto err_msg = std::string("GXFScheduler clock is not set");
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
   }
 }
 
 void GXFScheduler::set_parameters() {
+  if (!spec_) {
+    auto err_msg = fmt::format("No component spec for GXFScheduler '{}'", name_);
+    HOLOSCAN_LOG_ERROR(err_msg);
+    throw std::runtime_error(err_msg);
+  }
   update_params_from_args();
 
   // Set Handler parameters

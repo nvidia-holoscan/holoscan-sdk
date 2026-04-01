@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -250,6 +250,27 @@ enum class ImageFormat {
                                  ///  dimension of the V and U plane is halved relative to the image
                                  ///  dimensions. This format only supports images with a width that
                                  ///  is a multiple of two.
+
+  R16G16B16_UNORM,   ///< specifies a three-component,
+                     ///  48-bit unsigned normalized format that has
+                     ///  a 16-bit R component in bytes 0..1,
+                     ///  a 16-bit G component in bytes 2..3,
+                     ///  and a 16-bit B component in bytes 4..5
+  R16G16B16_SNORM,   ///< specifies a three-component,
+                     ///  48-bit signed normalized format that has
+                     ///  a 16-bit R component in bytes 0..1,
+                     ///  a 16-bit G component in bytes 2..3,
+                     ///  and a 16-bit B component in bytes 4..5
+  R16G16B16_SFLOAT,  ///< specifies a three-component,
+                     ///  48-bit signed floating-point format that has
+                     ///  a 16-bit R component in bytes 0..1,
+                     ///  a 16-bit G component in bytes 2..3,
+                     ///  and a 16-bit B component in bytes 4..5
+  R32G32B32_SFLOAT,  ///< specifies a three-component,
+                     ///  96-bit signed floating-point format that has
+                     ///  a 32-bit R component in bytes 0..3,
+                     ///  a 32-bit G component in bytes 4..7,
+                     ///  and a 32-bit B component in bytes 8..11
 };
 
 /**

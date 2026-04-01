@@ -152,8 +152,8 @@ Supported formats for `nvidia::gxf::VideoBuffer`.
 | GXF_VIDEO_FORMAT_GRAY16 | &check; | 16 bit GRAY scale single plane |
 | GXF_VIDEO_FORMAT_GRAY32 | - | 32 bit GRAY scale single plane |
 | GXF_VIDEO_FORMAT_GRAY32F | &check; | float 32 bit GRAY scale single plane |
-| GXF_VIDEO_FORMAT_RGB16 | - | RGB-16-16-16 single plane |
-| GXF_VIDEO_FORMAT_BGR16 | - | BGR-16-16-16 single plane |
+| GXF_VIDEO_FORMAT_RGB16 | &check; | RGB-16-16-16 single plane |
+| GXF_VIDEO_FORMAT_BGR16 | &check; | BGR-16-16-16 single plane |
 | GXF_VIDEO_FORMAT_RGB32 | - | RGB-32-32-32 single plane |
 | GXF_VIDEO_FORMAT_BGR32 | - | BGR-32-32-32 single plane |
 | GXF_VIDEO_FORMAT_R16_G16_B16 | - | RGB - signed 16 bit multiplanar |
@@ -188,6 +188,9 @@ Image format detection for `nvidia::gxf::Tensor`. Tensors don't have image forma
 | kFloat32 | 1 | float 32 bit GRAY scale single plane | &check; |
 | kUnsigned8 | 3 | RGB-8-8-8 single plane | - |
 | kInt8 | 3 | signed RGB-8-8-8 single plane | - |
+| kUnsigned16 | 3 | RGB-16-16-16 single plane | - |
+| kInt16 | 3 | signed RGB-16-16-16 single plane | - |
+| kFloat32 | 3 | RGB float 32 single plane | - |
 | kUnsigned8 | 4 | RGBA-8-8-8-8 single plane | - |
 | kInt8 | 4 | signed RGBA-8-8-8-8 single plane | - |
 | kUnsigned16 | 4 | RGBA-16-16-16-16 single plane | - |

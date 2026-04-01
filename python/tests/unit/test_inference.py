@@ -30,6 +30,7 @@ from holoscan.resources import (
     CudaStreamPool,
     UnboundedAllocator,
 )
+from tests.conftest import green_context_available
 
 from ..utils import requires_torch_cuda
 
@@ -176,6 +177,8 @@ class InferenceOpTestApp(Application):
 @requires_torch_cuda
 @pytest.mark.parametrize("green_context", [False, True])
 def test_inference_torch(green_context: bool):
+    if green_context and not green_context_available():
+        pytest.skip("Green Context not available in this environment.")
     app = InferenceOpTestApp(green_context)
     app.run()
 
