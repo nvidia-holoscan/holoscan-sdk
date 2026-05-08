@@ -18,8 +18,8 @@
 #include <cuda_runtime.h>
 #include <stdexcept>
 
-#include "holoscan/utils/cuda/buffer.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/utils/cuda/buffer.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan {
 namespace utils {

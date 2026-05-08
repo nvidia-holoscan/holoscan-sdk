@@ -1,31 +1,15 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index ea113e1..7a6223e 100644
+index ea113e1..4eefb49 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -111,17 +111,26 @@ install(
- install(
-     DIRECTORY include/
-     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-+    COMPONENT dlpack
- )
- 
- install(
-     FILES "${project_config}" "${version_config}"
-     DESTINATION "${config_install_dir}"
-+    COMPONENT dlpack
- )
- 
- install(
-     EXPORT "${TARGETS_EXPORT_NAME}"
+@@ -123,5 +123,10 @@ install(
      NAMESPACE "${namespace}"
      DESTINATION "${config_install_dir}"
-+    COMPONENT dlpack
-+)
-+
+ )
 +export(
 +    TARGETS dlpack
 +    NAMESPACE "${namespace}"
 +    FILE "${TARGETS_EXPORT_NAME}.cmake"
- )
++)
  
  # }

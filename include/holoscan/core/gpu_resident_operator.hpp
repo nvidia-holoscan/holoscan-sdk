@@ -24,8 +24,8 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/parameter.hpp"
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/parameter.hpp>
 
 namespace holoscan {
 

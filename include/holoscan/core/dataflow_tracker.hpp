@@ -32,8 +32,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <holoscan/core/flow_tracking_annotation.hpp>
 #include "./forward_def.hpp"
-#include "holoscan/core/flow_tracking_annotation.hpp"
 
 namespace holoscan {
 

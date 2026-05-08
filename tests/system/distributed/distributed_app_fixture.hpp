@@ -29,7 +29,7 @@
 
 #include <holoscan/holoscan.hpp>
 
-#include "holoscan/core/system/network_utils.hpp"
+#include <holoscan/core/system/network_utils.hpp>
 
 #include "../env_wrapper.hpp"
 

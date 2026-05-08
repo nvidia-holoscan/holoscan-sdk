@@ -23,7 +23,6 @@ rapids_cpm_find(nvtx3 ${nvtx_VERSION}
         GITHUB_REPOSITORY NVIDIA/NVTX
         GIT_TAG v3.3.0-c-cpp
         GIT_SHALLOW TRUE
-        PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/nvtx3.patch
         EXCLUDE_FROM_ALL
 
     OPTIONS

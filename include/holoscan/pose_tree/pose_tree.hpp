@@ -25,15 +25,15 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/resources/gxf/first_fit_allocator.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/pose_tree/hash_map.hpp>
+#include <holoscan/pose_tree/math/pose2.hpp>
+#include <holoscan/pose_tree/math/pose3.hpp>
+#include <holoscan/pose_tree/pose_tree_history.hpp>
 #include "common/fixed_vector.hpp"
 #include "common/unique_index_map.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/core/resources/gxf/first_fit_allocator.hpp"
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/pose_tree/hash_map.hpp"
-#include "holoscan/pose_tree/math/pose2.hpp"
-#include "holoscan/pose_tree/math/pose3.hpp"
-#include "holoscan/pose_tree/pose_tree_history.hpp"
 
 // NOLINTBEGIN(cert-dcl58-cpp) - std::hash specialization for std::pair is technically UB
 // per the standard, but works on all major compilers. A proper fix would require a custom

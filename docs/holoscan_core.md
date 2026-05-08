@@ -1,6 +1,6 @@
 (holoscan-core-concepts)=
-# Holoscan Core Concepts
 
+# Holoscan Core Concepts
 
 An `Application` is composed of `Fragments`, each of which runs a graph of `Operators`. The implementation of that graph is sometimes referred to as a pipeline, or workflow, which can be visualized below:
 
@@ -34,6 +34,7 @@ The core concepts of the Holoscan API are:
 - **{ref}`Executor <exhale_class_classholoscan_1_1Executor>`**: An executor that manages the execution of a fragment on a physical node. The framework provides executor implementations such as {cpp:class}`~holoscan::gxf::GXFExecutor` and {cpp:class}`~holoscan::GPUResidentExecutor` to execute an application.
 
 (holoscan-core-concepts-gxf)=
+
 ## GXF Executor-specific Concepts
 
 The following concepts are specific to applications executed by {cpp:class}`~holoscan::gxf::GXFExecutor`:

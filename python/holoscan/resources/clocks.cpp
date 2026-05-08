@@ -27,18 +27,18 @@
 #include <string>
 #include <variant>
 
+#include <holoscan/core/clock.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/resources/gxf/clock.hpp>
+#include <holoscan/core/resources/gxf/manual_clock.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
+#include <holoscan/core/resources/gxf/synthetic_clock.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "../core/component_util.hpp"
 #include "./clocks_pydoc.hpp"
-#include "holoscan/core/clock.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/resources/gxf/clock.hpp"
-#include "holoscan/core/resources/gxf/manual_clock.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
-#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
-#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -49,7 +49,7 @@ constexpr const char* kAnalyticsOutputFileName = "data.csv";
  * Example:
  *
  * ```cpp
- * #include "holoscan/core/analytics/csv_data_exporter.hpp"
+ * #include <holoscan/core/analytics/csv_data_exporter.hpp>
  *
  * void export_data() {
  * const std::string app_name = "sample_app";

@@ -1,4 +1,5 @@
 (holoscan-flow-tracking)=
+
 # Data Flow Tracking
 
 The Holoscan SDK provides the Data Flow Tracking APIs as a mechanism to profile your application and analyze the fine-grained timing properties and data flow between operators in the graph of a fragment.
@@ -11,6 +12,7 @@ Currently, data flow tracking is only supported between the root operators and l
 When data flow tracking is enabled, every message is tracked from the root operators to the leaf operators and in cycles. Then, the maximum (worst-case), average, and minimum end-to-end latencies of one or more paths can be retrieved using the Data Flow Tracking APIs.
 
 :::{tip}
+
 - The end-to-end latency between a root operator and a leaf operator is the time taken between the start of a root operator and the end of a leaf operator. Data Flow Tracking enables the support to track the end-to-end latency of every message being passed between a root operator and a leaf operator.
 - The reported end-to-end latency for a cyclic path is the time taken between the start of the first operator of a cycle and the time when a message is again received by the first operator of the cycle.
 :::
@@ -47,6 +49,7 @@ The default connection configuration in Holoscan includes:
 
 :::{note}
 If an application uses custom configurations such as:
+
 - Queue sizes greater than 1
 - `kPop` or `kReject` queue policy
 - Custom scheduling conditions (e.g., `ConditionType::kNone`)
@@ -86,10 +89,10 @@ with Tracker(app) as tracker:
 `````
 
 (holoscan-flow-tracking-example)=
+
 ## Enabling Data Flow Tracking for Distributed Applications
 
 For distributed (multi-fragment) applications, a separate tracker object is used for each Fragment so the API is slightly different than in the single fragment case.
-
 
 `````{tab-set}
 ````{tab-item} C++
@@ -228,11 +231,11 @@ This enables more programmatic observability within the operators. This is also 
 
 void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) override {
   auto value = op_input.receive<ValueData>("in").value();
-  
+
   if(fragment()->data_flow_tracker()) {
     // Get the message label for the input port
     auto message_label = get_data_flow_tracking_label("in");
-    
+
     // Access message label information
     HOLOSCAN_LOG_INFO("Message has {} path(s)", message_label.num_paths());
     auto path_names = message_label.get_all_path_names();
@@ -240,7 +243,7 @@ void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext&
       HOLOSCAN_LOG_INFO("  Path {}: {}", i, path_names[i]);
     }
   }
-  
+
   // Process data and emit
   op_output.emit(processed_value, "out");
 }
@@ -257,13 +260,13 @@ def compute(self, op_input, op_output, context):
     if self.fragment.data_flow_tracker():
       # Get the message label for the input port
       message_label = self.get_data_flow_tracking_label("in")
-      
+
       # Access message label information
       print(f"Message has {message_label.num_paths()} path(s)")
       path_names = message_label.get_all_path_names()
       for i, path_name in enumerate(path_names):
           print(f"  Path {i}: {path_name}")
-    
+
     # Process data and emit
     op_output.emit(processed_value, "out")
 ```
@@ -271,6 +274,7 @@ def compute(self, op_input, op_output, context):
 `````
 
 :::{note}
+
 - This method throws a `std::runtime_error` (C++)/ `RuntimeError` (Python) if:
   - The operator backend is not GXF-compatible
   - The fragment is not set
@@ -317,7 +321,9 @@ Tracker(num_start_messages_to_skip=num_start_messages_to_skip,
 ```
 ````
 `````
+
 The default values of these parameters of `track()` are as follows:
+
 - `kDefaultNumStartMessagesToSkip`: 10
 - `kDefaultNumLastMessagesToDiscard`: 10
 - `kDefaultLatencyThreshold`: 0 (do not filter out any latency values)
@@ -346,7 +352,6 @@ This distinction helps understand the behavior of an application when asynchrono
 :::{note}
 The `_old` suffix is for tracking purposes. Both `<operator_name>` and `<operator_name>_old` refer to the same operator instance in your application graph.
 :::
-
 
 ## Logging
 
@@ -422,7 +427,7 @@ with Tracker(app) as tracker:
 
 ### Logging for Distributed Applications
 
-For distributed applications, the logging can be enabled by calling the `enable_logging` method in {cpp:func}`C++ <holoscan::DataFlowTracker::enable_logging>` for individual fragments. There will be separate log files for each fragment. 
+For distributed applications, the logging can be enabled by calling the `enable_logging` method in {cpp:func}`C++ <holoscan::DataFlowTracker::enable_logging>` for individual fragments. There will be separate log files for each fragment.
 Logging for distributed applications follows a progressive pattern where every connected fragment contains timing information of its predecessor fragments. The final or leaf fragments (fragments with no successors) will log the timings of the messages across the full distributed application. The logfiles can be analyzed using [Holoscan Flow Benchmarking tools](https://nvidia-holoscan.github.io/holohub/benchmarks/holoscan_flow_benchmarking/). For application-wide analysis spanning multiple fragments, the logfiles of the leaf fragments can be used with the Holoscan Flow Benchmarking tools.
 
 `````{tab-set}
@@ -481,8 +486,8 @@ different PTP configurations.
 Check if your machine and network interface card supports PTP hardware timestamping:
 
 ```bash
-$ sudo apt-get update && sudo apt-get install ethtool
-$ ethtool -T <interface_name>
+sudo apt-get update && sudo apt-get install ethtool
+ethtool -T <interface_name>
 ```
 
 If the output of the above command is like the one provided below, it means PTP hardware
@@ -492,28 +497,28 @@ timestamping may be supported:
 $ ethtool -T eno1
 Time stamping parameters for eno1:
 Capabilities:
-	hardware-transmit     (SOF_TIMESTAMPING_TX_HARDWARE)
-	software-transmit     (SOF_TIMESTAMPING_TX_SOFTWARE)
-	hardware-receive      (SOF_TIMESTAMPING_RX_HARDWARE)
-	software-receive      (SOF_TIMESTAMPING_RX_SOFTWARE)
-	software-system-clock (SOF_TIMESTAMPING_SOFTWARE)
-	hardware-raw-clock    (SOF_TIMESTAMPING_RAW_HARDWARE)
+ hardware-transmit     (SOF_TIMESTAMPING_TX_HARDWARE)
+ software-transmit     (SOF_TIMESTAMPING_TX_SOFTWARE)
+ hardware-receive      (SOF_TIMESTAMPING_RX_HARDWARE)
+ software-receive      (SOF_TIMESTAMPING_RX_SOFTWARE)
+ software-system-clock (SOF_TIMESTAMPING_SOFTWARE)
+ hardware-raw-clock    (SOF_TIMESTAMPING_RAW_HARDWARE)
 PTP Hardware Clock: 0
 Hardware Transmit Timestamp Modes:
-	off                   (HWTSTAMP_TX_OFF)
-	on                    (HWTSTAMP_TX_ON)
+ off                   (HWTSTAMP_TX_OFF)
+ on                    (HWTSTAMP_TX_ON)
 Hardware Receive Filter Modes:
-	none                  (HWTSTAMP_FILTER_NONE)
-	all                   (HWTSTAMP_FILTER_ALL)
-	ptpv1-l4-sync         (HWTSTAMP_FILTER_PTP_V1_L4_SYNC)
-	ptpv1-l4-delay-req    (HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ)
-	ptpv2-l4-sync         (HWTSTAMP_FILTER_PTP_V2_L4_SYNC)
-	ptpv2-l4-delay-req    (HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ)
-	ptpv2-l2-sync         (HWTSTAMP_FILTER_PTP_V2_L2_SYNC)
-	ptpv2-l2-delay-req    (HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ)
-	ptpv2-event           (HWTSTAMP_FILTER_PTP_V2_EVENT)
-	ptpv2-sync            (HWTSTAMP_FILTER_PTP_V2_SYNC)
-	ptpv2-delay-req       (HWTSTAMP_FILTER_PTP_V2_DELAY_REQ)
+ none                  (HWTSTAMP_FILTER_NONE)
+ all                   (HWTSTAMP_FILTER_ALL)
+ ptpv1-l4-sync         (HWTSTAMP_FILTER_PTP_V1_L4_SYNC)
+ ptpv1-l4-delay-req    (HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ)
+ ptpv2-l4-sync         (HWTSTAMP_FILTER_PTP_V2_L4_SYNC)
+ ptpv2-l4-delay-req    (HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ)
+ ptpv2-l2-sync         (HWTSTAMP_FILTER_PTP_V2_L2_SYNC)
+ ptpv2-l2-delay-req    (HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ)
+ ptpv2-event           (HWTSTAMP_FILTER_PTP_V2_EVENT)
+ ptpv2-sync            (HWTSTAMP_FILTER_PTP_V2_SYNC)
+ ptpv2-delay-req       (HWTSTAMP_FILTER_PTP_V2_DELAY_REQ)
 ```
 
 However, if the output is the one provided below, it means PTP hardware timestamping is not supported:
@@ -523,9 +528,9 @@ $ ethtool -T eno1
 $ ethtool -T eno1
 Time stamping parameters for eno1:
 Capabilities:
-	software-transmit
-	software-receive
-	software-system-clock
+ software-transmit
+ software-receive
+ software-system-clock
 PTP Hardware Clock: none
 Hardware Transmit Timestamp Modes: none
 Hardware Receive Filter Modes: none
@@ -591,18 +596,18 @@ $ sudo pmc -u -b 0 -t 1 "SET GRANDMASTER_SETTINGS_NP clockClass 248 \
         timeSource 0xa0"
 sending: SET GRANDMASTER_SETTINGS_NP
 ptp4l[7527704.409]: port 1 (eno1): assuming the grand master role
-	f02f74.fffe.cb3590-0 seq 0 RESPONSE MANAGEMENT GRANDMASTER_SETTINGS_NP 
-		clockClass              248
-		clockAccuracy           0xfe
-		offsetScaledLogVariance 0xffff
-		currentUtcOffset        37
-		leap61                  0
-		leap59                  0
-		currentUtcOffsetValid   1
-		ptpTimescale            1
-		timeTraceable           1
-		frequencyTraceable      0
-		timeSource              0xa0
+ f02f74.fffe.cb3590-0 seq 0 RESPONSE MANAGEMENT GRANDMASTER_SETTINGS_NP
+  clockClass              248
+  clockAccuracy           0xfe
+  offsetScaledLogVariance 0xffff
+  currentUtcOffset        37
+  leap61                  0
+  leap59                  0
+  currentUtcOffsetValid   1
+  ptpTimescale            1
+  timeTraceable           1
+  frequencyTraceable      0
+  timeSource              0xa0
 
 
 $ sudo phc2sys -s eno1 -c CLOCK_REALTIME --step_threshold=1 --transportSpecific=1 -w -m

@@ -1,4 +1,5 @@
 (video-replayer-example)=
+
 # Video Replayer
 
 So far we have been working with simple operators to demonstrate Holoscan SDK concepts.
@@ -49,8 +50,8 @@ The built-in Holoviz operator provides the functionality to composite realtime s
 
 We will use Holoviz to display frames that have been sent by the replayer operator to its "receivers" port which can receive any number of inputs.  In more intricate workflows, this port can receive multiple streams of input data where, for example, one stream is the original video data, while other streams detect objects in the video to create bounding boxes and/or text overlays.
 
-
 (video-replayer-application-config)=
+
 ## Application Configuration File (YAML)
 
 The SDK supports reading an optional YAML configuration file and can be used to customize the application's workflow and operators.  For more complex workflows, it may be helpful to use the application configuration file to help separate operator parameter settings from your code.  See {ref}`configuring-an-application` for additional details.

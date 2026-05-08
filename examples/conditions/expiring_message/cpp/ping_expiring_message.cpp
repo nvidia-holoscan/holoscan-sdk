@@ -20,8 +20,8 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/holoscan.hpp"
-#include "holoscan/core/conditions/gxf/expiring_message.hpp"
+#include <holoscan/core/conditions/gxf/expiring_message.hpp>
+#include <holoscan/holoscan.hpp>
 
 namespace holoscan::ops {
 

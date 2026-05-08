@@ -1,4 +1,5 @@
 (video-replayer-distributed-example)=
+
 # Video Replayer (Distributed)
 
 In this example, we extend the previous [video replayer application](./video_replayer.md) into a multi-node [distributed application](../holoscan_create_distributed_app.md). A distributed application is made up of multiple Fragments ({cpp:class}`C++ <holoscan::Fragment>`/{py:class}`Python <holoscan.core.Fragment>`), each of which may run on its own node.
@@ -33,10 +34,10 @@ Here is the diagram of the operators and workflow used in this example.
 
 This is the same workflow as the [single fragment video replayer](./video_replayer.md). Each operator is assigned to a separate fragment and there is now a network connection between the fragments.
 
-
 ## Defining and Connecting Fragments
 
 Distributed applications define fragments explicitly to isolate the different units of work that could be distributed to different nodes. In this example:
+
 - We define two classes that inherit from `Fragment`:
   - **Fragment1** contains an instance of **VideoStreamReplayerOp** named "replayer."
   - **Fragment2** contains an instance of **HolovizOp** name "holoviz."
@@ -44,7 +45,6 @@ Distributed applications define fragments explicitly to isolate the different un
   - we call **make_fragment** to initialize both fragments.
   - we then connect the "output" port of "replayer" operator in fragment1 to the "receivers" port of the "holoviz" operator in fragment2 to define the application workflow.
 - The operators instantiated in the fragments can still be configured with parameters initialized from the YAML configuration ingested by the application using {cpp:func}`~holoscan::Fragment::from_config` (C++) or {py:func}`~holoscan.core.Fragment.kwargs` (Python).
-
 
 `````{tab-set}
 ````{tab-item} C++

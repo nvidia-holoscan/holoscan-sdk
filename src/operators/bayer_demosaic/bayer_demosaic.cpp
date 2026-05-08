@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
+#include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
 
 #include <cuda_runtime.h>
 
@@ -23,16 +23,16 @@
 #include <string>
 #include <utility>
 
-#include "gxf/std/tensor.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan::ops {
 

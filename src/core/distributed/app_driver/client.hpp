@@ -24,10 +24,10 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/system/cpu_info.hpp>
+#include <holoscan/core/system/gpu_info.hpp>
 #include "../generated/app_driver.grpc.pb.h"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/system/cpu_info.hpp"
-#include "holoscan/core/system/gpu_info.hpp"
 
 namespace holoscan {
 

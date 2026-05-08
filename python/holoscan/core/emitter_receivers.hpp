@@ -31,11 +31,11 @@
 
 #include "../gxf/entity.hpp"
 
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
 #include "emitter_receiver_registry.hpp"
 #include "gil_guarded_pyobject.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
 #include "io_context.hpp"
 #include "tensor.hpp"  // for PyTensor
 

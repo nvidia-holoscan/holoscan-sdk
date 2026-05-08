@@ -547,7 +547,7 @@ Arguments:
         Default: true
         Associated environment variable: HOLOSCAN_BUILD_PYTHON
   --sccache [true | false] : Use sccache for build caching (speeds up rebuilds)
-        Default: false
+        Default: true
         Associated environment variable: HOLOSCAN_USE_SCCACHE
         Optional: Set SCCACHE_MEMCACHED_ENDPOINT for distributed caching (e.g., server:11211)
 '
@@ -571,12 +571,26 @@ build() {
     local build_path="${CMAKE_BUILD_PATH:-$(get_build_dir)}"
     local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
     local reconfigure=false
-    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-'ON'}"
-    local build_python="${HOLOSCAN_BUILD_PYTHON:-'ON'}"
-    local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-'OFF'}"
-    local clang_tidy_check_headers="${HOLOSCAN_CLANG_TIDY_CHECK_HEADERS:-'OFF'}"
-    local use_sccache="${HOLOSCAN_USE_SCCACHE:-'OFF'}"
+    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-ON}"
+    local build_python="${HOLOSCAN_BUILD_PYTHON:-ON}"
+    local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-OFF}"
+    local clang_tidy_check_headers="${HOLOSCAN_CLANG_TIDY_CHECK_HEADERS:-OFF}"
+    local use_sccache="${HOLOSCAN_USE_SCCACHE:-ON}"
     local config_args=""
+
+    # Mount sccache directory to container.
+    local sccache_rel_dir="/.cache/sccache"
+    local sccache_host_dir
+    if [[ -n "${SCCACHE_DIR:-}" ]]; then
+        sccache_host_dir="$SCCACHE_DIR"
+    else
+        sccache_host_dir="${HOME}${sccache_rel_dir}"
+    fi
+    local sccache_dir_opt=""
+    if [[ "$use_sccache" == "ON" ]]; then
+        mkdir -p "$sccache_host_dir"
+        sccache_dir_opt="-v $sccache_host_dir:$sccache_rel_dir -e SCCACHE_DIR=$sccache_rel_dir"
+    fi
 
     # Check if memcached endpoint is reachable before passing it to container
     local sccache_memcached_opt=""
@@ -774,6 +788,7 @@ build() {
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk \
+        ${sccache_dir_opt} \
         ${sccache_memcached_opt} \
         ${extra_args[@]} \
         $img \
@@ -810,12 +825,19 @@ build() {
             cmake --install ${build_path} --prefix ${install_prefix} --component concurrentqueue
             cmake --install ${build_path} --prefix ${install_prefix} --component dlpack
             cmake --install ${build_path} --prefix ${install_prefix} --component fmt
+            cmake --install ${build_path} --prefix ${install_prefix} --component matx
             cmake --install ${build_path} --prefix ${install_prefix} --component nvtx3
             cmake --install ${build_path} --prefix ${install_prefix} --component rapids_logger
             cmake --install ${build_path} --prefix ${install_prefix} --component rmm
             cmake --install ${build_path} --prefix ${install_prefix} --component spdlog
             cmake --install ${build_path} --prefix ${install_prefix} --component tl-expected
             cmake --install ${build_path} --prefix ${install_prefix} --component ucxx
+            # CCCL libraries
+            cmake --install ${build_path} --prefix ${install_prefix} --component CCCL
+            cmake --install ${build_path} --prefix ${install_prefix} --component CUB
+            cmake --install ${build_path} --prefix ${install_prefix} --component cudax
+            cmake --install ${build_path} --prefix ${install_prefix} --component libcudacxx
+            cmake --install ${build_path} --prefix ${install_prefix} --component Thrust
 
             # Install Holoscan Sensor Bridge (if enabled)
             if grep -q "HOLOSCAN_BUILD_HOLOLINK:BOOL=ON" ${build_path}/CMakeCache.txt; then
@@ -908,87 +930,49 @@ build_run_image() {
 # Section: Test
 #===============================================================================
 
-install_lint_deps_desc() { c_echo 'Install lint dependencies
+lint_desc() { c_echo 'Lint the repository (via pre-commit)
 
-This command will install the dependencies required to run the linting tools:
-'
-cat ${TOP}/python/requirements.lint.txt
-echo
-}
-install_lint_deps() {
-    c_echo W "Install Lint Dependencies"
-    run_command ${HOLOSCAN_PY_EXE} -m pip install -r ${TOP}/python/requirements.lint.txt
-}
+Runs all pre-commit hooks (copyright, ruff, cpplint, cmakelint, codespell, markdownlint)
+on the whole repo. Configuration is in .pre-commit-config.yaml at repo root.
 
-lint_desc() { c_echo 'Lint the repository
-
-Python linting: ruff
-C++ linting: cpplint
-CMake linting: cmakelint
-Spelling: codespell
+pre-commit is resolved automatically:
+  1. uvx pre-commit  -- if uvx (from uv) is available (isolated, no pip pollution)
+  2. pre-commit      -- if already installed
+  3. pip install      -- as a last resort
 
 Arguments:
-  $@ - directories to lint (default: .)
+  When no arguments are given, runs all hooks with --all-files.
+  When arguments are given, they are passed directly to pre-commit run.
+
+Examples:
+  ./run lint                                    # all hooks, all files
+  ./run lint update-notice-files --all-files    # single hook, all files
+  ./run lint ruff-check --all-files             # single hook, all files
 '
 }
 lint() {
-    local DIR_TO_RUN=${@:-"."}
-
-    # We use $(command) || exit_code=1 to run all linting tools, and exit
-    # with failure after all commands were executed if any of them failed
-    local exit_code=0
-
-    pushd ${TOP} > /dev/null
-
-    c_echo W "Linting Python"
-    run_command ruff --version
-    run_command ruff check $DIR_TO_RUN || exit_code=1
-    # Set --diff so formatting suggestions are not automatically applied, but the suggestions
-    # will be printed to screen.
-    run_command ruff format --diff $DIR_TO_RUN || exit_code=1
-
-    c_echo W "Linting C++"
-    # We use `grep -v` to hide verbose output that drowns actual errors
-    # Since we care about the success/failure of cpplint and not of grep, we:
-    #  1. use `set -o pipefail` to fail if `cpplint` fails
-    #  2. use `grep -v ... || true` to ignore whether grep hid any output
-    #
-    # Reasoning for specific filters applied:
-    #   - -whitespace/indent_namespace  : many false positives in cpplint 2.0.2
-    #   - -build/c++17                  : disallows #include <filesystem>
-    run_command set -o pipefail && run_command ${HOLOSCAN_PY_EXE} -m cpplint \
-            --exclude .cache \
-            --exclude .local \
-            --exclude tmp \
-            --exclude build \
-            --exclude install \
-            --exclude build-\* \
-            --exclude install-\* \
-            --exclude gxf-build-\* \
-            --exclude src/core/distributed/generated \
-            --exclude src/core/services/generated \
-            --exclude modules/holoviz/thirdparty/nvpro_core \
-            --exclude examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu \
-            --filter=-whitespace/indent_namespace,-build/c++17 \
-            --recursive $DIR_TO_RUN \
-        | { grep -v "Ignoring\|Done processing" || true; } || exit_code=1
-
-
-    c_echo W "Code spelling"
-    # Supports inline comment to ignore code spell check for a line, add `// codespell-ignore` or
-    # `# codespell-ignore` at the end of the line
-    run_command codespell --version
-    run_command codespell $DIR_TO_RUN --skip="*.onnx,NOTICE.txt,*.toml,./docs/vale/styles/write-good" \
-        --ignore-regex=".*codespell-ignore$" --toml $(pwd)/pyproject.toml || exit_code=1
-
-    c_echo W "Linting CMake"
-    run_command cmakelint --filter=-whitespace/indent,-linelength,-readability/wonkycase,-convention/filename,-package/stdargs \
-              $(find $DIR_TO_RUN '(' -name CMakeLists.txt -o -name *.cmake ')' -not -path "*build-*/*" -not -path "*build/*" \
-                -not -path "*./.*" -not -path "*install/*" -not -path "*install-*/*") || exit_code=1
-
-    popd > /dev/null
-
-    exit $exit_code
+    local REPO_ROOT
+    REPO_ROOT="$(git -C "${TOP}" rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$(dirname "${TOP}")"
+    if [ ! -f "${REPO_ROOT}/.pre-commit-config.yaml" ]; then
+        c_echo_err R "Not found: ${REPO_ROOT}/.pre-commit-config.yaml"
+        return 1
+    fi
+    local pre_commit_cmd
+    if command -v uvx &>/dev/null; then
+        pre_commit_cmd="uvx pre-commit"
+    else
+        if ! command -v pre-commit &>/dev/null; then
+            c_echo W "Neither pre-commit nor uvx available, installing pre-commit via pip..."
+            run_command ${HOLOSCAN_PY_EXE} -m pip install pre-commit
+        fi
+        pre_commit_cmd="pre-commit"
+    fi
+    c_echo W "Running pre-commit (copyright + lint hooks) on all files"
+    if [ $# -gt 0 ]; then
+        (cd "${REPO_ROOT}" && run_command ${pre_commit_cmd} run "$@")
+    else
+        (cd "${REPO_ROOT}" && run_command ${pre_commit_cmd} run --all-files)
+    fi
 }
 
 test_desc() { c_echo 'Execute test cases with CTest
@@ -1063,19 +1047,19 @@ test() {
         fi
     fi
 
-	# --init
-	#   Use tini as entrypoint to forward proper signals to xvfb (below)
-	#
-	# --cap-drop=NET_BIND_SERVICE
-	#   needed for SYSTEM_TEST that depends on privileged ports being unbindable
-	#
-	# $run_headless (xvfb-run -a)
-	#   creates a display buffer for Holoviz use, the `-a` flag automatically finds
-	#   an open display port, and sets the DISPLAY env var. This is installed inside
-	#   the container at runtime so it isn't installed in the public container.
-	#   Additionally, `xvfb-run -a docker run ...` is not used, as no solution was found
-	#   that could reliably set the `-e DISPLAY` parameter using this approach.
-	#
+    # --init
+    #   Use tini as entrypoint to forward proper signals to xvfb (below)
+    #
+    # --cap-drop=NET_BIND_SERVICE
+    #   needed for SYSTEM_TEST that depends on privileged ports being unbindable
+    #
+    # $run_headless (xvfb-run -a)
+    #   creates a display buffer for Holoviz use, the `-a` flag automatically finds
+    #   an open display port, and sets the DISPLAY env var. This is installed inside
+    #   the container at runtime so it isn't installed in the public container.
+    #   Additionally, `xvfb-run -a docker run ...` is not used, as no solution was found
+    #   that could reliably set the `-e DISPLAY` parameter using this approach.
+    #
     if [ -z ${no_xvfb-} ]; then
         local run_headless=$([ -z ${DISPLAY-} ] && echo "xvfb-run -a")
     else
@@ -1360,10 +1344,6 @@ launch() {
         ${extra_args[@]} \
         $img -c "
             export PATH=\$PATH:${container_top}/${working_dir}/bin;
-            gxf_path=\$(find /opt/nvidia/gxf -name Gxf.py 2>/dev/null | head -n1);
-            if [ -f \"\${gxf_path}\" ]; then
-                export PYTHONPATH=\$PYTHONPATH:\$(realpath \$(dirname "\$gxf_path")/../..)
-            fi;
             $run_cmd"
 }
 

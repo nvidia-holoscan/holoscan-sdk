@@ -23,6 +23,8 @@
 
 #include <holoscan/holoscan.hpp>
 
+#include "ping_message_rx_op.hpp"  // MessageType
+
 namespace holoscan {
 namespace ops {
 

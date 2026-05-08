@@ -290,6 +290,7 @@
 - {ref}`exhale_function_io__context_8hpp_1a24d0b14ea7aaf76c7505e5f3b707afc8`
 
 ## Typedefs
+
 - {ref}`exhale_typedef_cpu__thread_8hpp_1a6db9bbcd2dc267ea27fcd162b70b14ed`
 - {ref}`exhale_typedef_expected_8hpp_1a21751b7658eb9233f58d9a5a4f2c1bb3`
 - {ref}`exhale_typedef_expected_8hpp_1a8c29243ec7fdd4aef7d935f0c72dc3f2`

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,15 +25,15 @@
 #include <unordered_map>
 #include <vector>
 
+#include <gxf/cuda/cuda_stream.hpp>
+#include <gxf/cuda/cuda_stream_id.hpp>
+#include <gxf/cuda/cuda_stream_pool.hpp>
 #include "../cuda_object_handler.hpp"
 #include "../operator_spec.hpp"
 #include "../parameter.hpp"
-#include "../resources/gxf/cuda_stream_pool.hpp"
 #include "../resources/gxf/cuda_green_context.hpp"
 #include "../resources/gxf/cuda_green_context_pool.hpp"
-#include "gxf/cuda/cuda_stream.hpp"
-#include "gxf/cuda/cuda_stream_id.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
+#include "../resources/gxf/cuda_stream_pool.hpp"
 
 namespace holoscan::gxf {
 

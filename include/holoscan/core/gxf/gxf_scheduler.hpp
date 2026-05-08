@@ -24,10 +24,10 @@
 #include <string>
 #include <utility>
 
+#include <gxf/std/clock.hpp>
 #include "../resources/gxf/clock.hpp"
 #include "../scheduler.hpp"
 #include "./gxf_component.hpp"
-#include "gxf/std/clock.hpp"
 
 namespace holoscan::gxf {
 

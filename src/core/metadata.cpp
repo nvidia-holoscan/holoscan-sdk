@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/metadata.hpp"
+#include <holoscan/core/metadata.hpp>
 
 #include <algorithm>
 #include <memory>

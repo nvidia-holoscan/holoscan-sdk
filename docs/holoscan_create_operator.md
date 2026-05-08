@@ -1,4 +1,5 @@
 (holoscan-create-operators)=
+
 # Creating Operators
 
 :::{tip}
@@ -6,6 +7,7 @@ Creating a custom operator is also illustrated in the [ping_custom_op](./example
 :::
 
 (holoscan-defining-operators-cpp)=
+
 ## C++ Operators
 
 When assembling a C++ application, two types of operators can be used:
@@ -18,6 +20,7 @@ It is possible to create an application using a mixture of GXF operators and nat
 :::
 
 (native-cpp-operators)=
+
 ### Native C++ Operators
 
 #### Operator Lifecycle (C++)
@@ -58,12 +61,11 @@ If Python bindings are going to be created for this C++ operator, it is recommen
 
 We can override the default behavior of the operator by implementing the above methods. The following example shows how to implement a custom operator that overrides start, stop, and compute methods.
 
-
 ```{code-block} cpp
 :caption: The basic structure of a Holoscan Operator (C++)
 :linenos: true
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 using holoscan::Operator;
 using holoscan::OperatorSpec;
@@ -110,7 +112,7 @@ To create a custom operator in C++, it is necessary to create a subclass of
 :emphasize-lines: 33-34,53,57,75,85-89,93-94,103-104,116-117
 :name: ping-multi-port-cpp
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 class ValueData {
  public:
@@ -259,7 +261,6 @@ standpoint to transmit a shared pointer to the object rather than making a copy.
 pointers are used and the same tensor is sent to more than one downstream operator, you should
 avoid in-place operations on the tensor or race conditions between operators may occur.
 
-
 If you need to configure arguments or perform other setup tasks before or after the operator is initialized, you can override the `initialize()` method. This method is called once before the `start()` method.
 
 Example:
@@ -294,7 +295,6 @@ Example:
 ```
 
 For details on the `register_converter()` and `register_codec()` methods, refer to {cpp:func}`holoscan::ComponentBase::register_converter` for the custom parameter type and the section on {ref}`object serialization<object-serialization>` for distributed applications.
-
 
 (specifying-operator-parameters-cpp)=
 
@@ -429,7 +429,6 @@ See the {ref}`interoperability section<interoperability-with-gxf-operators-cpp>`
 
 In the example below, the TensorRx operator receives input on a port called "in" with data type {cpp:class}`holoscan::gxf::Entity`.
 
-
 ```cpp
 // ...
 
@@ -535,6 +534,7 @@ class AnyRxOp : public holoscan::Operator {
 ```
 
 (retrieving-any-number-of-inputs-cpp)=
+
 #### Receiving any number of inputs (C++)
 
 Instead of assigning a specific number of input ports, it may be preferable to allow the ability to receive any number of objects on a port in certain situations.
@@ -626,6 +626,7 @@ The framework internally creates a parameter (`receivers`) with the type `std::v
 auto value_vector =
         op_input.receive<std::vector<std::shared_ptr<ValueData>>>("receivers").value();
 ```
+
 If you add `HOLOSCAN_LOG_INFO(rx->description());` at the end of the `compose()` method, you will see the description of the `PingRxOp` operator as shown below:
 
 ```yaml
@@ -668,6 +669,21 @@ spec:
   outputs:
     []
 ```
+
+:::
+
+:::{note}
+The `queue_policy` argument is also honored for `IOSpec::kAnySize` ports (since Holoscan SDK v4.2).
+When upstream senders emit faster than the receiver can drain, you can use `IOSpec::QueuePolicy::kPop`
+or `IOSpec::QueuePolicy::kReject` to avoid spurious "Push failed" log warnings:
+
+```cpp
+// Silently drop the oldest message when the queue is full (kPop policy)
+spec.input<std::vector<int>>("receivers", IOSpec::kAnySize, IOSpec::QueuePolicy::kPop);
+```
+
+The policy is applied to each indexed sub-port (`receivers:0`, `receivers:1`, ...) that the
+framework creates when upstream connections are established.
 :::
 
 (configuring-queue-size)=
@@ -808,6 +824,7 @@ To avoid the error message (such as `The operator does not have an input port wi
     }
   }
 ```
+
 :::
 
 :::{attention}
@@ -909,6 +926,7 @@ Examples of use of multi-port conditions are given in the [examples/conditions/m
         ConditionType::kMultiMessageAvailableTimeout, {"in1", "in2", "in3"}, multi_message_args);
   }
 ```
+
 Here, three input ports are defined, each of which has a queue size of 10. A `MultiMessageAvailableTimeoutCondition` is applied across all three of these ports via the `multi_port_condition` method. The condition is configured to allow the operator to execute when either a total of 20 messages have arrived across the three ports OR a time-out interval of 30 ms has elapsed.
 
 #### Building your C++ operator
@@ -969,8 +987,9 @@ You can then include the headers to your C++ operator in your application code.
 ### Interoperability between GXF and native C++ operators
 
 To support sending or receiving tensors to and from operators (both GXF and native C++ operators), the Holoscan SDK provides the C++ classes below:
-- A class template called {cpp:class}`holoscan::Map` which inherits from `std::unordered_map<std::string, std::shared_ptr<T>>`. The template parameter `T` can be any type, and it is used to specify the type of the `std::shared_ptr` objects stored in the map.
-- A {cpp:class}`holoscan::TensorMap` class defined as a specialization of `holoscan::Map` for the {cpp:class}`holoscan::Tensor` type.
+
+* A class template called {cpp:class}`holoscan::Map` which inherits from `std::unordered_map<std::string, std::shared_ptr<T>>`. The template parameter `T` can be any type, and it is used to specify the type of the `std::shared_ptr` objects stored in the map.
+* A {cpp:class}`holoscan::TensorMap` class defined as a specialization of `holoscan::Map` for the {cpp:class}`holoscan::Tensor` type.
 
 When a message with a {cpp:class}`holoscan::TensorMap` is emitted from a native C++ operator,
 the message object is always converted to a {cpp:class}`holoscan::gxf::Entity` object and sent to the
@@ -1053,14 +1072,12 @@ The following code shows how to implement `ProcessTensorOp`'s `compute()` method
   };
 
 ```
-- The input message is of type {cpp:class}`holoscan::TensorMap` object.
-- Every {cpp:class}`holoscan::Tensor`in the `TensorMap` object is copied on the host as `in_data`.
-- The data is processed (values multiplied by 2)
-- The data is moved back to the {cpp:class}`holoscan::Tensor` object on the GPU.
-- A new {cpp:class}`holoscan::TensorMap` object `out_message`is created to be sent to the next operator with {cpp:func}`op_output.emit() <holoscan::OutputContext::emit>`.
 
-
-
+* The input message is of type {cpp:class}`holoscan::TensorMap` object.
+* Every {cpp:class}`holoscan::Tensor`in the `TensorMap` object is copied on the host as `in_data`.
+* The data is processed (values multiplied by 2)
+* The data is moved back to the {cpp:class}`holoscan::Tensor` object on the GPU.
+* A new {cpp:class}`holoscan::TensorMap` object `out_message`is created to be sent to the next operator with {cpp:func}`op_output.emit() <holoscan::OutputContext::emit>`.
 
 :::{note}
 A complete example of the C++ native operator that supports interoperability with GXF operators is available in the [examples/tensor_interop/cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.4.0/examples/tensor_interop/cpp) directory.
@@ -1148,10 +1165,10 @@ class MyOp(Operator):
     def stop(self):
         pass
 ```
+
 #### `setup()` method vs `initialize()` vs `__init__()`
 
 The {py:meth}`~holoscan.core.Operator.setup` method aims to get the "operator's spec" by providing a {py:class}`~holoscan.core.OperatorSpec` object as a spec param. When {py:meth}`~holoscan.core.Operator.__init__` is called, it calls C++'s {cpp:func}`Operator::spec <holoscan::Operator::spec>` method (and also sets the {py:attr}`self.spec <holoscan.core.Operator.spec>` class member) and calls the {py:meth}`setup <holoscan.core.Operator.setup>` method so that the Operator's {py:attr}`~holoscan.core.Operator.spec` property holds the operator's specification. (See the [source code](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/__init__.py#:~:text=class%20Operator) for more details.)
-
 
 Since the {py:meth}`~holoscan.core.Operator.setup` method can be called multiple times with other {py:class}`~holoscan.core.OperatorSpec` objects (e.g., to enumerate the operator's description), in the {py:meth}`~holoscan.core.Operator.setup` method, a user shouldn't initialize something.
 Such initialization needs to be done by overriding the {py:meth}`~holoscan.core.Operator.initialize` method.
@@ -1458,6 +1475,7 @@ In both cases, it will return `None` if there is no message available on the inp
 ```
 
 (retrieving-any-number-of-inputs-python)=
+
 #### Receiving any number of inputs (Python)
 
 Instead of assigning a specific number of input ports, it may be preferable to allow the ability to receive any number of objects on a port in certain situations.
@@ -1465,7 +1483,6 @@ Instead of assigning a specific number of input ports, it may be preferable to a
 ##### Using `IOSpec.ANY_SIZE` for variable input handling
 
 One way to achieve this is to define a multi-receiver input port by calling `spec.input("port_name", IOSpec.ANY_SIZE)` with `IOSpec.ANY_SIZE` as the second argument in the `setup()` method of the operator (as done for `PingRxOp` in the {ref}`native operator ping example <ping-multi-port-python>`).
-
 
 ```python
     def setup(self, spec: OperatorSpec):
@@ -1590,8 +1607,22 @@ spec:
   outputs:
     []
 ```
+
 :::
 
+:::{note}
+The `policy` keyword argument is also honored for `IOSpec.ANY_SIZE` ports (since Holoscan SDK v4.2).
+When upstream senders emit faster than the receiver can drain, you can use `IOSpec.QueuePolicy.POP`
+or `IOSpec.QueuePolicy.REJECT` to avoid spurious "Push failed" log warnings:
+
+```python
+# Silently drop the oldest message when the queue is full (POP policy)
+spec.input("receivers", size=IOSpec.ANY_SIZE, policy=IOSpec.QueuePolicy.POP)
+```
+
+The policy is applied to each indexed sub-port (`receivers:0`, `receivers:1`, ...) that the
+framework creates when upstream connections are established.
+:::
 
 ##### Configuring input port queue size and message batch condition (Python)
 
@@ -1708,6 +1739,7 @@ To avoid the error message (such as `The operator does not have an input port wi
             # Process the input data
             print(f"Rx message received (value: {value.data})")
 ```
+
 :::
 
 :::{attention}
@@ -1742,6 +1774,7 @@ def setup(self, spec: OperatorSpec):
 ```
 
 (or-combiner-python)=
+
 ##### General combination of conditions (Python)
 
 For condition types which are not associated with an input or output port, the user creates them via construction of `Condition` objects provided via `holoscan.conditions` (or via a custom native Python `Condition` class). Any number of such conditions can be passed as positional arguments to an operator's constructor and the resulting status of the operator is the AND combination of these conditions. For example, the following would cause an operator to only execute of (condition1 AND condition2 AND condition3) are all ready.
@@ -1814,6 +1847,7 @@ Examples of use of multi-port conditions are given in the [examples/conditions/m
             min_sum=20,
         )
 ```
+
 Here, three input ports are defined, each of which has a queue size of 20. A `MultiMessageAvailableTimeoutCondition` is applied across all three of these ports via the `multi_port_condition` method. The condition is configured to allow the operator to execute when either a total of 20 messages have arrived across the three ports OR a time-out interval of 30 ms has elapsed.
 
 (cpp-python-tensor-interop)=
@@ -1821,10 +1855,13 @@ Here, three input ports are defined, each of which has a queue size of 20. A `Mu
 ### Important note on sending tensor objects between Python and C++ operators
 
 Holoscan's C++ API does not have any Python dependency and thus operators implemented in C++ will not be capable of directly receiving any Python objects. For a case such as a native Python operator that emits a NumPy, CuPy, or PyTorch tensor, the default behavior is to emit that Python object type directly as that is preferable for a pure Python operator workflow. However, emitting the Python object is problematic if the downstream operator is a C++-based one like `PingTensorRxOp` as it will not be able to handle this Python object. For interoperability of tensors with C++ operators, the `emitter_name="holoscan::Tensor"` kwarg should be provided to the `op_output.emit` call in the Python operator's `compute` method so that any tensors emitted are compatible with downstream C++-based operators. In practice this "holoscan::Tensor" emitter is configured to emit a C++ `holoscan::TensorMap` containing the tensor (no data copy is required for this). This means that any downstream C++ operator can receive this tensor either as a `TensorMap`
+
 ```cpp
     auto maybe_tensormap = op_input.receive<TensorMap>(port_name);
 ```
+
 or (since Holoscan v3.1) directly as a `std::shared_ptr<holoscan::Tensor>`
+
 ```cpp
     auto maybe_tensor = op_input.receive<Tensor>(port_name);
 ```
@@ -1832,7 +1869,6 @@ or (since Holoscan v3.1) directly as a `std::shared_ptr<holoscan::Tensor>`
 One exception to the above behavior is for the transmit of tensors between fragments of a distributed application. In this distributed case even for Python tensors like CuPy or NumPy arrays, the `emitter_name="holoscan::Tensor"` option will always automatically be used because the components used to serialize tensors over the network require a C++ tensor type.
 
 One other important detail when `emitter_name="holoscan::Tensor"` is used is that the name of the key in the `TensorMap` that is transmitted will depend on whether the Python tensor-like object transmitted was a host tensor (any tensor-like object having `__array_interface__`) or device tensor (any tensor-like object having `__cuda_array_interface__`). This key name information is used by any downstream Python operator to automatically convert the received tensor to a NumPy or CuPy array for the host or device case, respectively. This behavior was originally introduced to make the behavior of sending tensors between fragments of a distributed application comparable to sending those same tensors within-fragment (i.e. if a CuPy array was sent a CuPy array is also received at the other end despite the intermediate representation as a C++ `holoscan::Tensor`). The one downside to the approach currently used for `emitter_name="holoscan::Tensor` is that a host or device array from some other third-party library like PyTorch will not preserve its original type. It will instead be received as a NumPy (for host data) or CuPy (for device data) array on receive.
-
 
 (cpp-python-data-type-interop)=
 
@@ -1843,7 +1879,6 @@ It is possible for native Python operators to receive many basic C++ data types 
 For more information on extending this C++/Python type compatibility with general C++ types for Python operators there is a dedicated section on {ref}`how to register emit/receive capabilities for custom C++ types from Python <customizing-python-emit-receive-of-cpp-types>`.
 
 By default receive and emit logic is provided for the following basic C++ types. The left column lists a C++ type emitted by a wrapped C++ operator and the right column lists the type a native Python operator would receive. By default native Python operators emitting one of the types in the rightmost column will emit the Python object directly. However, to send data as a C++ type to a downstream wrapped C++ operator, the `Operator.emit` call can specify the `emitter_name` kwarg with one of the strings in the middle column in order to force output of the Python object as the specified C++ type.
-
 
 | C++ Type                                                             | emitter_name                                            | Received Python Type         |
 |----------------------------------------------------------------------|---------------------------------------------------------|------------------------------|
@@ -1873,8 +1908,8 @@ All of the types in the table above also appear in the {ref}`table of UCX serial
 Receive of C++ `std::shared_ptr` of the types in the table above is supported for Python native operators, but the value is extracted and cast to the Python type, so the native Python operator will be working with a copy of the contained data. Similarly, a `std::shared_ptr` can be transmitted, but this is done via `std::make_shared<T>` on the C++ object cast from the Python one. Wrapped C++ operators emitting a `std::shared_ptr<holoscan::Tensor>` or `holosan::TensorMap` is one case where a special code path is used to avoid any copying of the tensor data when interoperating between Python and C++ wrapped operators.
 :::
 
-
 (python-wrapped-operators)=
+
 ### Python wrapping of a C++ operator
 
 Wrapping an operator developed in C++ for use from Python is covered in a separate section on {ref}`creating C++ operator Python bindings<holoscan-create-operators-python-bindings>`.
@@ -1884,6 +1919,7 @@ As of Holoscan 2.1, there is a {py:class}`~holoscan.operators.GXFCodeletOp` clas
 :::
 
 (interoperability-with-wrapped-operators-python)=
+
 ### Interoperability between wrapped and native Python operators
 
 As described in the {ref}`Interoperability between GXF and native C++ operators<interoperability-with-gxf-operators-cpp>` section, {cpp:class}`holoscan::Tensor` objects can be passed to GXF operators using a {cpp:class}`holoscan::TensorMap` message that holds the tensor(s). In Python, this is done by sending `dict` type objects that have tensor names as the keys and holoscan Tensor or array-like objects as the values. Similarly, when a wrapped C++ operator that transmits a single {cpp:class}`holoscan::Tensor` is connected to the input port of a Python native operator, calling {py:func}`op_input.receive` on that port will return a Python dict containing a single item. That item's key is the tensor name and its value is the corresponding {py:class}`holoscan.core.Tensor`.
@@ -1935,10 +1971,11 @@ The following code shows how to implement `ImageProcessingOp`'s `compute()` meth
 
         op_output.emit(out_message, "output_tensor")
 ```
-- The {py:func}`op_input.receive() <holoscan.core.InputContext.receive>` method call returns a {py:class}`dict` object.
-- The {py:class}`holoscan.core.Tensor` object is converted to a CuPy array by using `cupy.asarray()` method call.
-- The CuPy array is used as an input to the `ndi.gaussian_filter()` function call with a parameter `sigma`. The result of the [`ndi.gaussian_filter()`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.gaussian_filter.html) function call is a CuPy array.
-- Finally, a new {py:class}`dict` object is created ,`out_message`, to be sent to the next operator with {py:func}`op_output.emit() <holoscan.core.OutputContext.emit>`. The CuPy array, `cp_array`, is added to it where the key is the tensor name. CuPy arrays do not have to explicitly be converted to a {py:class}`holocan.core.Tensor` object first since they implement a DLPack (and `__cuda__array_interface__`) interface.
+
+* The {py:func}`op_input.receive() <holoscan.core.InputContext.receive>` method call returns a {py:class}`dict` object.
+* The {py:class}`holoscan.core.Tensor` object is converted to a CuPy array by using `cupy.asarray()` method call.
+* The CuPy array is used as an input to the `ndi.gaussian_filter()` function call with a parameter `sigma`. The result of the [`ndi.gaussian_filter()`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.ndimage.gaussian_filter.html) function call is a CuPy array.
+* Finally, a new {py:class}`dict` object is created ,`out_message`, to be sent to the next operator with {py:func}`op_output.emit() <holoscan.core.OutputContext.emit>`. The CuPy array, `cp_array`, is added to it where the key is the tensor name. CuPy arrays do not have to explicitly be converted to a {py:class}`holocan.core.Tensor` object first since they implement a DLPack (and `__cuda__array_interface__`) interface.
 
 :::{note}
 A complete example of the Python native operator that supports interoperability with Python wrapped C++ operators is available in the [examples/tensor_interop/python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v0.4.0/examples/tensor_interop/python) directory.
@@ -1982,9 +2019,6 @@ There is a special serialization code for tensor types for emit/receive of tenso
 | host array-like object (with `__array_interface__`)        | numpy.ndarray           |
 | device array-like object (with `__cuda_array_interface__`) | cupy.ndarray            |
 
-
-
-
 This avoids NumPy or CuPy arrays being serialized to a string via cloudpickle so that they can efficiently be transmitted and the same type is returned again on the opposite side. Worth mentioning is that ,if the type emitted was e.g. a PyTorch host/device tensor on emit, the received value will be a numpy/cupy array since ANY object implementing the interfaces returns those types.
 :::
 
@@ -1995,6 +2029,7 @@ Holoscan also provides a `holoscan.decorator` module which provides ways to auto
 ## Advanced Topics
 
 (further-customizing-inputs-and-outputs)=
+
 ### Further customizing inputs and outputs
 
 This section complements the information above on basic input and output port configuration given separately in the C++ and Python operator creation guides. The concepts described here are the same for either the C++ or Python APIs.
@@ -2004,9 +2039,10 @@ By default, both the input and output ports of an Operator will use a double-buf
 For input ports, if you set `queue_size`/`size` to a value greater than 1 (e.g., `IOSpec::IOSize(2)` in C++ or `size=2` in Python) and do not override the port condition, the default `MessageAvailableCondition` will also set `min_size` to the same value, enabling batched execution. Holoscan emits a warning in this case. If you only want buffering without batching, explicitly set `min_size=1`. Holoscan plans to introduce an explicit `batch_size` configuration and change `queue_size`/`size` to control queue capacity only. For `IOSpec::kPrecedingCount` / `IOSpec.PRECEDING_COUNT`, the resolved queue size is computed from the application graph at run time; the planned `batch_size` configuration is intended to make this behavior explicitly configurable.
 
 It is possible to modify the global default queue policy via the `HOLOSCAN_QUEUE_POLICY` environment variable. Valid options (case insensitive) are:
-  - "pop": a new item that arrives when the queue is full replaces the oldest item
-  - "reject": a new item that arrives when the queue is discarded
-  - "fail": terminate the application if a new item arrives when the queue is full
+
+* "pop": a new item that arrives when the queue is full replaces the oldest item
+* "reject": a new item that arrives when the queue is discarded
+* "fail": terminate the application if a new item arrives when the queue is full
 
 The default behavior is "fail" when `HOLOSCAN_QUEUE_POLICY` is not specified. If an operator's `setup` method explicitly sets a receiver or transmitter via the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method as describe below, that connector's policy will not be overridden by the default. As of Holoscan 3.0, rather than specifying a custom policy via `connector`, it is preferred to just specify the `policy` argument to `OperatorSpec::input` or `OperatorSpec::output` directly and that policy will be applied to whichever connector type is assigned by the SDK (e.g. the receiver/transmitter class chosen by the SDK depends on whether connections are made within a fragment or across fragments of a distributed application). An `IOSpec::QueuePolicy` ({cpp:enum}`C++ <holoscan::IOSpec::QueuePolicy>`/{py:class}`Python <holoscan.core.IOSpec.QueuePolicy>`) enum is provided for specifying the policy.
 
@@ -2015,7 +2051,6 @@ Overriding operator port properties is an advanced topic. Developers may want to
 :::
 
 To override the properties of the queue used for a given port, the `connector` ({cpp:func}`C++ <holoscan::IOSpec::connector>`/{py:func}`Python <holoscan.core.IOSpec.connector>`) method can be used as shown in the example below. This example also shows how the `condition` ({cpp:func}`C++ <holoscan::IOSpec::condition>`/{py:func}`Python <holoscan.core.IOSpec.condition>`) method can be used to change the condition type placed on the Operator by a port. In general, when an operator has multiple conditions, they are AND combined, so the conditions on **all** ports must be satisfied before an operator can call `compute`.
-
 
 `````{tab-set}
 ````{tab-item} C++ Example
@@ -2100,24 +2135,25 @@ The Holoscan SDK enables seamless integration with various powerful, GPU-acceler
 
 In Python, `holoscan.core.Tensor` supports the DLPack protocol and NumPy/CUDA array interfaces, enabling efficient (often zero-copy) interchange with common tensor/array libraries. See the following examples:
 
-- [numpy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/numpy_native)
-- [cupy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cupy_native)
-- [pytorch_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/pytorch_native)
+* [numpy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/numpy_native)
+* [cupy_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/cupy_native)
+* [pytorch_native](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/pytorch_native)
 
 The section below provides a detailed example of integrating the [MatX](https://github.com/NVIDIA/MatX) library. For more examples, please refer to the [Best Practices to Integrate External Libraries into Holoscan Pipelines](https://github.com/nvidia-holoscan/holohub/blob/main/tutorials/integrate_external_libs_into_pipeline/README.md) tutorial in the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository. This tutorial covers libraries such as [CUDA Python](https://github.com/NVIDIA/cuda-python), [CuPy](https://cupy.dev/), [cuCIM](https://github.com/rapidsai/cucim), [CV-CUDA](https://github.com/CVCUDA/CV-CUDA), and [OpenCV](https://opencv.org/) for integration into Holoscan applications.
 
 (interoperability-with-matx)=
+
 #### MatX Integration (C++, since v3.5)
 
 The {cpp:class}`holoscan::Tensor`'s support for the [DLPack standard](https://dmlc.github.io/dlpack/latest/) enables zero-copy data sharing with libraries like [MatX](https://github.com/NVIDIA/MatX). MatX is a high-performance C++17 library for numerical computing on NVIDIA GPUs that you can use within Holoscan operators for computationally intensive tasks.
 
-To use MatX in your Holoscan application, you need to link against the `holoscan::matx` interface library in your `CMakeLists.txt`:
+To use MatX in your Holoscan application, you need to link against the `matx::matx` interface library in your `CMakeLists.txt`:
 
 ```{code-block} cmake
 target_link_libraries(my_application
   PRIVATE
   holoscan::core
-  holoscan::matx
+  matx::matx
 )
 ```
 
@@ -2180,8 +2216,8 @@ if (maybe_tensor_map) {
 A complete example is available in the `examples/matx/matx_basic/cpp/matx_basic.cu` file.
 :::
 
-
 (holoscan-operator-execution-control)=
+
 ### Operator Execution Control and Monitoring
 
 Holoscan provides several APIs for controlling and monitoring operator execution at runtime. These APIs are particularly useful for implementing advanced control flow and dynamic behavior in your application.
@@ -2499,7 +2535,6 @@ def compute(self, op_input, op_output, context):
 
 Currently, there's no way to retrieve the computed SchedulingCondition status from the
 operator (i.e., whether the computed scheduling condition status is NEVER, which means the operator is terminated).
-
 
 A better approach for checking an operator's computed scheduling condition will be
 available in a future release.

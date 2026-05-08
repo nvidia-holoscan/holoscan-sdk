@@ -14,6 +14,7 @@ To use PyTorch outside of these containers, install the `torch` wheel in your en
 ## Run instructions
 
 * **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Prerequisite] Install PyTorch with CUDA support (see instructions above)
@@ -27,14 +28,14 @@ To use PyTorch outside of these containers, install the `torch` wheel in your en
   python3 /opt/nvidia/holoscan/examples/pytorch_native/matmul.py
   ```
 
-- **source (dev container)**:
+* **source (dev container)**:
 
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/pytorch_native/matmul.py
   ```
 
-- **source (local env)**:
+* **source (local env)**:
 
   ```bash
   # [Prerequisite] Install PyTorch with CUDA support (see instructions above)

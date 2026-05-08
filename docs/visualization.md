@@ -23,6 +23,7 @@ The term Holoviz is used for both the [Holoviz operator](#holoviz-operator) and 
 The core entity of Holoviz are layers. A layer is a two-dimensional image object. Multiple layers are composited to create the final output.
 
 These layer types are supported by Holoviz:
+
 - Image layer
 - Geometry layer
 - GUI layer
@@ -287,10 +288,12 @@ ImGUI is a static library and has no stable API. Therefore, the application and 
 A depth map is a single channel 2d array where each element represents a depth value. The data is rendered as a 3D object using points, lines, or triangles. The color for the elements can also be specified.
 
 Supported formats for the depth map:
+
 - 8-bit unsigned normalized format that has a single 8-bit depth component
 - 32-bit signed float format that has a single 32-bit depth component
 
 Supported format for the depth color map:
+
 - 32-bit unsigned normalized format that has an 8-bit R component in byte 0, an 8-bit G component in byte 1, an 8-bit B component in byte 2, and an 8-bit A component in byte 3
 
 Depth maps are rendered in 3D and support camera movement.
@@ -413,6 +416,7 @@ The name of the display can either be the EDID name as displayed in the NVIDIA S
 `hwinfo --monitor`.
 
 :::{tip}
+
 `````{tab-set}
 ````{tab-item} X11
 In this example output of `xrandr`, `DP-2` would be an adequate display name to use:
@@ -436,6 +440,7 @@ $ hwinfo --monitor | grep Model
 ```
 ````
 `````
+
 :::
 
 ## CUDA Streams
@@ -532,7 +537,7 @@ Experimental HDR support is described in this [blog post](https://zamundaaa.gith
 
 1. Enable HDR in the display configuration
 1. Install the [Vulkan HDR layer](https://github.com/Zamundaaa/VK_hdr_layer)
-2. Set the `ENABLE_HDR_WSI` environment variable to `1`.
+1. Set the `ENABLE_HDR_WSI` environment variable to `1`.
 
 Run `vulkaninfo` to verify that HDR color spaces are reported
 
@@ -663,6 +668,7 @@ The {cpp:class}`C++ <holoscan::FirstPixelOutCondition>` allows an operator to sy
 The condition internally waits for the next FirstPixelOut signal from the display hardware. When FirstPixelOut occurs, the condition transitions to a ready state, allowing the operator to execute. After execution, the condition transitions back to a waiting state until the next FirstPixelOut.
 
 **Use cases:**
+
 - Synchronizing frame generation with display refresh rate
 - Minimizing display tearing in real-time visualization
 - Rate-limiting operators to match the display's capabilities
@@ -674,7 +680,7 @@ The {cpp:class}`C++ <holoscan::PresentDoneCondition>` allows an operator to sync
 The condition tracks presentation IDs, which increment with each frame presented. It blocks until a specific presentation ID is reached or a timeout occurs, ensuring that the application doesn't generate frames faster than the display can present them.
 
 :::{note}
-This condition is not supported on Orin iGPU because the required `VK_KHR_present_wait` extension is not available.
+This condition requires the `VK_KHR_present_wait` Vulkan device extension. On hardware where it is not available (e.g. Orin iGPU, IGX Thor + Blackwell dGPU configurations), the application will throw a `std::runtime_error` at runtime. Use `FirstPixelOutCondition` as an alternative, or verify extension support with `vulkaninfo | grep VK_KHR_present_wait` before using this condition.
 :::
 
 :::{note}
@@ -682,6 +688,7 @@ Applications using this condition might hang or crash when using tools to remote
 :::
 
 **Use cases:**
+
 - Preventing frame queue buildup by matching generation to presentation rate
 - Reducing end-to-end latency in interactive applications
 - Ensuring smooth frame pacing without dropped frames
@@ -714,7 +721,7 @@ FIFO mutex in the `/tmp/` directory. This enables better predictability with the
 maximum end-to-end latency of the Holoscan SDK applications.
 
 The support for this mutex is enabled by setting the environment variable
-`HOLOSCAN_HOLOVIZ_MUTEX` to `1`. 
+`HOLOSCAN_HOLOVIZ_MUTEX` to `1`.
 
 ```bash
 export HOLOSCAN_HOLOVIZ_MUTEX=1
@@ -737,7 +744,6 @@ queue files, an unexpected application crash or undefined application behavior
 may not properly clear those files before shutting down. In that case, manually remove
 those files (e.g., `rm -f /tmp/holoscan_holoviz_mutex*`).
 :::
-
 
 ## Holoviz operator
 

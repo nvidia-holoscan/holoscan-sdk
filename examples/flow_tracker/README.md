@@ -16,38 +16,50 @@ The example showcases two key aspects of data flow tracking:
 
 ## C++ Run instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/flow_tracker/cpp/flow_tracker
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/flow_tracker/cpp/flow_tracker
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/flow_tracker/cpp/flow_tracker
   ```
 
 ## Python Run instructions
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/flow_tracker.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/flow_tracker/python/flow_tracker.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/flow_tracker/python/flow_tracker.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/flow_tracker/python/flow_tracker.py

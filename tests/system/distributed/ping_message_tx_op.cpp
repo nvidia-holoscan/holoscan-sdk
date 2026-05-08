@@ -15,16 +15,17 @@
  * limitations under the License.
  */
 
-#include "ping_message_rx_op.hpp"  // for MessageType enum
 #include "ping_message_tx_op.hpp"
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/operators/holoviz/codecs.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/operators/holoviz/codecs.hpp>
+#include <holoscan/operators/holoviz/holoviz.hpp>
+
+#include "ping_message_rx_op.hpp"  // for MessageType enum
 
 namespace holoscan {
 namespace ops {

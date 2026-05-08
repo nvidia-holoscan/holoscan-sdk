@@ -9,11 +9,13 @@ The MatX examples are designed to show how to integrate MatX with Holoscan for c
 ## Examples
 
 ### [MatX Basic](./matx_basic)
+
 - **C++**: [`matx_basic.cu`](./matx_basic/cpp/matx_basic.cu)
 
 This example provides a simple introduction to using MatX within a Holoscan application. It shows how to create a MatX tensor, pass it between operators using zero-copy conversion to a `holoscan::Tensor`, and perform computations on the GPU.
 
 ### [MatX Allocator](./matx_allocator)
+
 - **C++**: [`matx_allocator.cu`](./matx_allocator/cpp/matx_allocator.cu)
 
 This example demonstrates how to use `holoscan::MatXAllocator` to create MatX tensors backed by a Holoscan memory pool (`RMMAllocator`), rather than MatX's default CUDA allocator. It shows pooled allocation, DLPack tensor interop between MatX and Holoscan, and GPU computation on the received tensor.

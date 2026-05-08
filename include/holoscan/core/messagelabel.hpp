@@ -26,8 +26,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <holoscan/logger/logger.hpp>
 #include "./forward_def.hpp"
-#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 

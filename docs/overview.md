@@ -8,33 +8,33 @@ The Holoscan SDK assists developers by providing:
 
 From containers, to Python wheels, to source, and from development to deployment environments, the Holoscan SDK comes in many packaging flavors to adapt to different needs. Find more information in the {ref}`sdk installation<clara_holoscan_setup>` section.
 
-2. **C++ and Python APIs**
+1. **C++ and Python APIs**
 
 These APIs are now the recommended interface for the creation of application pipelines in the Holoscan SDK. See the {ref}`Using the SDK <holoscan-user-overview>` section to learn how to leverage those APIs, or the Doxygen pages ([C++](api/holoscan_cpp_api.md)/[Python](api/holoscan_python_api.md)) for specific API documentation.
 
-3. **Built-in Operators**
+1. **Built-in Operators**
 
 The units of work in Holoscan applications are implemented within Operators, as described in the [core concepts](holoscan_core.md) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](relevant_technologies.md). This guide provides more information on the operators provided within the SDK [here](holoscan_operators_extensions.md).
 
-4. **Minimal Examples**
+1. **Minimal Examples**
 
 The Holoscan SDK provides a list of examples to illustrate specific capabilities of the SDK. Their source code can be found in the [GitHub repository](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme). The {ref}`Holoscan by Example<holoscan-getting-started>` section provides step-by-step analysis of some of these examples to illustrate the inner workings of the Holoscan SDK.
 
-5. **Repository of Operators and Applications**
+1. **Repository of Operators and Applications**
 
 [HoloHub](https://github.com/nvidia-holoscan/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community. Being open-source, these operators and applications can also be used as reference implementations to complete the built-in operators and examples available in the SDK.
 
-6. **Tooling to Package and Deploy Applications**
+1. **Tooling to Package and Deploy Applications**
 
 Packaging and deploying applications is a complex problem that can require large amount of efforts. The [Holoscan CLI](./cli/cli.md) is a command-line interface included in the Holoscan SDK that provides commands to [package and run applications](./holoscan_packager.md) in OCI-compliant containers that could be used for production.
 
-7. **Performance tools**
+1. **Performance tools**
 
 As highlighted in the relevant technologies section, the soul of the Holoscan project is to achieve peak performance by leveraging hardware and software developed at NVIDIA or provided by third parties. To validate this, Holoscan provides performance tools to help users and developers track their application performance. They currently include:
 
 - the [Data Flow Tracking](./flow_tracking.md) feature to profile your application and analyze the data flow between operators in its graph.
 
-8. **Documentation**
+1. **Documentation**
 
 The Holoscan SDK documentation is composed of:
 

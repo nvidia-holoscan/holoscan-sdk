@@ -23,10 +23,10 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/app_worker.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/logger/logger.hpp>
 #include "../generated/error_code.pb.h"
-#include "holoscan/core/app_worker.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/logger/logger.hpp"
 
 namespace holoscan::distributed {
 

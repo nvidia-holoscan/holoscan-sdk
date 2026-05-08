@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,17 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Note: The MatX library requires rapids-cmake version 24.12, which has a minimum CMake version
-# requirement of 3.26.4 (see https://github.com/rapidsai/rapids-cmake/pull/627).
+set(rapids-cmake-version 26.02)
 
 # https://github.com/rapidsai/rapids-cmake#installation
 if(NOT EXISTS ${CMAKE_BINARY_DIR}/RAPIDS.cmake)
-file(DOWNLOAD https://raw.githubusercontent.com/rapidsai/rapids-cmake/branch-25.10/RAPIDS.cmake
-     ${CMAKE_BINARY_DIR}/RAPIDS.cmake
-)
+  file(DOWNLOAD https://raw.githubusercontent.com/rapidsai/rapids-cmake/refs/heads/release/${rapids-cmake-version}/RAPIDS.cmake
+       ${CMAKE_BINARY_DIR}/RAPIDS.cmake
+       TIMEOUT 120
+       TLS_VERIFY ON
+       EXPECTED_HASH SHA256=7690a95285e02b4f04dd23b327da0ad46e1b7c19d85207e9ca7ac17faa1947ec
+       STATUS _rapids_dl_status
+       LOG _rapids_dl_log)
+  list(GET _rapids_dl_status 0 _rapids_dl_code)
+  list(GET _rapids_dl_status 1 _rapids_dl_message)
+  if(NOT _rapids_dl_code EQUAL 0)
+    file(REMOVE ${CMAKE_BINARY_DIR}/RAPIDS.cmake)
+    message(FATAL_ERROR
+            "rapids-cmake RAPIDS.cmake download failed (code ${_rapids_dl_code}): ${_rapids_dl_message}\n"
+            "${_rapids_dl_log}")
+  endif()
 endif()
 
-set(rapids-cmake-version 25.10)
 include(${CMAKE_BINARY_DIR}/RAPIDS.cmake)
 
 include(rapids-cmake)

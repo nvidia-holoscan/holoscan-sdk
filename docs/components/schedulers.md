@@ -35,13 +35,14 @@ The multithread scheduler has several parameters that the user can configure. Th
 - The value of `check_recession_period_ms` controls how long the scheduler will sleep before checking a given condition again. In other words, this is the polling interval for operators that are in a `WAIT` state. The default value for this parameter is `5` ms.
 - The value of `strict_job_thread_pinning` controls then behavior when user-defined thread pools with thread pinning are used. If this value is `false` (the default), then whenever an operator pinned to a thread is not in a READY state, some other unpinned operator could make use of that thread. If `true` only the pinned operator can make use of the thread.
 
-
 ## Event-Based Scheduler
 
 The event-based scheduler is also a multi-thread scheduler, but it is event-based rather than polling based. As such, there is no `check_recession_period_ms` parameter, and this scheduler will not have the high CPU usage that can occur when polling at a short interval. Instead, the scheduler only wakes up when an event is received indicating that an operator is ready to execute. The parameters of this scheduler are a superset of the parameters available for the `GreedyScheduler` (described above). Only the parameters unique to the event-based scheduler are described here.
 
 - The number of worker threads used by the scheduler can be set via `worker_thread_number`, which defaults to `1`. This should be set based on a consideration of both the workflow and the available hardware. For example, the topology of the computation graph will determine how many operators it may be possible to run in parallel. Some operators may potentially launch multiple threads internally, so some amount of performance profiling may be required to determine optimal parameters for a given workflow. The `worker_thread_number` parameter creates a **default thread pool**. Any operators not explicitly assigned to a user-defined thread pool (via `make_thread_pool()`) will use this default pool.
 - The worker threads in the default thread pool (created based on the `worker_thread_number` parameter) can be pinned to CPU cores via `pin_cores`. The parameter defaults to an empty list representing not to pin the worker threads to any CPU core. If a set of CPU core indices are given, all the worker threads in the default pool are pinned to the same set of specified CPU cores. Note that `pin_cores` only affects the default thread pool; to control CPU affinity for user-defined thread pools, use the `pin_cores` parameter in the `add()` or `add_realtime()` methods when assigning operators to those pools.
+- The scheduler's separate dispatcher thread can also be pinned to one CPU core by setting `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>` before launching the application. This is distinct from `pin_cores`, which only affects worker threads. The value must be an integer in the range `[0, 255]`.
+- You can also configure the dispatcher thread to use `SCHED_FIFO` or `SCHED_RR` by setting `GXF_EBS_DISPATCHER_SCHED_POLICY` and `GXF_EBS_DISPATCHER_SCHED_PRIORITY`. When a dispatcher scheduling policy is specified, the priority variable must also be set to a valid priority for that policy.
 
 For this scheduler, there is no `strict_job_thread_pinning` option (see description for the Multithread Scheduler above). The thread pinning is always strict.
 
@@ -90,7 +91,6 @@ This optimization is currently disabled by default as it is still pending additi
 
 The optimizations above (work stealing, event sharding, and the post-check fast path) are new in Holoscan 4.1. As noted above, work-stealing and the post-check fast path are not currently enabled by default. A summary of the settings disabling all new scheduling feaetures is to set
 
-
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
@@ -123,6 +123,7 @@ Setting `internal_event_shard_count=1` and `wait_state_shard_count=1` disables s
 - **`log_perf_stats`** (`bool`, default `false`) — When enabled, the scheduler logs internal instrumentation counters at shutdown. The report includes dispatcher loop and notification statistics, per-worker wait and execution times (with averages), work-steal attempt and success counts, and post-check fast-path/fallback hit rates. This is useful for diagnosing scheduling bottlenecks without requiring an external profiler.
 
 (operator-granularity-scheduling-overhead)=
+
 ## Operator Granularity and Scheduling Overhead
 
 When designing Holoscan applications, it's important to understand the relationship between operator granularity and scheduling overhead. For operators with trivial computations, the scheduling and message-passing overhead can outweigh the actual computation time.

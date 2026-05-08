@@ -1,0 +1,178 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Pre-commit hooks for Holoscan SDK
+# See https://pre-commit.com for more information
+# Install: pip install pre-commit && pre-commit install  (or: uvx pre-commit install)
+# Run manually: pre-commit run --all-files
+default_language_version:
+  python: python3
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^.*\.patch$
+      - id: end-of-file-fixer
+        exclude: ^.*\.patch$
+      - id: check-yaml
+        # Exclude .clang-format file because check-yaml do not support multi-document file
+        exclude: ^.*\.patch|\.clang-format$
+      - id: check-json
+        exclude: ^public/\.vscode/|^public/\.devcontainer/|.*\.patch$
+      - id: check-added-large-files
+        exclude: ^.*\.patch$
+
+  # Copyright header check (NVIDIA SPDX)
+  - repo: local
+    hooks:
+      - id: check-copyright
+        name: Check copyright headers
+        # Commit: staged paths only. ``--all-files``: auto-intersect vs main/release/latest refs
+        # when present; else all matching files. Override baseline: HOLOSCAN_COPYRIGHT_BASE_REF or
+        # ``--intersect-since-ref REF`` when invoking ``check_copyright.py`` (see ``--help``).
+        # Full tree: ``python3 public/scripts/check_copyright.py . --git-modified-only <ref>``.
+        entry: python3 public/scripts/check_copyright.py
+        args:
+          - --exclude
+          - CodeCoverage.cmake
+          - --exclude
+          - common-debian.sh
+          # Updated excludes to handle both root depths
+          - --exclude
+          - ^(public/)?\.cache
+          - --exclude
+          - ^(public/)?build
+          - --exclude
+          - ^(public/)?install
+          - --exclude
+          - ^(public/)?build-*
+          - --exclude
+          - ^(public/)?install-*
+          - --exclude
+          - ^(public/)?modules/holoviz/thirdparty/
+          - --exclude
+          - .*\.patch$
+          # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
+          - --exclude
+          - public/modules/holoipc/examples/fastdds_benchmark/
+          - --exclude
+          - public/modules/holoipc/examples/fastdds_example/
+          - --update-current-year
+        language: system
+        pass_filenames: true
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.6
+    hooks:
+      - id: remove-tabs  # Replace tabs by whitespaces before committing
+        args: [--whitespaces-count, '4']  # defaults to: 4
+        exclude: |
+          (?x)^(public/)?(
+            modules/holoviz/thirdparty/
+          )
+        types_or: [c++, cmake, dockerfile, markdown, python, shell]
+
+  # Lint: Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.13.2
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^(public/)?
+        exclude: ^scripts/register_devzone_release\.py$
+      - id: ruff-format
+        files: ^(public/)?
+        exclude: ^scripts/register_devzone_release\.py$
+
+  # Codespell
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        additional_dependencies:
+          - tomli>=2.0.1,<3.0; python_version<'3.11'
+        files: ^(public/)?
+        args:
+          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch
+          - --ignore-regex=.*codespell-ignore$
+          - --toml=.codespell.toml
+          - --write-changes
+
+  # Cpplint
+  - repo: https://github.com/cpplint/cpplint
+    rev: 2.0.2
+    hooks:
+      - id: cpplint
+        args:
+          - --quiet
+          - --exclude=.cache
+          - --exclude=.local
+          - --exclude=tmp
+          - --exclude=build
+          - --exclude=install
+          - --exclude=build-\*
+          - --exclude=install-\*
+          - --exclude=gxf-build-\*
+          - --exclude=src/core/distributed/generated
+          - --exclude=src/core/services/generated
+          - --exclude=modules/holoviz/thirdparty/nvpro_core
+          - --exclude=examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu
+          - --filter=-whitespace/indent_namespace,-build/c++17,-build/include_order
+        files: ^(public/)?.*\.(cpp|cu|cuh|h|hpp|cc|cxx)$
+        # Exclude patterns now handle the optional public/ prefix
+        exclude: |
+          (?x)^(public/)?(
+            \.cache|
+            \.local|
+            tmp|
+            build|
+            install|
+            build-|
+            install-|
+            gxf-build-|
+            src/core/distributed/generated/|
+            src/core/services/generated/|
+            modules/holoviz/thirdparty/nvpro_core/|
+            examples/custom_cuda_kernel_multi_sample/cpp/edge_detection\.cu$
+          )
+
+  # cmakelint
+  - repo: local
+    hooks:
+      - id: cmakelint
+        name: cmakelint
+        entry: cmakelint
+        language: python
+        additional_dependencies: ["cmakelint>=1.4.2,<2.0"]
+        args:
+          - "--filter=-whitespace/indent,-linelength,-readability/wonkycase,-convention/filename,-package/stdargs"
+        files: ^(public/)?.*(CMakeLists\.txt|\.cmake)$
+        exclude: ^(public/)?(build|install|build-|install-|\.cache)/
+
+  # markdownlint
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.47.0
+    hooks:
+      - id: markdownlint
+        args: [--fix, --config, public/.markdownlint.yaml]
+        files: ^public/.*\.md$
+
+  # clang-format
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v21.1.8
+    hooks:
+      - id: clang-format

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +29,10 @@
 #include <utility>
 #include <vector>
 
-#include "./parameter.hpp"
-#include "./type_traits.hpp"
 #include "./arg.hpp"
 #include "./forward_def.hpp"
+#include "./parameter.hpp"
+#include "./type_traits.hpp"
 
 #define HOLOSCAN_COMPONENT_FORWARD_TEMPLATE()                                        \
   template <typename ArgT,                                                           \

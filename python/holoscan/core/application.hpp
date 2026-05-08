@@ -28,12 +28,12 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "application_pydoc.hpp"
 #include "fragment_pydoc.hpp"
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/subgraph.hpp"
 #include "tensor.hpp"
 
 namespace py = pybind11;

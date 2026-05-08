@@ -2,7 +2,7 @@
 +++ b/public/examples/video_replayer/cpp/video_replayer.cpp
 @@ -22,6 +22,12 @@
  #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
- #include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
+ #include <holoscan/data_loggers/async_console_logger/async_console_logger.hpp>
  
 +#ifdef RECORD_OUTPUT
 +#include <holoscan/operators/format_converter/format_converter.hpp>

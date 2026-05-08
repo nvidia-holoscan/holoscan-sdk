@@ -8,6 +8,9 @@ Holoscan uses the following open source software:
 OpenSSL (https://github.com/openssl/openssl)
 Licensed under Apache 2.0 (https://github.com/openssl/openssl/blob/master/LICENSE.txt)
 
+ASIO (https://github.com/chriskohlhoff/asio)
+Licensed under BSL-1.0 (https://github.com/chriskohlhoff/asio/blob/asio-1-18-1/asio/LICENSE_1_0.txt)
+
 automake (https://packages.ubuntu.com/jammy/automake)
 1995-2013, Free Software Foundation, Inc
 Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/a/automake-1.16/automake-1.16_1.16.5-1.3/copyright)
@@ -15,9 +18,13 @@ Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/a/automa
 cURLpp (https://github.com/jpbarrette/curlpp)
 Licensed under MIT (https://github.com/jpbarrette/curlpp/blob/v0.8.1/doc/LICENSE)
 
-CLI11   (https://github.com/CLIUtils/CLI11)
+clang-format (https://pypi.org/project/clang-format/)
+Copyright 2021 Dominic Kempf, Heidelberg University and contributors
+Licensed under Apache-2.0 (https://github.com/ssciwr/clang-format-wheel/blob/main/LICENSE.md)
+
+CLI11 (https://github.com/CLIUtils/CLI11)
 Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/CLIUtils/CLI11/blob/v2.3.2/LICENSE)
+Licensed under BSD-3-clause (https://github.com/CLIUtils/CLI11/blob/v2.5.0/LICENSE)
 
 cloudpickle (https://github.com/cloudpipe/cloudpickle)
 Copyright (c) 2015, Cloudpickle contributors.
@@ -66,9 +73,18 @@ The source code for Eigen is available at <https://edge.urm.nvidia.com/artifacto
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
 
+Fast CDR (https://github.com/eProsima/Fast-CDR)
+Licensed under Apache-2.0 (https://github.com/eProsima/Fast-CDR/blob/v2.3.5/LICENSE)
+
+Fast DDS (https://github.com/eProsima/Fast-DDS)
+Licensed under Apache-2.0 (https://github.com/eProsima/Fast-DDS/blob/v3.4.2/LICENSE)
+
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
 Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
+
+foonathan_memory_vendor (https://github.com/eProsima/foonathan_memory_vendor)
+Licensed under Apache-2.0 (https://github.com/eProsima/foonathan_memory_vendor/blob/v1.3.2/LICENSE)
 
 GDRCopy (https://developer.nvidia.com/gdrcopy)
 Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.
@@ -239,6 +255,10 @@ Copyright (c) 1993, 1994, 1995, 1996 by Silicon Graphics Computer Systems, Inc.
 Copyright 1987, 1988 by Digital Equipment Corporation, Maynard, Massachusetts.
 Licensed under MIT (https://changelogs.ubuntu.com/changelogs/pool/main/libx/libxkbcommon/libxkbcommon_1.4.0-1/copyright)
 
+Lucas-C/pre-commit-hooks (https://github.com/Lucas-C/pre-commit-hooks/)
+Copyright (c) 2019 Lucas Cimon
+Licensed under MIT (https://github.com/Lucas-C/pre-commit-hooks/blob/master/LICENSE)
+
 magic_enum (https://github.com/Neargye/magic_enum)
 Copyright (c) 2019 - 2023 Daniil Goncharov
 Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
@@ -246,6 +266,10 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
 Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
+
+mirrors-clang-format (https://github.com/pre-commit/mirrors-clang-format/)
+Copyright (c) 2021 Anthony Sottile
+Licensed under MIT (https://github.com/pre-commit/mirrors-clang-format/blob/main/LICENSE)
 
 net-tools (https://github.com/ecki/net-tools)
 Licensed under GPLv2 (https://github.com/ecki/net-tools?tab=GPL-2.0-1-ov-file)
@@ -268,7 +292,7 @@ Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
 
 ONNX Runtime (https://github.com/microsoft/onnxruntime)
 Copyright (c) Microsoft Corporation
-Licensed under MIT (https://github.com/microsoft/onnxruntime/blob/v1.22.0/LICENSE)
+Licensed under MIT (https://github.com/microsoft/onnxruntime/blob/v1.24.2/LICENSE)
 
 openblas (https://packages.ubuntu.com/jammy/libopenblas0)
 2011-2021 The OpenBLAS Project
@@ -285,6 +309,14 @@ pkg-config (https://packages.ubuntu.com/jammy/pkg-config)
 Copyright (C) 2001, 2002 Red Hat Inc.
 Copyright (C) 2004, 2005 Tollef Fog Heen <tfheen@err.no>
 Licensed under GPLv2 (http://changelogs.ubuntu.com/changelogs/pool/main/p/pkg-config/pkg-config_0.29.2-1ubuntu3/copyright)
+
+pre-commit-hooks (https://github.com/pre-commit/pre-commit-hooks)
+Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
+Licensed under MIT (https://github.com/pre-commit/pre-commit-hooks/blob/main/LICENSE)
+
+pre-commit (https://pypi.org/project/pre-commit/)
+Copyright (c) 2014 pre-commit dev team: Anthony Sottile, Ken Struys
+Licensed under MIT (https://github.com/pre-commit/pre-commit/blob/main/LICENSE)
 
 pybind11 (https://github.com/pybind/pybind11)
 Copyright (c) 2016 Wenzel Jakob <wenzel.jakob@epfl.ch>, All rights reserved.
@@ -321,6 +353,10 @@ Licensed under Apache 2.0 (https://github.com/rapidsai/rmm/blob/branch-24.04/LIC
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
 
+ruff-pre-commit (https://github.com/astral-sh/ruff-pre-commit/)
+Copyright (c) 2024 Astral Software Inc.
+Licensed under MIT (https://github.com/astral-sh/ruff-pre-commit/blob/main/LICENSE-MIT)
+
 ruff (https://pypi.org/project/ruff/)
 Copyright (c) 2022 Charles Marsh
 Licensed under MIT (https://github.com/astral-sh/ruff/blob/main/LICENSE)
@@ -340,6 +376,9 @@ Licensed under Apache-2.0 (http://changelogs.ubuntu.com/changelogs/pool/universe
 stb (https://github.com/nothings/stb)
 Copyright (c) 2017 Sean Barrett
 Licensed under MIT (https://github.com/nothings/stb/blob/master/LICENSE)
+
+TinyXML-2 (https://github.com/leethomason/tinyxml2)
+Licensed under Zlib (https://github.com/leethomason/tinyxml2/blob/9.0.0/LICENSE.txt)
 
 tomli (https://pypi.org/project/tomli/)
 Copyright (c) 2021 Taneli Hukkinen

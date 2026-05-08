@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_extension_manager.hpp"
+#include <holoscan/core/gxf/gxf_extension_manager.hpp>
 
 #include <dlfcn.h>
 #include <unistd.h>
@@ -29,7 +29,7 @@
 #include <string_view>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 namespace holoscan::gxf {
 

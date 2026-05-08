@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,16 +15,16 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
+#include <holoscan/core/resources/gxf/cuda_green_context.hpp>
 
 #include <cstdint>
 #include <memory>
 #include <string>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/resources/gxf/cuda_green_context_pool.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context_pool.hpp>
 
 namespace holoscan {
 

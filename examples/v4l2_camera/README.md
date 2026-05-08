@@ -63,16 +63,21 @@ There are a few parameters that can be specified:
 ### C++ Run instructions
 
 * **using deb package install or NGC container**:
+
   ```bash
   cd /opt/nvidia/holoscan
   ./examples/v4l2_camera/cpp/v4l2_camera
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/v4l2_camera/cpp/v4l2_camera
   ```
+
 * **source (local env)**:
+
   ```bash
   cd ${BUILD_OR_INSTALL_DIR}
   ./examples/v4l2_camera/cpp/v4l2_camera
@@ -81,21 +86,28 @@ There are a few parameters that can be specified:
 ### Python Run instructions
 
 * **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/v4l2_camera.py
   ```
+
 * **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/v4l2_camera/python/v4l2_camera.py
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/v4l2_camera/python/v4l2_camera.py
   ```
+
 * **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/v4l2_camera/python/v4l2_camera.py
@@ -108,17 +120,21 @@ The V4L2 operator supports virtual video devices created with the [v4l2loopback 
 ### Example: Streaming an mp4 as a Loopback Device
 
 On your local machine, install `v4l2loopback` and `ffmpeg`:
+
 ```sh
 sudo apt-get install v4l2loopback-dkms ffmpeg
 ```
 
 Load the `v4l2loopback` kernel module on `/dev/video3`:
+
 ```sh
 sudo modprobe v4l2loopback video_nr=3 max_buffers=4
 ```
+
 Note that if you are doing containerized development, the kernel module needs to be loaded before launching the container. Also, if you for want to change parameters given when loading the kernel module, you will have to first unload the kernel module with `sudo modprobe -r v4l2loopback`, for the changes to have any effect.
 
 Next, play a video to `/dev/video3` using `ffmpeg`:
+
 ```sh
 ffmpeg -stream_loop -1 -re -i /path/to/video.mp4 -pix_fmt rgba -f v4l2 /dev/video3
 ```

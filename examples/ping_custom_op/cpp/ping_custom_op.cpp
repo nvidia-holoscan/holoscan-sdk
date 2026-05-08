@@ -18,8 +18,8 @@
 #include <iostream>
 
 #include <holoscan/holoscan.hpp>
-#include <holoscan/operators/ping_tx/ping_tx.hpp>
 #include <holoscan/operators/ping_rx/ping_rx.hpp>
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
 
 namespace holoscan::ops {
 

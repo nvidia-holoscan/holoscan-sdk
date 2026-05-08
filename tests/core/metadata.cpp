@@ -21,8 +21,8 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/metadata.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/metadata.hpp>
 
 #include "dummy_classes.hpp"
 

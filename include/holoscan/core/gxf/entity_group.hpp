@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +23,9 @@
 #include <memory>
 #include <string>
 
+#include "../operator.hpp"
 #include "./gxf_condition.hpp"
 #include "./gxf_operator.hpp"
-#include "../operator.hpp"
 
 namespace holoscan::gxf {
 

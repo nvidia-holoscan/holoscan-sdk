@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include <holoscan/core/gxf/gxf_operator.hpp>
 
 namespace holoscan::ops {
 

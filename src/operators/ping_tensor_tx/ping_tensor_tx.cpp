@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 
 #include <cuda_runtime.h>
 
@@ -25,7 +25,7 @@
 #include <vector>
 
 #include <gxf/std/allocator.hpp>
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan::ops {
 

@@ -24,7 +24,6 @@ rapids_cpm_find(fmt 11.0.2
     GITHUB_REPOSITORY fmtlib/fmt
     GIT_TAG 11.0.2
     GIT_SHALLOW TRUE
-    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/fmt.patch
 
     OPTIONS
     "FMT_INSTALL ON"

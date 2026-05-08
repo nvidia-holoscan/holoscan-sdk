@@ -15,17 +15,77 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/io_spec.hpp"
+#include <holoscan/core/io_spec.hpp>
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/resources/gxf/pubsub_receiver.hpp"
-#include "holoscan/core/resources/gxf/pubsub_transmitter.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/resources/gxf/pubsub_receiver.hpp>
+#include <holoscan/core/resources/gxf/pubsub_transmitter.hpp>
 
 using std::string_literals::operator""s;
+
+namespace {
+
+std::optional<std::string> topic_name_from_connector_args(
+    const std::shared_ptr<holoscan::Resource>& connector) {
+  if (!connector) {
+    return std::nullopt;
+  }
+
+  auto& args = connector->args();
+  for (auto it = args.rbegin(); it != args.rend(); ++it) {
+    if (it->name() != "topic_name" || !it->has_value()) {
+      continue;
+    }
+    try {
+      return std::any_cast<std::string>(it->value());
+    } catch (const std::bad_any_cast&) {
+      HOLOSCAN_LOG_WARN("IOSpec: connector '{}' has a non-string topic_name argument",
+                        connector->name());
+      return std::nullopt;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<holoscan::Arg> named_arg_from_connector_args(
+    const std::shared_ptr<holoscan::Resource>& connector, const std::string& arg_name) {
+  if (!connector) {
+    return std::nullopt;
+  }
+
+  auto& args = connector->args();
+  for (auto it = args.rbegin(); it != args.rend(); ++it) {
+    if (it->name() == arg_name) {
+      return *it;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<nvidia::gxf::QoSProfile> qos_profile_from_connector_args(
+    const std::shared_ptr<holoscan::Resource>& connector) {
+  if (!connector) {
+    return std::nullopt;
+  }
+
+  auto qos_arg = named_arg_from_connector_args(connector, "qos_profile");
+  if (!qos_arg.has_value() || !qos_arg->has_value()) {
+    return std::nullopt;
+  }
+  try {
+    return std::any_cast<nvidia::gxf::QoSProfile>(qos_arg->value());
+  } catch (const std::bad_any_cast&) {
+    HOLOSCAN_LOG_WARN("IOSpec: connector '{}' has a non-QoS qos_profile argument",
+                      connector->name());
+    return std::nullopt;
+  }
+}
+
+}  // namespace
 
 namespace holoscan {
 
@@ -78,7 +138,7 @@ IOSpec& IOSpec::qos(const nvidia::gxf::QoSProfile& profile) {
   return *this;
 }
 
-IOSpec& IOSpec::topic(const std::string& name) {
+IOSpec& IOSpec::topic(const std::string& name, bool replace_connector) {
   switch (connector_type_) {
     case ConnectorType::kDefault:
       // Automatically switch to PubSub.
@@ -87,9 +147,38 @@ IOSpec& IOSpec::topic(const std::string& name) {
     case ConnectorType::kPubSub:
       break;
     default:
+      if (replace_connector) {
+        ArgList args;
+        args.add(Arg("topic_name", name));
+
+        if (auto capacity = named_arg_from_connector_args(connector_, "capacity");
+            capacity.has_value()) {
+          args.add(*capacity);
+        } else if (io_type_ == IOType::kInput) {
+          const auto queue_size = queue_size_.size();
+          if (queue_size > 0) {
+            args.add(Arg("capacity", static_cast<uint64_t>(queue_size)));
+          }
+        }
+
+        if (auto policy = named_arg_from_connector_args(connector_, "policy"); policy.has_value()) {
+          args.add(*policy);
+        } else if (queue_policy_.has_value()) {
+          args.add(Arg("policy", static_cast<uint64_t>(queue_policy_.value())));
+        }
+
+        connector_type_ = ConnectorType::kPubSub;
+        if (io_type_ == IOType::kInput) {
+          connector_ = std::make_shared<PubSubReceiver>(args);
+        } else {
+          connector_ = std::make_shared<PubSubTransmitter>(args);
+        }
+        return *this;
+      }
       HOLOSCAN_LOG_WARN(
           "topic('{}') is ignored for non-PubSub connector on port '{}'. "
-          "Topic names are only used with ConnectorType::kPubSub.",
+          "Topic names are only used with ConnectorType::kPubSub unless "
+          "replace_connector=true is specified.",
           name,
           name_);
       return *this;
@@ -103,9 +192,58 @@ IOSpec& IOSpec::topic(const std::string& name) {
       connector_ = std::make_shared<PubSubTransmitter>(Arg("topic_name", name));
     }
   } else {
-    connector_->add_arg(Arg("topic_name", name));
+    auto& args = connector_->args();
+    bool found_topic_name = false;
+    for (auto it = args.begin(); it != args.end();) {
+      if (it->name() != "topic_name") {
+        ++it;
+        continue;
+      }
+      if (!found_topic_name) {
+        *it = Arg("topic_name", name);
+        found_topic_name = true;
+        ++it;
+      } else {
+        it = args.erase(it);
+      }
+    }
+    if (!found_topic_name) {
+      connector_->add_arg(Arg("topic_name", name));
+    }
   }
   return *this;
+}
+
+std::optional<std::string> IOSpec::topic() const {
+  if (connector_type_ != ConnectorType::kPubSub || !connector_) {
+    return std::nullopt;
+  }
+
+  if (auto topic_name = topic_name_from_connector_args(connector_); topic_name.has_value()) {
+    return topic_name;
+  }
+
+  if (io_type_ == IOType::kInput) {
+    auto rx = std::dynamic_pointer_cast<PubSubReceiver>(connector_);
+    if (!rx) {
+      return std::nullopt;
+    }
+    const auto runtime_topic_name = rx->topic_name();
+    if (runtime_topic_name.empty()) {
+      return std::nullopt;
+    }
+    return runtime_topic_name;
+  }
+
+  auto tx = std::dynamic_pointer_cast<PubSubTransmitter>(connector_);
+  if (!tx) {
+    return std::nullopt;
+  }
+  const auto runtime_topic_name = tx->topic_name();
+  if (runtime_topic_name.empty()) {
+    return std::nullopt;
+  }
+  return runtime_topic_name;
 }
 
 YAML::Node IOSpec::to_yaml_node() const {
@@ -166,6 +304,30 @@ std::string IOSpec::description() const {
   YAML::Emitter emitter;
   emitter << to_yaml_node();
   return emitter.c_str();
+}
+
+std::optional<nvidia::gxf::QoSProfile> IOSpec::qos() const {
+  if (connector_type_ != ConnectorType::kPubSub || !connector_) {
+    return std::nullopt;
+  }
+
+  if (auto qos_profile = qos_profile_from_connector_args(connector_); qos_profile.has_value()) {
+    return qos_profile;
+  }
+
+  if (io_type_ == IOType::kInput) {
+    auto rx = std::dynamic_pointer_cast<PubSubReceiver>(connector_);
+    if (!rx) {
+      return std::nullopt;
+    }
+    return rx->qos();
+  }
+
+  auto tx = std::dynamic_pointer_cast<PubSubTransmitter>(connector_);
+  if (!tx) {
+    return std::nullopt;
+  }
+  return tx->qos();
 }
 
 }  // namespace holoscan

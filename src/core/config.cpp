@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/config.hpp"
+#include <holoscan/core/config.hpp>
 
 #include <yaml-cpp/yaml.h>
 
@@ -23,8 +23,8 @@
 #include <unordered_set>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

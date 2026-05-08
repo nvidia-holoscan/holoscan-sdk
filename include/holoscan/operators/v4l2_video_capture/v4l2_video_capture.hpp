@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/operator.hpp"
+#include <holoscan/core/operator.hpp>
 
 namespace holoscan::ops {
 
@@ -83,6 +83,10 @@ class GxfFormat;
  *
  * - **V4L2_pixel_format** : std::string
  *   - V4L2 pixel format
+ * - **V4L2_width** : int32_t
+ *   - Actual negotiated frame width in pixels
+ * - **V4L2_height** : int32_t
+ *   - Actual negotiated frame height in pixels
  * - **V4L2_ycbcr_encoding** : std::string
  *   - V4L2 YCbCr encoding (`enum v4l2_ycbcr_encoding` value as string)
  * - **V4L2_quantization** : std::string

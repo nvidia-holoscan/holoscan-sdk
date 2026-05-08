@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#include <gtest/gtest.h>
 #include <cuda.h>
+#include <gtest/gtest.h>
 
 #include <memory>
 #include <string>
 #include <vector>
 
-#include <holoscan/holoscan.hpp>
+#include <holoinfer_utils.hpp>
 #include <holoscan/core/execution_context.hpp>
+#include <holoscan/holoscan.hpp>
 #include <holoscan/operators/inference/inference.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
-#include <holoinfer_utils.hpp>
 
 // Test tensor dimensions BATCH_SIZE x TENSOR_SIZE x TENSOR_SIZE
 constexpr int TENSOR_SIZE = 256;
@@ -201,30 +201,19 @@ class InferenceOpTestApp : public holoscan::Application {
       }
     }
 
-    auto cuda_stream_pool1 = make_resource<CudaStreamPool>("cuda_stream_pool1",
-                                                           0,
-                                                           cudaStreamNonBlocking,
-                                                           0,
-                                                           1,
-                                                           5,
-                                                           cuda_green_context1);
+    auto cuda_stream_pool1 = make_resource<CudaStreamPool>(
+        "cuda_stream_pool1", 0, cudaStreamNonBlocking, 0, 1, 5, cuda_green_context1);
     auto cuda_stream_pool2 =
-        test_two_
-            ? make_resource<CudaStreamPool>("cuda_stream_pool2",
-                                            0,
-                                            cudaStreamNonBlocking,
-                                            0,
-                                            1,
-                                            5,
-                                            cuda_green_context2)
-            : nullptr;
+        test_two_ ? make_resource<CudaStreamPool>(
+                        "cuda_stream_pool2", 0, cudaStreamNonBlocking, 0, 1, 5, cuda_green_context2)
+                  : nullptr;
 
     auto tensor_generator_op = make_operator<ops::TensorGeneratorOp>(
         "tensor_generator", Arg("allocator") = allocator, make_condition<CountCondition>(10));
 
     ops::InferenceOp::DataMap model_path_map1;
     ops::InferenceOp::DataMap model_path_map2;
-    std::string model_path = "../tests/operators/inference/models/" + model_path_;
+    std::string model_path = "tests/operators/inference/models/" + model_path_;
     model_path_map1.insert("first", model_path);
     if (test_two_) {
       model_path_map2.insert("second", model_path);
@@ -319,8 +308,7 @@ TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
   HOLOSCAN_LOG_INFO("enable_green_context = {}", enable_green_context);
   HOLOSCAN_LOG_INFO("test_two = {}", test_two);
 
-  std::filesystem::path config_path;
-  config_path = std::filesystem::path("../tests/operators/inference/inference.yaml");
+  std::filesystem::path config_path = "tests/operators/inference/inference.yaml";
 
   auto app = make_application<InferenceOpTestApp>(backend, model, enable_green_context, test_two);
   app->config(config_path);

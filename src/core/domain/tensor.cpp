@@ -20,10 +20,10 @@
 #include <string>
 #include <vector>
 
-#include "gxf/std/dlpack_utils.hpp"
-#include "gxf/std/memory_buffer.hpp"
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/domain/tensor.hpp"
+#include <gxf/std/dlpack_utils.hpp>
+#include <gxf/std/memory_buffer.hpp>
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/domain/tensor.hpp>
 
 namespace holoscan {
 

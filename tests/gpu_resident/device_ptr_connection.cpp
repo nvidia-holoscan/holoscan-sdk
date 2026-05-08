@@ -414,6 +414,78 @@ TEST_F(DevicePtrConnectionTest, MixedChain_MemBlock_DevicePtr_MemBlock) {
 }
 
 // ============================================================================
+// Fan-out to multiple inputs on the same downstream operator
+// ============================================================================
+
+// Source has device_ptr and fans out in a single add_flow call to one mem input and one device_ptr
+// input on the same sink operator. The source device_ptr must win for both connections.
+TEST_F(DevicePtrConnectionTest, SourceDevicePtr_FanOutSingleCall_SameSinkMixedInputs) {
+  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "WARN");
+  Fragment fragment;
+  auto source = fragment.make_operator<DevicePtrSourceOp>("source");
+  auto sink = fragment.make_operator<MultiPortMixedSinkOp>("sink");
+  fragment.add_flow(source, sink, {{"out", "in0"}, {"out", "in2"}});
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  testing::internal::CaptureStderr();
+  EXPECT_TRUE(executor->initialize_fragment());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("ignoring the memory block size") != std::string::npos)
+      << "Expected warning about ignoring memory block size not found in:\n"
+      << log_output;
+  EXPECT_TRUE(log_output.find("Both source") != std::string::npos &&
+              log_output.find("have device pointers") != std::string::npos)
+      << "Expected message about both sides having device pointers not found in:\n"
+      << log_output;
+
+  auto source_out = source->device_memory("out");
+  auto sink_in0 = sink->device_memory("in0");
+  auto sink_in2 = sink->device_memory("in2");
+
+  EXPECT_EQ(source_out, source->dev_ptr());
+  EXPECT_EQ(source_out, sink_in0);
+  EXPECT_EQ(source_out, sink_in2);
+  EXPECT_NE(sink_in2, sink->dev_ptr_2());
+}
+
+// Same topology as above, but the two fan-out connections are added across separate add_flow calls.
+TEST_F(DevicePtrConnectionTest, SourceDevicePtr_FanOutSeparateCalls_SameSinkMixedInputs) {
+  EnvVarWrapper wrapper("HOLOSCAN_LOG_LEVEL", "WARN");
+  Fragment fragment;
+  auto source = fragment.make_operator<DevicePtrSourceOp>("source");
+  auto sink = fragment.make_operator<MultiPortMixedSinkOp>("sink");
+  fragment.add_flow(source, sink, {{"out", "in0"}});
+  fragment.add_flow(source, sink, {{"out", "in2"}});
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  testing::internal::CaptureStderr();
+  EXPECT_TRUE(executor->initialize_fragment());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("ignoring the memory block size") != std::string::npos)
+      << "Expected warning about ignoring memory block size not found in:\n"
+      << log_output;
+  EXPECT_TRUE(log_output.find("Both source") != std::string::npos &&
+              log_output.find("have device pointers") != std::string::npos)
+      << "Expected message about both sides having device pointers not found in:\n"
+      << log_output;
+
+  auto source_out = source->device_memory("out");
+  auto sink_in0 = sink->device_memory("in0");
+  auto sink_in2 = sink->device_memory("in2");
+
+  EXPECT_EQ(source_out, source->dev_ptr());
+  EXPECT_EQ(source_out, sink_in0);
+  EXPECT_EQ(source_out, sink_in2);
+  EXPECT_NE(sink_in2, sink->dev_ptr_2());
+}
+
+// ============================================================================
 // Multi-port mixed connection types (3 ports)
 // ============================================================================
 

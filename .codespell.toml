@@ -1,0 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Codespell configuration (canonical). The repository root may symlink `.codespell.toml` here
+# so hooks and tools resolve the same settings from the monorepo root.
+
+[tool.codespell]
+skip = "_deps,build*,.cache,html,_build,_static,generated,latex,install*,.git,xml,vale,swipat*"
+ignore-words-list = "bu,dne,nd,thirdparty,unexpect,notin,activ,synopsys"

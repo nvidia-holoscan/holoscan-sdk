@@ -28,9 +28,9 @@
 #include "./core/dataflow_tracker.hpp"
 #include "./core/execution_context.hpp"
 #include "./core/executor.hpp"
+#include "./core/flow_graphs/flow_graph.hpp"
 #include "./core/fragment.hpp"
 #include "./core/gpu_resident_operator.hpp"
-#include "./core/flow_graphs/flow_graph.hpp"
 #include "./core/io_context.hpp"
 #include "./core/message.hpp"
 #include "./core/metadata.hpp"
@@ -58,6 +58,8 @@
 #include "./core/conditions/gxf/multi_message_available.hpp"
 #include "./core/conditions/gxf/multi_message_available_timeout.hpp"
 #include "./core/conditions/gxf/periodic.hpp"
+#include "./pubsub/runtime/conditions/publisher_available.hpp"
+#include "./pubsub/runtime/conditions/subscriber_available.hpp"
 
 // NetworkContexts
 #include "./core/network_contexts/gxf/pubsub_context.hpp"

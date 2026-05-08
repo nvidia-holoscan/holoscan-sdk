@@ -4,6 +4,7 @@ This document aims to guide users with recommended and advanced workflows to bui
 
 > [!WARNING]
 > **Disclaimer**: we only recommend building the SDK from source if you are a developer of the SDK, or need to build the SDK with debug symbols or other options not used as part of the published packages.
+>
 > - If you want to write your own operator or application, you can use the SDK as a dependency (and contribute to [HoloHub](https://github.com/nvidia-holoscan/holohub)).
 > - If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
 > - Refer to the [Holoscan SDK User Guide installation instructions](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#install-the-sdk) for guidance on installing Holoscan SDK from published packages.
@@ -25,6 +26,8 @@ This document aims to guide users with recommended and advanced workflows to bui
     - [Test Configuration](#test-configuration)
     - [Reproducing Test Failures](#reproducing-test-failures)
   - [Linting](#linting)
+  - [Pre-commit hooks](#pre-commit-hooks)
+  - [Building the User Guide](#building-the-user-guide)
   - [VSCode](#vscode)
 
 ## Building the SDK from source
@@ -111,12 +114,14 @@ The commands to run the [**examples**](./examples#readme) are then the same as i
 The SDK can be built with different configurations to match various deployment targets:
 
 **CUDA Versions**: 12, 13 (default in examples)
+
 ```sh
 export CUDA_MAJOR=13  # or 12
 ./run build
 ```
 
 **Architectures**: x86_64 (default), aarch64
+
 ```sh
 ./run build --arch aarch64
 # or
@@ -125,6 +130,7 @@ export HOLOSCAN_BUILD_ARCH=aarch64
 ```
 
 **GPU Types**: dgpu (default), igpu (aarch64 only)
+
 ```sh
 ./run build --gpu igpu  # for aarch64 only
 # or
@@ -133,6 +139,7 @@ export HOLOSCAN_BUILD_GPU_TYPE=igpu
 ```
 
 **Build Types**: Release (default), Debug, RelWithDebInfo
+
 ```sh
 ./run build --type debug
 # or
@@ -188,6 +195,7 @@ You can run tests using the `./run` script:
 #### Test Environment
 
 When using the `./run test` command, tests run inside containers, which ensures:
+
 - Consistent environment regardless of host system
 - Access to GPU via NVIDIA Container Toolkit
 - Isolation from host system dependencies
@@ -211,6 +219,7 @@ When a test fails (especially from CI), you can reproduce it locally:
 1. **Identify the test**: From CI logs or CDash, note the exact test name
 
 2. **Match the build configuration**:
+
    ```sh
    export CUDA_MAJOR=13  # or 12, match CI
    export ARCH=x86_64    # or aarch64, match CI
@@ -218,6 +227,7 @@ When a test fails (especially from CI), you can reproduce it locally:
    ```
 
 3. **Run the specific test**:
+
    ```sh
    # Using run script
    ./run test --name <test_name> --verbose
@@ -227,15 +237,18 @@ When a test fails (especially from CI), you can reproduce it locally:
    ```
 
 4. **Debug in interactive container** (from build tree):
+
    ```sh
    ./run launch build-cu13-x86_64
    # Inside container:
    cd build-cu13-x86_64
    ctest -R <test_name> --verbose --output-on-failure
    ```
+
    Note: The container is automatically managed by the `./run` script.
 
 5. **Run tests from install tree** (for examples):
+
    ```sh
    # Launch container with install tree mounted
    ./run launch install-cu13-x86_64
@@ -258,17 +271,70 @@ When a test fails (especially from CI), you can reproduce it locally:
    - `*_fail.png`: Actual output that failed
    - `*_ref.png`: Expected reference image
 
-
 ### Linting
 
-Run the following command to run various linting tools on the repository:
+Linting is implemented with **[pre-commit](https://pre-commit.com)**. Hooks (Ruff, cpplint, cmakelint, codespell, copyright, clang-format, markdownlint, and standard file checks) are listed in `.pre-commit-config.yaml` at the **git repository root**; pre-commit downloads and caches each hook’s tools the first time they run.
+
+From the build container (or any environment where you run `./run`), use:
 
 ```sh
-./run lint # optional: specify directories
+./run lint                # runs pre-commit run --all-files from the repository root
 ```
 
+`./run lint` automatically resolves `pre-commit`: it prefers [`uvx`](https://docs.astral.sh/uv/guides/tools/) when available (runs in an isolated environment without polluting your Python install), falls back to an existing `pre-commit` on PATH, or pip-installs it as a last resort. It then resolves the git top-level, checks for `.pre-commit-config.yaml` there, and runs all hooks on every tracked file. That matches a full CI-style pass. For faster, commit-oriented runs on staged files only, install hooks with `pre-commit install` and use plain `git commit`, or run `pre-commit run` from the repository root (see [Pre-commit hooks](#pre-commit-hooks)).
+
 > [!TIP]
-> Run `run lint --help` to see the list of tools that are used. If a lint command fails due to a missing module or executable on your system, you can install it using `python3 -m pip install <tool>`.
+> For hook-specific options and filtering, see `pre-commit run --help` and [.pre-commit-config.yaml](./.pre-commit-config.yaml).
+
+### Pre-commit hooks
+
+Contributors should enable **[pre-commit](https://pre-commit.com)** so checks run automatically on `git commit`. Use the **git repository root** (the directory that contains [`.pre-commit-config.yaml`](./.pre-commit-config.yaml)).
+
+**Setup** (on the host or in a shell where you commit — not only inside Docker):
+
+```sh
+# Option A: using uvx (recommended -- isolated, no pip pollution)
+# Install uv first if needed: https://docs.astral.sh/uv/getting-started/installation/
+uvx pre-commit install
+
+# Option B: using pip
+python3 -m pip install pre-commit
+pre-commit install
+```
+
+**Run manually** (same as `./run lint` for a full-tree run):
+
+```sh
+# Option A: using uvx
+uvx pre-commit run --all-files
+
+# Option B: using pip-installed pre-commit
+pre-commit run --all-files
+```
+
+Run a single hook by id (see the config file), for example:
+
+```sh
+pre-commit run ruff-check --all-files
+pre-commit run clang-format --all-files
+```
+
+**What the hooks cover:**
+
+| Area | Hooks / notes |
+|------|----------------|
+| Repository hygiene | `trailing-whitespace`, `end-of-file-fixer`, `check-yaml`, `check-json`, `check-added-large-files` (standard [pre-commit-hooks](https://github.com/pre-commit/pre-commit-hooks)) |
+| NVIDIA SPDX headers | `check-copyright` — runs [`scripts/check_copyright.py`](./scripts/check_copyright.py) |
+| Whitespace | `remove-tabs` — tabs replaced with spaces in C++, CMake, Dockerfile, Markdown, Python, and shell sources (third-party trees excluded in config) |
+| Python | `ruff-check` (with `--fix`) and `ruff-format` — rules in [`.ruff.toml`](./.ruff.toml) |
+| Spelling | `codespell` — may rewrite files (`--write-changes`); settings in [`.codespell.toml`](./.codespell.toml) (`[tool.codespell]`); lines can be ignored with `// codespell-ignore` or `# codespell-ignore` |
+| C/C++/CUDA style | `cpplint` and `clang-format` (clang-format version pinned in the mirror repo; binary must be available for that hook) |
+| CMake | `cmakelint` |
+| Markdown | `markdownlint` — paths and config file are set in `.pre-commit-config.yaml` (alongside `.markdownlint.yaml` in this tree) |
+
+**`check-copyright`:** Implemented by [`scripts/check_copyright.py`](./scripts/check_copyright.py). On `git commit`, pre-commit passes only **staged** paths. For `pre-commit run --all-files`, the script receives a wide file list and intersects it with changes since a default baseline (`origin/main` / `main` or `origin/release/latest` / `release/latest`, chosen from your current branch). Set **`HOLOSCAN_COPYRIGHT_BASE_REF`** or pass **`--intersect-since-ref REF`** to that script to pin the baseline. Run `python3 scripts/check_copyright.py --help` for all options.
+
+**Relationship to `./run lint`:** They run the **same** hooks from the same config. `./run lint` always executes `pre-commit run --all-files` at the git root (entire tree). After `pre-commit install`, `git commit` runs hooks on **staged** files only. Several hooks apply auto-fixes (for example Ruff and codespell); review `git diff` after a full-tree run.
 
 ### Building the User Guide
 
@@ -300,6 +366,7 @@ The `./run vscode` command supports multiple IDE options:
 - **Custom Binary**: Use `--cmd <path>` to specify a custom IDE binary
 
 **Examples:**
+
 ```bash
 ./run vscode                    # Auto-detect (Cursor if available, otherwise VSCode)
 ./run vscode --code             # Force VSCode

@@ -5,8 +5,9 @@ This example demonstrates how to use the [MatX](https://github.com/NVIDIA/MatX) 
 ## Overview
 
 The application consists of two operators:
-1.  A transmitter (`MatXTensorTxOp`) that creates a MatX tensor, populates it with data, and sends it downstream.
-2.  A receiver (`MatXTensorRxOp`) that receives the tensor, performs a simple computation on it using MatX, and prints the result.
+
+1. A transmitter (`MatXTensorTxOp`) that creates a MatX tensor, populates it with data, and sends it downstream.
+2. A receiver (`MatXTensorRxOp`) that receives the tensor, performs a simple computation on it using MatX, and prints the result.
 
 The conversion between the MatX tensor and `holoscan::Tensor` is achieved using the DLPack standard, which allows for zero-copy data sharing between the two libraries.
 
@@ -27,6 +28,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/matx/matx_basic/cpp/matx_basic
 ```
@@ -45,6 +47,7 @@ Then, run:
 The application will print log messages from the receiver operator, showing the received tensor and the result of the computation. The output will look similar to this:
 
 C++:
+
 ```text
 tensor name: tensor
 tensor nbytes: 40

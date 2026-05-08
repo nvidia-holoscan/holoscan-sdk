@@ -26,13 +26,13 @@
 #include <variant>
 #include <vector>
 
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/conditions/gxf/cuda_stream.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resources/gxf/receiver.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "../core/component_util.hpp"
 #include "./cuda_stream_pydoc.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/conditions/gxf/cuda_stream.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resources/gxf/receiver.hpp"
-#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

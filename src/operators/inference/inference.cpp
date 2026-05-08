@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/inference/inference.hpp"
+#include <holoscan/operators/inference/inference.hpp>
 
 #include <map>
 #include <memory>
@@ -24,14 +24,14 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/operators/inference/codecs.hpp"
-#include "holoscan/utils/holoinfer_utils.hpp"
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/operators/inference/codecs.hpp>
+#include <holoscan/utils/holoinfer_utils.hpp>
 
 #include <holoinfer_utils.hpp>
 
@@ -350,6 +350,9 @@ void InferenceOp::start() {
 }
 
 void InferenceOp::stop() {
+  // Reset the transmit cache to release the persistent GXF entity reference while the context
+  // is still valid.
+  transmit_cache_ = {};
   inference_specs_.reset();
   holoscan_infer_context_.reset();
 }
@@ -430,7 +433,7 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     // Get output dimensions
     auto model_out_dims_map = holoscan_infer_context_->get_output_dimensions();
 
-    // Transmit output buffers via a single GXF transmitter
+    // Transmit output buffers via a single GXF transmitter.
     stat = holoscan::utils::transmit_data_per_model(cont,
                                                     inference_map_.get().get_map(),
                                                     inference_specs_->output_per_model_,
@@ -441,7 +444,9 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                     transmit_on_cuda_.get(),
                                                     allocator.value(),
                                                     module_,
-                                                    cuda_stream);
+                                                    cuda_stream,
+                                                    transmit_cache_);
+
     if (stat != GXF_SUCCESS) {
       HoloInfer::raise_error(module_, "Compute, Data Transmission");
     }

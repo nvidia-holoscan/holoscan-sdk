@@ -18,23 +18,26 @@
 ############################################################
 # Versions
 ############################################################
-ARG ONNX_RUNTIME_VERSION=1.22.1
+ARG ONNX_RUNTIME_VERSION=1.24.2
 ARG ONNX_RUNTIME_STRATEGY=downloader # or builder
-ARG PYTORCH_IGPU_VERSION=2.9.1
-ARG PYTORCH_DGPU_VERSION=2.9.1
-ARG NCCL_VERSION=2.27  # strict compat to match pytorch versions (symbol: ncclCommWindowRegister)
-ARG LIBCUSPARSELT_VERSION=0.8  # strict compat to match pytorch versions
+ARG PYTORCH_IGPU_VERSION=2.11.0
+ARG PYTORCH_DGPU_VERSION=2.11.0
+ARG NCCL_VERSION=2.29  # match DLFW 26.03 development stack
+ARG LIBCUSPARSELT_CU12_VERSION=0.8  # strict compat to match PyTorch versions
+ARG LIBCUSPARSELT_CU13_VERSION=0.9      # match DLFW 26.03 development stack
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.5.1_20260318_8b9561654_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.5.1_20260318_8b9561654_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.6.0_20260429_73f41cf00_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.6.0_20260429_73f41cf00_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.3.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
-ARG TENSORRT_CU13_VERSION=10.13
-ARG UCX_VERSION=1.19.0
+ARG TENSORRT_CU13_VERSION=10.16
+ARG UCX_VERSION=1.20.0
 ARG GDRCOPY_VERSION=2.5.1  # MIT license - bundled with UCX for GPU Direct RDMA support
 ARG NSYS_VERSION=2025.3.1  # at least 2025.3 required for CUDA 13.0 support
 ARG OPENSSL_VERSION=3.0.19  # Use latest LTS source version with CVE fixes
 ARG YAML_CPP_VERSION=0.8.0
+ARG FASTDDS_VERSION=3.4.2
+ARG FASTDDS_GEN_VERSION=4.3.0
 ARG NVCOMP_VERSION=5.0.0.6    # Pin to <5.1 for stable CRC32 functionality on arm64 platforms.
 
 ############################################################
@@ -204,6 +207,8 @@ RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3
 FROM python-base AS build-tools
 
 # Install build tools
+# Note: Pin to CMake 3.31 to work around 3.31.12 error: "cmake : Breaks: cmake-data (< 4.3)"
+#       CMake Issue#27775
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
     OS_CODENAME=$(. /etc/os-release && echo "$VERSION_CODENAME") \
@@ -216,8 +221,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
     && rm "$KW_KEYRING" \
     && apt-get install --no-install-recommends -y \
         kitware-archive-keyring \
-        cmake="3.*" \
-        cmake-data="3.*" \
+        cmake="3.31.11*" \
+        cmake-data="3.31.11*" \
         build-essential \
         patchelf \
         ninja-build \
@@ -400,9 +405,15 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
 FROM tensorrt-dev AS infer-dev-dgpu
 
 ARG NCCL_VERSION
-ARG LIBCUSPARSELT_VERSION
+ARG LIBCUSPARSELT_CU12_VERSION
+ARG LIBCUSPARSELT_CU13_VERSION
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    if [ "${CUDA_MAJOR}" = "13" ]; then \
+        LIBCUSPARSELT_VERSION="${LIBCUSPARSELT_CU13_VERSION}"; \
+    else \
+        LIBCUSPARSELT_VERSION="${LIBCUSPARSELT_CU12_VERSION}"; \
+    fi; \
     apt-get update \
     # Get the exact NCCL package version for the specified NCCL_VERSION and CUDA_MAJOR with a single grep call.
     && NCCL_APT_VERSION=$(apt-cache madison libnccl2 | grep -o "${NCCL_VERSION}[^ ]*+cuda${CUDA_MAJOR}[^ ]*" | head -n 1) \
@@ -500,7 +511,7 @@ FROM base AS sccache-downloader
 WORKDIR /opt/sccache
 
 # Set sccache version
-ENV SCCACHE_VERSION=v0.12.0-rapids.27
+ENV SCCACHE_VERSION=v0.14.0-rapids.1
 ENV SCCACHE_BASE_URL=https://github.com/rapidsai/sccache/releases/download
 
 # Download and extract the binary
@@ -523,22 +534,18 @@ RUN git clone \
   https://github.com/Microsoft/onnxruntime \
   ${ORT_DIR}/src
 
-# Apply patch for CUDA 12.9, TensorRT 10.11+, CUTLASS 3.9.2, and CUDA 13.0 support (ORT < 1.23)
-WORKDIR ${ORT_DIR}/src
-RUN ORT_REPO_PREFIX=https://github.com/microsoft/onnxruntime/commit/ && \
-    curl -sSL ${ORT_REPO_PREFIX}ed7c234b2535.patch | git apply -v && \
-    curl -sSL ${ORT_REPO_PREFIX}8983424d9a8d.patch | git apply -v && \
-    curl -sSL ${ORT_REPO_PREFIX}9dad9af9f9b4.patch | git apply -v && \
-    curl -sSL ${ORT_REPO_PREFIX}a2bd54bc8c59.patch | git apply -v && \
-    curl -sSL ${ORT_REPO_PREFIX}7a6cef6fe367.patch | git apply -v --include=onnxruntime/contrib_ops/cuda/moe/ft_moe/moe_kernel.cu && \
-    curl -sSL ${ORT_REPO_PREFIX}7c18d896b033.patch | git apply -v
-
 ############################################################
 # ONNX Runtime (Build)
 ############################################################
 FROM tensorrt-dev AS onnxruntime-builder
 ARG ORT_DIR=/opt/onnxruntime
 ARG ONNX_RUNTIME_VERSION
+
+# Need cudnn.h for ONNX Runtime 1.24 build
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt install -y --no-install-recommends libcudnn9-dev-cuda-${CUDA_MAJOR}
 
 # Create user for non-root build
 ARG BUILD_UID=1000
@@ -608,8 +615,18 @@ ARG ONNX_RUNTIME_VERSION
 # Download ORT binaries from artifactory
 WORKDIR /opt/onnxruntime
 RUN CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2) \
+    && if [ ${CUDA_MAJOR} = "13" ]; then \
+        # Use ONNX Runtime CUDA 13.0 pre-built binary for convenience
+        CUDA_MAJOR_MINOR="13.0"; \
+    fi \
     && curl -S -L -# -o ort.tgz \
-        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz
+        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz \
+    && echo "Downloaded ONNX Runtime from onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz" \
+    && ARCHIVE_SIZE=$(stat -c%s "ort.tgz") \
+    && if [ "${ARCHIVE_SIZE}" -lt 1024 ]; then \
+        echo "Error: Downloaded archive ort.tgz is less than 1KB in size (${ARCHIVE_SIZE} bytes). Possible download error." >&2; \
+        exit 2; \
+    fi
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
 RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 --no-same-owner --no-same-permissions
 
@@ -633,6 +650,11 @@ ARG PYTORCH_DGPU_VERSION
 # Install torch wheel
 RUN --mount=type=cache,target=/root/.cache/pip,id=holoscan-sdk-pip-cache-$TARGETARCH-$GPU_TYPE \
     CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2 --output-delimiter=""); \
+    if [ ${CUDA_MAJOR} = "13" ]; then \
+        # PyTorch CUDA 13.2 support is scheduled for PyTorch 2.12.0.
+        # For now, use major-compatible CUDA 13.0 wheels.
+        CUDA_MAJOR_MINOR="130"; \
+    fi; \
     PYTORCH_VERSION="${PYTORCH_DGPU_VERSION}+cu${CUDA_MAJOR_MINOR}"; \
     INDEX_URL="https://download.pytorch.org/whl"; \
     python3 -m pip download \
@@ -767,6 +789,93 @@ RUN cmake --build build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
 RUN cmake --install build --prefix /opt/yaml-cpp/${YAML_CPP_VERSION}
 
 ############################################################
+# Fast DDS (eProsima) - for IPC / DDS-based communication
+############################################################
+# We build from source instead of using eProsima's .deb package because:
+# - There is no public apt repository; the .deb must be downloaded manually from
+#   https://eprosima.com/index.php/downloads-all (no stable URL for automation).
+# - Official binaries are documented for amd64 only; this image supports TARGETARCH
+#   (amd64 and arm64), and building from source guarantees Fast DDS for both.
+# - Building installs to /opt/fastdds/${FASTDDS_VERSION}, which downstream stages
+#   expect (CMAKE_PREFIX_PATH, ldconfig). Package install would use system paths.
+# See: https://fast-dds.docs.eprosima.com/en/3.4.x/installation/binaries/binaries_linux.html
+#
+ARG FASTDDS_VERSION=3.4.2
+FROM build-tools AS fastdds-builder
+ARG TARGETARCH
+ARG GPU_TYPE
+ARG FASTDDS_VERSION=3.4.2
+ARG MAX_PROC
+
+# Fast DDS build dependencies (see https://fast-dds.docs.eprosima.com/en/3.4.x/installation/sources/sources_linux.html)
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libasio-dev \
+        libtinyxml2-dev \
+        libssl-dev
+
+ENV FASTDDS_INSTALL_DIR=/opt/fastdds/${FASTDDS_VERSION}
+
+# 1. foonathan_memory_vendor (v1.3.2 for Fast DDS 3.4.2)
+WORKDIR /opt/fastdds/build
+RUN git clone --depth 1 --branch v1.3.2 https://github.com/eProsima/foonathan_memory_vendor.git foonathan_memory_vendor
+RUN cmake -S foonathan_memory_vendor -B foonathan_memory_vendor/build -G Ninja \
+    -D CMAKE_INSTALL_PREFIX=${FASTDDS_INSTALL_DIR} \
+    -D BUILD_SHARED_LIBS=ON
+RUN cmake --build foonathan_memory_vendor/build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN cmake --install foonathan_memory_vendor/build --prefix ${FASTDDS_INSTALL_DIR}
+
+# 2. Fast-CDR (v2.3.5 for Fast DDS 3.4.2)
+RUN git clone --depth 1 --branch v2.3.5 https://github.com/eProsima/Fast-CDR.git Fast-CDR
+RUN cmake -S Fast-CDR -B Fast-CDR/build -G Ninja \
+    -D CMAKE_INSTALL_PREFIX=${FASTDDS_INSTALL_DIR}
+RUN cmake --build Fast-CDR/build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN cmake --install Fast-CDR/build --prefix ${FASTDDS_INSTALL_DIR}
+
+# 3. Fast DDS (v3.4.2)
+RUN git clone --depth 1 --branch v${FASTDDS_VERSION} https://github.com/eProsima/Fast-DDS.git Fast-DDS
+RUN cmake -S Fast-DDS -B Fast-DDS/build -G Ninja \
+    -D CMAKE_INSTALL_PREFIX=${FASTDDS_INSTALL_DIR} \
+    -D CMAKE_PREFIX_PATH=${FASTDDS_INSTALL_DIR} \
+    -D CMAKE_BUILD_TYPE=Release
+RUN cmake --build Fast-DDS/build -j $(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN cmake --install Fast-DDS/build --prefix ${FASTDDS_INSTALL_DIR}
+
+############################################################
+# Fast-DDS-Gen (eProsima) - IDL compiler for Fast DDS (Java / Gradle)
+############################################################
+# Not bundled with Fast-DDS; needed to regenerate holo_ipc / example Fast DDS types from .idl.
+# Install layout: /opt/fastdds-gen/${FASTDDS_GEN_VERSION}/{fastddsgen.jar,bin/fastddsgen}
+# See: https://github.com/eProsima/Fast-DDS-Gen
+#
+FROM build-tools AS fastdds-gen-builder
+ARG FASTDDS_GEN_VERSION=4.3.0
+ARG MAX_PROC
+ARG TARGETARCH
+ARG GPU_TYPE
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openjdk-17-jdk-headless \
+    && rm -rf /var/lib/apt/lists/*
+ENV FAST_DDS_GEN_INSTALL_DIR=/opt/fastdds-gen/${FASTDDS_GEN_VERSION}
+WORKDIR /opt/fastdds-gen/build
+RUN git clone --depth 1 --branch v${FASTDDS_GEN_VERSION} \
+    https://github.com/eProsima/Fast-DDS-Gen.git Fast-DDS-Gen
+WORKDIR /opt/fastdds-gen/build/Fast-DDS-Gen
+RUN ./gradlew assemble --no-daemon -Dorg.gradle.parallel=true \
+    -Dorg.gradle.workers.max=$(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+RUN mkdir -p "${FAST_DDS_GEN_INSTALL_DIR}/bin" \
+    && cp build/libs/fastddsgen.jar "${FAST_DDS_GEN_INSTALL_DIR}/" \
+    && printf '#!/bin/sh\nexec java -jar "%s/fastddsgen.jar" "$@"\n' "${FAST_DDS_GEN_INSTALL_DIR}" \
+        > "${FAST_DDS_GEN_INSTALL_DIR}/bin/fastddsgen" \
+    && chmod +x "${FAST_DDS_GEN_INSTALL_DIR}/bin/fastddsgen"
+
+
+############################################################
 # GXF
 ############################################################
 FROM base AS gxf-downloader
@@ -889,11 +998,13 @@ RUN ./autogen.sh && \
     --enable-optimizations \
     --enable-mt \
     --enable-cma \
+    --enable-devel-headers \
     --with-verbs \
     --with-mlx5 \
     --with-rdmacm \
     --with-cuda=/usr/local/cuda \
     --with-gdrcopy=/opt/gdrcopy/install \
+    --without-knem \
     --without-xpmem \
     --without-fuse3 \
     --without-java \
@@ -903,23 +1014,6 @@ RUN make install
 
 # Copy gdrcopy library to UCX lib directory (required by libuct_cuda_gdrcopy.so at runtime)
 RUN find /opt/gdrcopy/install/lib -name '*.so*' -exec cp -a {} /opt/ucx/lib/ \;
-
-# Patch rpath for UCX core libraries to use $ORIGIN for relocatable installation.
-# This ensures libraries find their dependencies relative to their own location
-# rather than using absolute paths from the build environment.
-RUN patchelf --set-rpath '$ORIGIN' /opt/ucx/lib/libucs.so.0 && \
-    patchelf --set-rpath '$ORIGIN' /opt/ucx/lib/libucm.so.0 && \
-    patchelf --set-rpath '$ORIGIN' /opt/ucx/lib/libucp.so.0 && \
-    patchelf --set-rpath '$ORIGIN' /opt/ucx/lib/libuct.so.0 && \
-    patchelf --set-rpath '$ORIGIN' /opt/ucx/lib/libucs_signal.so.0
-
-# Patch rpath for UCX binaries to use the lib directory relative to the binary location.
-# This ensures binaries find the correct UCX libraries instead of system/HPC-X versions.
-RUN for bin in /opt/ucx/bin/*; do \
-        if [ -f "$bin" ] && file "$bin" | grep -q "ELF"; then \
-            patchelf --set-rpath '$ORIGIN/../lib' "$bin" || true; \
-        fi; \
-    done
 
 # UCX build configuration summary:
 # - RDMA/InfiniBand support enabled (verbs, mlx5, rdmacm)
@@ -979,8 +1073,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         libv4l-dev \
         v4l-utils \
         libjpeg-turbo8-dev \
+        libtinyxml2-dev \
         ibverbs-providers libibverbs1 librdmacm1 \
     && ln -sf /usr/bin/clang-tidy-${LLVM_VERSION} /usr/bin/clang-tidy
+
+# Workaround: Remove cuda-compat-13-* which is known to not function properly.
+# cuda-compat-13-0 does not provide display forward compatibility and does not
+# meaningfully support CTK 13.x minor version forward compatibility, so we can
+# safely remove it.
+# Addresses build container runtime test failures on IGX Thor platforms with IGX-SW 2.0.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get purge -y cuda-compat-13-0 || true
 
 # Installing libvulkan-dev may re-install the python3 package.
 # Re-override to use a separate version if needed (see python-base-${GPU_TYPE} stages)
@@ -1041,7 +1145,7 @@ COPY --from=sccache-downloader ${SCCACHE}/sccache /usr/local/bin
 ARG ONNX_RUNTIME_VERSION
 ENV ONNX_RUNTIME=/opt/onnxruntime/${ONNX_RUNTIME_VERSION}
 COPY --from=onnxruntime ${ONNX_RUNTIME} ${ONNX_RUNTIME}
-ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${ONNX_RUNTIME}"
+ENV CMAKE_PREFIX_PATH="${ONNX_RUNTIME}"
 
 # Copy gRPC
 ARG GRPC_VERSION
@@ -1067,6 +1171,25 @@ ARG YAML_CPP_VERSION
 ENV YAML_CPP=/opt/yaml-cpp/${YAML_CPP_VERSION}
 COPY --from=yaml-cpp-builder ${YAML_CPP} ${YAML_CPP}
 ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${YAML_CPP}"
+
+# Copy Fast DDS (for IPC / holo_ipc)
+ARG FASTDDS_VERSION=3.4.2
+ENV FASTDDS=/opt/fastdds/${FASTDDS_VERSION}
+COPY --from=fastdds-builder ${FASTDDS} ${FASTDDS}
+ENV CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH}:${FASTDDS}"
+RUN echo "${FASTDDS}/lib" >> /etc/ld.so.conf.d/fastdds.conf && ldconfig
+
+# Fast-DDS-Gen (fastddsgen.jar + wrapper); JRE required at runtime to invoke java -jar
+ARG FASTDDS_GEN_VERSION=4.3.0
+ENV FAST_DDS_GEN=/opt/fastdds-gen/${FASTDDS_GEN_VERSION}
+COPY --from=fastdds-gen-builder ${FAST_DDS_GEN} ${FAST_DDS_GEN}
+ENV PATH="${PATH}:${FAST_DDS_GEN}/bin"
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
+    apt-get update \
+    && apt-get install -y --no-install-recommends \
+        openjdk-17-jre-headless \
+    && rm -rf /var/lib/apt/lists/*
 
 ############################################################################################
 # GXF CMake build stage

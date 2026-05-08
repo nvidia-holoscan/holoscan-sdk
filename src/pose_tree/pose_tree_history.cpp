@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/pose_tree/pose_tree_history.hpp"
+#include <holoscan/pose_tree/pose_tree_history.hpp>
 
 #include <mutex>
 
-#include "holoscan/pose_tree/math/interpolation.hpp"
+#include <holoscan/pose_tree/math/interpolation.hpp>
 
 namespace holoscan {
 

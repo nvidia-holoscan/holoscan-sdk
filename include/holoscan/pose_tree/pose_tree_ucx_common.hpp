@@ -28,8 +28,8 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/expected.hpp"
-#include "holoscan/pose_tree/pose_tree.hpp"
+#include <holoscan/core/expected.hpp>
+#include <holoscan/pose_tree/pose_tree.hpp>
 
 namespace holoscan {
 

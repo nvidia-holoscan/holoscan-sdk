@@ -15,18 +15,21 @@ This example demonstrates how to implement a for-loop pattern using dynamic flow
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Dynamic Flow Control**: Using dynamic flows to control operator execution paths
 2. **Cyclic Execution**: Implementing a controlled loop pattern with fixed iterations
 3. **Conditional Branching**: Switching between loop continuation and termination
 4. **State Tracking**: Using metadata to track iteration count
 
 The key aspects of this application include:
+
 - Use of dynamic flows to implement loop behavior
 - Metadata tracking for loop iteration count
 - Conditional flow control based on iteration state
 - Clean loop termination after desired iterations
 
 The application demonstrates:
+
 - How to implement for-loop patterns using dynamic flows
 - How to track and manage loop iterations
 - How to conditionally terminate loops
@@ -37,6 +40,7 @@ The application demonstrates:
 ## C++ API
 
 The application consists of several operators:
+
 1. `SimpleOp`: A basic operator that tracks its execution count and displays its state
 2. The operators are named node1 through node4 and form a loop structure where:
    - node1 is the entry point and decision maker
@@ -54,6 +58,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/for_loop/cpp/for_loop_execution
 ```
@@ -71,6 +76,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/for_loop/python/for_loop_execution.py
 ```

@@ -33,12 +33,12 @@
 #include <utility>
 #include <vector>
 
+#include <gxf/app/graph_entity.hpp>
 #include "../../app_driver.hpp"
 #include "../../codec_registry.hpp"
 #include "../../executor.hpp"
-#include "../../gxf/gxf_extension_manager.hpp"
 #include "../../flow_graphs/flow_graph.hpp"
-#include "gxf/app/graph_entity.hpp"
+#include "../../gxf/gxf_extension_manager.hpp"
 
 namespace holoscan {
 

@@ -1,4 +1,5 @@
 (nsight-profiling)=
+
 # NSight Systems Profiling
 
 The Holoscan SDK has been annotated using the [NVTX](https://github.com/NVIDIA/NVTX) API to provide runtime tracing and profiling of key application calls such as the `start`, `compute`, and `stop` callbacks made to the operators used by the application. Time spent on `emit` and `receive` calls for individual operator ports as well as timings for optional metadata handling, CUDA stream handling and data logger calls are also shown. Additionally, the SDK provides **frame-level tracking** that correlates NVTX ranges with individual data frames flowing through the application pipeline. This profiling can be captured and visualized using the tools provided by [NSight Systems](https://developer.nvidia.com/nsight-systems).
@@ -69,7 +70,7 @@ app->run();
 
 When frame tracking is enabled, NSight Systems will display:
 
-- **Frame numbers** in NVTX range names (e.g., "Operator::compute [Frame 1]")  
+- **Frame numbers** in NVTX range names (e.g., "Operator::compute [Frame 1]")
 - **Per-frame timings** for each operator's processing stages
 - **Frame flow visualization** showing how frames progress through the pipeline
 - **Frame correlation** across different operators processing the same data
@@ -77,7 +78,7 @@ When frame tracking is enabled, NSight Systems will display:
 ### Key Benefits
 
 - **Frame-level performance analysis**: Identify which specific frames cause performance issues
-- **End-to-end frame tracking**: Follow individual frames through complex multi-operator pipelines  
+- **End-to-end frame tracking**: Follow individual frames through complex multi-operator pipelines
 - **Bottleneck identification**: Pinpoint operators that create frame processing delays
 - **Temporal correlation**: Understand timing relationships between operators processing the same frame
 
@@ -95,7 +96,7 @@ Frame-level tracking requires [Data Flow Tracking](flow_tracking.md) to be enabl
 
 ### Results
 
-The following images visualize the profiling results for the `Endoscopy Tool Tracking` and `Ping Multi-Port` applications using the NSight Systems UI (`nsys-ui`). The operators used in `Endoscopy Tool Tracking` are all single-port operators, whereas the operators used in `Ping Multi-Port` have 2 ports each to send and receive messages. In each of the images, the frame that is currently processed by an operator is identified using the frame number visible on expanding the `compute` section. 
+The following images visualize the profiling results for the `Endoscopy Tool Tracking` and `Ping Multi-Port` applications using the NSight Systems UI (`nsys-ui`). The operators used in `Endoscopy Tool Tracking` are all single-port operators, whereas the operators used in `Ping Multi-Port` have 2 ports each to send and receive messages. In each of the images, the frame that is currently processed by an operator is identified using the frame number visible on expanding the `compute` section.
 
 #### Endoscopy Tool Tracking
 

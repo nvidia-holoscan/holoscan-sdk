@@ -34,8 +34,8 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/logger/logger.hpp>
 #include "./type_traits.hpp"
-#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 

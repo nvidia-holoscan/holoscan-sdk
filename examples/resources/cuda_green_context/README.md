@@ -10,15 +10,20 @@ Each `PingTxOp` operator uses a cuda stream pool with one of the cuda green cont
 ### C++ Run instructions
 
 * **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/resources/cuda_green_context/cpp/cuda_green_context
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/resources/cuda_green_context/cpp/cuda_green_context
   ```
+
 * **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/resources/cuda_green_context/cpp/cuda_green_context
   ```
@@ -34,7 +39,7 @@ context is used in the system.
 
 Note that the kernels launched by the operators in this example are just arbitrary choices to have some kernels running on the various streams and demonstrate how the native Python APIs are called. The specific computations performed do not serve any real-world purpose other than to act as an example. For real-world applications of stream handling using operators written in C++ from a Python or C++ application, see Holohub's [Multi-AI Ultrasound](https://github.com/nvidia-holoscan/holohub/tree/holoscan-sdk-2.7.0/applications/multiai_ultrasound), [Endoscopy Tool Tracking](https://github.com/nvidia-holoscan/holohub/tree/holoscan-sdk-2.7.0/applications/endoscopy_tool_tracking) and [Ultrasound Bone Scoliosis Segmentation](https://github.com/nvidia-holoscan/holohub/tree/holoscan-sdk-2.7.0/applications/ultrasound_segmentation) examples.
 
-## Key operators and components involved:
+## Key operators and components involved
 
 A common `CudaStreamPool` resource with a capacity of 5 streams is defined. For this application, only 3 non-default streams are used (one for each of the two `CudaSourceOp` operators and one for the `CudaProcessOp`). If the app is run with `use_default_stream=True` the stream pool is not utilized and all operators just use the default stream.
 
@@ -65,21 +70,28 @@ For DALI, the `cuda_stream` argument used by some functions needs to be provided
 ## Python Run instructions
 
 * **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/cuda_green_context.py
   ```
+
 * **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/resources/cuda_green_context/python/cuda_green_context.py
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/resources/cuda_green_context/python/cuda_green_context.py
   ```
+
 * **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/resources/cuda_green_context/python/cuda_green_context.py

@@ -19,11 +19,11 @@
 
 #include <memory>
 
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/fragment.hpp>
 #include "./executors_pydoc.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

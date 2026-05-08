@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include <iostream>
 #include <holoscan/holoscan.hpp>
+#include <iostream>
 
 namespace holoscan::ops {
 

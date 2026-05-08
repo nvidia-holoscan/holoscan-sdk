@@ -5,6 +5,7 @@ This folder contains examples demonstrating the **Pose Tree** feature in Holosca
 ## Overview
 
 The Pose Tree feature is designed for applications that need to manage the dynamic spatial relationships between different components or coordinate systems. It allows operators to:
+
 - Define a hierarchy of coordinate frames.
 - Update the transformation (pose) between frames at any given time.
 - Query the relative pose between any two frames in the tree, even if they are not directly connected.
@@ -14,12 +15,14 @@ The Pose Tree feature is designed for applications that need to manage the dynam
 ## Examples
 
 ### [Pose Tree Basic](./pose_tree_basic)
+
 - **C++**: [`pose_tree_basic.cpp`](./pose_tree_basic/cpp/pose_tree_basic.cpp)
 - **Python**: [`pose_tree_basic.py`](./pose_tree_basic/python/pose_tree_basic.py)
 
 This example simulates the orbital mechanics of the Sun, Earth, and Moon. It's a comprehensive demonstration of how to set up the `PoseTreeManager`, update poses in one operator, and query them from another in a single-fragment application.
 
 ### [Distributed Pose Tree](./distributed_pose_tree)
+
 - **C++**: [`distributed_pose_tree.cpp`](./distributed_pose_tree/cpp/distributed_pose_tree.cpp)
 - **Python**: [`distributed_pose_tree.py`](./distributed_pose_tree/python/distributed_pose_tree.py)
 

@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/condition.hpp"
+#include <holoscan/core/condition.hpp>
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resource.hpp>
 
 namespace holoscan {
 

@@ -17,10 +17,10 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/data_loggers/async_console_logger/async_console_logger.hpp>
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
-#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
 
 class VideoReplayerApp : public holoscan::Application {
  public:

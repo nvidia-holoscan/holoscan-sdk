@@ -1,4 +1,5 @@
 (holoscan-debugging)=
+
 # Debugging
 
 ## Overview
@@ -8,7 +9,6 @@ The Holoscan SDK is designed to streamline the debugging process for developers 
 This comprehensive guide covers the SDK's debugging capabilities, with a focus on Visual Studio Code integration, and provides detailed instructions for various debugging scenarios.
 
 It includes methods for debugging both the C++ and Python components of applications, utilizing tools like GDB, UCX, and Python-specific debuggers.
-
 
 ## Visual Studio Code Integration
 
@@ -38,6 +38,7 @@ The `./run vscode` command now supports multiple IDE options:
 - **Custom Binary**: Use `--cmd <path>` to specify a custom IDE binary path
 
 **Examples:**
+
 ```bash
 ./run vscode                    # Auto-detect (Cursor if available, otherwise VSCode)
 ./run vscode --code             # Force VSCode
@@ -115,13 +116,11 @@ This section outlines the procedures for debugging an application crash.
 
 In the event of an application crash, you might encounter messages like `Segmentation fault (core dumped)` or `Aborted (core dumped)`. These indicate the generation of a core dump file, which captures the application's memory state at the time of the crash. This file can be utilized for debugging purposes.
 
-
 #### Enabling Core Dump
 
 There are instances where core dumps might be disabled or not generated despite an application crash.
 
 To activate core dumps, it's necessary to configure the `ulimit` setting, which determines the maximum size of core dump files. By default, `ulimit` is set to 0, effectively disabling core dumps. Setting `ulimit` to unlimited enables the generation of core dumps.
-
 
 ```bash
 ulimit -c unlimited
@@ -151,13 +150,11 @@ As `kernel.core_pattern` is a system-wide kernel parameter, modifying it on the 
 
 Furthermore, when launching a Docker container using `docker run`, it's often essential to include the `--cap-add=SYS_PTRACE` option to enable core dump creation inside the container. Core dump generation typically requires elevated privileges, which are not automatically available to Docker containers.
 
-
 #### Using GDB to Debug a Core Dump File
 
 After the core dump file is generated, you can utilize GDB to debug the core dump file.
 
 Consider a scenario where a segmentation fault is intentionally induced at line 29 in `examples/ping_simple/cpp/ping_simple.cpp` by adding the line `*(int*)0 = 0;` to trigger the fault.
-
 
 ```diff
 --- a/examples/ping_simple/cpp/ping_simple.cpp
@@ -179,7 +176,6 @@ Consider a scenario where a segmentation fault is intentionally induced at line 
 
 Upon running `./examples/ping_simple/cpp/ping_simple`, the following output is observed:
 
-
 ```bash
 $ ./examples/ping_simple/cpp/ping_simple
 Segmentation fault (core dumped)
@@ -195,9 +191,11 @@ coredump_ping_simple_2160275
 The core dump file can be debugged using GDB by executing `gdb <application> <coredump_file>`.
 
 ```bash
-$ gdb ./examples/ping_simple/cpp/ping_simple coredump_ping_simple_2160275
+gdb ./examples/ping_simple/cpp/ping_simple coredump_ping_simple_2160275
 ```
+
 gives
+
 ```text
 GNU gdb (Ubuntu 12.1-0ubuntu1~22.04) 12.1
 Copyright (C) 2022 Free Software Foundation, Inc.
@@ -253,7 +251,6 @@ While the default action is to print a backtrace on a segmentation fault, it may
 
 For instance, if a segmentation fault is intentionally caused at line 139 near the start of `PingTensorTxOp::compute` in `/workspace/holoscan-sdk/src/operators/ping_tensor_tx/ping_tensor_tx.cpp` (by adding `*(int*)0 = 0;`), running `./examples/ping_distributed/cpp/ping_distributed` will result in the following output:
 
-
 ```bash
 [holoscan:2097261:0:2097311] Caught signal 11 (Segmentation fault: address not mapped to object at address (nil))
 ==== backtrace (tid:2097311) ====
@@ -307,10 +304,9 @@ It is observed that the thread responsible for the segmentation fault is 51 (`ti
 
 Upon attaching the debugger, a backtrace will be displayed, but it may not be from the thread that triggered the segmentation fault. To handle this, use the `info threads` command to list all threads, and the `thread <thread_id>` command to switch to the thread that caused the segmentation fault.
 
-
 ```bash
 (gdb) info threads
-  Id   Target Id                                        Frame 
+  Id   Target Id                                        Frame
 * 1    Thread 0x7f9fc6ce2000 (LWP 37) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
   2    Thread 0x7f9fc51bb000 (LWP 39) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
   3    Thread 0x7f9fc11ba000 (LWP 40) "ping_distribute" 0x00007f9fc80e6612 in __libc_pause () at ../sysdeps/unix/sysv/linux/pause.c:29
@@ -451,6 +447,7 @@ Breakpoint 1 at /workspace/holoscan-sdk/build-x86_64/examples/ping_multi_port/py
 ```
 
 Now that we are at the desired breakpoint, we can interactively debug the operator. The following show an example of using `s` to step by one line then `p value1` to print the value of the "value1" variable. The `l` command is used to show the surrounding context. In the output, the arrow indicates the line where we are currently at in the debugger and the "B" indicates the breakpoint that was previously added.
+
 ```
 (Pdb) s
 > /workspace/holoscan-sdk/build-x86_64/examples/ping_multi_port/python/ping_multi_port.py(98)compute()

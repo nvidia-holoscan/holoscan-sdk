@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,21 +15,21 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
+#include <holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp>
 
 #include <limits>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "gxf/std/tensor.hpp"
+#include <gxf/std/tensor.hpp>
 
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
 
 using holoscan::ops::segmentation_postprocessor::cuda_postprocess;
 using holoscan::ops::segmentation_postprocessor::DataFormat;

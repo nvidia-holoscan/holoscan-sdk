@@ -28,12 +28,12 @@
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -58,16 +58,15 @@ class PyV4L2VideoCaptureOp : public V4L2VideoCaptureOp {
   using V4L2VideoCaptureOp::V4L2VideoCaptureOp;
 
   // Define a constructor that fully initializes the object.
-  PyV4L2VideoCaptureOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                       const py::args& args,
-                       std::optional<std::shared_ptr<::holoscan::Allocator>> allocator =
-                           std::nullopt,
-                       const std::string& device = "/dev/video0"s, uint32_t width = 0,
-                       uint32_t height = 0, float frame_rate = 0, uint32_t num_buffers = 4,
-                       const std::string& pixel_format = "auto", bool pass_through = false,
-                       const std::string& name = operator_default_name_v<ops::V4L2VideoCaptureOp>,
-                       std::optional<uint32_t> exposure_time = std::nullopt,
-                       std::optional<uint32_t> gain = std::nullopt)
+  PyV4L2VideoCaptureOp(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      std::optional<std::shared_ptr<::holoscan::Allocator>> allocator = std::nullopt,
+      const std::string& device = "/dev/video0"s, uint32_t width = 0, uint32_t height = 0,
+      float frame_rate = 0, uint32_t num_buffers = 4, const std::string& pixel_format = "auto",
+      bool pass_through = false,
+      const std::string& name = operator_default_name_v<ops::V4L2VideoCaptureOp>,
+      std::optional<uint32_t> exposure_time = std::nullopt,
+      std::optional<uint32_t> gain = std::nullopt)
       : V4L2VideoCaptureOp(ArgList{Arg{"device", device},
                                    Arg{"width", width},
                                    Arg{"height", height},

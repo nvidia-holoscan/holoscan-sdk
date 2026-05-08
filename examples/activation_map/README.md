@@ -5,6 +5,7 @@ Contains python and C++ examples to show how to select a subset models at applic
 ## Data
 
 The following datasets are used by this example:
+
 - [(Git) First dummy ONNX model](models/dummy_addition_model_1.onnx): This model will add 1 to all values in the input float tensor (shape [1,16]).
 - [(Git) Second dummy ONNX model](models/dummy_addition_model_2.onnx): This model will add 2 to all values in the input float tensor (shape [1,16]).
 - [(Git) Second dummy ONNX model](models/dummy_addition_model_3.onnx): This model will add 3 to all values in the input float tensor (shape [1,16]).
@@ -12,6 +13,7 @@ The following datasets are used by this example:
 For re-generating dummy models see the included script `models/gen_dummy_models.py`.
 
 ## Workflow
+
 ![](workflow.png)
 Fig. 1: Activation Map example workflow
 
@@ -23,36 +25,49 @@ Each time, the MakeTensorsOp operator will create input tensors for the `first`,
 
 ## C++ Run instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/activation_map/cpp/activation_map
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/activation_map/cpp/activation_map
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/activation_map/cpp/activation_map
   ```
 
 ## Python Run instructions
-* **using python wheel**:
+
+- **using python wheel**:
+
   ```bash
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/python/activation_map.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/activation_map/python/activation_map.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/activation_map/python/activation_map.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/activation_map/python/activation_map.py
@@ -63,7 +78,7 @@ Each time, the MakeTensorsOp operator will create input tensors for the `first`,
 ### Error: `Cannot write engine file` or `Engine file creation failed`
 
 This error may occur in Debian or Python installations that do not have write permissions to the
-default model output directory at `<working_dir>/../models`. 
+default model output directory at `<working_dir>/../models`.
 
 To fix this issue, create the directory and set the correct permissions, or run the application with
 superuser permissions.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,6 +34,11 @@ void init_message_available(py::module_&);
 void init_multi_message_available(py::module_&);
 void init_multi_message_available_timeout(py::module_&);
 void init_expiring_message_available(py::module_&);
+void init_publisher_available(py::module_&);
+void init_subscriber_available(py::module_&);
+#ifdef HOLOSCAN_PYTHON_HAS_PENDING_EXPORT_CONDITION
+void init_pending_export(py::module_&);
+#endif
 
 PYBIND11_MODULE(_conditions, m) {
   m.doc() = R"pbdoc(
@@ -55,5 +60,10 @@ PYBIND11_MODULE(_conditions, m) {
   init_multi_message_available(m);
   init_multi_message_available_timeout(m);
   init_expiring_message_available(m);
+  init_publisher_available(m);
+  init_subscriber_available(m);
+#ifdef HOLOSCAN_PYTHON_HAS_PENDING_EXPORT_CONDITION
+  init_pending_export(m);
+#endif
 }  // PYBIND11_MODULE
 }  // namespace holoscan

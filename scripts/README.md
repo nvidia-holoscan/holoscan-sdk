@@ -3,6 +3,7 @@
 This folder includes the following scripts:
 
 - [`aja_build.sh`](#aja_build)
+- [`check_copyright.py`](#check_copyrightpy)
 - [`convert_gxf_entities_to_images.py`](#convert_gxf_entities_to_imagespy)
 - [`convert_gxf_entities_to_video.py`](#convert_gxf_entities_to_videopy)
 - [`convert_video_to_gxf_entities.py`](#convert_video_to_gxf_entitiespy)
@@ -45,6 +46,31 @@ python3 scripts/convert_gxf_entities_to_images.py --directory data/racerx --base
 
 Use `--outputdir` to specify the directory where the files will be created.
 Use `--outputname` to specify a different output name than the default `tensor` prefix.
+
+____
+
+## check_copyright.py
+
+This script adapts an NVIDIA copyright header checker from the RAFT project. It can be used to automatically update the copyright year and can also optionally run on CI and only check the files that have been modified.
+
+The script `check_copyright.py` file checks for NVIDIA copyright headers in files matching any of the lists of regular expressions in the `files_to_check` list.
+There are also regular expressions for the copyright string that is being checked. The `CheckSimple` one is for when there is only a single year and `CheckDouble` is for when the header uses a year range. The `gitutils.py` defines some utilities for interacting with Git that enables the `--git-modified-only` capabilities of the copyright checker.
+
+### Usage
+
+You can call the script from the repository, specifying to check all matching files within the include and src subfolders.
+
+```bash
+python scripts/check_copyright.py include src
+```
+
+Alternatively, it can be used to check only modified files in a CI script using ([example from RAFT here](https://github.com/rapidsai/raft/blob/4f22957db9a38d81d0cd6ad864507c47d243ad56/ci/checks/style.sh#L29)):
+
+```bash
+python ci/checks/copyright.py --git-modified-only
+```
+
+There is also a `--update-current-year` option to allow update of the copyright year in all files and ``-exclude`` option to allow user-specified regular expressions for exclusion from the check.
 
 ____
 
@@ -103,6 +129,7 @@ Examples:
 ```sh
 ffmpeg -ss 00:00:05 -i video_1920x1080.avi -t 00:00:05 -pix_fmt rgb24 -f rawvideo pipe:1 | python3 scripts/convert_video_to_gxf_entities.py --width 1920 --height 1080 --channels 3 --framerate 30
 ```
+
 ```sh
 ffmpeg -ss 00:00:05 -i video_1920x1080.avi -to 00:00:10 -pix_fmt rgb24 -f rawvideo pipe:1 | python3 scripts/convert_video_to_gxf_entities.py --width 1920 --height 1080 --channels 3 --framerate 30
 ```
@@ -148,6 +175,7 @@ Provides a set of UUIDs to be used by `GXF_EXT_FACTORY_SET_INFO` and `GXF_EXT_FA
 ``` sh
 python3 scripts/generate_extension_uuids.py
 ```
+
 ____
 
 ## get_cmake_cuda_archs.py
@@ -162,27 +190,29 @@ python3 scripts/get_cmake_cuda_archs.py <requested_archs> [options]
 
 **Positional Arguments:**
 
--   `requested_archs`: Defines the target architectures. Can be:
-    -   `all`: Use all nvcc supported, platform-compatible, and non-feature-specific architectures.
-    -   `all-major`: Use only major versions from the `all` selection (e.g., 70, 80, 90).
-    -   `native`: Passes the string "native" directly through (for CMake to detect).
-    -   A comma or space-separated list of specific architecture numbers (e.g., `'75 86 90a'`).
+- `requested_archs`: Defines the target architectures. Can be:
+  - `all`: Use all nvcc supported, platform-compatible, and non-feature-specific architectures.
+  - `all-major`: Use only major versions from the `all` selection (e.g., 70, 80, 90).
+  - `native`: Passes the string "native" directly through (for CMake to detect).
+  - A comma or space-separated list of specific architecture numbers (e.g., `'75 86 90a'`).
 
 **Options:**
 
--   `--nvcc-path <path>`, `-n <path>`: Path to the `nvcc` executable. Defaults to searching PATH, then `/usr/local/cuda/bin/nvcc`.
--   `--min-arch <num>`, `-m <num>`: Minimum major CUDA architecture to consider (e.g., `70` for Volta and newer). Set to `0` or omit to disable.
--   `--allow-specific-archs`, `-f`: Allow feature-specific architectures (e.g., `sm_89`, `sm_XXa/f`) when they are explicitly listed in `requested_archs`. This flag does not affect the `all` or `all-major` selections, which always exclude these.
--   `--verbose`, `-v`: Enable verbose debug logging to stderr.
+- `--nvcc-path <path>`, `-n <path>`: Path to the `nvcc` executable. Defaults to searching PATH, then `/usr/local/cuda/bin/nvcc`.
+- `--min-arch <num>`, `-m <num>`: Minimum major CUDA architecture to consider (e.g., `70` for Volta and newer). Set to `0` or omit to disable.
+- `--allow-specific-archs`, `-f`: Allow feature-specific architectures (e.g., `sm_89`, `sm_XXa/f`) when they are explicitly listed in `requested_archs`. This flag does not affect the `all` or `all-major` selections, which always exclude these.
+- `--verbose`, `-v`: Enable verbose debug logging to stderr.
 
 ### Examples
 
 Get all supported architectures for the current platform, with a minimum of sm_70:
+
 ```sh
 python3 scripts/get_cmake_cuda_archs.py all --min-arch 70
 ```
 
 Get specific architectures:
+
 ```sh
 python3 scripts/get_cmake_cuda_archs.py "75 86 90a"
 ```
@@ -256,6 +286,7 @@ HOLOSCAN_LOG_LEVEL=ERROR python3 scripts/scheduler_overhead_benchmark.py
 ```
 
 The script runs benchmarks comparing:
+
 - Greedy vs. Event-Based schedulers
 - Operator execution with and without message passing
 - Different worker thread configurations

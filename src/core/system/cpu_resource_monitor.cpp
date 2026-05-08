@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/system/cpu_resource_monitor.hpp"
+#include <holoscan/core/system/cpu_resource_monitor.hpp>
 
 #include <hwloc.h>
 #include <sys/statvfs.h>
@@ -25,7 +25,7 @@
 #include <iostream>
 #include <memory>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

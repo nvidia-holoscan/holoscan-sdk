@@ -1103,6 +1103,7 @@ class MyHolovizDepthMapApp(Application):
             headless=True,
             enable_render_buffer_output=True,
             enable_depth_buffer_output=True,
+            interrupt_app_on_window_close=False,
             allocator=alloc,
             tensors=[
                 dict(name="depth_map", type="depth_map"),

@@ -1,5 +1,5 @@
 #*****************************************************************************
-# SPDX-FileCopyrightText: Copyright (c) 2020-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2020-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #*****************************************************************************
 include_guard(GLOBAL)
@@ -318,4 +318,3 @@ function(compile_glsl_directory)
   set(GLSL_HEADERS ${GLSL_HEADER_FILES} PARENT_SCOPE)
   set(SPV_OUTPUT ${SPV_OUTPUT} PARENT_SCOPE) # propagate value set in compile_glsl
 endfunction()
-

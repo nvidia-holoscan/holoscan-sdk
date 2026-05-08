@@ -1,5 +1,5 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,6 @@ import tracemalloc
 
 from holoscan.conditions import CountCondition
 from holoscan.core import Application, Operator, OperatorSpec
-from holoscan.operators import PingRxOp
 
 from .env_wrapper import env_var_context
 
@@ -32,6 +31,14 @@ GLOBAL_RUN_COUNT = 2000
 # Local testing showed that even with GLOBAL_RUN_COUNT exceeding 10000, the 'count' values
 # for all statistical items remain below 1000. Values up to 1058 were observed on CI test runs.
 GLOBAL_STAT_COUNT_LIMIT = 1500
+
+
+class SinkOp(Operator):
+    def setup(self, spec: OperatorSpec):
+        spec.input("in")
+
+    def compute(self, op_input, op_output, context):
+        op_input.receive("in")
 
 
 class PingTxOp(Operator):
@@ -53,7 +60,7 @@ class MyPingApp(Application):
     def compose(self):
         # Define the tx and rx operators, allowing tx to execute 10 times
         tx = PingTxOp(self, CountCondition(self, 10), name="tx")
-        rx = PingRxOp(self, name="rx")
+        rx = SinkOp(self, name="rx")
 
         # Define the workflow:  tx -> rx
         self.add_flow(tx, rx)
@@ -68,6 +75,7 @@ def test_multiple_run():
     }
     with env_var_context(env_var_settings):
         app = MyPingApp()
+        print(f"Running {GLOBAL_RUN_COUNT} test cycles (sync)...")
         for _ in range(GLOBAL_RUN_COUNT):
             app.run()
             gc.collect()
@@ -97,6 +105,7 @@ def test_multiple_run_async():
     }
     with env_var_context(env_var_settings):
         app = MyPingApp()
+        print(f"Running {GLOBAL_RUN_COUNT} test cycles (async)...")
         for _ in range(GLOBAL_RUN_COUNT):
             future = app.run_async()
             future.result()
@@ -122,6 +131,7 @@ def main():
     tracemalloc.start()
 
     app = MyPingApp()
+    print("Running 1000 test cycles (async)...")
     for _ in range(1000):
         future = app.run_async()
         future.result()

@@ -15,25 +15,26 @@
  * limitations under the License.
  */
 
-#include <cstring>
+#include <deque>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/app_driver.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/utils/cuda/buffer.hpp"
-#include "holoscan/utils/cuda/cuda_graph_utils.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/core/app_driver.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gpu_resident_operator.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/utils/cuda/buffer.hpp>
+#include <holoscan/utils/cuda/cuda_graph_utils.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 #include "gr_cuda_controller.cuh"
 
@@ -68,8 +69,9 @@ GPUResidentExecutor::~GPUResidentExecutor() {
 
 void GPUResidentExecutor::run([[maybe_unused]] OperatorFlowGraph& graph) {
   HOLOSCAN_LOG_DEBUG("GPUResidentExecutor::run()");
-  HOLOSCAN_LOG_WARN("GPU-resident graph execution is asynchronous by design. Even run() is not a "
-                    "blocking operation.");
+  HOLOSCAN_LOG_WARN(
+      "GPU-resident graph execution is asynchronous by design. Even run() is not a "
+      "blocking operation.");
   run_async(graph);
 }
 
@@ -115,55 +117,40 @@ void GPUResidentExecutor::set_unique_ids(std::shared_ptr<Operator> op) {
   }
 }
 
-void GPUResidentExecutor::prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph) {
-  auto operators = graph->get_nodes();
+void GPUResidentExecutor::prepare_data_flow(
+    std::shared_ptr<OperatorFlowGraph> graph,
+    const std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
+  for (const auto& op : topo_ordered_operators) {
+    op->initialize();
+    set_unique_ids(op);
+  }
 
-  // For chain of operators, this is the following we will do:
-  // Start from the next operator of the root operator
-  // For each operator, get its upstream connections
-  // allocate a single memory block for each connection according to the specified size
+  for (const auto& source_op : topo_ordered_operators) {
+    for (const auto& dest_op : graph->get_next_nodes(source_op)) {
+      HOLOSCAN_LOG_INFO("Connection {} -> {}", source_op->name(), dest_op->name());
 
-  auto root_node = graph->get_root_nodes()[0];
-
-  auto current_op = root_node;
-  current_op->initialize();  // initialize the operators before preparing the data flow
-  set_unique_ids(current_op);
-
-  while (graph->get_next_nodes(current_op).size() > 0) {
-    auto next_ops = graph->get_next_nodes(current_op);
-    auto next_op = next_ops[0];
-    next_op->initialize();
-    set_unique_ids(next_op);
-
-    HOLOSCAN_LOG_INFO("Connection {} -> {}", current_op->name(), next_op->name());
-    const auto& port_map = graph->get_port_map(current_op, next_op);
-    if (!port_map.has_value()) {
-      auto error_msg =
-          fmt::format("Could not find port map for {} -> {}", current_op->name(), next_op->name());
-      throw std::runtime_error(error_msg);
-    }
-    const auto& port_map_val = port_map.value();
-
-    // GPU-resident add_flow enforces 1:1 port mapping (no fan-out, no receivers).
-    // Iterate each source_port -> destination_port pair and allocate/connect the device buffer.
-    for (const auto& [source_port, destination_ports] : *port_map_val) {
-      if (destination_ports.size() != 1) {
-        throw std::runtime_error(fmt::format(
-            "GPU-resident connection {}.{} has {} destination ports; expected exactly 1",
-            current_op->name(), source_port, destination_ports.size()));
+      const auto& port_map = graph->get_port_map(source_op, dest_op);
+      if (!port_map.has_value()) {
+        auto error_msg =
+            fmt::format("Could not find port map for {} -> {}", source_op->name(), dest_op->name());
+        throw std::runtime_error(error_msg);
       }
-      const auto& destination_port = *destination_ports.begin();
+      const auto& port_map_val = port_map.value();
 
-      connect_ports(current_op, next_op, source_port, destination_port);
+      // A single GPU-resident output port may fan out to multiple downstream input ports.
+      for (const auto& [source_port, destination_ports] : *port_map_val) {
+        for (const auto& destination_port : destination_ports) {
+          connect_ports(source_op, dest_op, source_port, destination_port);
+        }
+      }
     }
-    current_op = std::move(next_op);
   }
 }
 
 void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
-                                                   std::shared_ptr<Operator> dest_op,
-                                                   const std::string& source_port,
-                                                   const std::string& destination_port) {
+                                        std::shared_ptr<Operator> dest_op,
+                                        const std::string& source_port,
+                                        const std::string& destination_port) {
   auto output_memory_block_size = source_op->spec()->outputs()[source_port]->memory_block_size();
   auto input_memory_block_size = dest_op->spec()->inputs()[destination_port]->memory_block_size();
   auto output_device_ptr = source_op->spec()->outputs()[source_port]->device_ptr();
@@ -212,8 +199,7 @@ void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
           source_port,
           dest_op->name(),
           destination_port);
-      connect_io_device_ptr(
-          source_op, dest_op, source_port, destination_port, output_device_ptr);
+      connect_io_device_ptr(source_op, dest_op, source_port, destination_port, output_device_ptr);
     } else {
       // Case 2: Only one side has a device pointer
       void* device_ptr = has_output_ptr ? output_device_ptr : input_device_ptr;
@@ -226,8 +212,7 @@ void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
             dest_op->name(),
             destination_port);
       }
-      connect_io_device_ptr(
-          source_op, dest_op, source_port, destination_port, device_ptr);
+      connect_io_device_ptr(source_op, dest_op, source_port, destination_port, device_ptr);
     }
   } else if (has_output_mem || has_input_mem) {
     // Case 4: Only one side has a memory block size, the other has nothing
@@ -243,8 +228,7 @@ void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
         dest_op->name(),
         destination_port,
         no_mem_op_name);
-    allocate_io_device_buffer(
-        source_op, dest_op, source_port, destination_port, mem_size);
+    allocate_io_device_buffer(source_op, dest_op, source_port, destination_port, mem_size);
   } else {
     // Neither side has a memory block size or a device pointer
     throw std::runtime_error(
@@ -271,8 +255,6 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> so
                     dest_op->name(),
                     target_port));
   }
-  std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> device_buffer =
-      std::make_shared<holoscan::utils::cuda::DeviceBuffer>(memory_block_size);
 
   if (!source_op->spec() || !dest_op->spec()) {
     throw std::runtime_error(
@@ -284,14 +266,39 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> so
   auto& source_port_unique_id = source_op->spec()->outputs()[source_port]->unique_id();
   auto& target_port_unique_id = dest_op->spec()->inputs()[target_port]->unique_id();
 
-  if (io_device_buffers_.find(source_port_unique_id) != io_device_buffers_.end()) {
-    throw std::runtime_error(
-        fmt::format("Port name {} already exists in the io_device_buffers_ map", source_port));
+  if (io_device_ptrs_.find(source_port_unique_id) != io_device_ptrs_.end()) {
+    throw std::runtime_error(fmt::format(
+        "Source port {}.{} is already connected through externally managed device pointers",
+        source_op->name(),
+        source_port));
   }
-  if (io_device_buffers_.find(target_port_unique_id) != io_device_buffers_.end()) {
+  if (io_device_buffers_.find(target_port_unique_id) != io_device_buffers_.end() ||
+      io_device_ptrs_.find(target_port_unique_id) != io_device_ptrs_.end()) {
     throw std::runtime_error(
-        fmt::format("Port name {} already exists in the io_device_buffers_ map", target_port));
+        fmt::format("Internal invariant violated: destination port {}.{} was already connected. "
+                    "Fragment::add_flow() should reject multiple upstream "
+                    "connections to the same GPU-resident input port.",
+                    dest_op->name(),
+                    target_port));
   }
+
+  auto source_buffer_it = io_device_buffers_.find(source_port_unique_id);
+  if (source_buffer_it != io_device_buffers_.end()) {
+    if (source_buffer_it->second->get_bytes() != memory_block_size) {
+      throw std::runtime_error(fmt::format(
+          "Existing buffer size ({}) for connection source port {}.{} does not match requested "
+          "size ({})",
+          source_buffer_it->second->get_bytes(),
+          source_op->name(),
+          source_port,
+          memory_block_size));
+    }
+    io_device_buffers_[target_port_unique_id] = source_buffer_it->second;
+    return;
+  }
+
+  std::shared_ptr<holoscan::utils::cuda::DeviceBuffer> device_buffer =
+      std::make_shared<holoscan::utils::cuda::DeviceBuffer>(memory_block_size);
 
   io_device_buffers_[source_port_unique_id] = device_buffer;
   io_device_buffers_[target_port_unique_id] = std::move(device_buffer);
@@ -300,8 +307,7 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> so
 void GPUResidentExecutor::connect_io_device_ptr(std::shared_ptr<Operator> source_op,
                                                 std::shared_ptr<Operator> dest_op,
                                                 const std::string& source_port,
-                                                const std::string& target_port,
-                                                void* device_ptr) {
+                                                const std::string& target_port, void* device_ptr) {
   if (device_ptr == nullptr) {
     throw std::runtime_error(
         fmt::format("The device pointer must be non-null for connecting ports {}.{} -> {}.{}",
@@ -335,13 +341,32 @@ void GPUResidentExecutor::connect_io_device_ptr(std::shared_ptr<Operator> source
   auto& source_port_unique_id = source_op->spec()->outputs()[source_port]->unique_id();
   auto& target_port_unique_id = dest_op->spec()->inputs()[target_port]->unique_id();
 
-  if (io_device_ptrs_.find(source_port_unique_id) != io_device_ptrs_.end()) {
-    throw std::runtime_error(
-        fmt::format("Port name {} already exists in the io_device_ptrs_ map", source_port));
+  if (io_device_buffers_.find(source_port_unique_id) != io_device_buffers_.end()) {
+    throw std::runtime_error(fmt::format(
+        "Source port {}.{} is already connected through executor-allocated device buffers",
+        source_op->name(),
+        source_port));
   }
-  if (io_device_ptrs_.find(target_port_unique_id) != io_device_ptrs_.end()) {
+  if (io_device_buffers_.find(target_port_unique_id) != io_device_buffers_.end() ||
+      io_device_ptrs_.find(target_port_unique_id) != io_device_ptrs_.end()) {
     throw std::runtime_error(
-        fmt::format("Port name {} already exists in the io_device_ptrs_ map", target_port));
+        fmt::format("Internal invariant violated: destination port {}.{} was already connected. "
+                    "Fragment::add_flow() should reject multiple upstream "
+                    "connections to the same GPU-resident input port.",
+                    dest_op->name(),
+                    target_port));
+  }
+
+  auto source_ptr_it = io_device_ptrs_.find(source_port_unique_id);
+  if (source_ptr_it != io_device_ptrs_.end()) {
+    if (source_ptr_it->second != device_ptr) {
+      throw std::runtime_error(fmt::format(
+          "Source port {}.{} is already connected to a different externally managed device pointer",
+          source_op->name(),
+          source_port));
+    }
+    io_device_ptrs_[target_port_unique_id] = source_ptr_it->second;
+    return;
   }
 
   io_device_ptrs_[source_port_unique_id] = device_ptr;
@@ -369,7 +394,8 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
   }
 
   HOLOSCAN_LOG_ERROR(
-      "Port name {} of operator {} was not found in io_device_buffers_ or io_device_ptrs_ map",
+      "Port name {} of operator {} was not found in the executor-allocated device buffer map or "
+      "the externally managed device pointer map",
       port_name,
       op->name());
   return nullptr;
@@ -378,60 +404,70 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
 bool GPUResidentExecutor::verify_graph_topology(
     std::shared_ptr<OperatorFlowGraph> graph,
     std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
-  auto operators = graph->get_nodes();
-  // Check if the graph has a cycle
-  auto cycle = graph->has_cycle();
-  if (cycle.size() > 0) {
-    // throw error
-    auto err_msg = fmt::format(
-        "Fragment graph has a cycle. GPU-resident graph execution only supports a "
-        "linear chain of operators");
-    HOLOSCAN_LOG_ERROR(err_msg);
-    return false;
-  }
+  topo_ordered_operators.clear();
 
-  // get the root nodes
+  auto operators = graph->get_nodes();
+  // Collect the root nodes up front so we can reject unsupported multi-root topologies early.
   auto root_nodes = graph->get_root_nodes();
-  if (root_nodes.size() != 1) {
-    // throw error
+  if (root_nodes.size() > 1) {
     auto err_msg = fmt::format(
-        "Fragment graph has ({}) root operators. GPU-resident graph execution only supports a "
-        "linear chain of operators.",
+        "Fragment graph has ({}) root operators. GPU-resident graph execution only supports DAGs "
+        "with a single source operator.",
         root_nodes.size());
     HOLOSCAN_LOG_ERROR(err_msg);
     return false;
   }
 
-  // Check all the nodes have exactly one downstream node
-  auto current_node = root_nodes[0];
-  unsigned int visited_nodes = 1;
-  while (current_node) {
+  auto cyclic_roots = graph->has_cycle();
+  if (!cyclic_roots.empty()) {
+    std::vector<std::string> names;
+    names.reserve(cyclic_roots.size());
+    for (const auto& node : cyclic_roots) {
+      names.push_back(node->name());
+    }
+    auto err_msg = fmt::format(
+        "Fragment graph has a cycle (root nodes of cycle: {}). GPU-resident graph execution only "
+        "supports DAGs.",
+        fmt::join(names, ", "));
+    HOLOSCAN_LOG_ERROR(err_msg);
+    return false;
+  }
+
+  // at this point, the graph is a single-source DAG
+  // topological ordering is straightforward
+
+  std::deque<std::shared_ptr<Operator>> worklist;
+  std::unordered_map<std::shared_ptr<Operator>, size_t> indegrees;
+  indegrees.reserve(operators.size());
+
+  for (const auto& op : operators) {
+    indegrees[op] = graph->get_previous_nodes(op).size();
+    if (indegrees[op] == 0) {
+      worklist.push_back(op);
+    }
+  }
+
+  topo_ordered_operators.reserve(operators.size());
+  while (!worklist.empty()) {
+    auto current_node = worklist.front();
+    worklist.pop_front();
     topo_ordered_operators.push_back(current_node);
-    auto next_nodes = graph->get_next_nodes(current_node);
-    if (next_nodes.size() > 1) {
-      // throw error
-      auto err_msg = fmt::format(
-          "Operator ({}) has ({}) downstream operators. GPU-resident graph execution only supports "
-          "a linear chain of operators.",
-          current_node->name(),
-          next_nodes.size());
-      HOLOSCAN_LOG_ERROR(err_msg);
-      return false;
-    } else if (next_nodes.size() == 0) {
-      if (visited_nodes < operators.size()) {
-        // throw error
-        auto err_msg = fmt::format(
-            "Fragment graph has disconnected operators. GPU-resident graph execution only "
-            "supports a linear chain of operators.");
+
+    for (const auto& next_node : graph->get_next_nodes(current_node)) {
+      auto indegree_it = indegrees.find(next_node);
+      if (indegree_it == indegrees.end()) {
+        auto err_msg =
+            fmt::format("Operator ({}) was not found in the indegree map.", next_node->name());
         HOLOSCAN_LOG_ERROR(err_msg);
         return false;
       }
-      break;  // reached the leaf node
+      indegree_it->second--;
+      if (indegree_it->second == 0) {
+        worklist.push_back(next_node);
+      }
     }
-    HOLOSCAN_LOG_INFO("Connection {} -> {}", current_node->name(), next_nodes[0]->name());
-    visited_nodes++;
-    current_node = next_nodes[0];
   }
+
   return true;
 }
 
@@ -449,11 +485,12 @@ void GPUResidentExecutor::create_cuda_graph_from_operators(
           capture_stream, graph, nullptr, nullptr, 0, cudaStreamCaptureModeGlobal),
       "Failed to capture the workload graph");
 
-  // call the compute method of the operators
+  // call the compute method of the operators in topological order
   for (auto& op_node : topo_ordered_operators) {
     HOLOSCAN_LOG_DEBUG("Processing operator: {}", op_node->name());
 
-    // Get the execution context
+    // Keep the currently captured execution context on the executor so helper paths that fetch
+    // GPUResidentExecutor::execution_context() observe the active operator context.
     exec_context_ = std::make_shared<ExecutionContext>();
     InputContext input_context(exec_context_.get(), op_node.get());
     OutputContext output_context(exec_context_.get(), op_node.get());
@@ -524,11 +561,11 @@ bool GPUResidentExecutor::initialize_fragment() {
   // initialize CUDA and set device to 0
   initialize_cuda();
 
-  // prepare the data flow connections between operators
+  // prepare the data flow connections between operators using the flattened DAG ordering
   if (data_ready_handler_fragment_) {
-    prepare_data_flow(data_ready_handler_fragment_->graph_shared());
+    prepare_data_flow(data_ready_handler_fragment_->graph_shared(), topo_ordered_drh_operators_);
   }
-  prepare_data_flow(fragment_->graph_shared());
+  prepare_data_flow(fragment_->graph_shared(), topo_ordered_main_operators_);
 
   // call the start method of the operators
   for (auto& op_node : topo_ordered_drh_operators_) {
@@ -638,12 +675,14 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
   }
   // create the while controller kernel node and add it as the root node in the
   // body graph of the while node
+  bool enable_debug_prints = (log_level() == LogLevel::DEBUG);
   cudaKernelNodeParams while_controller_kernel_params{};
   // declare both block and grid dim to be all 1
   while_controller_kernel_params.blockDim = dim3(1, 1, 1);
   while_controller_kernel_params.gridDim = dim3(1, 1, 1);
   while_controller_kernel_params.sharedMemBytes = 0;
-  while_controller_kernel_params.func = (void*)&while_controller;
+  while_controller_kernel_params.func =
+      enable_debug_prints ? (void*)&while_controller_debug : (void*)&while_controller;
   // Store device addresses in variables before taking their addresses
   void* data_ready_addr = gpu_resident_deck_->data_ready_device_address();
   void* result_ready_addr = gpu_resident_deck_->result_ready_device_address();
@@ -702,7 +741,8 @@ void GPUResidentExecutor::create_gpu_resident_cuda_graph() {
   while_end_marker_kernel_params.blockDim = dim3(1, 1, 1);
   while_end_marker_kernel_params.gridDim = dim3(1, 1, 1);
   while_end_marker_kernel_params.sharedMemBytes = 0;
-  while_end_marker_kernel_params.func = (void*)&while_end_marker;
+  while_end_marker_kernel_params.func =
+      enable_debug_prints ? (void*)&while_end_marker_debug : (void*)&while_end_marker;
   void* start_time_ns_addr = perf_enabled_ ? start_time_ns_dev_->data() : nullptr;
   void* execution_times_us_addr = perf_enabled_ ? execution_times_us_dev_->data() : nullptr;
   void* actual_samples_collected_addr =
@@ -769,9 +809,10 @@ void GPUResidentExecutor::timeout_ms(unsigned long long timeout_ms) {
 
 void GPUResidentExecutor::sync_with_host(bool enable) {
   if (!gpu_resident_deck_) {
-    auto err_msg = fmt::format("GPUResidentExecutor::{}(): GPU-resident deck is not "
-                               "initialized/found.",
-                               __func__);
+    auto err_msg = fmt::format(
+        "GPUResidentExecutor::{}(): GPU-resident deck is not "
+        "initialized/found.",
+        __func__);
     throw std::runtime_error(err_msg);
   } else if (gpu_resident_deck_->is_launched()) {
     HOLOSCAN_LOG_ERROR(
@@ -786,9 +827,10 @@ void GPUResidentExecutor::sync_with_host(bool enable) {
 
 void GPUResidentExecutor::data_not_ready_sleep_interval_us(unsigned int sleep_interval_us) {
   if (!gpu_resident_deck_) {
-    auto err_msg = fmt::format("GPUResidentExecutor::{}(): GPU-resident deck is not "
-                               "initialized/found.",
-                               __func__);
+    auto err_msg = fmt::format(
+        "GPUResidentExecutor::{}(): GPU-resident deck is not "
+        "initialized/found.",
+        __func__);
     throw std::runtime_error(err_msg);
   } else if (gpu_resident_deck_->is_launched()) {
     HOLOSCAN_LOG_ERROR(
@@ -997,7 +1039,7 @@ bool GPUResidentExecutor::verify_distinct_operator_names() {
 void GPUResidentExecutor::enable_perf_measurement(unsigned int num_samples) {
   if (!num_samples) {
     throw std::runtime_error(
-        "Number of samples for GPU-resident performance measurementcannot be 0");
+        "Number of samples for GPU-resident performance measurement cannot be 0");
   }
   perf_enabled_ = true;
   num_samples_ = num_samples;

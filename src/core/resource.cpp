@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/resource.hpp>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/component_spec.hpp"
+#include <holoscan/core/component_spec.hpp>
 
 namespace holoscan {
 

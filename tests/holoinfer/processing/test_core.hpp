@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,8 @@
 #ifndef HOLOINFER_PROCESSING_TEST_CORE_HPP
 #define HOLOINFER_PROCESSING_TEST_CORE_HPP
 
+#include <gtest/gtest.h>
+
 #include <map>
 #include <memory>
 #include <string>
@@ -27,27 +29,14 @@
 
 namespace HoloInfer = holoscan::inference;
 
-class ProcessingTests {
- public:
-  ProcessingTests() {}
-  void processing_assert(const HoloInfer::InferStatus& status, const std::string& module,
-                         unsigned int current_test, const std::string& test_name,
-                         HoloInfer::holoinfer_code assert_type);
-
+class HoloInferProcessingTests : public ::testing::Test {
+ protected:
   HoloInfer::InferStatus call_parameter_check_processing();
   HoloInfer::InferStatus setup_processor(bool use_cuda_graphs = false);
   HoloInfer::InferStatus execute_processor();
   void clear_processor();
 
-  void parameter_test();
-  void parameter_setup_test();
-  void print_summary();
-  int get_status();
-
- private:
-  /// Default parameters for inference
-  unsigned int pass_test_count = 0, fail_test_count = 0, total_test_count = 0;
-
+  /// Default parameters for processing
   std::map<std::string, std::vector<std::string>> process_operations = {
       {"plax_cham_infer", {"max_per_channel_scaled"}}};
 
@@ -64,31 +53,6 @@ class ProcessingTests {
   cudaStream_t cuda_stream = 0;
   std::string config_path = "";
   std::map<std::string, std::string> custom_kernels;
-
-  const std::map<unsigned int, std::string> test_identifier_process = {
-      {1, "Processing Params, input tensors are empty"},
-      {2, "Processing Params, processed_map empty value vector check"},
-      {3, "Processing Params, processed_map empty tensor name check"},
-      {4, "Processing Params, processed_map duplicate tensor name check"},
-      {5, "Processing Params, output_tensor exist in processed_map"},
-      {6, "Processing Params, output_tensor is unique"},
-      {7, "Processing Params, empty operation vector in process_operation"},
-      {8, "Processing Params, dummy operation in vector"},
-      {9, "Processing Params, print operation not supported"},
-      {10, "Processing Params, incorrect config path"},
-      {11, "Processing Params, incorrect tensor in result map"},
-      {12, "Processing Params, empty dimension map"},
-      {13, "Processing Params, Mismatch tensor in processed_map"},
-      {14, "Processing Params, Empty data buffer"},
-      {15, "Processing Params, Empty config for generate boxes"},
-      {16, "Processing Params, Incorrect config path for generate boxes"},
-      {17, "Processing Params, incorrect tensor for generate boxes"},
-      {18, "Processing Params, Custom CUDA kernel: empty cuda kernels map"},
-      {19, "Processing Params, Custom CUDA kernel: Incorrect naming"},
-      {20, "Processing Params, Custom CUDA kernel: Incorrect key in custom kernel map"},
-      {21, "Processing Params, Custom CUDA kernel: Empty kernel in custom kernel map"},
-      {22, "Processing Params, Custom CUDA kernel: Incorrect kernel in custom kernel map"},
-      {23, "Processing Params, Custom CUDA kernel: CUDA Graphs true"}};
 };
 
 #endif /* HOLOINFER_PROCESSING_TEST_CORE_HPP */

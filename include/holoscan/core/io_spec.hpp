@@ -176,7 +176,8 @@ class IOSpec {
 
   /**
    * @brief Construct a new IOSpec object with memory block size. This type of IOSpec is used for
-   * GPU-resident graph execution. We don't allow queue_size or queue_policy for this type of IOSpec.
+   * GPU-resident graph execution. We don't allow queue_size or queue_policy for this type of
+   * IOSpec.
    *
    * @param op_spec The pointer to the operator specification that contains this input/output.
    * @param name The name of this input/output.
@@ -200,8 +201,8 @@ class IOSpec {
 
   /**
    * @brief Construct a new IOSpec object with device pointer. This type of IOSpec is used for
-   * GPU-resident graph execution when a memory block is allocated in a customized way by the operator.
-   * We don't allow queue_size or queue_policy for this type of IOSpec.
+   * GPU-resident graph execution when a memory block is allocated in a customized way by the
+   * operator. We don't allow queue_size or queue_policy for this type of IOSpec.
    *
    * @param op_spec The pointer to the operator specification that contains this input/output.
    * @param name The name of this input/output.
@@ -457,15 +458,28 @@ class IOSpec {
    * If the connector type is kDefault, it is automatically changed to kPubSub and the topic is
    * applied. If the connector type is already kPubSub, the topic is set on the existing connector.
    * For any other connector type (e.g. kUCX, kDoubleBuffer), a warning is logged and the topic
-   * is ignored.
+   * is ignored unless `replace_connector` is true, in which case the existing connector is
+   * replaced with a Pub/Sub connector.
    *
    * When both publisher and subscriber use the same topic, add_flow() is optional;
    * add_operator() for each is sufficient — Pub/Sub backend discovery matches by topic.
    *
    * @param name Topic name (must match between publisher and subscriber ports).
+   * @param replace_connector If true, explicitly non-PubSub connectors are replaced with a Pub/Sub
+   *        connector for this port.
    * @return Reference to this IOSpec.
    */
-  IOSpec& topic(const std::string& name);
+  IOSpec& topic(const std::string& name, bool replace_connector = false);
+
+  /**
+   * @brief Get the currently configured topic name for this port, if any.
+   *
+   * For Pub/Sub ports this returns the latest configured `topic_name` argument, including values
+   * supplied through `topic(...)` or direct Pub/Sub connector arguments.
+   *
+   * @return Configured topic name, or `std::nullopt` if this port is not topic-mapped.
+   */
+  [[nodiscard]] std::optional<std::string> topic() const;
 
   /**
    * @brief Set a QoS profile for this port (Publish/Subscribe connectors only).
@@ -499,6 +513,17 @@ class IOSpec {
    * @return Reference to this IOSpec.
    */
   IOSpec& qos(const nvidia::gxf::QoSProfile& profile);
+
+  /**
+   * @brief Get the explicitly configured QoS profile for this port, if any.
+   *
+   * This reflects QoS applied through `qos(...)` or directly on the Pub/Sub connector resource.
+   * Callers that need the effective runtime QoS should fall back to `QoSProfile::Default()` when a
+   * topic is configured but no explicit QoS override exists.
+   *
+   * @return Configured QoS profile, or `std::nullopt` if no explicit override is present.
+   */
+  [[nodiscard]] std::optional<nvidia::gxf::QoSProfile> qos() const;
 
   /**
    * @brief Get the queue size of the input/output port.

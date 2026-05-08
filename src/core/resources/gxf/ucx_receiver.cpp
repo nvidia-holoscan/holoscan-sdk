@@ -15,19 +15,19 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/ucx_receiver.hpp"
+#include <holoscan/core/resources/gxf/ucx_receiver.hpp>
 
 #include <algorithm>
 #include <memory>
 #include <string>
 
-#include "gxf/ucx/ucx_serialization_buffer.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
-#include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
+#include <gxf/ucx/ucx_serialization_buffer.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp>
+#include <holoscan/core/resources/gxf/ucx_serialization_buffer.hpp>
 
 namespace holoscan {
 

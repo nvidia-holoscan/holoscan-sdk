@@ -31,11 +31,11 @@
 
 #include "./codecs.hpp"
 #include "./common.hpp"
+#include "./endpoint.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./message.hpp"
 #include "./type_traits.hpp"
-#include "./endpoint.hpp"
 
 using std::string_literals::operator""s;
 

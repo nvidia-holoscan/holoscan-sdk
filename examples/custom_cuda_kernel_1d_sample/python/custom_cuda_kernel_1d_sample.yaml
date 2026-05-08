@@ -1,5 +1,5 @@
 %YAML 1.2
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@ processor:
     "input_formatted": ["custom_cuda_kernel-1"]
   processed_map:
     "input_formatted": ["input_processed"]
-  custom_kernels: 
+  custom_kernels:
     cuda_kernel-1: |
                   extern "C" __global__ void customKernel1(const unsigned char* input, unsigned char*
                   output, int size) {
@@ -41,7 +41,7 @@ processor:
                     int channels = 3;
                     if (idx < size/channels) {
                       int pixel_idx = idx * channels; // Each pixel has 3 channels (RGB)
-      
+
                       unsigned char r = input[pixel_idx];
                       unsigned char g = input[pixel_idx + 1];
                       unsigned char b = input[pixel_idx + 2];

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/system/topology.hpp"
+#include <holoscan/core/system/topology.hpp>
 
 #include <hwloc.h>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

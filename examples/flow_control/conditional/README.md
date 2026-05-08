@@ -11,18 +11,21 @@ This example demonstrates how to implement conditional flow control using Holosc
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Conditional Flow**: Dynamic routing of data based on runtime conditions
 2. **Multiple Paths**: Handling different execution paths based on conditions
 3. **Controlled Iterations**: Using CountCondition to limit operator execution
 4. **Dynamic Flow Control**: Runtime decision-making for data routing
 
 The key aspects of this application include:
+
 - Use of dynamic flows for conditional routing
 - Implementation of controlled iterations using CountCondition
 - Multiple execution paths based on runtime values
 - Simple operator state management
 
 The application demonstrates:
+
 - How to implement conditional routing logic
 - How to use CountCondition for iteration control
 - How to manage multiple execution paths
@@ -33,7 +36,9 @@ The application demonstrates:
 ## C++ API
 
 The application uses multiple instances of the following operator:
+
 1. `SimpleOp`: A basic operator that maintains a counter and prints its execution
+
 - Launched with CountCondition(2) for node1
 - Routes data to either node2 or node4 based on counter value
 - Subsequent nodes process and display execution status
@@ -49,6 +54,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/conditional/cpp/conditional_execution
 ```
@@ -56,7 +62,9 @@ Then, run:
 ## Python API
 
 The application demonstrates the same flow control patterns using the Python API. It consists of the same operators as the C++ version:
+
 1. `SimpleOp`: A basic operator that maintains a counter and prints its execution
+
 - Launched with CountCondition(2) for node1
 - Routes data to either node2 or node4 based on counter value
 - Subsequent nodes process and display execution status
@@ -70,6 +78,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/conditional/python/conditional_execution.py
 ```

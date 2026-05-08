@@ -14,16 +14,21 @@ The main components include a set of custom operators that encapsulate GXF Codel
 
 ### Run Instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/import_gxf_components/cpp/import_gxf_components
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/import_gxf_components/cpp/import_gxf_components
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/import_gxf_components/cpp/import_gxf_components
   ```
@@ -38,7 +43,8 @@ Python example shows how to utilize the `GXFCodeletOp` and `GXFComponentResource
 
 ### Run instructions
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
@@ -47,16 +53,22 @@ Python example shows how to utilize the `GXFCodeletOp` and `GXFComponentResource
   python3 -m pip install cupy-cuda12x
   python3 <APP_DIR>/import_gxf_components.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/import_gxf_components/python/import_gxf_components.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/import_gxf_components/python/import_gxf_components.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   python3 -m pip install cupy-cuda12x
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib

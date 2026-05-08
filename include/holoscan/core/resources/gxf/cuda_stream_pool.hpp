@@ -21,8 +21,8 @@
 #include <memory>
 #include <string>
 
-#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
 #include <gxf/cuda/cuda_stream_pool.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context.hpp>
 
 #include "./allocator.hpp"
 

@@ -24,8 +24,8 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/execution_context.hpp>
 #include "execution_context_pydoc.hpp"
-#include "holoscan/core/execution_context.hpp"
 #include "operator.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)

@@ -27,9 +27,9 @@
 #include <new>
 #include <stdexcept>
 
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_allocator.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_allocator.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

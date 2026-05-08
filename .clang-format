@@ -1,3 +1,6 @@
+---
+Language: Cpp
+
 # The following configuration is from GXF Core project.
 
 BasedOnStyle: Google
@@ -22,3 +25,11 @@ BinPackArguments: false
 
 # Leave SPDX comments as is (CommentPragmas is available since clang-format 3.7)
 CommentPragmas: '^(\s*\* )?SPDX-(FileCopyrightText|License-Identifier):'
+
+---
+Language: Json
+IndentWidth: 2
+
+---
+Language: Proto
+DisableFormat: true

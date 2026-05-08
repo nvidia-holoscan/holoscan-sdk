@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/subgraph.hpp"
+#include <holoscan/core/subgraph.hpp>
 
 #include <fmt/format.h>
 
@@ -28,13 +28,13 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace {
 
@@ -51,6 +51,64 @@ std::string format_port_list(const PortMapT& ports) {
     first = false;
   }
   return result;
+}
+
+const holoscan::InterfacePort& get_data_interface_port_or_throw(const holoscan::Subgraph& subgraph,
+                                                                const std::string& interface_port,
+                                                                bool expect_input) {
+  const auto& data_ports = subgraph.interface_ports();
+  auto data_it = data_ports.find(interface_port);
+  if (data_it == data_ports.end()) {
+    const auto& exec_ports = subgraph.exec_interface_ports();
+    auto exec_it = exec_ports.find(interface_port);
+    if (exec_it != exec_ports.end()) {
+      throw std::runtime_error(
+          fmt::format("Subgraph '{}': interface port '{}' is an execution port, not a data port",
+                      subgraph.name(),
+                      interface_port));
+    }
+    throw std::runtime_error(
+        fmt::format("Subgraph '{}': unknown interface port '{}'", subgraph.name(), interface_port));
+  }
+
+  if (data_it->second.is_input != expect_input) {
+    throw std::runtime_error(fmt::format("Subgraph '{}': interface port '{}' is an {} port",
+                                         subgraph.name(),
+                                         interface_port,
+                                         data_it->second.is_input ? "input" : "output"));
+  }
+
+  if (data_it->second.empty()) {
+    throw std::runtime_error(
+        fmt::format("Subgraph '{}': interface port '{}' has no internal mappings",
+                    subgraph.name(),
+                    interface_port));
+  }
+
+  return data_it->second;
+}
+
+void bind_interface_port_topic(const holoscan::Subgraph& subgraph,
+                               const std::string& interface_port, const std::string& topic,
+                               const std::optional<nvidia::gxf::QoSProfile>& qos, bool expect_input,
+                               bool replace_connector) {
+  const auto& resolved_port =
+      get_data_interface_port_or_throw(subgraph, interface_port, expect_input);
+  for (const auto& mapping : resolved_port.mappings) {
+    if (!mapping.internal_operator) {
+      throw std::runtime_error(
+          fmt::format("Subgraph '{}': interface port '{}' has a null internal operator mapping",
+                      subgraph.name(),
+                      interface_port));
+    }
+    if (expect_input) {
+      mapping.internal_operator->bind_input_topic(
+          mapping.internal_port_name, topic, qos, replace_connector);
+    } else {
+      mapping.internal_operator->bind_output_topic(
+          mapping.internal_port_name, topic, qos, replace_connector);
+    }
+  }
 }
 
 }  // namespace
@@ -256,6 +314,26 @@ void Subgraph::add_flow(const std::shared_ptr<Subgraph>& upstream_subgraph,
     throw std::runtime_error(err_msg);
   }
   fragment_->add_flow(upstream_subgraph, downstream_subgraph, std::move(port_pairs));
+}
+
+void Subgraph::bind_input_topic(const std::string& interface_port, const std::string& topic,
+                                const std::optional<nvidia::gxf::QoSProfile>& qos,
+                                bool replace_connector) {
+  if (!is_composed_) {
+    throw std::runtime_error(fmt::format(
+        "Subgraph '{}': bind_input_topic() requires compose() to have been called first", name_));
+  }
+  bind_interface_port_topic(*this, interface_port, topic, qos, true, replace_connector);
+}
+
+void Subgraph::bind_output_topic(const std::string& interface_port, const std::string& topic,
+                                 const std::optional<nvidia::gxf::QoSProfile>& qos,
+                                 bool replace_connector) {
+  if (!is_composed_) {
+    throw std::runtime_error(fmt::format(
+        "Subgraph '{}': bind_output_topic() requires compose() to have been called first", name_));
+  }
+  bind_interface_port_topic(*this, interface_port, topic, qos, false, replace_connector);
 }
 
 void Subgraph::add_flow(const std::shared_ptr<Operator>& upstream_op,

@@ -1,4 +1,5 @@
 (ping-multi-port-example)=
+
 # Ping Multi Port
 
 In this section, we look at how to create an application with a more complex workflow where
@@ -47,7 +48,7 @@ operators for our user-defined `ValueData` class.
 :emphasize-lines: 6, 16
 :name: holoscan-one-operator-workflow-cpp
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 class ValueData {
  public:
@@ -287,7 +288,6 @@ not change when we went from passing `int` to `ValueData` objects.
 `````
 
 `PingMxOp` processes the data, then sends it out on two ports, similarly to what is done by `PingTxOp` above.
-
 
 ## Receiving Any Number of Inputs
 

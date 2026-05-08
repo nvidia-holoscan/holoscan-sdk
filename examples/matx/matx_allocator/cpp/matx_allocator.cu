@@ -122,7 +122,8 @@ class MatXAllocRxOp : public holoscan::Operator {
           DLManagedTensor* dl = tensor->to_dlpack();
           auto dl_guard = std::unique_ptr<DLManagedTensor, void (*)(DLManagedTensor*)>(
               dl, [](DLManagedTensor* p) {
-                if (p && p->deleter) p->deleter(p);
+                if (p && p->deleter)
+                  p->deleter(p);
               });
           matx::make_tensor(matx_tensor, *dl);
         }

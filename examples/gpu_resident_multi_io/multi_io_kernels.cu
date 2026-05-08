@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-#include <stdio.h>
 #include <cuda_runtime.h>
+#include <cstdio>
 
-#include "holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh"
+#include <holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh>
 
 namespace {
 constexpr int kModulo = 101;
@@ -65,19 +65,12 @@ void launch_source_emit_kernel(int* out0, int* out1, int size, cudaStream_t stre
   source_emit_kernel<<<1, 1, 0, stream>>>(out0, out1, size);
 }
 
-void launch_add_sub_kernel(const int* in0,
-                           const int* in1,
-                           int* sum_out,
-                           int* diff_out,
-                           int size,
+void launch_add_sub_kernel(const int* in0, const int* in1, int* sum_out, int* diff_out, int size,
                            cudaStream_t stream) {
   add_sub_kernel<<<1, 1, 0, stream>>>(in0, in1, sum_out, diff_out, size);
 }
 
-void launch_final_add_kernel(const int* in_sum,
-                             const int* in_diff,
-                             int* out,
-                             int size,
+void launch_final_add_kernel(const int* in_sum, const int* in_diff, int* out, int size,
                              cudaStream_t stream) {
   final_add_kernel<<<1, 1, 0, stream>>>(in_sum, in_diff, out, size);
 }

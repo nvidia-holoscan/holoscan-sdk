@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,4 +34,13 @@ FetchContent_Declare(
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/holoinfer
 )
 
+FetchContent_Declare(
+  holoipc
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/holoipc
+)
+
 FetchContent_MakeAvailable(holoviz holoinfer)
+
+if(HOLOSCAN_BUILD_IPC)
+  FetchContent_MakeAvailable(holoipc)
+endif()

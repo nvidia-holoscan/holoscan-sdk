@@ -52,21 +52,18 @@ Ensure the following are installed in the environment where you want to run the 
 The Holoscan CLI is available as a PyPI package and can be installed with the following command:
 
 ```bash
-$ pip install holoscan-cli
+pip install holoscan-cli
 ```
 
 Verify the installation:
 
 ```bash
-$ holoscan version
+holoscan version
 ```
-
 
 :::{tip}
 Always install Holoscan SDK first, followed by Holoscan CLI on a system that requires both. This ensures that all necessary dependencies and packages are installed correctly, allowing for smooth operation of the Holoscan CLI.
 :::
-
-
 
 ## Package an application
 
@@ -209,8 +206,7 @@ Additional arguments are required when launching the container to enable the pac
 
 In addition to using HAP-defined environment variables, applications must also handle parsing the `—config` argument when packaging a non-distributed application.
 
-
-   - **Handle `--config` argument**
+- **Handle `--config` argument**
 
      `````{tab-set}
      ````{tab-item} C++

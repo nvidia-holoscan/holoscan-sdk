@@ -22,9 +22,9 @@
 #include <string>
 #include <vector>
 
+#include <gxf/pubsub/endpoint_info.hpp>
 #include <gxf/pubsub/gid.hpp>
 #include <gxf/pubsub/pubsub_context.hpp>
-#include <gxf/pubsub/endpoint_info.hpp>
 
 #include "../../gxf/gxf_network_context.hpp"
 #include "../../resources/gxf/clock.hpp"

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,12 +23,12 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity_group.hpp>
+#include <holoscan/core/resources/gxf/system_resources.hpp>
+#include <holoscan/core/resources/gxf/unbounded_allocator.hpp>
 #include "../config.hpp"
 #include "../utils.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity_group.hpp"
-#include "holoscan/core/resources/gxf/system_resources.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 using namespace std::string_literals;
 

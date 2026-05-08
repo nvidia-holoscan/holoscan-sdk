@@ -12,15 +12,20 @@ the beginning of the execution.
 ## C++ Run instructions
 
 * **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/ping_cycle/cpp/ping_cycle
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/ping_cycle/cpp/ping_cycle
   ```
+
 * **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/ping_cycle/cpp/ping_cycle
   ```

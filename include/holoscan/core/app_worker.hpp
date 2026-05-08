@@ -28,8 +28,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
 
 namespace holoscan {
 

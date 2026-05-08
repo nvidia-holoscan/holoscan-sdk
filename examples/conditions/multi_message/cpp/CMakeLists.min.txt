@@ -73,7 +73,7 @@ if(BUILD_TESTING)
          --fail-pattern 'Unable to convert argument type'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
-  
+
   add_test(NAME EXAMPLE_CPP_SINGLE_MESSAGE_TIMEOUT_TEST
            COMMAND single_message_timeout
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}

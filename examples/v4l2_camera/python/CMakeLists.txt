@@ -73,7 +73,8 @@ if(HOLOSCAN_BUILD_TESTS AND HOLOSCAN_BUILD_V4L2_TESTS)
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/v4l2_camera.py PYTHON_SOURCE_STRING)
   string(REPLACE "from holoscan.core import Application"
       "from holoscan.conditions import CountCondition\nfrom holoscan.core import Application" PYTHON_SOURCE_STRING "${PYTHON_SOURCE_STRING}")
-  string(REPLACE "self.add_flow" "visualizer.add_arg(CountCondition(self, 10)); self.add_flow" PYTHON_SOURCE_STRING "${PYTHON_SOURCE_STRING}")
+  string(REPLACE "self.add_flow(passthrough, visualizer"
+      "visualizer.add_arg(CountCondition(self, 10)); self.add_flow(passthrough, visualizer" PYTHON_SOURCE_STRING "${PYTHON_SOURCE_STRING}")
   set(PYTHON_SOURCE_FILE ${CMAKE_CURRENT_BINARY_DIR}/v4l2_camera_test.py)
   file(WRITE ${PYTHON_SOURCE_FILE} "${PYTHON_SOURCE_STRING}")
 

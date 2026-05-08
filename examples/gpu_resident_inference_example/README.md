@@ -17,6 +17,7 @@ The GPU Resident Infernece operator ingests a YAML configuration file that conta
 ### Inference Parameters
 
 Three mandatory parameters must be present under the key `inference_parameters`.
+
 - `model_path_map`: Map with key as model and value as path to the model.
 - `pre_processor_map`: Map with key as model and value as the input tensor to the model.
 - `inference_map`: Map with key as model and value as the output tensor from the model.

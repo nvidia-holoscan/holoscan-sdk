@@ -37,21 +37,21 @@ namespace holoscan {
 class Operator;
 
 template <typename NodeT = std::shared_ptr<Operator>,
-typename EdgeDataElementT =
-std::unordered_map<std::string, std::set<std::string, std::less<>>>>
+          typename EdgeDataElementT =
+              std::unordered_map<std::string, std::set<std::string, std::less<>>>>
 class FlowGraph;
 
 // Graph type aliases
 //   for operator graph
 using OperatorNodeType = std::shared_ptr<Operator>;
 using OperatorEdgeDataElementType =
-std::unordered_map<std::string, std::set<std::string, std::less<>>>;
+    std::unordered_map<std::string, std::set<std::string, std::less<>>>;
 using OperatorFlowGraph = FlowGraph<OperatorNodeType, OperatorEdgeDataElementType>;
 
 //   for fragment graph
 using FragmentNodeType = std::shared_ptr<Fragment>;
 using FragmentEdgeDataElementType =
-std::unordered_map<std::string, std::set<std::string, std::less<>>>;
+    std::unordered_map<std::string, std::set<std::string, std::less<>>>;
 using FragmentFlowGraph = FlowGraph<FragmentNodeType, FragmentEdgeDataElementType>;
 
 /**

@@ -27,18 +27,18 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/component.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "gil_guarded_pyobject.hpp"
-#include "holoscan/core/component.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/subgraph.hpp"
 #include "kwarg_handling.hpp"
 #include "operator_pydoc.hpp"
 

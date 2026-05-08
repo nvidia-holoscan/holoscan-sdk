@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
+#include <holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp>
 
 #include <any>
 #include <cstdint>
@@ -25,12 +25,12 @@
 #include <typeindex>
 #include <utility>
 
-#include "gxf/core/entity.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <gxf/core/entity.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 namespace data_loggers {

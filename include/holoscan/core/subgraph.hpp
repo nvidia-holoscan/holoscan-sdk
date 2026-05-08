@@ -376,6 +376,38 @@ class Subgraph {
                 std::set<std::pair<std::string, std::string>> port_pairs = {});
 
   /**
+   * @brief Bind an input interface port to a Pub/Sub topic.
+   *
+   * Applies the topic binding to every internal operator port mapped from this interface port.
+   *
+   * @param interface_port Interface port name on this subgraph.
+   * @param topic Topic name to subscribe to.
+   * @param qos Optional QoS profile override. When nullopt, any QoS already configured on the
+   *        mapped internal ports is preserved.
+   * @param replace_connector If true, replace explicitly non-PubSub connectors on mapped internal
+   *        ports with Pub/Sub connectors.
+   */
+  void bind_input_topic(const std::string& interface_port, const std::string& topic,
+                        const std::optional<nvidia::gxf::QoSProfile>& qos = std::nullopt,
+                        bool replace_connector = false);
+
+  /**
+   * @brief Bind an output interface port to a Pub/Sub topic.
+   *
+   * Applies the topic binding to every internal operator port mapped from this interface port.
+   *
+   * @param interface_port Interface port name on this subgraph.
+   * @param topic Topic name to publish to.
+   * @param qos Optional QoS profile override. When nullopt, any QoS already configured on the
+   *        mapped internal ports is preserved.
+   * @param replace_connector If true, replace explicitly non-PubSub connectors on mapped internal
+   *        ports with Pub/Sub connectors.
+   */
+  void bind_output_topic(const std::string& interface_port, const std::string& topic,
+                         const std::optional<nvidia::gxf::QoSProfile>& qos = std::nullopt,
+                         bool replace_connector = false);
+
+  /**
    * @brief Connect Operator to Subgraph with connector type
    *
    * @param upstream_op The upstream operator

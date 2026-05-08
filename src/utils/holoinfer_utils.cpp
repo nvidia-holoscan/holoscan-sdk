@@ -28,9 +28,9 @@
 #include <holoinfer_buffer.hpp>
 #include <holoinfer_utils.hpp>
 
-#include "gxf/std/tensor.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/utils/holoinfer_utils.hpp"
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/utils/holoinfer_utils.hpp>
 
 namespace HoloInfer = holoscan::inference;
 
@@ -688,6 +688,345 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     auto result = gxf::Entity(std::move(out_message.value()));
     op_output.emit(result, "transmitter");
     HoloInfer::timer_init(e_time);
+  } catch (std::exception& _ex) {
+    return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
+  } catch (...) {
+    return report_error(module, "Data transmission, Unknown exception");
+  }
+  HoloInfer::timer_init(e_time);
+  HoloInfer::timer_check(s_time, e_time, module + " Data transmission ");
+
+  return GXF_SUCCESS;
+}
+
+// Cached variant of transmit_data: reuses the tensor slot already present in the persistent
+// entity instead of adding a new one each frame. Three cases:
+//   • First use or incoming size exceeds allocation: full reshape (reallocate + update shape).
+//   • Incoming fits in existing allocation but dims changed: wrapMemory to update shape metadata
+//     only — the underlying buffer is reused without any free/alloc.
+//   • Same dims as last frame: fast path, no tensor mutation at all.
+template <typename T>
+gxf_result_t transmit_data_cached(
+    nvidia::gxf::MemoryStorageType from, nvidia::gxf::MemoryStorageType to,
+    nvidia::gxf::Expected<nvidia::gxf::Entity>& out_message, const std::string& current_tensor,
+    nvidia::gxf::Shape& output_shape, size_t buffer_size, HoloInfer::DataMap& input_data_map,
+    const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_, const std::string& module,
+    cudaStream_t cstream, std::map<std::string, size_t>& allocated_sizes,
+    std::map<std::string, std::vector<int64_t>>& last_dims, const std::vector<int64_t>& dims) {
+  const nvidia::gxf::MemoryStorageType target_storage =
+      (to == nvidia::gxf::MemoryStorageType::kDevice) ? nvidia::gxf::MemoryStorageType::kDevice
+                                                      : nvidia::gxf::MemoryStorageType::kHost;
+
+  // Retrieve the existing tensor component from the persistent entity, or add it on first use.
+  if (!out_message) {
+    return report_error(module, "Data transmission, Out message entity is not valid.");
+  }
+  auto maybe_out_tensor = out_message.value().get<nvidia::gxf::Tensor>(current_tensor.c_str());
+  if (!maybe_out_tensor) {
+    auto added = out_message.value().add<nvidia::gxf::Tensor>(current_tensor.c_str());
+    if (!added) {
+      return report_error(module, "Data transmission, Out tensor allocation.");
+    }
+    maybe_out_tensor = added;
+  }
+  auto& out_tensor = maybe_out_tensor.value();
+
+  auto size_it = allocated_sizes.find(current_tensor);
+  auto dims_it = last_dims.find(current_tensor);
+  const bool first_use = (size_it == allocated_sizes.end());
+  const bool needs_grow = !first_use && (buffer_size > size_it->second);
+  const bool dims_changed = first_use || (dims_it == last_dims.end()) || (dims_it->second != dims);
+
+  if (first_use || needs_grow) {
+    // Buffer must be (re)allocated: first use or incoming data no longer fits.
+    out_tensor->reshape<T>(output_shape, target_storage, allocator_);
+    if (!out_tensor->pointer()) {
+      return report_error(module, "Data transmission, Out tensor buffer allocation.");
+    }
+    allocated_sizes[current_tensor] = buffer_size;
+    last_dims[current_tensor] = dims;
+  } else if (dims_changed) {
+    // Incoming fits in the existing allocation but the shape changed.
+    // Move the MemoryBuffer out of the tensor (preserving its allocator-managed release
+    // function), then re-attach it with the new shape via wrapMemoryBuffer.
+    //
+    // We must NOT use wrapMemory with a no-op deleter here: when the same pointer is passed
+    // to MemoryBuffer::wrapMemory the freeBuffer() guard is skipped, but release_func_ is
+    // unconditionally overwritten. That silently discards the allocator's release function,
+    // so the next reshape (or the tensor destructor) invokes the no-op instead of returning
+    // the block to the allocator — permanently leaking it from BlockMemoryPool.
+    auto saved_buf = out_tensor->move_buffer();
+    auto wrap_result =
+        out_tensor->wrapMemoryBuffer(output_shape,
+                                     nvidia::gxf::PrimitiveTypeTraits<T>::value,
+                                     sizeof(T),
+                                     nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE},
+                                     std::move(saved_buf));
+    if (!wrap_result) {
+      return report_error(module, "Data transmission, Out tensor shape update.");
+    }
+    last_dims[current_tensor] = dims;
+  }
+
+  nvidia::gxf::Expected<T*> out_tensor_data = out_tensor->data<T>();
+  if (!out_tensor_data)
+    return report_error(module, "Data transmission, Getting out tensor data.");
+
+  if (from == nvidia::gxf::MemoryStorageType::kHost) {
+    if (to == nvidia::gxf::MemoryStorageType::kHost) {
+      memcpy(out_tensor_data.value(),
+             input_data_map.at(current_tensor)->host_buffer_->data(),
+             buffer_size * sizeof(T));
+    } else {  // to is on device
+      auto src = input_data_map.at(current_tensor)->host_buffer_->data();
+      cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
+                                                static_cast<const void*>(src),
+                                                buffer_size * sizeof(T),
+                                                cudaMemcpyHostToDevice,
+                                                cstream);
+      if (cuda_result != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Data transmission (HtoD) failed: {}", cudaGetErrorString(cuda_result));
+        return report_error(module, "Data Transmission, HtoD cudaMemcpy.");
+      }
+    }
+  } else {
+    if (to == nvidia::gxf::MemoryStorageType::kDevice) {
+      void* src = input_data_map.at(current_tensor)->device_buffer_->data();
+      cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
+                                                static_cast<const void*>(src),
+                                                buffer_size * sizeof(T),
+                                                cudaMemcpyDeviceToDevice,
+                                                cstream);
+      if (cuda_result != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Data transmission (DtoD) failed: {}", cudaGetErrorString(cuda_result));
+        return report_error(module, "Data transmission, DtoD cudaMemcpy.");
+      }
+    } else {  // to is on host
+      void* src = input_data_map.at(current_tensor)->device_buffer_->data();
+      cudaError_t cuda_result = cudaMemcpyAsync(static_cast<void*>(out_tensor_data.value()),
+                                                static_cast<const void*>(src),
+                                                buffer_size * sizeof(T),
+                                                cudaMemcpyDeviceToHost,
+                                                cstream);
+      if (cuda_result != cudaSuccess) {
+        HOLOSCAN_LOG_ERROR("Data transmission (DtoH) failed: {}", cudaGetErrorString(cuda_result));
+        return report_error(module, "Data transmission, DtoH cudaMemcpy");
+      }
+    }
+  }
+  return GXF_SUCCESS;
+}
+
+gxf_result_t transmit_data_per_model(gxf_context_t& cont,
+                                     const HoloInfer::MultiMappings& model_to_tensor_map,
+                                     HoloInfer::DataMap& input_data_map, OutputContext& op_output,
+                                     std::vector<std::string>& out_tensors,
+                                     HoloInfer::DimType& tensor_out_dims_map, bool cuda_buffer_in,
+                                     bool cuda_buffer_out,
+                                     const nvidia::gxf::Handle<nvidia::gxf::Allocator>& allocator_,
+                                     const std::string& module, const cudaStream_t& cstream,
+                                     TensorTransmitCache& cache) {
+  HoloInfer::TimePoint s_time, e_time;
+  HoloInfer::timer_init(s_time);
+  try {
+    nvidia::gxf::MemoryStorageType from = nvidia::gxf::MemoryStorageType::kHost;
+    nvidia::gxf::MemoryStorageType to = nvidia::gxf::MemoryStorageType::kHost;
+
+    if (cuda_buffer_in) {
+      from = nvidia::gxf::MemoryStorageType::kDevice;
+    }
+    if (cuda_buffer_out) {
+      to = nvidia::gxf::MemoryStorageType::kDevice;
+    }
+
+    // Create the persistent output entity only on the first call.
+    if (!cache.out_message) {
+      cache.out_message = nvidia::gxf::Entity::New(cont);
+      if (!cache.out_message) {
+        return report_error(module, "Data transmission, Out message allocation");
+      }
+    }
+
+    // Merge any dynamic output tensors discovered in input_data_map into out_tensors.
+    for (const auto& dtensor : input_data_map) {
+      if (std::find(out_tensors.begin(), out_tensors.end(), dtensor.first) == out_tensors.end()) {
+        out_tensors.push_back(dtensor.first);
+      }
+    }
+
+    for (unsigned int i = 0; i < out_tensors.size(); ++i) {
+      if (input_data_map.find(out_tensors[i]) == input_data_map.end()) {
+        return report_error(module,
+                            "Data Transmission, Mapped data not found for " + out_tensors[i]);
+      }
+      const auto& current_out_tensor = out_tensors[i];
+
+      std::string key_name = "";
+      unsigned int tensor_index = 0;
+
+      if (model_to_tensor_map.size() > 0) {
+        for (const auto& [key_to_tensor, tensor_names_vector] : model_to_tensor_map) {
+          for (size_t a = 0; a < tensor_names_vector.size(); a++) {
+            if (tensor_names_vector[a].compare(current_out_tensor) == 0) {
+              key_name = key_to_tensor;
+              tensor_index = a;
+              break;
+            }
+          }
+          if (key_name.length() != 0) {
+            break;
+          }
+        }
+      }
+
+      if (key_name.length() == 0) {
+        key_name = current_out_tensor;
+      }
+
+      if (tensor_out_dims_map.find(key_name) == tensor_out_dims_map.end()) {
+        return report_error(module, "Tensor mapping not found in dimension map for " + key_name);
+      }
+
+      std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
+
+      if (dims.size() < 1 || dims.size() > nvidia::gxf::Shape::kMaxRank) {
+        HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
+                          nvidia::gxf::Shape::kMaxRank);
+        return report_error(
+            module, "Output dimension size not supported. Size: " + std::to_string(dims.size()));
+      }
+
+      std::vector<int32_t> dimarray(dims.begin(), dims.end());
+      nvidia::gxf::Shape output_shape = nvidia::gxf::Shape(dimarray);
+      size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
+      auto tensor_dtype = input_data_map.at(current_out_tensor)->get_datatype();
+
+      gxf_result_t stat = GXF_SUCCESS;
+      switch (tensor_dtype) {
+        case HoloInfer::holoinfer_datatype::h_Float16: {
+          stat = transmit_data_cached<__half>(from,
+                                              to,
+                                              cache.out_message,
+                                              current_out_tensor,
+                                              output_shape,
+                                              buffer_size,
+                                              input_data_map,
+                                              allocator_,
+                                              module,
+                                              cstream,
+                                              cache.allocated_sizes,
+                                              cache.last_dims,
+                                              dims);
+          break;
+        }
+        case HoloInfer::holoinfer_datatype::h_Float32: {
+          stat = transmit_data_cached<float>(from,
+                                             to,
+                                             cache.out_message,
+                                             current_out_tensor,
+                                             output_shape,
+                                             buffer_size,
+                                             input_data_map,
+                                             allocator_,
+                                             module,
+                                             cstream,
+                                             cache.allocated_sizes,
+                                             cache.last_dims,
+                                             dims);
+          break;
+        }
+        case HoloInfer::holoinfer_datatype::h_Int32: {
+          stat = transmit_data_cached<int32_t>(from,
+                                               to,
+                                               cache.out_message,
+                                               current_out_tensor,
+                                               output_shape,
+                                               buffer_size,
+                                               input_data_map,
+                                               allocator_,
+                                               module,
+                                               cstream,
+                                               cache.allocated_sizes,
+                                               cache.last_dims,
+                                               dims);
+          break;
+        }
+        case HoloInfer::holoinfer_datatype::h_Int8: {
+          stat = transmit_data_cached<int8_t>(from,
+                                              to,
+                                              cache.out_message,
+                                              current_out_tensor,
+                                              output_shape,
+                                              buffer_size,
+                                              input_data_map,
+                                              allocator_,
+                                              module,
+                                              cstream,
+                                              cache.allocated_sizes,
+                                              cache.last_dims,
+                                              dims);
+          break;
+        }
+        case HoloInfer::holoinfer_datatype::h_UInt8: {
+          stat = transmit_data_cached<uint8_t>(from,
+                                               to,
+                                               cache.out_message,
+                                               current_out_tensor,
+                                               output_shape,
+                                               buffer_size,
+                                               input_data_map,
+                                               allocator_,
+                                               module,
+                                               cstream,
+                                               cache.allocated_sizes,
+                                               cache.last_dims,
+                                               dims);
+          break;
+        }
+        case HoloInfer::holoinfer_datatype::h_Int64: {
+          stat = transmit_data_cached<int64_t>(from,
+                                               to,
+                                               cache.out_message,
+                                               current_out_tensor,
+                                               output_shape,
+                                               buffer_size,
+                                               input_data_map,
+                                               allocator_,
+                                               module,
+                                               cstream,
+                                               cache.allocated_sizes,
+                                               cache.last_dims,
+                                               dims);
+          break;
+        }
+        default: {
+          HOLOSCAN_LOG_INFO(
+              "Outgoing tensors must be of type: float, float16, int32, int64, int8, uint8");
+          HOLOSCAN_LOG_ERROR("Unsupported data type in HoloInfer data transmission.");
+          stat = GXF_FAILURE;
+        }
+      }
+      if (stat != GXF_SUCCESS) {
+        return report_error(
+            module, "Data Transmission, Out tensor transmission failed for " + current_out_tensor);
+      }
+    }
+
+    // CUDA stream attachment note:
+    // Unlike the CudaStreamHandler-based overload which calls cuda_stream_handler.to_message()
+    // here, the cstream-based API delegates stream attachment to the calling operator via
+    // op_output.set_cuda_stream(cstream, "transmitter"), which must be called before this
+    // function. GXFOutputContext::emit_impl then injects (or updates) the CudaStreamId
+    // component in the entity at publish time — correctly handling both the first-frame (add)
+    // and subsequent-frame (update) cases for this persistent cached entity. Downstream
+    // operators that call receive_cuda_stream() receive cstream and their enqueued work is
+    // naturally serialized after the cudaMemcpyAsync operations above.
+    //
+    // Emit a reference-counted copy of the persistent entity. Using copy (not move) keeps
+    // cache.out_message valid for the next frame while the downstream operator holds its own
+    // reference to the same entity.
+    auto result = gxf::Entity(cache.out_message.value());
+    op_output.emit(result, "transmitter");
   } catch (std::exception& _ex) {
     return report_error(module, "Data transmission, Message: " + std::string(_ex.what()));
   } catch (...) {

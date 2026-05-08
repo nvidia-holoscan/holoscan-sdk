@@ -38,11 +38,9 @@ TEST(Graphs, TestFlowTrackingForSingleOperatorFragment) {
 
   // The single operator "solo" is both root and leaf, so the tracked path
   // should consist of just that one operator.
-  EXPECT_EQ(tracker.get_num_paths(), 1) << "=== LOG ===\n"
-                                        << log_output << "\n===========\n";
-  EXPECT_TRUE(log_output.find(": solo") != std::string::npos)
-      << "=== LOG ===\n"
-      << log_output << "\n===========\n";
+  EXPECT_EQ(tracker.get_num_paths(), 1) << "=== LOG ===\n" << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find(": solo") != std::string::npos) << "=== LOG ===\n"
+                                                              << log_output << "\n===========\n";
 }
 
 }  // namespace holoscan

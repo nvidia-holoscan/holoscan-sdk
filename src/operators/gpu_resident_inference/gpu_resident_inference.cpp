@@ -15,16 +15,16 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/gpu_resident_inference/gpu_resident_inference.hpp"
+#include <holoscan/operators/gpu_resident_inference/gpu_resident_inference.hpp>
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
 
 #include <holoinfer_utils.hpp>
 
@@ -68,8 +68,8 @@ void GPUResidentInferenceOp::setup(OperatorSpec& spec) {
   }
 
   auto in_buffer_size = in_tensor_it->second * HoloInfer::get_element_size(in_datatype_it->second);
-  auto out_buffer_size = out_tensor_it->second *
-                         holoscan::inference::get_element_size(out_datatype_it->second);
+  auto out_buffer_size =
+      out_tensor_it->second * holoscan::inference::get_element_size(out_datatype_it->second);
 
   HOLOSCAN_LOG_INFO("input buffer size {}, output buffer size {}", in_buffer_size, out_buffer_size);
   spec.device_input("in", in_buffer_size);
@@ -177,7 +177,7 @@ void GPUResidentInferenceOp::compute([[maybe_unused]] InputContext& op_input,
                      inference_specs_->gpu_resident_output_);
 
   if (!cuda_stream_ptr) {
-      HoloInfer::raise_error(module_, "Compute, Invalid CUDA stream pointer");
+    HoloInfer::raise_error(module_, "Compute, Invalid CUDA stream pointer");
   }
   auto status = holoscan_infer_context_->execute_inference(inference_specs_, *cuda_stream_ptr);
 

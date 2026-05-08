@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
+#include <holoscan/core/conditions/gxf/multi_message_available_timeout.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -24,9 +24,9 @@
 
 #include <gxf/std/scheduling_terms.hpp>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resource.hpp>
 
 namespace holoscan {
 

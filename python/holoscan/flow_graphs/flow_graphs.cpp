@@ -27,14 +27,14 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/component.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
 #include "./flow_graphs_pydoc.hpp"
-#include "holoscan/core/component.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

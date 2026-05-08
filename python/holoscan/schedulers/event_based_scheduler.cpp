@@ -24,16 +24,16 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_component.hpp>
+#include <holoscan/core/gxf/gxf_scheduler.hpp>
+#include <holoscan/core/resources/gxf/clock.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
+#include <holoscan/core/schedulers/gxf/event_based_scheduler.hpp>
 #include "../core/component_util.hpp"
 #include "./event_based_scheduler_pydoc.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_component.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
-#include "holoscan/core/resources/gxf/clock.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
-#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

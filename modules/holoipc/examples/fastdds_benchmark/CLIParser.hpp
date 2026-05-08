@@ -1,0 +1,295 @@
+// Copyright 2024 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef HOLOIPC_EXAMPLES_FASTDDS_BENCHMARK_CLIPARSER_HPP
+#define HOLOIPC_EXAMPLES_FASTDDS_BENCHMARK_CLIPARSER_HPP
+
+#include <csignal>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <string>
+
+#include <holoscan/ipc/log.hpp>
+
+namespace holoscan {
+namespace ipc {
+namespace fastdds_benchmark {
+
+class CLIParser {
+ public:
+  CLIParser() = delete;
+
+  //! Entity kind enumeration
+  enum class EntityKind : uint8_t { PUBLISHER, SUBSCRIBER, UNDEFINED };
+
+  //! Publisher configuration structure (shared for both publisher and subscriber applications)
+  struct publisher_config {
+    std::size_t samples = 0;
+    std::size_t matched = 1;
+    //! Payload size in bytes for each GPU buffer sample (subscriber may use this later).
+    uint32_t message_size = 1024;
+    //! If true, use AccelBuffer; if false (default), plain Buffer.
+    bool use_accel_buffer = false;
+  };
+
+  //! Subscriber application configuration structure
+  struct subscriber_config : public publisher_config {
+    //! If true, use Context::acquire_pointer_eager (no wait for ACK); AccelBuffer path only.
+    bool use_eager_acquire = false;
+  };
+
+  //! Configuration structure for the application
+  struct hello_world_config {
+    CLIParser::EntityKind entity = CLIParser::EntityKind::UNDEFINED;
+    publisher_config pub_config;
+    subscriber_config sub_config;
+  };
+
+  /**
+   * @brief Print usage help message and exit with the given return code
+   *
+   * @param return_code return code to exit with
+   *
+   * @warning This method finishes the execution of the program with the input return code
+   */
+  static void print_help(uint8_t return_code) {
+    constexpr std::size_t k_max_cli_samples = std::numeric_limits<std::size_t>::max();
+    std::cout << "Usage: fastdds_benchmark <entity> [options]" << std::endl;
+    std::cout << "" << std::endl;
+    std::cout << "Entities:" << std::endl;
+    std::cout << "  publisher                       Run a publisher entity" << std::endl;
+    std::cout << "  subscriber                      Run a subscriber entity" << std::endl;
+    std::cout << "" << std::endl;
+    std::cout << "Common options:" << std::endl;
+    std::cout << "  -h, --help                      Print this help message" << std::endl;
+    std::cout << "  -s <num>, --samples <num>       Number of samples to send or receive"
+              << std::endl;
+    std::cout << "                                  [0 <= <num> <= " << k_max_cli_samples << "]"
+              << std::endl;
+    std::cout << "                                  (Default: 0 [unlimited])" << std::endl;
+    std::cout << "  -z <num>, --message-size <num>  Payload size in bytes per sample" << std::endl;
+    std::cout << "                                  [1 <= <num> <= 4294967295]" << std::endl;
+    std::cout << "                                  (Default: 1024)" << std::endl;
+    std::cout << "  -a, --accel                     Use AccelBuffer (omit for plain Buffer)."
+              << std::endl;
+    std::cout << "                                  Must match the peer." << std::endl;
+    std::cout << "Subscriber options:" << std::endl;
+    std::cout << "  -e, --eager                     Use acquire_pointer_eager" << std::endl;
+    std::cout << "                                  (AccelBuffer path only)." << std::endl;
+    std::cout << "                                  Benchmarks open-before-ACK latency."
+              << std::endl;
+    std::cout << "Publisher options:" << std::endl;
+    std::cout << "  -m, --matched                   Number of participants to discover"
+              << std::endl;
+    std::cout << "                                  before start publishing (Default: 1)"
+              << std::endl;
+    std::exit(return_code);
+  }
+
+  /**
+   * @brief Parse the command line options and return the configuration_config object
+   *
+   * @param argc number of arguments
+   * @param argv array of arguments
+   * @return configuration_config object with the parsed options
+   *
+   * @warning This method finishes the execution of the program if the input arguments are invalid
+   */
+  static hello_world_config parse_cli_options(int argc, char* argv[]) {
+    hello_world_config config;
+
+    if (argc < 2) {
+      HOLOSCAN_IPC_LOG_ERROR("missing entity argument");
+      print_help(EXIT_FAILURE);
+    }
+
+    std::string first_argument = argv[1];
+
+    if (first_argument == "publisher") {
+      config.entity = CLIParser::EntityKind::PUBLISHER;
+    } else if (first_argument == "subscriber") {
+      config.entity = CLIParser::EntityKind::SUBSCRIBER;
+    } else if (first_argument == "-h" || first_argument == "--help") {
+      print_help(EXIT_SUCCESS);
+    } else {
+      HOLOSCAN_IPC_LOG_ERROR("parsing entity argument {}", first_argument);
+      print_help(EXIT_FAILURE);
+    }
+
+    for (int i = 2; i < argc; ++i) {
+      std::string arg = argv[i];
+      if (arg == "-h" || arg == "--help") {
+        print_help(EXIT_SUCCESS);
+      } else if (arg == "-s" || arg == "--samples") {
+        if (i + 1 < argc) {
+          try {
+            const std::string sample_arg = argv[++i];
+            unsigned long long input = std::stoull(sample_arg);
+            if (input > std::numeric_limits<std::size_t>::max()) {
+              throw std::out_of_range("sample argument out of range");
+            } else {
+              if (config.entity == CLIParser::EntityKind::PUBLISHER) {
+                config.pub_config.samples = static_cast<std::size_t>(input);
+              } else if (config.entity == CLIParser::EntityKind::SUBSCRIBER) {
+                config.sub_config.samples = static_cast<std::size_t>(input);
+              } else {
+                HOLOSCAN_IPC_LOG_ERROR("entity not specified for --sample argument");
+                print_help(EXIT_FAILURE);
+              }
+            }
+          } catch (const std::invalid_argument& e) {
+            HOLOSCAN_IPC_LOG_ERROR("invalid sample argument for {}: {}", arg, e.what());
+            print_help(EXIT_FAILURE);
+          } catch (const std::out_of_range& e) {
+            HOLOSCAN_IPC_LOG_ERROR("sample argument out of range for {}: {}", arg, e.what());
+            print_help(EXIT_FAILURE);
+          }
+        } else {
+          HOLOSCAN_IPC_LOG_ERROR("missing argument for {}", arg);
+          print_help(EXIT_FAILURE);
+        }
+      } else if (arg == "-z" || arg == "--message-size") {
+        if (i + 1 >= argc) {
+          HOLOSCAN_IPC_LOG_ERROR("missing argument for {}", arg);
+          print_help(EXIT_FAILURE);
+        }
+        try {
+          unsigned long input = std::stoul(argv[++i]);
+          constexpr unsigned long kMax =
+              static_cast<unsigned long>(std::numeric_limits<uint32_t>::max());
+          if (input == 0 || input > kMax) {
+            throw std::out_of_range("message-size out of range");
+          }
+          const uint32_t size = static_cast<uint32_t>(input);
+          if (config.entity == CLIParser::EntityKind::PUBLISHER) {
+            config.pub_config.message_size = size;
+          } else if (config.entity == CLIParser::EntityKind::SUBSCRIBER) {
+            config.sub_config.message_size = size;
+          } else {
+            HOLOSCAN_IPC_LOG_ERROR("entity not specified for {}", arg);
+            print_help(EXIT_FAILURE);
+          }
+        } catch (const std::invalid_argument& e) {
+          HOLOSCAN_IPC_LOG_ERROR("invalid message-size for {}: {}", arg, e.what());
+          print_help(EXIT_FAILURE);
+        } catch (const std::out_of_range& e) {
+          HOLOSCAN_IPC_LOG_ERROR("message-size out of range for {}: {}", arg, e.what());
+          print_help(EXIT_FAILURE);
+        }
+      } else if (arg == "-m" || arg == "--matched") {
+        if (i + 1 >= argc) {
+          HOLOSCAN_IPC_LOG_ERROR("{} requires an argument", arg);
+          print_help(EXIT_FAILURE);
+        }
+        try {
+          const std::string matched_arg = argv[++i];
+          unsigned long long input = std::stoull(matched_arg);
+          if (input > std::numeric_limits<std::size_t>::max()) {
+            throw std::out_of_range("matched argument out of range");
+          } else {
+            if (config.entity == CLIParser::EntityKind::PUBLISHER) {
+              config.pub_config.matched = static_cast<std::size_t>(input);
+            } else {
+              HOLOSCAN_IPC_LOG_ERROR("matched can only be used with the publisher entity");
+              print_help(EXIT_FAILURE);
+            }
+          }
+        } catch (const std::invalid_argument& e) {
+          HOLOSCAN_IPC_LOG_ERROR("invalid matched argument for {}: {}", arg, e.what());
+          print_help(EXIT_FAILURE);
+        } catch (const std::out_of_range& e) {
+          HOLOSCAN_IPC_LOG_ERROR("matched argument out of range for {}: {}", arg, e.what());
+          print_help(EXIT_FAILURE);
+        }
+      } else if (arg == "-a" || arg == "--accel") {
+        if (config.entity == CLIParser::EntityKind::PUBLISHER) {
+          config.pub_config.use_accel_buffer = true;
+        } else if (config.entity == CLIParser::EntityKind::SUBSCRIBER) {
+          config.sub_config.use_accel_buffer = true;
+        } else {
+          HOLOSCAN_IPC_LOG_ERROR("entity not specified for {}", arg);
+          print_help(EXIT_FAILURE);
+        }
+      } else if (arg == "-e" || arg == "--eager") {
+        if (config.entity == CLIParser::EntityKind::SUBSCRIBER) {
+          config.sub_config.use_eager_acquire = true;
+        } else {
+          HOLOSCAN_IPC_LOG_ERROR("--eager is only valid for the subscriber entity");
+          print_help(EXIT_FAILURE);
+        }
+      } else {
+        HOLOSCAN_IPC_LOG_ERROR("unknown option {}", arg);
+        print_help(EXIT_FAILURE);
+      }
+    }
+
+    if (config.entity == CLIParser::EntityKind::SUBSCRIBER && config.sub_config.use_eager_acquire &&
+        !config.sub_config.use_accel_buffer) {
+      HOLOSCAN_IPC_LOG_ERROR("--eager requires --accel (AccelBuffer / IPC path)");
+      print_help(EXIT_FAILURE);
+    }
+
+    return config;
+  }
+
+  /**
+   * @brief Parse the signal number into the signal name
+   *
+   * @param signum signal number
+   * @return std::string signal name
+   */
+  static std::string parse_signal(const int& signum) {
+    switch (signum) {
+      case SIGINT:
+        return "SIGINT";
+      case SIGTERM:
+        return "SIGTERM";
+#ifndef _WIN32
+      case SIGQUIT:
+        return "SIGQUIT";
+      case SIGHUP:
+        return "SIGHUP";
+#endif  // _WIN32
+      default:
+        return "UNKNOWN SIGNAL";
+    }
+  }
+
+  /**
+   * @brief Parse the entity kind into std::string
+   *
+   * @param entity entity kind
+   * @return std::string entity kind
+   */
+  static std::string parse_entity_kind(const EntityKind& entity) {
+    switch (entity) {
+      case EntityKind::PUBLISHER:
+        return "Publisher";
+      case EntityKind::SUBSCRIBER:
+        return "Subscriber";
+      case EntityKind::UNDEFINED:
+      default:
+        return "Undefined entity";
+    }
+  }
+};
+
+}  // namespace fastdds_benchmark
+}  // namespace ipc
+}  // namespace holoscan
+
+#endif  // HOLOIPC_EXAMPLES_FASTDDS_BENCHMARK_CLIPARSER_HPP

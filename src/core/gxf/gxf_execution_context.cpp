@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
 
 #include <gxf/core/gxf.h>
 
@@ -25,12 +25,12 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_io_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/profiler/profiler.hpp"
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_io_context.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/gxf/gxf_wrapper.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/profiler/profiler.hpp>
 
 namespace holoscan::gxf {
 

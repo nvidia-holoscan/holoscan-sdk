@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,10 +17,10 @@
 
 #include <vector>
 
-#include "holoscan/core/operator.hpp"
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
-#include "holoscan/test/test_harness.hpp"
-#include "holoscan/test/validation_functions.hpp"
+#include <holoscan/core/operator.hpp>
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
+#include <holoscan/test/test_harness.hpp>
+#include <holoscan/test/validation_functions.hpp>
 
 namespace holoscan::test {
 
@@ -38,8 +38,8 @@ TEST_F(OperatorTestBase, PingTx) {
 
   // Create test harness and run
   auto test_harness = create_operator_test<ops::PingTxOp>()
-    ->add_condition<holoscan::CountCondition>("count_condition", num_pings)
-    ->add_output_port("out", validator);
+                          ->add_condition<holoscan::CountCondition>("count_condition", num_pings)
+                          ->add_output_port("out", validator);
 
   test_harness->run_test();
 }

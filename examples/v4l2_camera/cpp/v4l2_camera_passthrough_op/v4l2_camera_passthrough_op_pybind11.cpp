@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,11 +22,11 @@
 
 #include "./v4l2_camera_passthrough_op_pydoc.hpp"
 
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resource.hpp>
 
 // Include the C++ operator header
 #include "v4l2_camera_passthrough_op.hpp"

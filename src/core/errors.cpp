@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/errors.hpp"
 #include <fmt/format.h>
+#include <holoscan/core/errors.hpp>
 
 #include <string>
 

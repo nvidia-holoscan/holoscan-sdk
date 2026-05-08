@@ -25,38 +25,38 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/conditions/gxf/boolean.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/gxf/block_memory_pool.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/core/resources/gxf/unbounded_allocator.hpp>
 #include "../config.hpp"
 #include "../utils.hpp"
 #include "common/assert.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/conditions/gxf/boolean.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/gxf/block_memory_pool.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
-#include "holoscan/operators/async_ping_rx/async_ping_rx.hpp"
-#include "holoscan/operators/async_ping_tx/async_ping_tx.hpp"
-#include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
-#include "holoscan/operators/format_converter/format_converter.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
-#include "holoscan/operators/inference/inference.hpp"
-#include "holoscan/operators/inference_processor/inference_processor.hpp"
-#include "holoscan/operators/ping_rx/ping_rx.hpp"
-#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
-#include "holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp"
-#include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
-#include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
-#include "holoscan/operators/video_stream_replayer/video_stream_replayer.hpp"
+#include <holoscan/operators/async_ping_rx/async_ping_rx.hpp>
+#include <holoscan/operators/async_ping_tx/async_ping_tx.hpp>
+#include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
+#include <holoscan/operators/format_converter/format_converter.hpp>
+#include <holoscan/operators/holoviz/holoviz.hpp>
+#include <holoscan/operators/inference/inference.hpp>
+#include <holoscan/operators/inference_processor/inference_processor.hpp>
+#include <holoscan/operators/ping_rx/ping_rx.hpp>
+#include <holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp>
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
+#include <holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.hpp>
+#include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
+#include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
+#include <holoscan/operators/video_stream_replayer/video_stream_replayer.hpp>
 
 using namespace std::string_literals;
 

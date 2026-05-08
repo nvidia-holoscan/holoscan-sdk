@@ -27,9 +27,9 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/dataflow_tracker.hpp"
-#include "holoscan/core/resources/data_logger.hpp"  // for console_output_mutex
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/dataflow_tracker.hpp>
+#include <holoscan/core/resources/data_logger.hpp>  // for console_output_mutex
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

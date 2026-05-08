@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/receiver.hpp"
+#include <holoscan/core/resources/gxf/receiver.hpp>
 
 #include <cstdint>
 #include <string>

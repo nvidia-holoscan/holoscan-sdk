@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_resource.hpp"
+#include <holoscan/core/gxf/gxf_resource.hpp>
 
 #include <any>
 #include <functional>
@@ -26,10 +26,10 @@
 #include <unordered_map>
 #include <utility>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 namespace holoscan::gxf {
 

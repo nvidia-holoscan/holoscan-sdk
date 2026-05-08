@@ -18,7 +18,7 @@
 // Array subscript access for frame name copying is intentional.
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index)
 
-#include "holoscan/pose_tree/pose_tree.hpp"
+#include <holoscan/pose_tree/pose_tree.hpp>
 
 #include <algorithm>
 #include <cstdio>

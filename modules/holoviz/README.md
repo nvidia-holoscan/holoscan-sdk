@@ -153,6 +153,7 @@ The Context is the central object that manages all state for a Holoviz instance.
 - **State management**: Maintains layers, Vulkan state, window, and callbacks
 
 **Key responsibilities:**
+
 - Managing the lifecycle of Window and Vulkan objects
 - Storing user callbacks (keyboard, mouse, window events)
 - Maintaining the current frame's layer list
@@ -202,6 +203,7 @@ graph LR
 ```
 
 **Vulkan Pipeline:**
+
 1. **Transfer Pass**: Upload data from CPU/CUDA to GPU textures and buffers
 2. **Render Pass**: Execute draw commands to render layers
 3. **Present**: Display the rendered frame
@@ -274,6 +276,7 @@ Renders vector graphics and 3D geometry:
 - **Depth maps**: Specialized rendering of depth data as 3D point clouds
 
 **Primitive rendering:**
+
 - Coordinates in normalized [0, 1] space (or 3D world space with camera)
 - Customizable colors, line widths, and point sizes
 - CUDA device memory support for dynamic geometry
@@ -296,6 +299,7 @@ Manages CUDA context and device operations:
 - **Memory helpers**: RAII wrappers for CUDA resources
 
 **CUDA utility functions** (`src/cuda/`):
+
 - `convert.cu`: Image format conversions (RGB to RGBA, BGRA to RGBA)
 - `gen_depth_map.cu`: Generate 3D vertex coordinates and indices from depth maps
 - `gen_primitive_vertices.cu`: Generate vertex data from primitive descriptions
@@ -369,6 +373,7 @@ flowchart TD
 ### Vulkan Rendering Details
 
 **Render passes:**
+
 1. **Setup phase** (once per frame):
    - Acquire next swapchain image
    - Create/update command buffer
@@ -416,6 +421,7 @@ graph LR
 ```
 
 Shaders are located in `src/vulkan/shaders/`:
+
 - `image_shader.glsl.{vert,frag}`: Image layer rendering with texture sampling
 - `geometry_shader.glsl.{vert,frag}`: Geometry rendering
 - `geometry_color_shader.glsl.vert`: Per-vertex color variant
@@ -452,6 +458,7 @@ struct View {
 ```
 
 **Use cases:**
+
 - Picture-in-picture: Render same content in multiple viewports
 - Split screen: Different views of the scene
 - 3D transformation: Apply custom projection matrices
@@ -497,6 +504,7 @@ sequenceDiagram
 ```
 
 **Key advantages:**
+
 - **Zero-copy**: Data stays on GPU, no CPU round-trip
 - **Synchronization**: Proper synchronization between CUDA and Vulkan using semaphores
 - **Multi-GPU support**: Automatic detection and handling of multi-GPU systems
@@ -565,6 +573,7 @@ viz::Init("DP-1", 3840, 2160, 60000, viz::InitFlags::NONE);
 ```
 
 **Requirements:**
+
 - Display must be disabled in NVIDIA Settings (for multi-display setups)
 - Or stop the X server for single-display setups: `sudo systemctl stop display-manager`
 
@@ -585,18 +594,18 @@ graph TB
     Priority --> |1st| Mailbox[MAILBOX]
     Priority --> |2nd| Immediate[IMMEDIATE]
     Priority --> |3rd| Fifo[FIFO]
-    
+
     Standard[Standard Modes]
     Standard --> Mailbox
     Standard --> Fifo
     Standard --> Immediate
     Standard --> FifoRelaxed[FIFO_RELAXED]
     Standard --> FifoLatest[FIFO_LATEST_READY]
-    
+
     Exclusive[Exclusive Mode Only]
     Exclusive --> SharedDemand[SHARED_DEMAND_REFRESH]
     Exclusive --> SharedCont[SHARED_CONTINUOUS_REFRESH]
-    
+
     style Mailbox fill:#90EE90
     style Fifo fill:#87CEEB
     style Immediate fill:#FFB6C1
@@ -658,6 +667,7 @@ viz::GetCameraPose(16, matrix);
 ```
 
 **Mouse controls:**
+
 - **Orbit**: Left mouse button (LMB)
 - **Pan**: LMB + CTRL or Middle mouse button (MMB)
 - **Dolly**: LMB + SHIFT or Right mouse button (RMB) or Mouse wheel
@@ -950,6 +960,7 @@ int main() {
 ### Common Pitfalls for C++ Developers New to Vulkan/CUDA
 
 1. **CUDA stream usage**: Use explicit CUDA streams instead of the default stream for better performance
+
    ```cpp
    // Bad: Using default stream (synchronizes with all other streams)
    myKernel<<<grid, block>>>(d_image);
@@ -969,6 +980,7 @@ int main() {
    **Note:** When using the default stream (0), Holoviz also uses the default stream, so no explicit synchronization is needed. However, the default stream synchronizes with all other streams, which can hurt performance in multi-stream applications.
 
 2. **Image format matching**: Ensure your data format matches the specified `ImageFormat`
+
    ```cpp
    // Bad: Data is BGRA but format says RGBA
    viz::ImageHost(width, height, viz::ImageFormat::R8G8B8A8_UNORM, bgra_data);
@@ -980,6 +992,7 @@ int main() {
    ```
 
 3. **Coordinate spaces**: Geometry coordinates are normalized [0, 1] by default
+
    ```cpp
    // This draws a line from top-left (0,0) to bottom-right (1,1)
    const float line[] = {0.0f, 0.0f, 1.0f, 1.0f};

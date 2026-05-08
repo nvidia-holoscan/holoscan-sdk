@@ -295,8 +295,8 @@ Examples
         def compose(self):
             # This operator will be named "camera1_source" if Subgraph instance is "camera1"
             source = PingTxOp(self, name="source")
-            
-            # This operator will be named "camera1_converter"  
+
+            # This operator will be named "camera1_converter"
             converter = FormatConverterOp(self, name="converter")
 )doc")
 

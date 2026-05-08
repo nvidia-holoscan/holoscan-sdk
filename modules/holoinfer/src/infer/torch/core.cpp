@@ -932,8 +932,6 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
     // May be exposed as parameter in future releases
     torch::jit::GraphOptimizerEnabledGuard guard{false};
     inference_module_.to(infer_device_);
-
-    torch::NoGradGuard no_grad;
   } catch (const c10::Error& exception) {
     HOLOSCAN_LOG_ERROR(exception.what());
     throw;
@@ -998,6 +996,7 @@ InferStatus TorchInfer::do_inference(const std::vector<std::shared_ptr<DataBuffe
   }
 
   // compute module forward
+  torch::InferenceMode inference_guard;
   try {
     impl_->outputs_ = impl_->inference_module_.forward(impl_->inputs_);
   } catch (const c10::Error& exception) {

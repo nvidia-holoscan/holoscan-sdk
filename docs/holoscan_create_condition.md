@@ -1,4 +1,5 @@
 (holoscan-create-conditions)=
+
 # Creating Conditions
 
 :::{tip}
@@ -6,6 +7,7 @@ In most cases, applications will be built using one of several provided conditio
 :::
 
 (holoscan-defining-conditions-cpp)=
+
 ## C++ Conditions
 
 When assembling a C++ application, two types of conditions can be used:
@@ -18,10 +20,10 @@ It is possible to assign a mixture of GXF conditions and native conditions to an
 :::
 
 (native-conditions)=
+
 ### Native Conditions
 
 #### Understanding operator scheduling
-
 
 `````{tab-set}
 ````{tab-item} C++
@@ -63,10 +65,12 @@ When using `kWaitEvent` / `WAIT_EVENT`, your condition must call `notify_schedul
 #### Creating a custom condition (C++)
 
 When creating a native `Condition` ({cpp:class}`C++ <holoscan::Condition>`/{py:class}`Python <holoscan.core.Condition>`), one will typically need to override the following base component class methods
+
 * `initialize` ({cpp:func}`C++ <holoscan::Condition::initialize>`/{py:func}`Python <holoscan.core.Condition.initialize>`) is called once during initialization after the applications `run` ({cpp:func}`C++ <holoscan::Application::run>`/{py:func}`Python <holoscan.core.Application.run>`) method is called. This can be used to setup any initial status for the member variables defined for the condition. It is important that this method call the base `initialize` ({cpp:func}`C++ <holoscan::Condition::initialize>`/{py:func}`Python <holoscan.core.Condition.initialize>`) method prior to using any parameters defined by `setup` ({cpp:func}`C++ <holoscan::Condition::setup>`/{py:func}`Python <holoscan.core.Condition.setup>`).
 * `setup` ({cpp:func}`C++ <holoscan::Condition::setup>`/{py:func}`Python <holoscan.core.Condition.setup>`) This method is used to configure any parameters defined for the condition. This method will be called automatically by the `Application` ({cpp:class}`C++ <holoscan::Application>`/{py:class}`Python <holoscan.core.Application>`) class when its `run` ({cpp:func}`C++ <holoscan::Application::run>`/{py:func}`Python <holoscan.core.Application.run>`) method is called.
 
 It is also required to override the following three methods that will be used by the underlying GXF scheduler. Of these, the `check` method is the only one that is always required to have a non-empty implementation.
+
 * `check` ({cpp:func}`C++ <holoscan::Condition::check>`/{py:func}`Python <holoscan.core.Condition.check>`) is called by the underlying GXF scheduler in order to check whether the operator to which this condition is assigned is ready to execute. The operator will only execute when this check sets the `type` output argument to `holoscan::SchedulingStatusType::kReady` (C++) / `holoscan.core.SchedulingStatusType.READY` (Python).
 * `on_execute` ({cpp:func}`C++ <holoscan::Condition::on_execute>`/{py:func}`Python <holoscan.core.Condition.on_execute>`) is called immediately after an operator's `compute` method ({cpp:func}`C++ <holoscan::Operator::compute>`/{py:func}`Python <holoscan.core.Operator.compute>`), just before any emitted messages are actually distributed to downstream receivers.
 * `update_state` ({cpp:func}`C++ <holoscan::Condition::update_state>`/{py:func}`Python <holoscan.core.Condition.update_state>`) is always called immediately before `check` ({cpp:func}`C++ <holoscan::Condition::check>`/{py:func}`Python <holoscan.core.Condition.check>`) and is always passed the current timestamp as an input argument. This is used by operator whose status depends on the current timestamp.
@@ -89,9 +93,9 @@ To create a custom condition in C++, it is necessary to create a subclass of
 
 #include <optional>
 
-#include "holoscan/holoscan.hpp"
-#include "holoscan/operators/ping_rx/ping_rx.hpp"
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
+#include <holoscan/holoscan.hpp>
+#include <holoscan/operators/ping_rx/ping_rx.hpp>
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
 
 namespace holoscan::conditions {
 
@@ -288,6 +292,7 @@ if __name__ == "__main__":
 ```
 ````
 `````
+
 In this application, two operators are created: `PingTxOp` ({cpp:class}`C++ <holoscan::Operators::PingTxOp>` / {py:class}`Python <holoscan.operators.PingRxOp>`).
 
   1. The `tx` operator is a source operator that emits an integer value each time it is evoked.
@@ -485,6 +490,7 @@ class NativeMessageAvailableCondition(Condition):
 `````
 
 (event-based-conditions)=
+
 #### Creating event-based conditions (kWaitEvent)
 
 For conditions that wait on asynchronous events (such as CUDA stream completion or external callbacks), use the `kWaitEvent` / `WAIT_EVENT` status. This tells the scheduler that the condition will be satisfied at some unknown future time when an external event occurs.
@@ -505,14 +511,15 @@ IDLE --[update_state: work available]--> WAITING --[callback fires]--> READY --[
 
 For a complete, production-quality example of an event-based condition, see the `CudaStreamCondition` implementation in the SDK source code:
 
-- **Header**: `include/holoscan/core/conditions/gxf/cuda_stream.hpp`
-- **Implementation**: `src/core/conditions/gxf/cuda_stream.cpp`
+* **Header**: `include/holoscan/core/conditions/gxf/cuda_stream.hpp`
+* **Implementation**: `src/core/conditions/gxf/cuda_stream.cpp`
 
 This condition demonstrates:
-- Using `cudaLaunchHostFunc()` to register callbacks on CUDA streams
-- Atomic state management with `std::atomic<State>`
-- Proper use of `notify_scheduler()` from the callback
-- Handling multiple streams and messages
+
+* Using `cudaLaunchHostFunc()` to register callbacks on CUDA streams
+* Atomic state management with `std::atomic<State>`
+* Proper use of `notify_scheduler()` from the callback
+* Handling multiple streams and messages
 
 ```cpp
 // Key pattern from CudaStreamCondition:

@@ -23,10 +23,10 @@
 #include <utility>
 #include <variant>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/subgraph.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/subgraph.hpp>
 
 namespace holoscan {
 

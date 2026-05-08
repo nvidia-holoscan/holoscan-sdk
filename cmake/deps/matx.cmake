@@ -24,7 +24,7 @@ rapids_cpm_find(matx 0.9.4
     GITHUB_REPOSITORY NVIDIA/MatX
     GIT_TAG v0.9.4
     GIT_SHALLOW TRUE
-    PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/matx_setvals.patch
+    PATCH_COMMAND git apply ${CMAKE_CURRENT_LIST_DIR}/patches/matx_install.patch ${CMAKE_CURRENT_LIST_DIR}/patches/matx_setvals.patch
     EXCLUDE_FROM_ALL
     OPTIONS CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON
 )
@@ -38,12 +38,4 @@ if(matx_ADDED)
         $<BUILD_INTERFACE:${matx_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/3rdparty/matx>
     )
-
-    # Install the headers needed for development with the SDK
-    # Note: MatX's umbrella header is located in include/matx.h along with 'matx' folder having
-    # the actual implementation.
-    install(DIRECTORY ${matx_SOURCE_DIR}/include/
-        DESTINATION include/3rdparty/matx
-        COMPONENT "holoscan-dependencies"
-        )
 endif()

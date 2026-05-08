@@ -76,6 +76,18 @@ function(ConfigureTest CMAKE_TEST_NAME)
   )
 endfunction()
 
+# Copy test data files into the build tree so that tests can reference them via
+# paths relative to their WORKING_DIRECTORY (CMAKE_BINARY_DIR).
+file(COPY
+  ${CMAKE_CURRENT_SOURCE_DIR}/operators/inference/inference.yaml
+  ${CMAKE_CURRENT_SOURCE_DIR}/operators/inference/models
+  DESTINATION ${CMAKE_BINARY_DIR}/tests/operators/inference
+)
+file(COPY
+  ${CMAKE_CURRENT_SOURCE_DIR}/holoinfer/test_models
+  DESTINATION ${CMAKE_BINARY_DIR}/tests/holoinfer
+)
+
 # ##################################################################################################
 # * core tests ----------------------------------------------------------------------------------
 ConfigureTest(
@@ -108,6 +120,151 @@ ConfigureTest(
   core/scheduler_classes.cpp
   core/system_resource_manager.cpp
 )
+add_dependencies(CORE_TEST gxf_ucx_holoscan)
+
+# ##################################################################################################
+# * pubsub runtime tests ---------------------------------------------------------------------------
+ConfigureTest(PUBSUB_RUNTIME_TEST
+  pubsub/runtime_condition_classes.cpp
+)
+target_link_libraries(PUBSUB_RUNTIME_TEST
+  PRIVATE
+    holoscan::pubsub_runtime
+)
+
+# ##################################################################################################
+# * pubsub in-memory tests -------------------------------------------------------------------------
+ConfigureTest(PUBSUB_IN_MEMORY_TEST
+  pubsub/in_memory_network_context_classes.cpp
+  pubsub/in_memory_pubsub_session.cpp
+)
+add_dependencies(PUBSUB_IN_MEMORY_TEST gxf_ucx_holoscan)
+target_link_libraries(PUBSUB_IN_MEMORY_TEST
+  PRIVATE
+    holoscan::pubsub_in_memory
+)
+
+# ##################################################################################################
+# * pubsub FastDDS system tests --------------------------------------------------------------------
+if(TARGET holoscan::pubsub_fastdds)
+  ConfigureTest(PUBSUB_FASTDDS_BACKEND_TEST
+    system/pubsub/fastdds/fastdds_backend_test.cpp
+  )
+  target_include_directories(PUBSUB_FASTDDS_BACKEND_TEST
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/system/pubsub/fastdds
+  )
+  target_link_libraries(PUBSUB_FASTDDS_BACKEND_TEST
+    PRIVATE
+      holoscan::pubsub_fastdds
+  )
+
+  ConfigureTest(PUBSUB_FASTDDS_SYSTEM_TEST
+    system/pubsub/fastdds/pubsub_loopback_test.cpp
+  )
+  target_link_libraries(PUBSUB_FASTDDS_SYSTEM_TEST
+    PRIVATE
+      holoscan::pubsub_fastdds
+  )
+
+  ConfigureTest(PUBSUB_FASTDDS_NATIVE_BUFFER_DATA_PATH_TEST
+    system/pubsub/fastdds/native_buffer_data_path_test.cpp
+  )
+  target_include_directories(PUBSUB_FASTDDS_NATIVE_BUFFER_DATA_PATH_TEST
+    PRIVATE
+      ${CMAKE_CURRENT_SOURCE_DIR}/system/pubsub/fastdds
+  )
+  target_link_libraries(PUBSUB_FASTDDS_NATIVE_BUFFER_DATA_PATH_TEST
+    PRIVATE
+      holoscan::pubsub_fastdds
+  )
+
+  ConfigureTest(PUBSUB_FASTDDS_NATIVE_BUFFER_INTEGRATION_TEST
+    system/pubsub/fastdds/native_buffer_integration_test.cpp
+  )
+  target_link_libraries(PUBSUB_FASTDDS_NATIVE_BUFFER_INTEGRATION_TEST
+    PRIVATE
+      holoscan::pubsub_fastdds
+  )
+
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+  add_executable(PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP
+    system/pubsub/fastdds/native_buffer_ipc_app.cpp
+  )
+  set_target_properties(
+    PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP
+    PROPERTIES
+      RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/gtests>"
+      CXX_CLANG_TIDY ""
+  )
+  target_include_directories(PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP
+    PRIVATE
+      ${HOLOSCAN_TOP}/gxf_extensions
+  )
+  target_link_libraries(PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP
+    PRIVATE
+      holoscan::pubsub_fastdds
+  )
+  install(
+    TARGETS PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP
+    COMPONENT holoscan-testing
+    DESTINATION bin/gtests/libholoscan
+    EXCLUDE_FROM_ALL
+  )
+
+  add_test(
+    NAME PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_TEST
+    COMMAND bash -c
+      "bash ${CMAKE_CURRENT_SOURCE_DIR}/system/pubsub/fastdds/test_native_buffer_ipc.sh \
+       $<TARGET_FILE:PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP> 5 2>&1 | \
+       ${Python3_EXECUTABLE} ${HOLOSCAN_TOP}/scripts/test_pattern_validation.py \
+         --pass-pattern 'PASS: received 5/5 messages, 0 mismatches' \
+         --pass-pattern 'rx: verified message 5 OK' \
+         --fail-pattern 'TIMEOUT:' \
+         --fail-pattern 'pending exports still outstanding' \
+         --fail-pattern 'GXF_PUBSUB_DESCRIPTOR_OPEN_FAIL' \
+         --fail-pattern 'rx: no Tensor in entity' \
+         --fail-pattern 'rx: data mismatch'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_TEST PROPERTIES TIMEOUT 60)
+
+  add_test(
+    NAME PUBSUB_FASTDDS_NATIVE_BUFFER_FALLBACK_TEST
+    COMMAND ${CMAKE_COMMAND} -E env HOLOSCAN_LOG_LEVEL=DEBUG HOLOSCAN_EXECUTOR_LOG_LEVEL=DEBUG bash -c
+      "bash ${CMAKE_CURRENT_SOURCE_DIR}/system/pubsub/fastdds/test_native_buffer_fallback.sh \
+       $<TARGET_FILE:PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP> 5 2>&1 | \
+       ${Python3_EXECUTABLE} ${HOLOSCAN_TOP}/scripts/test_pattern_validation.py \
+         --pass-pattern 'PASS\\[fallback\\]: received 5/5 messages, 0 mismatches' \
+         --pass-pattern 'PubSubContext: receiving serialized byte payload' \
+         --fail-pattern 'TIMEOUT:' \
+         --fail-pattern 'pending exports still outstanding' \
+         --fail-pattern 'GXF_PUBSUB_DESCRIPTOR_OPEN_FAIL' \
+         --fail-pattern 'PubSubContext: receiving native descriptor payload' \
+         --fail-pattern 'rx: data mismatch'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(PUBSUB_FASTDDS_NATIVE_BUFFER_FALLBACK_TEST PROPERTIES TIMEOUT 60)
+
+  add_test(
+    NAME PUBSUB_FASTDDS_NATIVE_BUFFER_MIXED_TEST
+    COMMAND ${CMAKE_COMMAND} -E env HOLOSCAN_LOG_LEVEL=DEBUG HOLOSCAN_EXECUTOR_LOG_LEVEL=DEBUG bash -c
+      "bash ${CMAKE_CURRENT_SOURCE_DIR}/system/pubsub/fastdds/test_native_buffer_mixed.sh \
+       $<TARGET_FILE:PUBSUB_FASTDDS_NATIVE_BUFFER_IPC_APP> 5 2>&1 | \
+       ${Python3_EXECUTABLE} ${HOLOSCAN_TOP}/scripts/test_pattern_validation.py \
+         --pass-pattern 'PASS\\[native\\]: received 5/5 messages, 0 mismatches' \
+         --pass-pattern 'PASS\\[byte\\]: received 5/5 messages, 0 mismatches' \
+         --pass-pattern 'PubSubContext: receiving native descriptor payload' \
+         --pass-pattern 'PubSubContext: receiving serialized byte payload' \
+         --fail-pattern 'TIMEOUT:' \
+         --fail-pattern 'pending exports still outstanding' \
+         --fail-pattern 'GXF_PUBSUB_DESCRIPTOR_OPEN_FAIL' \
+         --fail-pattern 'rx: data mismatch'"
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  )
+  set_tests_properties(PUBSUB_FASTDDS_NATIVE_BUFFER_MIXED_TEST PROPERTIES TIMEOUT 60)
+endif()
 
 # ##################################################################################################
 # * MatX interoperability tests ---------------------------------------------------------------------
@@ -118,20 +275,14 @@ if(CMAKE_CUDA_COMPILER)
     MATX_INTEROP_TEST
     core/matx_tensor_interop.cu
   )
-  target_link_libraries(MATX_INTEROP_TEST
-    PRIVATE
-      holoscan::matx
-  )
+  target_link_libraries(MATX_INTEROP_TEST PRIVATE matx::matx)
 
   # MatX custom allocator adapter tests
   ConfigureTest(
     MATX_ALLOCATOR_TEST
     core/matx_allocator_test.cu
   )
-  target_link_libraries(MATX_ALLOCATOR_TEST
-    PRIVATE
-      holoscan::matx
-  )
+  target_link_libraries(MATX_ALLOCATOR_TEST PRIVATE matx::matx)
 endif()
 
 if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
@@ -178,6 +329,7 @@ ConfigureTest(CODECS_TEST
 # * operator classes tests ----------------------------------------------------------------------------------
 ConfigureTest(OPERATORS_CLASSES_TEST
   operators/operator_classes.cpp
+  operators/test_video_io_operators.cpp
 )
 target_link_libraries(OPERATORS_CLASSES_TEST
   PRIVATE
@@ -194,6 +346,7 @@ target_link_libraries(OPERATORS_CLASSES_TEST
   holoscan::ops::ping_tensor_tx
   holoscan::ops::segmentation_postprocessor
   holoscan::ops::v4l2
+  holoscan::ops::video_io
   holoscan::ops::video_stream_recorder
   holoscan::ops::video_stream_replayer
 )
@@ -244,6 +397,19 @@ target_link_libraries(DATA_LOGGER_CLASSES_TEST
 )
 
 # ##################################################################################################
+# * in-memory pubsub system tests (full Holoscan application) -------------------------------------
+ConfigureTest(IN_MEMORY_PUBSUB_SYSTEM_TEST
+  system/pubsub/pubsub_loopback_test.cpp
+  system/pubsub/pubsub_fault_injection_test.cpp
+  system/env_wrapper.cpp
+)
+target_link_libraries(IN_MEMORY_PUBSUB_SYSTEM_TEST
+  PRIVATE
+    holoscan::pubsub_in_memory
+    holoscan::pubsub_runtime
+)
+
+# ##################################################################################################
 # * system tests ----------------------------------------------------------------------------------
 ConfigureTest(
   SYSTEM_TEST
@@ -265,6 +431,7 @@ ConfigureTest(
   system/loading_gxf_extension.cpp
   system/message_conditions_via_constructor.cpp
   system/multi_receiver_operator_ping_app.cpp
+  system/multi_receiver_queue_policy_test.cpp
   system/multiple_run_app.cpp
   system/multithreaded_app.cpp
   system/native_async_operator_ping_app.cpp
@@ -454,8 +621,11 @@ target_link_libraries(BAYER_DEMOSAIC_GPU_RESIDENT_TEST
     CUDA::nppicc
 )
 
-# #######
-ConfigureTest(HOLOINFER_TEST
+# ##################################################################################################
+# * holoinfer tests — registered as individual CTest entries via gtest_discover_tests
+include(GoogleTest)
+
+add_executable(HOLOINFER_TEST
   holoinfer/inference/test_core.cpp
   holoinfer/inference/test_inference.cpp
   holoinfer/inference/test_parameters.cpp
@@ -464,19 +634,48 @@ ConfigureTest(HOLOINFER_TEST
   holoinfer/processing/test_core.cpp
   holoinfer/processing/test_core.hpp
   holoinfer/processing/test_parameters.cpp
-  holoinfer/holoinfer_test_driver.cpp
 )
+
+set_target_properties(HOLOINFER_TEST
+  PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "$<BUILD_INTERFACE:${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/gtests>"
+    CXX_CLANG_TIDY ""
+)
+
 target_include_directories(HOLOINFER_TEST
   PRIVATE
+    ${HOLOSCAN_TOP}/gxf_extensions
     ${CMAKE_SOURCE_DIR}/modules/holoinfer/src/include
 )
 
 target_link_libraries(HOLOINFER_TEST
   PRIVATE
+    GTest::gmock_main
+    GTest::gtest_main
     holoinfer
     holoscan::holoinfer_utils
     $<TARGET_NAME_IF_EXISTS:holoscan::infer::torch>
+    yaml-cpp::yaml-cpp
 )
+
+set(_HOLOINFER_TEST_BIN_DIR ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR})
+gtest_discover_tests(HOLOINFER_TEST
+  WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+  DISCOVERY_MODE PRE_TEST
+  PROPERTIES ENVIRONMENT
+    "LD_LIBRARY_PATH=${_HOLOINFER_TEST_BIN_DIR}/lib:${_HOLOINFER_TEST_BIN_DIR}/gxf_extensions:${_HOLOINFER_TEST_BIN_DIR}/gxf_extensions/format_converter:${_HOLOINFER_TEST_BIN_DIR}/gxf_extensions/holoviz:${_HOLOINFER_TEST_BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH};HOLOSCAN_LIB_PATH=${_HOLOINFER_TEST_BIN_DIR}/gxf_extensions:${_HOLOINFER_TEST_BIN_DIR}/lib:$ENV{HOLOSCAN_LIB_PATH}"
+)
+
+install(
+  TARGETS HOLOINFER_TEST
+  COMPONENT holoscan-testing
+  DESTINATION bin/gtests/libholoscan
+  EXCLUDE_FROM_ALL
+)
+
+if(HOLOSCAN_BUILD_ORT)
+  add_dependencies(HOLOINFER_TEST holoinfer_ort)
+endif()
 
 # ##################################################################################################
 # * Flow Tracking tests ----------------------------------------------------------------------------------

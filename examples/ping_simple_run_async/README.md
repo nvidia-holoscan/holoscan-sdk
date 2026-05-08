@@ -3,6 +3,7 @@
 This example demonstrates a simple ping application 'asynchronously' with two operators connected using add_flow().
 
 There are two operators involved in this example:
+
   1. a transmitter, set to transmit a sequence of integers from 1-10 to it's 'out' port
   2. a receiver that prints the received values to the terminal
 

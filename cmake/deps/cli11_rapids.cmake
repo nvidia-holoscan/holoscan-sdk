@@ -17,12 +17,13 @@
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_find_package.html#
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
-rapids_cpm_find(CLI11 2.3.2
+set(CLI11_VERSION 2.5.0)
+rapids_cpm_find(CLI11 "${CLI11_VERSION}"
     GLOBAL_TARGETS CLI11::CLI11
 
     CPM_ARGS
         GITHUB_REPOSITORY CLIUtils/CLI11
-        GIT_TAG v2.3.2
+        GIT_TAG "v${CLI11_VERSION}"
         GIT_SHALLOW TRUE
         PATCH_COMMAND patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/cli11.patch
         EXCLUDE_FROM_ALL

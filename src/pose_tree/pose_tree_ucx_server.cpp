@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/pose_tree/pose_tree_ucx_server.hpp"
+#include <holoscan/pose_tree/pose_tree_ucx_server.hpp>
 
 #include <ucp/api/ucp.h>
 #include <ucs/type/status.h>
@@ -26,7 +26,6 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdint>
-#include <iostream>
 #include <list>
 #include <map>
 #include <memory>
@@ -37,9 +36,9 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/pose_tree/pose_tree.hpp"
-#include "holoscan/pose_tree/pose_tree_ucx_common.hpp"
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/pose_tree/pose_tree.hpp>
+#include <holoscan/pose_tree/pose_tree_ucx_common.hpp>
 
 namespace holoscan {
 
@@ -172,6 +171,9 @@ struct PoseTreeUCXServer::ServerImpl {
     std::vector<std::shared_ptr<std::vector<char>>> pending_delta_buffers_;
     mutable std::mutex pending_deltas_mutex_;
 
+    // Remap this client's local frame IDs to the server's canonical frame IDs.
+    std::map<holoscan::PoseTree::frame_t, holoscan::PoseTree::frame_t> client_to_server_frame_ids_;
+
     // Maximum number of buffered deltas per client to prevent unbounded memory growth.
     static constexpr size_t kMaxPendingDeltas = 10000;
   };
@@ -255,13 +257,18 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
   switch (delta_msg.delta_type) {
     case DELTA_FRAME_CREATED: {
       frame_name_str = delta_msg.data.frame_data.name;
-      frame_id = delta_msg.data.frame_data.frame_id;
+      const auto client_frame_id = delta_msg.data.frame_data.frame_id;
+      frame_id = client_frame_id;
 
       auto find_result = server_impl_->pose_tree->find_frame(frame_name_str);
-      if (!find_result.has_value()) {
+      if (find_result.has_value()) {
+        frame_id = find_result.value();
+        client_to_server_frame_ids_[client_frame_id] = frame_id;
+      } else {
         auto result = server_impl_->pose_tree->create_frame_with_id(frame_id, frame_name_str);
         if (result) {
           frame_id = result.value();
+          client_to_server_frame_ids_[client_frame_id] = frame_id;
           frame_created = true;
         }
       }
@@ -269,12 +276,26 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
     }
     case DELTA_EDGE_SET: {
       const auto& edge_data = delta_msg.data.edge_data;
+      auto lhs_it = client_to_server_frame_ids_.find(edge_data.lhs_frame);
+      auto rhs_it = client_to_server_frame_ids_.find(edge_data.rhs_frame);
+      if (lhs_it == client_to_server_frame_ids_.end() ||
+          rhs_it == client_to_server_frame_ids_.end()) {
+        HOLOSCAN_LOG_WARN(
+            "PoseTreeUCXServer: dropping edge delta from client {} due to unmapped frame IDs {} "
+            "-> {}",
+            client_id_,
+            edge_data.lhs_frame,
+            edge_data.rhs_frame);
+        break;
+      }
+
+      const auto server_lhs = lhs_it->second;
+      const auto server_rhs = rhs_it->second;
       pose = deserialize_pose3d(edge_data);
-      auto set_result = server_impl_->pose_tree->set(
-          edge_data.lhs_frame, edge_data.rhs_frame, edge_data.time, pose);
+      auto set_result = server_impl_->pose_tree->set(server_lhs, server_rhs, edge_data.time, pose);
       if (set_result) {
-        lhs = edge_data.lhs_frame;
-        rhs = edge_data.rhs_frame;
+        lhs = server_lhs;
+        rhs = server_rhs;
         time = edge_data.time;
         edge_set = true;
       } else {

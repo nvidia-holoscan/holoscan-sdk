@@ -18,10 +18,10 @@ This example shows how the default condition on `tx` can be disabled so that it 
 
 *See the operator creation guides section on input and output ports ([C++](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#specifying-operator-inputs-and-outputs-c) or [Python](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_operator.html#specifying-operator-inputs-and-outputs-python)) for how to configure the condition on a port.*
 
-
 ## C++ API
 
 This example shows a simple application using only native operators. There are three types of operators involved (see diagram above):
+
   1. a transmitter (`tx`), that transmits an integer value on port "out".
   2. increment operators (`increment1` and `increment2`) that increment the received value by a given amount and then transmits that new value
   3. receivers (`rx1` and `rx2`) that print their name and received value
@@ -41,6 +41,7 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Set values for `scheduler` and any corresponding parameters such as `worker_thread_number` in `multi_branch_pipeline.yaml`.
 
 Then, run:
+
 ```bash
 ./examples/multi_branch_pipeline/cpp/multi_branch_pipeline
 ```

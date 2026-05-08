@@ -117,10 +117,11 @@ class PubSubReceiver : public Receiver {
    */
   [[nodiscard]] const std::optional<nvidia::gxf::QoSProfile>& qos() const { return qos_; }
 
- private:
   Parameter<std::string> topic_name_;
   Parameter<uint64_t> capacity_;
   Parameter<uint64_t> policy_;
+
+ private:
   std::optional<nvidia::gxf::QoSProfile> qos_;
 };
 

@@ -26,6 +26,7 @@ GPU-resident graphs are only supported in C++. Python support is planned for the
 ### When to Use GPU-Resident Graphs
 
 GPU-resident graphs are ideal for:
+
 - Real-time applications where predictable and consistent execution timing is critical
 - Applications with CUDA-only operators
 - Applications that either have no CPU-based process dependencies or where a CPU-based Holoscan fragment can work asynchronously with a GPU-resident (CUDA-only) Holoscan fragment
@@ -35,15 +36,17 @@ GPU-resident graphs are ideal for:
 ### GPU-Resident Operators
 
 GPU-resident operators inherit from `holoscan::GPUResidentOperator` instead of the standard `holoscan::Operator` class. These operators:
+
 - Execute entirely on the GPU using CUDA kernels
 - Use device memory for input/output ports
 - Are captured into CUDA Graphs
 
 ### GPU-Resident Fragments
 
-A GPU-resident Fragment is created by composing GPU-resident operators. The framework automatically detects that a `holoscan::Fragment` should use GPU-resident graphs when all operators in the fragment inherit from `holoscan::GPUResidentOperator`. Currently, only linear chains of operators are supported. A DAG of operators will be supported in the future.
+A GPU-resident Fragment is created by composing GPU-resident operators. The framework automatically detects that a `holoscan::Fragment` should use GPU-resident graphs when all operators in the fragment inherit from `holoscan::GPUResidentOperator`. GPU-resident execution supports acyclic operator graphs with a single source operator. During initialization, the framework flattens the graph in topological order before connecting device memory and capturing `compute()` calls into CUDA Graphs.
 
 To create a GPU-resident Fragment:
+
 1. Create operators that inherit from `holoscan::GPUResidentOperator`
 2. Compose them in a standard Fragment using `make_operator<>()` and `add_flow()`
 3. The framework will automatically enable GPU-resident graphs during initialization
@@ -56,8 +59,8 @@ class MyGpuResidentFragment : public holoscan::Fragment {
     auto source = make_operator<SourceGpuOp>("source");
     auto compute = make_operator<ComputeGpuOp>("compute");
     auto sink = make_operator<SinkGpuOp>("sink");
-    
-    // Connect them in a linear chain
+
+    // Connect them with standard dataflow edges
     add_flow(source, compute);
     add_flow(compute, sink);
 
@@ -95,6 +98,7 @@ This feature allows integration of GPU-direct technologies into the Holoscan SDK
 ### CUDA Graph Backend
 
 When a GPU-resident fragment is initialized, the framework:
+
 1. **Allocates device memory** for all inter-operator connections based on port specifications
 2. **Captures operator execution** into CUDA Graphs by recording the `compute()` method
 3. **Creates a GPU-resident graph execution** (that optionally includes control flow for data ready checking)
@@ -113,6 +117,7 @@ The GPU-resident CUDA graph is launched once from the host CPU process. The grap
 #### Host CPU-driven GPU-resident Graphs
 
 Optionally, the host CPU can also control the GPU-resident graphs by the following steps:
+
 - Write input data to device memory
 - Call `data_ready()` to trigger processing
 - Check `result_ready()` to know when results are available
@@ -139,7 +144,7 @@ class MyGpuOp : public holoscan::GPUResidentOperator {
   void setup(OperatorSpec& spec) override {
     // Declare device input port with memory size (in bytes)
     spec.device_input("in", sizeof(float) * num_elements);
-    
+
     // Declare device output port with memory size (in bytes)
     spec.device_output("out", sizeof(float) * num_elements);
   }
@@ -187,29 +192,36 @@ When two operators are connected, the executor decides how to set up shared devi
 #### Important Helper Methods
 
 **`cuda_stream()`**
+
 ```cpp
 std::shared_ptr<cudaStream_t> cuda_stream();
 ```
+
 Returns the CUDA stream for launching kernels in the operator's `compute()` method.
 
 **`device_memory(port_name)`**
+
 ```cpp
 void* device_memory(const std::string& port_name);
 ```
+
 Returns the device memory address for a given input or output port. Use this to access pre-allocated buffers for kernel launches.
 
 **`data_ready_handler_cuda_stream()`**
+
 ```cpp
 std::shared_ptr<cudaStream_t> data_ready_handler_cuda_stream();
 ```
+
 Returns the CUDA stream for data ready handler operations.
 
 **`data_ready_device_address()`**
+
 ```cpp
 void* data_ready_device_address();
 ```
-Returns the device memory pointer for the data ready signal. This address can be used in data ready handler's CUDA kernels to signal that data is ready for processing. See `holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh` for CUDA device functions like `gpu_resident_mark_data_ready_dev()` and `gpu_resident_mark_data_not_ready_dev()` where this address can be used.
 
+Returns the device memory pointer for the data ready signal. This address can be used in data ready handler's CUDA kernels to signal that data is ready for processing. See `holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh` for CUDA device functions like `gpu_resident_mark_data_ready_dev()` and `gpu_resident_mark_data_not_ready_dev()` where this address can be used.
 
 #### Example Operator Implementation
 
@@ -269,27 +281,35 @@ fragment->gpu_resident().tear_down();  // Tear down GPU-resident fragment (termi
 #### Control and Status Checking Methods from Host (CPU) Process
 
 **`tear_down()`**
+
 ```cpp
 void tear_down();
 ```
+
 Sends a tear down signal to stop GPU-resident graph. It can take some time to tear down the GPU-resident CUDA graph. Check with `is_launched()` function to know if the graph has been torn down. **Note:** If `timeout_ms` is set to non-zero value, then the application will automatically be torn down after the timeout duration.
 
 **`is_launched()`**
+
 ```cpp
 bool is_launched();
 ```
+
 Returns `true` if the GPU-resident CUDA graph has been launched and is running, `false` otherwise. Use this to wait for initialization to complete before sending data. If the graph has been torn down, this function will return `false` in that case.
 
 **`data_ready()`**
+
 ```cpp
 void data_ready();
 ```
+
 Signals that input data is ready for processing. Call this after writing data to the application's input device memory. This could be the device memory allocated to the source operator of an application pipeline.
 
 **`result_ready()`**
+
 ```cpp
 bool result_ready();
 ```
+
 Returns `true` if the current iteration's results are ready for consumption, `false` otherwise. Poll this after calling `data_ready()` to know when to read output data.
 
 :::{note}
@@ -299,23 +319,29 @@ The `data_ready`, `result_ready` and other such CPU-side control methods can aff
 #### Configuration Methods
 
 **`timeout_ms(timeout)`**
+
 ```cpp
 void timeout_ms(unsigned long long timeout_ms);
 ```
+
 Sets the timeout for GPU-resident graph in milliseconds. GPU-resident graph will be torn down after the timeout duration. If nothing is set or set to 0, then the graph will run indefinitely until `tear_down()` is called.
 
 **`data_not_ready_sleep_interval_us(sleep_interval_us)`**
+
 ```cpp
 void data_not_ready_sleep_interval_us(unsigned int sleep_interval_us = 500);
 ```
+
 Sets the sleep interval on the GPU device when data is not ready. The GPU-resident graph loop will sleep for this duration (in microseconds) before checking the data ready signal again. This helps reduce unnecessary GPU polling and power consumption when waiting for new data. Default is 500 microseconds. Lower values provide faster response to data ready signals but increase GPU and power usage, while higher values reduce GPU usage but may introduce increased latency.
 
 **Important:** This setting must be configured before calling `run_async()` as it cannot be changed after the CUDA graph has been launched.
 
 **`sync_with_host(enable)`**
+
 ```cpp
 void sync_with_host(bool enable = true);
 ```
+
 Enables or disables a system-wide memory fence at the end of each GPU-resident iteration. When enabled, the GPU issues a system-wide fence (`__threadfence_system()`) after the workload completes and before signaling result-ready. This ensures that all device memory writes are globally visible to the host before the result-ready flag is observed.
 
 This option is intended for scenarios where the host controls the GPU-resident graph loop and reads back results between iterations (e.g., via `cudaMemcpy`). It is recommended for debugging, development, and testing purposes.
@@ -327,9 +353,11 @@ Enabling `sync_with_host` adds latency to each iteration and is not recommended 
 **Important:** This setting must be configured before calling `run_async()` as it cannot be changed after the CUDA graph has been launched.
 
 **`register_data_ready_handler(fragment)`**
+
 ```cpp
 void register_data_ready_handler(std::shared_ptr<Fragment> data_ready_handler_fragment);
 ```
+
 Registers a data ready handler fragment that executes at the beginning of each iteration to determine if data is ready.
 
 ## How GPU-Resident Graphs Work
@@ -338,7 +366,7 @@ Registers a data ready handler fragment that executes at the beginning of each i
 
 A GPU-resident fragment is initialized in the following steps:
 
-1. **Graph Topology Verification**: The framework verifies the operator graph forms a supported topology (only linear chains are currently supported; DAGs will be supported in the future).
+1. **Graph Topology Verification**: The framework verifies that the operator graph is a supported topology: a DAG with exactly one source operator.
 
 2. **Device Memory Setup**: For each connection between operators:
    - If both ports specify a memory block size, the executor allocates a shared device buffer
@@ -346,7 +374,7 @@ A GPU-resident fragment is initialized in the following steps:
    - Memory addresses are mapped to operator ports
    - Connected operator ports map to same device memory addresses
 
-3. **CUDA Graph Capture**: 
+3. **CUDA Graph Capture**:
    - A CUDA stream is created for graph capture
    - Each operator's `compute()` method is executed during capture
    - CUDA operations (kernel launches, memcpy, etc.) are recorded into a graph
@@ -363,7 +391,7 @@ A GPU-resident fragment is initialized in the following steps:
 In the execution phase, there is no CPU-driven graph execution unless explicitly requested by the host CPU process. During asynchronous execution:
 
 1. **Graph Launch**: The GPU-resident CUDA graph is launched on a dedicated stream
-2. **Iteration Loop** (on the GPU): 
+2. **Iteration Loop** (on the GPU):
    - The graph polls the data ready signal and tear down signal
    - If data is not ready, the GPU sleeps for the configured interval (default 500 microseconds) before checking again
    - When data ready signal is set, executes all operators
@@ -381,18 +409,20 @@ In the execution phase, there is no CPU-driven graph execution unless explicitly
 ### Topological Ordering
 
 Operators are executed in topological order based on the dataflow graph. The framework:
+
 - Determines the correct execution sequence
 - Ensures dependencies are satisfied before operator execution
 - Captures operators in the correct order into the CUDA graph
 
 ## Current Limitations
 
-- **Linear Topology Only**: Currently supports only linear chains of operators
+- **Single-Source DAG Only**: GPU-resident execution supports DAGs with exactly one source operator; multiple disconnected roots are not supported
+- **Single Upstream Per Input Port**: Each GPU-resident input port may be connected to only one upstream output port
 - **Static Memory**: All memory must be pre-allocated; dynamic memory allocation not supported
 - **Single Device**: Multi-GPU execution not yet supported. `CUDA Device 0` is used for GPU-resident graph execution by default.
 - **No Scheduler**: Cannot use standard Holoscan schedulers to connect with GPU-resident graph execution
 
-Some of the limitations such as supporting linear chain only are temporary and will be eliminated in the future releases.
+Some of the topology limitations are temporary and will be relaxed in future releases.
 
 ## Examples
 
@@ -401,7 +431,6 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 **`public/examples/gpu_resident_example/gpu_resident_example.cpp`**
 **`public/examples/gpu_resident_input/gpu_resident_input.cpp`**
 **`public/examples/gpu_resident_multi_io/gpu_resident_multi_io.cpp`** — operators with multiple input/output ports
-
 
 ## Best Practices
 
@@ -433,12 +462,14 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 ### Graph Not Launching
 
 If `is_launched()` never returns `true`:
+
 - Check for initialization errors in operator `compute()` methods
 - Verify all operators inherit from `GPUResidentOperator`
 
 ### Result Never Ready
 
 If `result_ready()` never returns `true`:
+
 - Verify `data_ready()` was called after writing input data
 - Check for kernel errors
 - Ensure operators are launching kernels correctly
@@ -446,6 +477,7 @@ If `result_ready()` never returns `true`:
 ### Memory Access Errors
 
 If encountering CUDA memory errors:
+
 - Verify buffer sizes match between port declaration and usage
 - Check that device memory addresses are not null before use
 - Ensure no out-of-bounds access in kernels
@@ -453,6 +485,7 @@ If encountering CUDA memory errors:
 ### Performance Issues
 
 If execution is slower than expected:
+
 - Profile with NVIDIA Nsight Systems to identify bottlenecks
 - Check for unnecessary CUDA synchronization
 - Verify kernels are launched with optimal grid/block dimensions

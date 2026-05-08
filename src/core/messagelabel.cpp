@@ -25,10 +25,10 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/messagelabel.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resources/data_logger.hpp"  // for console_output_mutex
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/messagelabel.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resources/data_logger.hpp>  // for console_output_mutex
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

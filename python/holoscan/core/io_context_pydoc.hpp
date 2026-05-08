@@ -51,13 +51,13 @@ Receive an object from the specified port.
 Parameters
 ----------
 name : str
-	The name of the port to receive the object from.
+    The name of the port to receive the object from.
 
 Returns
 -------
 data : object
-	The received Python object. If no entities were received on the port, `data` will be
-	``None``.
+    The received Python object. If no entities were received on the port, `data` will be
+    ``None``.
 
 )doc")
 
@@ -82,18 +82,18 @@ operations:
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port. Can be omitted if the operator has only one input port.
+    The name of the input port. Can be omitted if the operator has only one input port.
 allocate : bool, optional
-	If True (default), allocates an internal stream if not already allocated. If False,
-	the first received stream is used as the internal stream.
+    If True (default), allocates an internal stream if not already allocated. If False,
+    the first received stream is used as the internal stream.
 sync_to_default : bool, optional
-	If True, also synchronizes the internal stream to ``cudaStreamDefault``. Default is False.
+    If True, also synchronizes the internal stream to ``cudaStreamDefault``. Default is False.
 
 Returns
 -------
 stream_ptr : int
-	The memory address of the operator's internal cudaStream_t (reused across all ``compute()``
-	calls). Returns 0 (cudaStreamDefault) if no stream pool is available and no stream was found.
+    The memory address of the operator's internal cudaStream_t (reused across all ``compute()``
+    calls). Returns 0 (cudaStreamDefault) if no stream pool is available and no stream was found.
 
 )doc")
 
@@ -114,15 +114,15 @@ For most operators, use ``receive_cuda_stream`` instead.
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port. Can be omitted if the operator has only one input port.
+    The name of the input port. Can be omitted if the operator has only one input port.
 
 Returns
 -------
 stream_ptrs : list[int or None]
-	The memory addresses of the cudaStream_t for each message. In normal operation, the list
-	length matches the number of messages on the port, with ``None`` for messages without a
-	stream. If stream handling is unavailable (e.g., CudaObjectHandler not initialized), an
-	empty list is returned.
+    The memory addresses of the cudaStream_t for each message. In normal operation, the list
+    length matches the number of messages on the port, with ``None`` for messages without a
+    stream. If stream handling is unavailable (e.g., CudaObjectHandler not initialized), an
+    empty list is returned.
 
 )doc")
 
@@ -132,14 +132,14 @@ Get the acquisition timestamp corresponding to a given input port.
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port to receive the object from. Can be left empty if there is only
-	one input port on the operator.
+    The name of the input port to receive the object from. Can be left empty if there is only
+    one input port on the operator.
 
 Returns
 -------
 timestamp : int or None
-	Returns the timestamp (in nanoseconds). If the upstream operator did not emit a timestamp or
-	the input port name does not exist, this timestamp will be ``None``.
+    Returns the timestamp (in nanoseconds). If the upstream operator did not emit a timestamp or
+    the input port name does not exist, this timestamp will be ``None``.
 
 )doc")
 
@@ -149,14 +149,14 @@ Get the acquisition timestamsp corresponding to all messages received on a given
 Parameters
 ----------
 input_port_name : str, optional
-	The name of the input port to receive the object from. Can be left empty if there is only
-	one input port on the operator.
+    The name of the input port to receive the object from. Can be left empty if there is only
+    one input port on the operator.
 
 Returns
 -------
 timestamps : list[int or None]
-	Returns the timestamps (in nanoseconds). Values of None will be present for any of the
-	received messages that did not contain a timestamp.
+    Returns the timestamps (in nanoseconds). Values of None will be present for any of the
+    received messages that did not contain a timestamp.
 
 )doc")
 
@@ -174,24 +174,24 @@ Emit a Python or C++ object on the specified port.
 Parameters
 ----------
 data : object
-	The Python object to emit. If it is a tensor-like object it will be transmitted as a C++
-	holoscan::Tensor for compatibility with C++ operators expecting a holoscan::Tensor (no copy of
-	the data is required when converting to the C++ tensor type). Similarly, if `data` is a
-	dictionary where all keys are strings and all values are tensor-like objects then it will be
-	transmitted as a holoscan::TensorMap for compatibility with Holoscan C++ operators. Similarly
-	if it is detected that the output port is connected across fragments in a distributed
-	application, then serialization of the data will automatically be performed so that it can be
-	sent over the network via UCX.
+    The Python object to emit. If it is a tensor-like object it will be transmitted as a C++
+    holoscan::Tensor for compatibility with C++ operators expecting a holoscan::Tensor (no copy of
+    the data is required when converting to the C++ tensor type). Similarly, if `data` is a
+    dictionary where all keys are strings and all values are tensor-like objects then it will be
+    transmitted as a holoscan::TensorMap for compatibility with Holoscan C++ operators. Similarly
+    if it is detected that the output port is connected across fragments in a distributed
+    application, then serialization of the data will automatically be performed so that it can be
+    sent over the network via UCX.
 name : str
-	The name of the port to emit the object on.
+    The name of the port to emit the object on.
 emitter_name : str, optional
-	This can be specified to force emitting as a different type than would be chosen by default.
-	For example, if `data` is a Python `str` object it would normally be emitted as a Python
-	string. However, to send the string as a `std::string` as expected by a downstream C++
-	operator, one could set ``emitter_name="std::string"`` to make sure the data will be cast to
-	this type. In general, any type that has been registered with the type registry can be
-	specified here as long as the provided object can be cast to that type. To get a list of the
-	currently registered type names, call ``holoscan.core.io_type_registry.registered_types()``.
+    This can be specified to force emitting as a different type than would be chosen by default.
+    For example, if `data` is a Python `str` object it would normally be emitted as a Python
+    string. However, to send the string as a `std::string` as expected by a downstream C++
+    operator, one could set ``emitter_name="std::string"`` to make sure the data will be cast to
+    this type. In general, any type that has been registered with the type registry can be
+    specified here as long as the provided object can be cast to that type. To get a list of the
+    currently registered type names, call ``holoscan.core.io_type_registry.registered_types()``.
 )doc")
 
 PYDOC(set_cuda_stream, R"doc(
@@ -208,10 +208,10 @@ This method must be called **before** the corresponding ``emit()`` call for the 
 Parameters
 ----------
 stream_ptr : int
-	The memory address of the cudaStream_t to emit. Must be a Holoscan-managed stream (one
-	returned by ``receive_cuda_stream``, ``receive_cuda_streams``, or ``allocate_cuda_stream``).
+    The memory address of the cudaStream_t to emit. Must be a Holoscan-managed stream (one
+    returned by ``receive_cuda_stream``, ``receive_cuda_streams``, or ``allocate_cuda_stream``).
 output_port_name : str, optional
-	The name of the output port. Can be omitted if the operator has only one output port.
+    The name of the output port. Can be omitted if the operator has only one output port.
 )doc")
 
 }  // namespace OutputContext
@@ -228,7 +228,7 @@ List of types with an emitter and/or receiver registered
 Returns
 -------
 names : list of str
-	The list of registered emitter/receiver names.
+    The list of registered emitter/receiver names.
 )doc")
 
 }  // namespace EmitterReceiverRegistry

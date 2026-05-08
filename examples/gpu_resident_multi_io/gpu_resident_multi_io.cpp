@@ -50,8 +50,8 @@ class SourceMultiOutputGpuOp : public holoscan::GPUResidentOperator {
     auto* out1_device_address = static_cast<int*>(device_memory("out1"));
 
     if (out0_device_address == nullptr || out1_device_address == nullptr) {
-      HOLOSCAN_LOG_ERROR(
-          "SourceMultiOutputGpuOp::compute() -- {} -- invalid output pointers", name());
+      HOLOSCAN_LOG_ERROR("SourceMultiOutputGpuOp::compute() -- {} -- invalid output pointers",
+                         name());
       return;
     }
 

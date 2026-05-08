@@ -26,11 +26,11 @@
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/operators/video_stream_recorder/video_stream_recorder.hpp"
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/operators/video_stream_recorder/video_stream_recorder.hpp>
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

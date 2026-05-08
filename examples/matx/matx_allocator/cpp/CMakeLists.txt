@@ -20,7 +20,7 @@ add_executable(matx_allocator
 target_link_libraries(matx_allocator
   PRIVATE
   holoscan::core
-  holoscan::matx
+  matx::matx
 )
 
 # Suppress NVCC warning from CLI11 third-party library

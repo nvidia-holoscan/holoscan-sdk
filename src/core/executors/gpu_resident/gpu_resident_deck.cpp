@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/executors/gpu_resident/gpu_resident_deck.hpp"
+#include <holoscan/core/executors/gpu_resident/gpu_resident_deck.hpp>
 
 #include <cuda_runtime.h>
 
@@ -26,9 +26,9 @@
 #include <memory>
 #include <thread>
 
-#include "holoscan/core/executors/gpu_resident/controlcommand.hpp"
-#include "holoscan/utils/cuda/buffer.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/core/executors/gpu_resident/controlcommand.hpp>
+#include <holoscan/utils/cuda/buffer.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan {
 
@@ -67,38 +67,47 @@ GPUResidentDeck::~GPUResidentDeck() {
 std::future<void> GPUResidentDeck::launch_cuda_graph(cudaGraphExec_t graph_exec) {
   // Launch the CUDA graph asynchronously and return a future
   return std::async(std::launch::async, [this, graph_exec]() {
-    // Use cuda::std::atomic_ref for CPU-GPU visibility
-    cuda::std::atomic_ref<unsigned int> data_ready_atomic(
-        *reinterpret_cast<unsigned int*>(cpu_data_ready_trigger_->data()));
-    cuda::std::atomic_ref<unsigned int> result_ready_atomic(
-        *reinterpret_cast<unsigned int*>(cpu_result_ready_trigger_->data()));
-    cuda::std::atomic_ref<unsigned int> tear_down_atomic(
-        *reinterpret_cast<unsigned int*>(cpu_tear_down_trigger_->data()));
+    try {
+      // Use cuda::std::atomic_ref for CPU-GPU visibility
+      cuda::std::atomic_ref<unsigned int> data_ready_atomic(
+          *reinterpret_cast<unsigned int*>(cpu_data_ready_trigger_->data()));
+      cuda::std::atomic_ref<unsigned int> result_ready_atomic(
+          *reinterpret_cast<unsigned int*>(cpu_result_ready_trigger_->data()));
+      cuda::std::atomic_ref<unsigned int> tear_down_atomic(
+          *reinterpret_cast<unsigned int*>(cpu_tear_down_trigger_->data()));
 
-    // Atomic stores with memory_order_release to ensure GPU sees the updates
-    data_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::DATA_NOT_READY),
-                            cuda::std::memory_order_release);
-    result_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::RESULT_NOT_READY),
+      // Atomic stores with memory_order_release to ensure GPU sees the updates
+      data_ready_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::DATA_NOT_READY),
                               cuda::std::memory_order_release);
-    tear_down_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::INVALID),
-                           cuda::std::memory_order_release);
-    HOLOSCAN_LOG_DEBUG("GPU-resident CUDA graph is being launched.");
-    // Launch the graph on the execution stream
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphLaunch(graph_exec, execution_stream_),
-                                   "Failed to launch CUDA graph");
-    // Set the atomic flag to indicate the graph has been launched
-    graph_launched_.store(true);
-    // check if timeout is zero
-    // if not zero, then sleep for timeout and then send a tear down trigger
-    // if zero, then wait for the stream to synchronize
-    if (timeout_ms_ != 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms_));
-      tear_down();
-    } else {
-      HOLOSCAN_LOG_DEBUG("GPU-resident graph execution stream is being synchronized.");
-      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(execution_stream_),
-                                     "Failed to synchronize execution stream");
+      result_ready_atomic.store(
+          static_cast<unsigned int>(holoscan::ControlCommand::RESULT_NOT_READY),
+          cuda::std::memory_order_release);
+      tear_down_atomic.store(static_cast<unsigned int>(holoscan::ControlCommand::INVALID),
+                             cuda::std::memory_order_release);
+      HOLOSCAN_LOG_DEBUG("GPU-resident CUDA graph is being launched.");
+      // Launch the graph on the execution stream
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphLaunch(graph_exec, execution_stream_),
+                                     "Failed to launch CUDA graph");
+      // Set the atomic flag to indicate the graph has been launched
+      graph_launched_.store(true);
+      // check if timeout is zero
+      // if not zero, then sleep for timeout and then send a tear down trigger
+      // if zero, then wait for the stream to synchronize
+      if (timeout_ms_ != 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(timeout_ms_));
+        tear_down();
+      } else {
+        HOLOSCAN_LOG_DEBUG("GPU-resident graph execution stream is being synchronized.");
+        HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(execution_stream_),
+                                       "Failed to synchronize execution stream");
+      }
+    } catch (...) {
+      HOLOSCAN_CUDA_CALL_ERR_MSG(cudaGraphExecDestroy(graph_exec),
+                                 "Failed to destroy executable CUDA graph");
+      throw;
     }
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaGraphExecDestroy(graph_exec),
+                                   "Failed to destroy executable CUDA graph");
   });
 }
 
@@ -120,6 +129,7 @@ void GPUResidentDeck::tear_down() {
       "Torn down GPU-resident workload. Waiting for execution stream to synchronize.");
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaStreamSynchronize(execution_stream_),
                                  "Failed to synchronize execution stream");
+  HOLOSCAN_LOG_INFO("Execution stream synchronized. GPU-resident Graph tear down completed.");
 }
 
 void GPUResidentDeck::set_data_ready() {

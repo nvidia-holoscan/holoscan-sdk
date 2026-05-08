@@ -5,9 +5,12 @@ This product includes software developed at NVIDIA CORPORATION (https://www.nvid
 
 Holoscan uses the following open source software:
 
-CLI11   (https://github.com/CLIUtils/CLI11)
+ASIO (https://github.com/chriskohlhoff/asio)
+Licensed under BSL-1.0 (https://github.com/chriskohlhoff/asio/blob/asio-1-18-1/asio/LICENSE_1_0.txt)
+
+CLI11 (https://github.com/CLIUtils/CLI11)
 Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/CLIUtils/CLI11/blob/v2.3.2/LICENSE)
+Licensed under BSD-3-clause (https://github.com/CLIUtils/CLI11/blob/v2.5.0/LICENSE)
 
 cloudpickle (https://github.com/cloudpipe/cloudpickle)
 Copyright (c) 2015, Cloudpickle contributors.
@@ -34,9 +37,18 @@ The source code for Eigen is available at <https://edge.urm.nvidia.com/artifacto
 expected (https://github.com/TartanLlama/expected)
 Licensed under CC0-1.0 (https://github.com/TartanLlama/expected/blob/v1.1.0/COPYING)
 
+Fast CDR (https://github.com/eProsima/Fast-CDR)
+Licensed under Apache-2.0 (https://github.com/eProsima/Fast-CDR/blob/v2.3.5/LICENSE)
+
+Fast DDS (https://github.com/eProsima/Fast-DDS)
+Licensed under Apache-2.0 (https://github.com/eProsima/Fast-DDS/blob/v3.4.2/LICENSE)
+
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
 Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
+
+foonathan_memory_vendor (https://github.com/eProsima/foonathan_memory_vendor)
+Licensed under Apache-2.0 (https://github.com/eProsima/foonathan_memory_vendor/blob/v1.3.2/LICENSE)
 
 GDRCopy (https://developer.nvidia.com/gdrcopy)
 Copyright (c) 2014-2021, NVIDIA CORPORATION. All rights reserved.

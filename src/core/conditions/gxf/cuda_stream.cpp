@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/conditions/gxf/cuda_stream.hpp"
+#include <holoscan/core/conditions/gxf/cuda_stream.hpp>
 
 #include <cuda_runtime.h>
 #include <gxf/core/gxf.h>
@@ -26,10 +26,10 @@
 #include <gxf/cuda/cuda_stream.hpp>
 #include <gxf/cuda/cuda_stream_id.hpp>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

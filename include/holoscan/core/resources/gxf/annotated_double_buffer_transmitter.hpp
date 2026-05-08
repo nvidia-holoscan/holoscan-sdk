@@ -22,7 +22,7 @@
 #include <gxf/core/entity.hpp>
 #include <gxf/core/handle.hpp>
 
-#include "gxf/std/double_buffer_transmitter.hpp"
+#include <gxf/std/double_buffer_transmitter.hpp>
 
 namespace holoscan {
 

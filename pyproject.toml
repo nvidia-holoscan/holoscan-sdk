@@ -13,83 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-[tool.codespell]
-skip = "_deps,build*,.cache,html,_build,_static,generated,latex,install*,.git,xml,vale"
-ignore-words-list = "bu,dne,nd,thirdparty,unexpect"
-
-[tool.ruff]
-exclude = [
-  "_build",
-  "_deps",
-  "_static",
-  "build*",
-  ".cache",
-  "html",
-  "generated",
-  "latex",
-  "install*",
-  ".git",
-  "xml"
-]
-line-length = 100
-fix = false  # don't automatically apply fixes (can override with ruff --fix)
-target-version = "py310"
-
-
-[tool.ruff.lint]
-# see: https://docs.astral.sh/ruff/rules/
-select = [
-  "E",     # Pyflakes
-  "W",     # Pyflakes
-  "F",     # Pyflakes
-  "I",     # isort
-  "UP",    # pyupgrade
-  "SIM",   # flake8-simplify
-  "B",     # flake8-bugbear
-  "A",     # flake8-builtins (avoid shadowing of Python builtins)
-  "N",     # pep8-naming (enforce pep8 naming conventions)
-  "YTT",   # flake8-2020 (check for misuse of sys.version or sys.version_info)
-  "ICN",   # flake8-import-conventions (e.g. enforce importing numpy as np)
-  "T10",   # flake8-debugger (ensure no leftover trace/breakpoint commands)
-  "PT",    # flake8-pytest-style
-  "FIX",   # flake8-fixme (warn on leftover TODO statements)
-  "ARG",   # flake8-unused-arguments
-  "NPY",   # numpy-specific rules
-  "PERF",  # performance related rules
-  "PLC",   # pylint conventions
-  "PLE",   # pylint error
-]
-fixable = ["ALL"]  # list of rule codes or prefixes to consider fixable
-ignore = [
-  "PT006"  # don't enforce csv vs. list vs. tuple for first argument of parametrize
-]
-# Customize ARG check (see: https://docs.astral.sh/ruff/settings/#lint_dummy-variable-rgx)
-# - augment default setting of variables starting with _ to also ignore:
-#   - `op_input`, `op_output` and `context` arguments of `Operator.compute`
-#   - `spec` argument of `Operator.setup`
-#   - `timestamp` argument of `Condition.check` and `Condition.update_state`
-# (If we want to remove these ignores, we will have to prepand an underscore to the names of the
-#  unused variables in all existing examples and tests.)
-dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?)|op_input|op_output|context|spec|timestamp)$"
-
-[tool.ruff.lint.per-file-ignores]
-# ignore line length for __init__.py files (due to copyright header not in triple quotes)
-# (For API documentation, the __init__.py files need sphinx autosummary commands in the first
-#  triple quote comment block, so the copyright header is commented as individual lines)
-"python/holoscan/**/__init__.py" = ["E501"]
-"python/holoscan/decorator.py" = ["E402"]
-"scripts/gxf_entity_codec.py" = ["N815"]  # allow mixed-case enum names in this utility script
-
-[tool.ruff.lint.isort]
-known-first-party = ["holoscan"]
-combine-as-imports = false
-force-single-line = false
-order-by-type = true
-
-[tool.ruff.lint.flake8-import-conventions.aliases]
-# Declare the default aliases.
-cupy = "cp"
-numpy = "np"
+# Codespell settings live in `.codespell.toml`.
+# Ruff settings live in `.ruff.toml`.
 
 [tool.pytest.ini_options]
 addopts = "-ra"

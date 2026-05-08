@@ -22,24 +22,24 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/std/clock.hpp"
-#include "gxf/std/codelet.hpp"
-#include "holoscan/core/conditions/gxf/asynchronous.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
-#include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
-#include "holoscan/core/messagelabel.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resources/gxf/condition_combiner.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/resources/gxf/receiver.hpp"
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/profiler/profiler.hpp"
+#include <gxf/std/clock.hpp>
+#include <gxf/std/codelet.hpp>
+#include <holoscan/core/conditions/gxf/asynchronous.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/gxf/gxf_scheduler.hpp>
+#include <holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp>
+#include <holoscan/core/gxf/gxf_wrapper.hpp>
+#include <holoscan/core/messagelabel.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resources/gxf/condition_combiner.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/core/resources/gxf/receiver.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/profiler/profiler.hpp>
 
 namespace {
 
@@ -80,15 +80,19 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
     }
 
     if (is_any_size) {
-      // kAnySize port - look for indexed ports (port_name:0, port_name:1, etc.)
+      auto direct_receiver = std::dynamic_pointer_cast<holoscan::Receiver>(connector);
+
+      // kAnySize port - either use a single directly bound base receiver or expand
+      // indexed ports (port_name:0, port_name:1, etc.). Mixed mode is not supported.
       std::string prefix = port_name + ":";
+      std::vector<std::shared_ptr<holoscan::Receiver>> indexed_receivers;
       for (const auto& [input_port_name, io_spec] : inputs) {
         if (input_port_name.rfind(prefix, 0) == 0) {  // starts with "port_name:"
           auto indexed_connector = io_spec->connector();
           if (indexed_connector) {
             auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(indexed_connector);
             if (receiver) {
-              receivers.push_back(receiver);
+              indexed_receivers.push_back(receiver);
               HOLOSCAN_LOG_DEBUG("Operator '{}': found multi-receiver port '{}' for base name '{}'",
                                  operator_name,
                                  input_port_name,
@@ -97,7 +101,25 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
           }
         }
       }
-      if (receivers.empty()) {
+
+      if (direct_receiver && !indexed_receivers.empty()) {
+        throw std::runtime_error(fmt::format(
+            "Operator '{}': kAnySize input '{}' cannot mix a directly bound base connector "
+            "with indexed ports ('{}:N')",
+            operator_name,
+            port_name,
+            port_name));
+      }
+
+      if (direct_receiver) {
+        receivers.push_back(direct_receiver);
+        HOLOSCAN_LOG_DEBUG("Operator '{}': found direct receiver for kAnySize port '{}'",
+                           operator_name,
+                           port_name);
+        return receivers;
+      }
+
+      if (indexed_receivers.empty()) {
         HOLOSCAN_LOG_WARN(
             "Operator '{}': 'receivers' argument specified kAnySize port '{}' but no "
             "indexed ports ({}:0, {}:1, etc.) were found",
@@ -105,6 +127,8 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
             port_name,
             port_name,
             port_name);
+      } else {
+        receivers = std::move(indexed_receivers);
       }
       return receivers;
     }
@@ -138,6 +162,54 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
   }
 
   return receivers;
+}
+
+std::shared_ptr<holoscan::IOSpec> lookup_port_iospec(
+    const std::shared_ptr<holoscan::OperatorSpec>& spec, const std::string& port_name,
+    holoscan::IOSpec::IOType port_type) {
+  if (!spec) {
+    return nullptr;
+  }
+
+  auto& iospecs = port_type == holoscan::IOSpec::IOType::kInput ? spec->inputs() : spec->outputs();
+  auto iospec_iter = iospecs.find(port_name);
+  if (iospec_iter == iospecs.end()) {
+    return nullptr;
+  }
+  return iospec_iter->second;
+}
+
+std::shared_ptr<holoscan::IOSpec> get_port_iospec_or_throw(
+    const std::shared_ptr<holoscan::OperatorSpec>& spec, const std::string& operator_name,
+    const std::string& port_name, holoscan::IOSpec::IOType port_type) {
+  if (!spec) {
+    throw std::runtime_error(fmt::format(
+        "Operator '{}': {}() requires setup() to have been called first for port '{}'",
+        operator_name,
+        port_type == holoscan::IOSpec::IOType::kInput ? "bind_input_topic" : "bind_output_topic",
+        port_name));
+  }
+  auto io_spec = lookup_port_iospec(spec, port_name, port_type);
+  if (io_spec) {
+    return io_spec;
+  }
+
+  throw std::runtime_error(
+      fmt::format("Operator '{}': no {} port named '{}'",
+                  operator_name,
+                  port_type == holoscan::IOSpec::IOType::kInput ? "input" : "output",
+                  port_name));
+}
+
+std::optional<nvidia::gxf::QoSProfile> effective_iospec_qos(
+    const std::shared_ptr<holoscan::IOSpec>& io_spec) {
+  if (!io_spec) {
+    return std::nullopt;
+  }
+  if (auto explicit_qos = io_spec->qos(); explicit_qos.has_value()) {
+    return explicit_qos;
+  }
+  return std::nullopt;
 }
 
 }  // anonymous namespace
@@ -974,6 +1046,64 @@ std::optional<std::shared_ptr<Receiver>> Operator::receiver(const std::string& p
     return std::nullopt;
   }
   return receiver;
+}
+
+void Operator::bind_input_topic(const std::string& port_name, const std::string& topic,
+                                const std::optional<nvidia::gxf::QoSProfile>& qos,
+                                bool replace_connector) {
+  if (is_initialized_) {
+    throw std::runtime_error(fmt::format(
+        "Operator '{}': bind_input_topic() cannot be called after initialize() for port '{}'",
+        name_,
+        port_name));
+  }
+  auto io_spec = get_port_iospec_or_throw(spec_, name_, port_name, IOSpec::IOType::kInput);
+  io_spec->topic(topic, replace_connector);
+  if (qos.has_value()) {
+    io_spec->qos(qos.value());
+  }
+}
+
+void Operator::bind_output_topic(const std::string& port_name, const std::string& topic,
+                                 const std::optional<nvidia::gxf::QoSProfile>& qos,
+                                 bool replace_connector) {
+  if (is_initialized_) {
+    throw std::runtime_error(fmt::format(
+        "Operator '{}': bind_output_topic() cannot be called after initialize() for port '{}'",
+        name_,
+        port_name));
+  }
+  auto io_spec = get_port_iospec_or_throw(spec_, name_, port_name, IOSpec::IOType::kOutput);
+  io_spec->topic(topic, replace_connector);
+  if (qos.has_value()) {
+    io_spec->qos(qos.value());
+  }
+}
+
+std::optional<std::string> Operator::input_topic(const std::string& port_name) const {
+  auto io_spec = lookup_port_iospec(spec_, port_name, IOSpec::IOType::kInput);
+  if (!io_spec) {
+    return std::nullopt;
+  }
+  return io_spec->topic();
+}
+
+std::optional<std::string> Operator::output_topic(const std::string& port_name) const {
+  auto io_spec = lookup_port_iospec(spec_, port_name, IOSpec::IOType::kOutput);
+  if (!io_spec) {
+    return std::nullopt;
+  }
+  return io_spec->topic();
+}
+
+std::optional<nvidia::gxf::QoSProfile> Operator::input_qos(const std::string& port_name) const {
+  auto io_spec = lookup_port_iospec(spec_, port_name, IOSpec::IOType::kInput);
+  return effective_iospec_qos(io_spec);
+}
+
+std::optional<nvidia::gxf::QoSProfile> Operator::output_qos(const std::string& port_name) const {
+  auto io_spec = lookup_port_iospec(spec_, port_name, IOSpec::IOType::kOutput);
+  return effective_iospec_qos(io_spec);
 }
 
 void Operator::queue_policy(const std::string& port_name, IOSpec::IOType port_type,

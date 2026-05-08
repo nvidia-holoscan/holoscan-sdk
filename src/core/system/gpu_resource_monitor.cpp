@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/system/gpu_resource_monitor.hpp"
+#include <holoscan/core/system/gpu_resource_monitor.hpp>
 
 #include <dlfcn.h>
 
@@ -25,7 +25,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 #define HOLOSCAN_NVML_CALL(stmt)                                                           \
   ({                                                                                       \

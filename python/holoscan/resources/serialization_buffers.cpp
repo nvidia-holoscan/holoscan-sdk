@@ -23,15 +23,15 @@
 #include <string>
 #include <variant>
 
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/resources/gxf/serialization_buffer.hpp>
+#include <holoscan/core/resources/gxf/ucx_serialization_buffer.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "../core/component_util.hpp"
 #include "./serialization_buffers_pydoc.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/resources/gxf/serialization_buffer.hpp"
-#include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
-#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

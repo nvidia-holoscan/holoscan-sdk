@@ -22,8 +22,8 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/app_driver.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/app_driver.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::distributed {
 

@@ -26,14 +26,14 @@
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/operators/test_ops/pose_tree_manager_lookup.hpp"
-#include "holoscan/operators/test_ops/rx_dtype_test.hpp"
-#include "holoscan/operators/test_ops/tx_dtype_test.hpp"
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/operators/test_ops/pose_tree_manager_lookup.hpp>
+#include <holoscan/operators/test_ops/rx_dtype_test.hpp>
+#include <holoscan/operators/test_ops/tx_dtype_test.hpp>
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -86,10 +86,9 @@ class PyPoseTreeManagerLookupOp : public holoscan::ops::PoseTreeManagerLookupOp 
   using PoseTreeManagerLookupOp::PoseTreeManagerLookupOp;
 
   // Define a constructor that fully initializes the object.
-  PyPoseTreeManagerLookupOp(const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-                            const py::args& args,
-                            const std::string& name =
-                                operator_default_name_v<PoseTreeManagerLookupOp>)
+  PyPoseTreeManagerLookupOp(
+      const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, const py::args& args,
+      const std::string& name = operator_default_name_v<PoseTreeManagerLookupOp>)
       : PoseTreeManagerLookupOp() {
     add_positional_condition_and_resource_args(this, args);
     init_operator_base(this, fragment_or_subgraph, name);

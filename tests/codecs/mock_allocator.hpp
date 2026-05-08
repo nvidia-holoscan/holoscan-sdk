@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,8 +19,8 @@
 #include <cstdint>
 #include <set>
 
-#include "gxf/core/expected.hpp"  // nvidia::gxf::Expected
-#include "gxf/std/allocator.hpp"  // nvidia::gxf::MemoryStorageType
+#include <gxf/core/expected.hpp>  // nvidia::gxf::Expected
+#include <gxf/std/allocator.hpp>  // nvidia::gxf::MemoryStorageType
 
 #ifndef HOLOSCAN_TESTS_CODECS_MOCK_ALLOCATOR_HPP
 #define HOLOSCAN_TESTS_CODECS_MOCK_ALLOCATOR_HPP

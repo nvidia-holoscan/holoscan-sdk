@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
+#include <holoscan/core/gxf/gxf_wrapper.hpp>
 
 #include <fmt/format.h>
 #include <chrono>
@@ -25,14 +25,14 @@
 #include <thread>
 #include <unordered_map>
 
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/profiler/nvtx3.hpp"
-#include "holoscan/profiler/profiler.hpp"
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/profiler/nvtx3.hpp>
+#include <holoscan/profiler/profiler.hpp>
 
-#include "gxf/std/transmitter.hpp"
+#include <gxf/std/transmitter.hpp>
 
 namespace holoscan::gxf {
 
@@ -371,7 +371,6 @@ void GXFWrapper::create_post_compute_nvtx_range() {
         op_->name());
   }
 }
-
 
 bool GXFWrapper::is_root_operator() const {
   return op_->is_root() || op_->is_user_defined_root() ||

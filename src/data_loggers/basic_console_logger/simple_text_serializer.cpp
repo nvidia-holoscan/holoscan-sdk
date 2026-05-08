@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 
 #include <algorithm>
 #include <any>
@@ -28,19 +28,19 @@
 #include <string>
 #include <vector>
 
-#include <magic_enum.hpp>
-#include "gxf/core/entity.hpp"
-#include "gxf/core/handle.hpp"
-#include "gxf/multimedia/video.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <gxf/core/entity.hpp>
+#include <gxf/core/handle.hpp>
+#include <gxf/multimedia/video.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
+#include <magic_enum/magic_enum.hpp>
 
-// #include "holoscan/core/component_spec.hpp"
-// #include "holoscan/core/fragment.hpp"
+// #include <holoscan/core/component_spec.hpp>
+// #include <holoscan/core/fragment.hpp>
 
 namespace holoscan {
 namespace data_loggers {

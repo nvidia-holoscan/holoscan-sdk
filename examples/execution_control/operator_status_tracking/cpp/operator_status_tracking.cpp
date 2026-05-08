@@ -22,7 +22,7 @@
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 // A simple operator that processes a fixed number of times and then completes
 class FiniteSourceOp : public holoscan::Operator {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,10 +21,10 @@
 
 #include "gxf_network_context_pydoc.hpp"
 
-#include "holoscan/core/gxf/gxf_component.hpp"
-#include "holoscan/core/gxf/gxf_network_context.hpp"
+#include <holoscan/core/gxf/gxf_component.hpp>
+#include <holoscan/core/gxf/gxf_network_context.hpp>
 
-#include "gxf/core/gxf.h"
+#include <gxf/core/gxf.h>
 
 namespace py = pybind11;
 

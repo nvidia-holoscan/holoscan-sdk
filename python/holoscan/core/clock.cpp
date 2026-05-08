@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-#include <pybind11/pybind11.h>
 #include <pybind11/chrono.h>  // will include timedelta.h for us
+#include <pybind11/pybind11.h>
 
 #include <chrono>
 #include <cstdint>
@@ -25,14 +25,14 @@
 #include <stdexcept>
 #include <string>
 
+#include <holoscan/core/clock.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resources/gxf/manual_clock.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
+#include <holoscan/core/resources/gxf/synthetic_clock.hpp>
 #include "./clock.hpp"
 #include "./clock_pydoc.hpp"
-#include "holoscan/core/clock.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resources/gxf/manual_clock.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
-#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

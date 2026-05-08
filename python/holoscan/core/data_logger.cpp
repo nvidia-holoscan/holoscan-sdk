@@ -29,17 +29,17 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/data_logger.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resources/async_data_logger.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/core/resources/data_logger_queue.hpp>
 #include "component.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/data_logger.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resources/async_data_logger.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/core/resources/data_logger_queue.hpp"
-#include "kwarg_handling.hpp"
 #include "data_logger_pydoc.hpp"
+#include "kwarg_handling.hpp"
 
 namespace py = pybind11;
 

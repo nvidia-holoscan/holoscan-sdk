@@ -30,7 +30,7 @@
 #include <unordered_map>
 #include <variant>
 
-#include "holoscan/core/domain/tensor.hpp"
+#include <holoscan/core/domain/tensor.hpp>
 
 namespace py = pybind11;
 

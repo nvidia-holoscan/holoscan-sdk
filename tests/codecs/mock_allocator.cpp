@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,10 +20,10 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "gxf/core/gxf.h"
+#include <gxf/core/gxf.h>
+#include <gxf/core/expected.hpp>  // nvidia::gxf::Expected
+#include <gxf/std/allocator.hpp>  // nvidia::gxf::MemoryStorageType
 #include "common/logger.hpp"      // GXF_LOG_*
-#include "gxf/core/expected.hpp"  // nvidia::gxf::Expected
-#include "gxf/std/allocator.hpp"  // nvidia::gxf::MemoryStorageType
 
 namespace holoscan {
 

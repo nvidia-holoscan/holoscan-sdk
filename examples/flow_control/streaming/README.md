@@ -11,18 +11,21 @@ This example demonstrates how to implement dynamic flow control and cyclic execu
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Dynamic Flow Control**: Using dynamic flows to control operator execution
 2. **Cyclic Execution**: Implementing a cyclic flow pattern with controlled iterations
 3. **Multi-stage Processing**: Processing data through multiple operators in sequence
 4. **Controlled Termination**: Stopping the cycle after a specific number of iterations
 
 The key aspects of this application include:
+
 - Use of dynamic flows to control operator execution
 - Implementation of cyclic patterns with controlled iterations
 - Explicit port naming for complex flow control
 - Multi-stage data processing pipeline
 
 The application demonstrates:
+
 - How to implement cyclic execution patterns
 - How to use dynamic flows for complex routing
 - How to manage operator execution sequences
@@ -33,6 +36,7 @@ The application demonstrates:
 ## C++ API
 
 The application consists of several operators:
+
 1. `PingTxOp`: Transmits sequential integer values
 2. `PingMxOp`: Middle operator that receives and forwards values
 3. `PingRxOp`: Receives and displays the final values
@@ -48,6 +52,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/streaming/cpp/streaming_execution
 ```
@@ -55,6 +60,7 @@ Then, run:
 ## Python API
 
 The application demonstrates the same flow control patterns using the Python API. It consists of several operators:
+
 1. `PingTxOp`: Transmits sequential integer values
 2. `PingMxOp`: Middle operator that receives and forwards values
 3. `PingRxOp`: Receives and displays the final values
@@ -70,6 +76,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/streaming/python/streaming_execution.py
 ```

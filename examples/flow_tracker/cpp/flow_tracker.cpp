@@ -18,7 +18,7 @@
 #include <memory>
 #include <vector>
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 class ValueData {
  public:

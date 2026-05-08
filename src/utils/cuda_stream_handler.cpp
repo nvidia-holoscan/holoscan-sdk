@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,19 +15,19 @@
  * limitations under the License.
  */
 
-#include "holoscan/utils/cuda_stream_handler.hpp"
+#include <holoscan/utils/cuda_stream_handler.hpp>
 
 #include <memory>
 #include <utility>
 #include <vector>
 
-#include "gxf/cuda/cuda_stream.hpp"
-#include "gxf/cuda/cuda_stream_id.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <gxf/cuda/cuda_stream.hpp>
+#include <gxf/cuda/cuda_stream_id.hpp>
+#include <gxf/cuda/cuda_stream_pool.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 
 namespace holoscan {
 

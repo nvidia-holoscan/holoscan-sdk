@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/inference_processor/inference_processor.hpp"
+#include <holoscan/operators/inference_processor/inference_processor.hpp>
 
 #include <memory>
 #include <string>
@@ -24,13 +24,13 @@
 
 #include <holoinfer_utils.hpp>
 
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
-#include "holoscan/utils/holoinfer_utils.hpp"
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
+#include <holoscan/utils/holoinfer_utils.hpp>
 
 template <>
 struct YAML::convert<holoscan::ops::InferenceProcessorOp::DataMap> {
@@ -220,6 +220,8 @@ void InferenceProcessorOp::start() {
 
 void InferenceProcessorOp::stop() {
   data_per_tensor_.clear();
+  // Reset the transmit cache
+  transmit_cache_ = {};
   holoscan_postprocess_context_.reset();
 }
 
@@ -277,7 +279,7 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
     auto processed_dims_map = holoscan_postprocess_context_->get_processed_data_dims();
 
     if (processed_data_map.size() != 0) {
-      // Transmit output buffers via a single GXF transmitter
+      // Transmit output buffers via a single GXF transmitter.
       stat = holoscan::utils::transmit_data_per_model(cont,
                                                       processed_map_.get().get_map(),
                                                       processed_data_map,
@@ -288,7 +290,8 @@ void InferenceProcessorOp::compute(InputContext& op_input, OutputContext& op_out
                                                       transmit_on_cuda_.get(),
                                                       allocator.value(),
                                                       module_,
-                                                      cuda_stream);
+                                                      cuda_stream,
+                                                      transmit_cache_);
       if (stat != GXF_SUCCESS) {
         HoloInfer::report_error(module_, "Tick, Data Transmission");
       }

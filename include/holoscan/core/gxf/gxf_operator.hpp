@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,11 +25,11 @@
 #include <string>
 #include <utility>
 
+#include <gxf/core/handle.hpp>
+#include <gxf/std/codelet.hpp>
 #include "../executors/gxf/gxf_parameter_adaptor.hpp"
 #include "../operator.hpp"
 #include "./gxf_utils.hpp"
-#include "gxf/core/handle.hpp"
-#include "gxf/std/codelet.hpp"
 
 namespace holoscan::ops {
 

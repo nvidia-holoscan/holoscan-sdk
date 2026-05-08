@@ -30,19 +30,19 @@
 #include <utility>
 #include <vector>
 
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/codec_registry.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/operators/holoviz/holoviz.hpp>
+#include <holoscan/profiler/profiler.hpp>
 #include "../gxf/entity.hpp"
 #include "core.hpp"
 #include "emitter_receiver_registry.hpp"
 #include "emitter_receivers.hpp"
-#include "gxf/std/tensor.hpp"
 #include "holoinfer_activation_spec.hpp"
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/codec_registry.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
-#include "holoscan/profiler/profiler.hpp"
 #include "io_context_pydoc.hpp"
 #include "operator.hpp"  // for PyOperator
 #include "tensor.hpp"    // for PyTensor

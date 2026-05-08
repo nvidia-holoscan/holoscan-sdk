@@ -22,7 +22,7 @@
 #include <memory>
 #include <utility>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "../cuda/convert.hpp"
 #include "format_util.hpp"

@@ -15,22 +15,22 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/format_converter/format_converter.hpp"
+#include <holoscan/operators/format_converter/format_converter.hpp>
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "gxf/std/tensor.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace {
 bool has_c_ordered_memory_layout(const nvidia::gxf::Tensor& in_tensor_gxf, int rank,

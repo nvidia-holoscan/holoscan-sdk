@@ -35,73 +35,31 @@ add_custom_target(holoscan-python-tests
 add_dependencies(holoscan-python holoscan-python-tests)
 
 if(HOLOSCAN_BUILD_TESTS)
-  add_test(NAME python-api-unit-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/unit -v --durations=0
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-  set_tests_properties(python-api-unit-tests PROPERTIES
-                       ENVIRONMENT "PYTHONUNBUFFERED=1")
+  include(HoloscanPytestAddTests)
 
-  add_test(NAME python-api-system-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system -v --durations=0 -k "not distributed" --run-realtime
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-  set_tests_properties(python-api-system-tests PROPERTIES
-                       ENVIRONMENT "PYTHONUNBUFFERED=1"
-                       TIMEOUT 1000)
-
-  add_test(NAME python-api-system-distributed-ebs-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-
-  # rerun distributed tests but with the older MultiThreadScheduler
-  # (omit UCX object serialization tests on this second run to keep overall time down)
-  add_test(NAME python-api-system-distributed-mts-tests
-    COMMAND ${PYTHON_EXECUTABLE} -m pytest ${CMAKE_PYTHON_WORKING_DIR}/tests/system/distributed -v --durations=0 -k "not ucx"
-    # either have to run from this working directory or set PYTHONPATH
-    WORKING_DIRECTORY ${CMAKE_PYTHON_WORKING_DIR}
-  )
-
-  # Tracking any fatal error reported by the application tests
-  set_tests_properties(python-api-system-tests PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
-
-  set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
-
-  set_tests_properties(python-api-system-distributed-mts-tests PROPERTIES
-                       FAIL_REGULAR_EXPRESSION "Fatal Python error")
-
-# set environment variables used by distributed applications in the tests
-if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-  set(CMAKE_DISTRIBUTED_TEST_FLAGS
+  # Set environment variables used by distributed applications in the tests
+  if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+    set(CMAKE_DISTRIBUTED_TEST_FLAGS
 "\
 HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=6000\
 "
-  )
-else()
-  set(CMAKE_DISTRIBUTED_TEST_FLAGS
+    )
+  else()
+    set(CMAKE_DISTRIBUTED_TEST_FLAGS
 "\
 HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=3000\
 "
-  )
-endif()
+    )
+  endif()
 
-  set_tests_properties(python-api-system-distributed-ebs-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based PYTHONUNBUFFERED=1"
-  )
-  # repeat tests for older MultiThreadScheduler (omitting UCX serialization tests to save time)
-  set_tests_properties(python-api-system-distributed-mts-tests PROPERTIES ENVIRONMENT
-    "${CMAKE_DISTRIBUTED_TEST_FLAGS} HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread PYTHONUNBUFFERED=1"
-  )
+  # Register individual pytest files as separate CTest entries
+  add_subdirectory(tests/unit)
+  add_subdirectory(tests/system)
+  add_subdirectory(tests/system/distributed)
 
   # tracing tests
   # Holoscan SDK tracing is not yet fully implemented for Python 3.12 and above.

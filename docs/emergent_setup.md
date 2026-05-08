@@ -1,9 +1,11 @@
 (emergent-vision-tech)=
+
 # Emergent Vision Technologies (EVT)
 
 Thanks to a collaboration with [Emergent Vision Technologies](https://emergentvisiontec.com/), the Holoscan SDK now supports EVT high-speed cameras on NVIDIA Developer Kits equipped with a [ConnectX NIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/) using the [Rivermax SDK](https://developer.nvidia.com/networking/rivermax).
 
 (emergent-hw-install)=
+
 ## Installing EVT Hardware
 
 The EVT cameras can be connected to NVIDIA Developer Kits through a [Mellanox ConnectX SmartNIC](https://www.nvidia.com/en-us/networking/ethernet-adapters/), with the most simple connection method being a single cable between a camera and the devkit.
@@ -27,6 +29,7 @@ the lens can be bought from any [online](https://www.bhphotovideo.com/c/search?N
 :::
 
 (emergent-sw-install)=
+
 ## Installing EVT Software
 
 The Emergent SDK needs to be installed in order to compile and run the Clara
@@ -47,6 +50,7 @@ Ensure the [ConnectX is properly configured](./set_up_gpudirect_rdma.md#enabling
 :::
 
 (testing-emergent-camera)=
+
 ## Testing the EVT Camera
 
 To test if the EVT camera and SDK was installed correctly, run the `eCapture`
@@ -55,34 +59,38 @@ file is under `/opt/mellanox/rivermax/rivermax.lic`, then follow the instruction
 under the eCapture section of EVT [Camera User's Manual](https://emergentvisiontec.com/resources/?tab=umg).
 
 (emergent-troubleshooting)=
+
 ## Troubleshooting
 
 1. **Problem:** The application fails to find the EVT camera.
 
 >**Solution:**
+>
 >- Make sure that the MLNX ConnectX SmartNIC is configured with the correct IP address. Follow
->  section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic)
+> section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic)
 
-2. **Problem:** The application fails to open the EVT camera.
+1. **Problem:** The application fails to open the EVT camera.
 
 >**Solutions:**
+>
 >- Make sure that the application was run with `sudo` privileges.
 >- Make sure a valid Rivermax license file is located at `/opt/mellanox/rivermax/rivermax.lic`.
 
-3. **Problem:** Fail to find `eCapture` application in the home window.
+1. **Problem:** Fail to find `eCapture` application in the home window.
 
 >**Solution:**
+>
 >- Open the terminal and find it under `/opt/EVT/eCapture`. The applications needs to
 >be run with `sudo` privileges.
 
-4. **Problem:** The `eCapture` application fails to connect to the EVT camera with
+1. **Problem:** The `eCapture` application fails to connect to the EVT camera with
 error message "GVCP ack error".
 
 >**Solutions:**
 > It could be an issue with the HR12 power connection to the camera. Disconnect the
 > HR12 power connector from the camera and try reconnecting it.
 
-5. **Problem:** The IP address of the Emergent camera is reset even after setting up with the above steps.
+1. **Problem:** The IP address of the Emergent camera is reset even after setting up with the above steps.
 
 >**Solutions:**
 > Check whether the NIC settings in Ubuntu is set to "Connect automatically". Go to `Settings`->`Network`->`NIC for the Camera` and then unselect "Connect automatically" and in the IPv6 tab, select `Disable`.

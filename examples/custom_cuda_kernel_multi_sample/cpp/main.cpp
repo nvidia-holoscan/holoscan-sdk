@@ -69,8 +69,8 @@ class App : public holoscan::Application {
     if (enable_green_context_) {
       // Create a global CUDA Green context pool
       // Use the default min_sm_count=2, create partitions with 3 green contexts
-      std::vector<uint32_t> partitions(
-        kGreenContextPartitions.begin(), kGreenContextPartitions.end());
+      std::vector<uint32_t> partitions(kGreenContextPartitions.begin(),
+                                       kGreenContextPartitions.end());
       auto cuda_green_context_pool = make_resource<CudaGreenContextPool>(
           "cuda_green_context_pool", 0, 0, partitions.size(), partitions);
       auto cuda_green_context1 =
@@ -163,8 +163,7 @@ class App : public holoscan::Application {
 
 constexpr int kSkipReturnCode = 77;
 constexpr int kMinCudaDriverVersion = 12040;
-constexpr const char* kHsdkFaqUrl =
-    "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
+constexpr const char* kHsdkFaqUrl = "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
 
 // Gets the current CUDA Driver API, such as "12040" for 12.4
 static std::optional<int> detect_cuda_driver_version() {
@@ -248,8 +247,8 @@ int main(int argc, char** argv) {
     auto version = detect_cuda_driver_version();
     std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
               << kMinCudaDriverVersion << ", detected: "
-              << (version.has_value() ? std::to_string(version.value()) : "unknown")
-              << "). See " << kHsdkFaqUrl << std::endl;
+              << (version.has_value() ? std::to_string(version.value()) : "unknown") << "). See "
+              << kHsdkFaqUrl << std::endl;
     return kSkipReturnCode;
   }
 

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/application.hpp"
+#include <holoscan/core/application.hpp>
 
 #include <sys/resource.h>  // for getrlimit (stack size check)
 #include <ucs/config/global_opts.h>
@@ -36,24 +36,24 @@
 #include <utility>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
+#include <holoscan/core/app_driver.hpp>
+#include <holoscan/core/app_worker.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/dataflow_tracker.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resources/gxf/manual_clock.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
+#include <holoscan/core/resources/gxf/synthetic_clock.hpp>
+#include <holoscan/core/schedulers/gxf/event_based_scheduler.hpp>
+#include <holoscan/core/schedulers/gxf/greedy_scheduler.hpp>
+#include <holoscan/core/schedulers/gxf/multithread_scheduler.hpp>
 #include "./distributed/app_driver/client.hpp"
-#include "holoscan/core/app_driver.hpp"
-#include "holoscan/core/app_worker.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/dataflow_tracker.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resources/gxf/manual_clock.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
-#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
-#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
-#include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
-#include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
 
 namespace CLI {
 ////////////////////////////////////////////////////////////////////////////////////////////////////

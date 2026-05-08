@@ -35,6 +35,8 @@ from holoscan.conditions import (
     MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
     PeriodicConditionPolicy,
+    PublisherAvailableCondition,
+    SubscriberAvailableCondition,
 )
 from holoscan.core import Application, ConditionBase, ConditionType, Operator, SchedulingStatusType
 from holoscan.gxf import Entity, GXFCondition
@@ -184,6 +186,76 @@ args:
 
     def test_positional_initialization(self, app):
         DownstreamMessageAffordableCondition(app, 4, "out", "affordable")
+
+
+class TestPublisherAvailableCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "publisher_available"
+        cond = PublisherAvailableCondition(
+            fragment=app,
+            name=name,
+            min_publisher_count=2,
+            receiver="in",
+            require_pubsub_connector=False,
+            poll_period_ms=250,
+            latch_ready=True,
+        )
+        assert isinstance(cond, ConditionBase)
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  - name: min_publisher_count
+    type: uint64_t
+    value: 2
+""" in repr(cond)
+
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        PublisherAvailableCondition(app)
+
+    def test_positional_initialization(self, app):
+        PublisherAvailableCondition(app, 2, "in", False, 250, True, "publisher_available")
+
+
+class TestSubscriberAvailableCondition:
+    def test_kwarg_based_initialization(self, app, capfd):
+        name = "subscriber_available"
+        cond = SubscriberAvailableCondition(
+            fragment=app,
+            name=name,
+            min_subscriber_count=2,
+            transmitter="out",
+            require_pubsub_connector=False,
+            poll_period_ms=250,
+            stabilization_ms=50,
+            latch_ready=True,
+            ready_on_shutdown=True,
+        )
+        assert isinstance(cond, ConditionBase)
+
+        assert f"""
+name: {name}
+fragment: ""
+args:
+  - name: min_subscriber_count
+    type: uint64_t
+    value: 2
+""" in repr(cond)
+
+        captured = capfd.readouterr()
+        assert "error" not in captured.err
+        assert "warning" not in captured.err
+
+    def test_default_initialization(self, app):
+        SubscriberAvailableCondition(app)
+
+    def test_positional_initialization(self, app):
+        SubscriberAvailableCondition(app, 2, "out", False, 250, 50, True, True, "subscriber")
 
 
 class TestMemoryAvailableCondition:

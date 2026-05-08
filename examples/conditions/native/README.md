@@ -10,6 +10,7 @@ This example demonstrates how to define and use a native `Holoscan::Condition` (
 ## Application Description: ping_periodic_native
 
 This example has two operators involved:
+
   1. a transmitter, 'tx', that transmits a monotonically increasing integer value on port `out`. This operator is configured to be executed 5 times and each subsequent message is sent only after a period of 200 milliseconds has elapsed.
   2. a receiver, 'rx', that prints the received values to the terminal.
 
@@ -30,10 +31,13 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, for the `ping_periodic_native` app run:
+
 ```bash
 ./examples/conditions/native/cpp/ping_periodic_native
 ```
+
 or for the `message_available_native` app run:
+
 ```bash
 ./examples/conditions/native/cpp/message_available_native
 ```
@@ -45,10 +49,13 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Then, run:
 
 Then, for the `ping_periodic_native` app run:
+
 ```bash
 python ./examples/conditions/native/python/ping_periodic_native.py
 ```
+
 or for the `message_available_native` app run:
+
 ```bash
 python ./examples/conditions/native/python/message_available_native.py
 ```

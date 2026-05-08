@@ -728,6 +728,101 @@ index 86d234a1..426eca99 100644
 +    DESTINATION tools
 +    FILES ${HOLOLINK_TOOLS_FILES}
 +)
+diff --git a/src/hololink/common/cuda_helper.cpp b/src/hololink/common/cuda_helper.cpp
+index fbcc7ad5..a97d25a3 100644
+--- a/src/hololink/common/cuda_helper.cpp
++++ b/src/hololink/common/cuda_helper.cpp
+@@ -38,6 +38,29 @@
+ 
+ namespace hololink::common {
+ 
++std::string current_device_sm_arch()
++{
++    CUdevice device;
++    CudaCheck(cuCtxGetDevice(&device));
++    int major = 0;
++    int minor = 0;
++    CudaCheck(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
++    CudaCheck(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
++    std::stringstream buf;
++    buf << "sm_" << major << minor;
++    return buf.str();
++}
++
++static bool has_arch_option(const std::vector<std::string>& options)
++{
++    for (const auto& option : options) {
++        if (option.find("--gpu-architecture=") == 0 || option.find("-arch=") == 0) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
+     const std::vector<std::string>& functions, const std::vector<std::string>& options)
+ {
+@@ -48,7 +71,16 @@ CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
+         0, // numHeaders
+         NULL, // headers
+         NULL)); // includeNames
++    // NVRTC must target a real SM (sm_<m><n>) to emit CUBIN. We load CUBIN via
++    // cuModuleLoadDataEx below to bypass the driver's PTX->SASS JIT, which is
++    // rejected on R580.00 when the NVRTC toolchain is newer than the driver
++    // (CUDA_ERROR_UNSUPPORTED_PTX_VERSION). See NVBugs 6110136, 6059987.
++    std::string arch_option;
+     std::vector<const char*> compile_options;
++    if (!has_arch_option(options)) {
++        arch_option = "--gpu-architecture=" + current_device_sm_arch();
++        compile_options.push_back(arch_option.c_str());
++    }
+     for (auto&& option : options) {
+         compile_options.push_back(option.c_str());
+     }
+@@ -64,16 +96,16 @@ CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
+         buf << "Failed to compile: " << log.get();
+         throw std::runtime_error(buf.str().c_str());
+     }
+-    // Obtain PTX from the program.
+-    size_t ptxSize;
+-    NvRTCCheck(nvrtcGetPTXSize(prog, &ptxSize));
+-    std::unique_ptr<char[]> ptx(new char[ptxSize]);
+-    NvRTCCheck(nvrtcGetPTX(prog, ptx.get()));
++    // Obtain CUBIN from the program (real-arch target required, set above).
++    size_t cubinSize;
++    NvRTCCheck(nvrtcGetCUBINSize(prog, &cubinSize));
++    std::unique_ptr<char[]> cubin(new char[cubinSize]);
++    NvRTCCheck(nvrtcGetCUBIN(prog, cubin.get()));
+     // Destroy the program.
+     NvRTCCheck(nvrtcDestroyProgram(&prog));
+ 
+-    // Load the generated PTX and get a handle to the kernels
+-    CudaCheck(cuModuleLoadDataEx(&module_, ptx.get(), 0, 0, 0));
++    // Load the generated CUBIN and get a handle to the kernels.
++    CudaCheck(cuModuleLoadDataEx(&module_, cubin.get(), 0, 0, 0));
+     for (auto&& function : functions) {
+         LaunchParams launch_params;
+         CudaCheck(cuModuleGetFunction(&launch_params.function_, module_, function.c_str()));
+diff --git a/src/hololink/common/cuda_helper.hpp b/src/hololink/common/cuda_helper.hpp
+index 734e8b12..c5db8933 100644
+--- a/src/hololink/common/cuda_helper.hpp
++++ b/src/hololink/common/cuda_helper.hpp
+@@ -41,6 +41,15 @@ struct fmt::formatter<CUresult> : fmt::formatter<int> {
+ 
+ namespace hololink::common {
+ 
++/**
++ * Returns the compute-capability arch string for the device attached to the
++ * current CUDA context, e.g. "sm_90", "sm_100", "sm_110". Used to target
++ * NVRTC CUBIN emission at a specific SM so we bypass the driver's PTX JIT
++ * (required on platforms like R580.00 where PTX from newer NVRTC toolchains
++ * is rejected with CUDA_ERROR_UNSUPPORTED_PTX_VERSION).
++ */
++std::string current_device_sm_arch();
++
+ /**
+  * CUDA driver API error check helper
+  */
 diff --git a/src/hololink/core/CMakeLists.txt b/src/hololink/core/CMakeLists.txt
 index 434ff049..d8a9e898 100644
 --- a/src/hololink/core/CMakeLists.txt
@@ -753,6 +848,82 @@ index ce744add..e8176ba6 100644
      # this is for building emulator-only
      include(../../../cmake/hololink_deps/dlpack.cmake)
  
+diff --git a/src/hololink/expr_eval/expr_eval.cu b/src/hololink/expr_eval/expr_eval.cu
+index 1ed94095..3ff34126 100644
+--- a/src/hololink/expr_eval/expr_eval.cu
++++ b/src/hololink/expr_eval/expr_eval.cu
+@@ -134,8 +134,12 @@ static void log_and_throw(const std::string& msg) {
+   throw std::runtime_error(msg);
+ }
+ 
+-// Parallel Thread Execution - a Cuda compilation result.
+-using CudaPtx = std::string;
++// NVRTC compilation artifact (CUBIN - driver-ready SASS). Stored as a byte
++// buffer in a std::string for convenience. We emit CUBIN rather than PTX to
++// bypass the driver's PTX->SASS JIT, which is rejected on R580.00 when the
++// NVRTC toolchain is newer than the driver (CUDA_ERROR_UNSUPPORTED_PTX_VERSION).
++// See NVBugs 6110136, 6059987.
++using CudaBinary = std::string;
+ 
+ // A wrapper class for nvrtcProgram
+ class CudaProgram {
+@@ -178,13 +182,14 @@ public:
+     return log;
+   }
+ 
+-  // Get the PTX (The compilation artifact)
+-  CudaPtx get_ptx() const {
+-    size_t ptx_size;
+-    NVRTC_CHECK(nvrtcGetPTXSize(program_, &ptx_size));
+-    CudaPtx ptx(ptx_size, '\0');
+-    NVRTC_CHECK(nvrtcGetPTX(program_, ptx.data()));
+-    return ptx;
++  // Get the CUBIN (the compilation artifact - real-arch SASS, loadable via
++  // cuModuleLoadDataEx without driver-side PTX JIT).
++  CudaBinary get_cubin() const {
++    size_t cubin_size;
++    NVRTC_CHECK(nvrtcGetCUBINSize(program_, &cubin_size));
++    CudaBinary cubin(cubin_size, '\0');
++    NVRTC_CHECK(nvrtcGetCUBIN(program_, cubin.data()));
++    return cubin;
+   }
+ 
+ private:
+@@ -197,8 +202,8 @@ private:
+ class CudaModule {
+ public:
+   CudaModule() = default;
+-  CudaModule(const CudaPtx& ptx) {
+-    CudaCheck(cuModuleLoadDataEx(&module_, ptx.data(), 0, nullptr, nullptr));
++  CudaModule(const CudaBinary& cubin) {
++    CudaCheck(cuModuleLoadDataEx(&module_, cubin.data(), 0, nullptr, nullptr));
+   }
+ 
+   CudaModule(CudaModule&) = delete;
+@@ -406,9 +411,13 @@ extern "C" __global__ void )" << cuda_kernel_name << R"((float* output, int coun
+   HSB_LOG_DEBUG("Expression Evaluator Cuda code:\n{}", cuda_code);
+   CudaProgram cuda_program(cuda_code);
+ 
+-  // Compile
++  // Compile. NVRTC must target a real SM (sm_<m><n>) to emit CUBIN; see
++  // CudaBinary comment above. Query the active context's device so we match
++  // the GPU at runtime rather than a build-time assumption.
++  const std::string arch_option = "--gpu-architecture=" + hololink::common::current_device_sm_arch();
+   std::vector<std::string> include_paths;
+   std::vector<const char*> options;
++  options.push_back(arch_option.c_str());
+   std::stringstream ss_paths(cuda_toolkit_include_paths_);
+   std::string token;
+ 
+@@ -421,7 +430,7 @@ extern "C" __global__ void )" << cuda_kernel_name << R"((float* output, int coun
+   cuda_program.compile(options);
+ 
+   // Create a Cuda module and get the Cuda Function
+-  CudaModule cuda_module(cuda_program.get_ptx());
++  CudaModule cuda_module(cuda_program.get_cubin());
+   CUfunction cuda_function(cuda_module.get_function(cuda_kernel_name));
+   
+   // Create an Expression object and return it
 diff --git a/src/hololink/operators/iq_dec/iq_dec_op.cpp b/src/hololink/operators/iq_dec/iq_dec_op.cpp
 index 96929ad8..60ee5419 100644
 --- a/src/hololink/operators/iq_dec/iq_dec_op.cpp

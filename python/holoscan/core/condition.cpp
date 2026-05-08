@@ -22,14 +22,14 @@
 #include <string>
 #include <utility>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "component.hpp"
 #include "condition_pydoc.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/subgraph.hpp"
 #include "kwarg_handling.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)

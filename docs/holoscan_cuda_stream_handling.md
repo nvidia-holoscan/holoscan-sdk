@@ -92,6 +92,7 @@ Since `compute()` can return while GPU work is still in progress, timing tools l
 This example illustrates the intended stream API usage patterns with advice on how to maximize parallelism while avoiding race conditions. It also explains why `receive_cuda_stream` returns the operator's own internal stream (rather than the upstream stream).
 
 Consider a pipeline with parallel branches that converge:
+
 - **Operator A** (root): has one output port "out" connected to both B and D
 - **Operator B** (branch 1): has input port "in" and output port "out"
 - **Operator D** (branch 2): has input port "in" and output port "out"
@@ -152,6 +153,7 @@ def compute(self, op_input, op_output, context):
 `````
 
 **What happens:**
+
 1. `allocate_cuda_stream("stream_A")` allocates a dedicated stream for operator A
 2. GPU kernel is launched asynchronously on `stream_A`; control returns to CPU immediately
 3. `set_cuda_stream()` configures the output port to include `stream_A`'s ID as a component in the message
@@ -162,6 +164,7 @@ def compute(self, op_input, op_output, context):
 **Zero-Copy and Race Conditions**
 
 When a `Tensor` is emitted, it is transmitted as a `shared_ptr<Tensor>`; this is a **zero-copy** operation. Both operators B and D receive pointers to the **same underlying memory**. If either B or D modifies the input tensor in-place, it will create a **race condition** with the other operator. To avoid this:
+
 - Treat input tensors as **read-only** when the same data is sent to multiple downstream operators
 - If modification is needed, allocate new output tensors rather than modifying inputs in-place
 :::
@@ -209,6 +212,7 @@ def compute(self, op_input, op_output, context):
 `````
 
 **What happens:**
+
 1. `receive()` receives the tensor and internally notes that `stream_A`'s ID was attached
 2. `receive_cuda_stream("in")` performs several operations:
    - Calls `cudaEventRecord(event, stream_A)`: schedules an event to fire when `stream_A`'s work completes
@@ -241,6 +245,7 @@ By using independent streams, the GPU scheduler can potentially execute B's and 
 **Parallel Execution is Not Guaranteed**
 
 Using separate CUDA streams *enables* parallel execution but does not *guarantee* it. If one kernel fully occupies the GPU's resources (e.g., uses all available SMs or saturates memory bandwidth), the other kernel will be delayed until resources become available. The actual degree of parallelism depends on:
+
 - Kernel resource requirements (registers, shared memory, thread blocks)
 - GPU hardware capabilities (number of SMs, memory bandwidth)
 - Current GPU utilization from other work
@@ -298,6 +303,7 @@ def compute(self, op_input, op_output, context):
 `````
 
 **What happens:**
+
 1. Both `receive()` calls capture their respective upstream stream IDs (`stream_B` and `stream_D`)
 2. First `receive_cuda_stream("in_b")` allocates `stream_C` and synchronizes `stream_B` to it
 3. Second `receive_cuda_stream("in_d")` reuses `stream_C` and synchronizes `stream_D` to it
@@ -321,6 +327,7 @@ GPU:    ===[stream_A: kernel]========================================>
 ```
 
 **Key observations:**
+
 - All CPU-side `compute()` calls return quickly without waiting for GPU work
 - GPU work is properly ordered via event-based dependencies (no CPU blocking)
 - B and D can run in parallel on the GPU since they use independent streams
@@ -342,7 +349,8 @@ The `CudaStreamPool` class ({cpp:class}`C++ <holoscan::CudaStreamPool>`/{py:clas
 For advanced use cases requiring guaranteed GPU resource isolation, the `CudaGreenContextPool` ({cpp:class}`C++ <holoscan::CudaGreenContextPool>`/{py:class}`Python <holoscan.resources.CudaGreenContextPool>`) and `CudaGreenContext` ({cpp:class}`C++ <holoscan::CudaGreenContext>`/{py:class}`Python <holoscan.resources.CudaGreenContext>`) classes wrap CUDA's [Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) feature, allowing partitioning of GPU SMs into isolated contexts for different operators.
 
 :::{note}
-There is a legacy `CudaStreamHandler` utility class (provided via `#include "holoscan/utils/cuda_stream_handler.hpp"`) that made it possible to write a C++ operator that could make use of a `CudaStreamPool`. This class had some limitations:
+There is a legacy `CudaStreamHandler` utility class (provided via `#include <holoscan/utils/cuda_stream_handler.hpp>`) that made it possible to write a C++ operator that could make use of a `CudaStreamPool`. This class had some limitations:
+
 - It required receiving messages as type `holoscan::gxf::Entity`.
 - It required using `nvidia::gxf::Entity` and `nvidia::gxf::Handle` methods from the underlying GXF library.
 - It was not available for native Python operators.
@@ -635,7 +643,6 @@ The `receive_cuda_streams` ({cpp:func}`C++ <holoscan::InputContext::receive_cuda
 
 Note that as for `receive_cuda_stream`, it is important that any `receive_cuda_streams` call for a port is **after** the corresponding `receive` call for that same port. An example is given below
 
-
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
@@ -719,7 +726,6 @@ The `synchronize_streams` ({cpp:func}`C++ <holoscan::ExecutionContext::synchroni
 
 The `device_from_stream` ({cpp:func}`C++ <holoscan::ExecutionContext::device_from_stream>`/{py:func}`Python <holoscan.core.ExecutionContext.device_from_stream>`) method returns the CUDA device ID for a given stream. This method only works with streams managed by Holoscan SDK (those returned by `receive_cuda_stream`, `receive_cuda_streams`, or `allocate_cuda_stream`).
 
-
 ### `set_cuda_stream` (OutputContext)
 
 The `set_cuda_stream` ({cpp:func}`C++ <holoscan::OutputContext::set_cuda_stream>`/{py:func}`Python <holoscan.core.OutputContext.set_cuda_stream>`) method configures a specific stream to be emitted on an output port. Not needed when using `receive_cuda_stream` (which auto-configures output ports), but required when using `allocate_cuda_stream` or manual stream handling. See the {ref}`allocate_cuda_stream example <execution-context-stream-methods>` above.
@@ -737,6 +743,7 @@ By default, `receive_cuda_stream` synchronizes streams **inside** `compute()`. T
 `CudaStreamCondition` ({cpp:class}`C++ <holoscan::CudaStreamCondition>`/{py:class}`Python <holoscan.conditions.CudaStreamCondition>`) provides this capability. When a message arrives, it registers host callbacks (via `cudaLaunchHostFunc`) on the input streams. The operator is only marked READY after all callbacks fire, indicating GPU work is complete.
 
 **Features:**
+
 - **Multiple input ports**: Monitor multiple ports simultaneously, including multi-receiver ports (`IOSpec::kAnySize`)
 - **All messages in queue**: Checks streams on all messages, not just the first
 

@@ -9,18 +9,21 @@ This example demonstrates how to implement conditional routing using Holoscan SD
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Dynamic Flow Control**: Using dynamic flows to route data based on conditions
 2. **Conditional Routing**: Directing data to different operators based on values
 3. **Multiple Receivers**: Handling multiple downstream operators
 4. **Controlled Execution**: Using CountCondition to limit iterations
 
 The key aspects of this application include:
+
 - Use of dynamic flows for conditional routing
 - Value-based decision making for data flow
 - Multiple receiver operator handling
 - Controlled number of iterations
 
 The application demonstrates:
+
 - How to implement conditional routing patterns
 - How to use dynamic flows for value-based routing
 - How to manage multiple downstream operators
@@ -31,6 +34,7 @@ The application demonstrates:
 ## C++ API
 
 The application consists of several operators:
+
 1. `PingTx`: Transmits sequential integer values
 2. `PingRx`: Receives and displays the values (used for both node2 and node3)
 
@@ -45,6 +49,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/conditional_routing/cpp/conditional_routing_execution
 ```
@@ -52,6 +57,7 @@ Then, run:
 ## Python API
 
 The application demonstrates the same flow control patterns using the Python API. It consists of several operators:
+
 1. `PingTx`: Transmits sequential integer values
 2. `PingRx`: Receives and displays the values (used for both node2 and node3)
 
@@ -66,6 +72,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/conditional_routing/python/conditional_routing_execution.py
 ```

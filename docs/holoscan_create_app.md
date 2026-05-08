@@ -3,6 +3,7 @@
 # Creating an Application
 
 In this section, we'll address:
+
 - How to {ref}`define an Application class<defining-an-application-class>`.
 - How to {ref}`configure an Application<configuring-an-application>`.
 - How to {ref}`define different types of workflows<application-workflows>`.
@@ -135,6 +136,7 @@ An application can be configured at different levels:
 The sections below will describe how to configure each of them, starting with a native support for YAML-based configuration for convenience.
 
 (yaml-config-support)=
+
 ### YAML configuration support
 
 Holoscan supports loading arbitrary parameters from a YAML configuration file at runtime, making it convenient to configure each item listed above, or other custom parameters you wish to add on top of the existing API. For C++ applications, it also provides the ability to change the behavior of your application without needing to recompile it.
@@ -303,6 +305,7 @@ Operators are defined in the `compose()` method of your application. They are no
 Operators have three type of fields which can be configured: parameters, conditions, and resources.
 
 (configuring-app-operator-parameters)=
+
 #### Configuring operator parameters
 
 Operators could have parameters defined in their `setup` method to better control their behavior (see details when [creating your own operators](./holoscan_create_operator.md)). The snippet below would be the implementation of this method for a minimal operator named `MyOp`, that takes a string and a boolean as parameters; we'll ignore any extra details for the sake of this example:
@@ -421,6 +424,7 @@ def compose(self):
 ````
 
 (configuring-app-operator-conditions)=
+
 #### Configuring operator conditions
 
 By default, operators with no input ports will continuously run, while operators with input ports will run as long as they receive inputs (as they're configured with the [`MessageAvailableCondition`](./components/conditions.md#messageavailablecondition)).
@@ -473,6 +477,7 @@ You'll need to specify a unique name for the conditions if there are multiple co
 :::
 
 (configuring-app-operator-resources)=
+
 #### Configuring operator resources
 
 Some [resources](./components/resources.md) can be passed to the operator's constructor, typically an [allocator](./components/resources.md#allocator) passed as a regular parameter.
@@ -510,7 +515,6 @@ def compose(self):
   auto my_op = MyOp(self, name="my_op", pool1=p1, pool2=p2)
 ```
 ````
-
 
 (configuring-app-operator-native-resources)=
 
@@ -653,7 +657,6 @@ where this native resource could have been created and passed positionally to `M
 
 There is a minimal example of native resource use in the [examples/native](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/native/) folder.
 
-
 (configuring-app-scheduler)=
 
 ### Configuring the scheduler
@@ -753,7 +756,29 @@ The `pin_cores` parameter for CPU core affinity is only supported with `EventBas
 See {ref}`Configuring worker thread pools<configuring-app-thread-pools>` below for details.
 :::
 
+:::{note}
+**Pinning the EventBasedScheduler dispatcher thread**
+
+The `EventBasedScheduler` also has a separate dispatcher thread in addition to its worker threads. That dispatcher thread can be pinned to a single CPU core by setting `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>` before launching the application. This setting is separate from the `pin_cores` parameter and only affects the dispatcher thread.
+
+You can optionally combine dispatcher CPU affinity with Linux real-time scheduling by setting:
+
+- `GXF_EBS_DISPATCHER_SCHED_POLICY` to `SCHED_FIFO` or `SCHED_RR`
+- `GXF_EBS_DISPATCHER_SCHED_PRIORITY` to a valid priority for the selected policy
+
+For example:
+
+```bash
+GXF_EBS_DISPATCHER_CPU_CORE=1 \
+GXF_EBS_DISPATCHER_SCHED_POLICY=SCHED_FIFO \
+GXF_EBS_DISPATCHER_SCHED_PRIORITY=99 \
+./my_app
+```
+
+:::
+
 (configuring-app-thread-pools)=
+
 ### Configuring worker thread pools
 
 Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal **default thread pool** with a number of worker threads determined by the `worker_thread_number` parameter. In some scenarios, it may be desirable for users to assign operators to specific **user-defined thread pools**.
@@ -763,6 +788,7 @@ Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previ
 The scheduler's `worker_thread_number` parameter creates a **default thread pool** with that many worker threads. Any operators not explicitly assigned to a user-defined thread pool will use this default pool. When you create user-defined thread pools via `make_thread_pool()`, these create **additional** worker threads beyond those in the default pool.
 
 For example:
+
 - Scheduler configured with `worker_thread_number=4` → **4 default threads**
 - User creates `make_thread_pool("pool1", 2)` → **2 additional threads**
 - User creates `make_thread_pool("pool2", 3)` → **3 additional threads**
@@ -859,6 +885,7 @@ CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `ad
 
 ````
 `````
+
 :::{note}
 It is not necessary to define user-defined thread pools for Holoscan applications. The scheduler automatically creates a default thread pool with `worker_thread_number` threads (as specified when configuring the scheduler). Any operators not explicitly assigned to a user-defined thread pool will use this default pool. User-defined thread pools provide explicit control over thread pinning and CPU affinity for specific operators.
 
@@ -877,6 +904,7 @@ There is also a related boolean parameter, `strict_thread_pinning` that can be p
 If a thread pool is configured by the single-thread `GreedyScheduler` is used a warning will be logged indicating that the user-defined thread pools would be ignored. Only `MultiThreadScheduler` and `EventBasedScheduler` can make use of the thread pools.
 
 (configuring-app-thread-pools-realtime)=
+
 #### Linux real-time scheduling with thread pools
 
 The `EventBasedScheduler` offers additional features to pin an operator to a dedicated worker thread scheduled by real-time scheduling policies supported in the Linux kernel. The configuration can be done by using the `add_realtime()` method (in contrast to the `add()` method) in `ThreadPool` to assign an operator with a real-time scheduling policy along with the parameters required for the selected scheduling policy.
@@ -905,6 +933,7 @@ For more detailed information about Linux kernel schedulers, refer to the [Ubunt
 Using real-time scheduling policies requires appropriate Linux kernel configuration and may require running `sudo sysctl -w kernel.sched_rt_runtime_us=-1` beforehand to disable the real-time runtime limit.
 
 **Container Requirements:**
+
 - **SCHED_DEADLINE**: Requires root privileges and `--cap-add=CAP_SYS_NICE` when running in a container
 - **SCHED_FIFO/SCHED_RR**: May require `--ulimit rtprio=99` when running in a container (can replace 99 with the highest value actually used for the `sched_priority` argument to `add_realtime()`)
 :::
@@ -975,11 +1004,13 @@ Here's an example of configuring operators to run with real-time policies:
 `````
 
 (configuring-app-runtime)=
+
 ### Configuring runtime properties
 
 As described [below](building-and-running-your-application), applications can run simply by executing the C++ or Python application manually on a given node, or by [packaging it](./holoscan_packager.md) in a [HAP container](./cli/hap.md). With the latter, runtime properties need to be configured: refer to the [App Runner Configuration](./cli/run_config.md) for details.
 
 (application-workflows)=
+
 ## Application Workflows
 
 :::{note}
@@ -1003,6 +1034,7 @@ The simplest form of a workflow would be a single operator.
 ```
 
 The graph above shows an **Operator** ({cpp:class}`C++ <holoscan::Operator>`/{py:class}`Python <holoscan.core.Operator>`) (named `MyOp`) that has neither inputs nor output ports.
+
 - Such an operator may accept input data from the outside (e.g., from a file) and produce output data (e.g., to a file) so that it acts as both the source and the sink operator.
 - Arguments to the operator (e.g., input/output file paths) can be passed as parameters as described in the {ref}`section above<configuring-an-application>`.
 
@@ -1064,7 +1096,6 @@ Here is an example workflow where the operators are connected linearly:
 In this example, **SourceOp** produces a message and passes it to **ProcessOp**. **ProcessOp** produces another message and passes it to **SinkOp**.
 
 We can connect two operators by calling the `add_flow()` method ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) in the `compose()` method.
-
 
 The `add_flow()` method ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) takes the source operator, the destination operator, and the optional port name pairs.
 The port name pair is used to connect the output port of the source operator to the input port of the destination operator.
@@ -1139,7 +1170,6 @@ You can design a complex workflow like below where some operators have multi-inp
     processor2->processor3 [label="image...image"]
     processor3->writer [label="seg_image...seg_image"]
 ```
-
 
 ````{tab-set-code}
 
@@ -1234,6 +1264,7 @@ A Subgraph ({cpp:class}`C++ <holoscan::Subgraph>`/{py:class}`Python <holoscan.co
 #### Features of Subgraphs
 
 Subgraphs enable:
+
 - **Reusable components**: Create a subgraph once and instantiate it multiple times within an application
 - **Encapsulation**: Hide internal complexity behind well-defined interface ports
 - **Modular design**: Organize complex applications into logical, maintainable components
@@ -1312,7 +1343,6 @@ class PingTxSubgraph(Subgraph):
 
 ````
 `````
-
 
 :::{note}
 Subgraphs are a convenience for graph composition but do not affect operator scheduling. At runtime, an application using subgraphs will behave exactly the same as one composed without them. Any `add_operator` and `add_flow` calls within a subgraph directly add nodes (with qualified names) and edges to the operator graph maintained by the Fragment passed to the subgraph constructor. It is this final, flattened fragment that the application runs.
@@ -1430,6 +1460,7 @@ The {py:func}`Fragment.make_subgraph<holoscan.core.Fragment.make_subgraph>` and 
 When a subgraph is instantiated, all operators within it are automatically assigned qualified names by prepending the instance name. This ensures uniqueness when the same subgraph class is used multiple times.
 
 For example, if `PingTxSubgraph` contains a `"transmitter"` operator:
+
 - Instance `"tx1"` creates operator `"tx1_transmitter"`
 - Instance `"tx2"` creates operator `"tx2_transmitter"`
 
@@ -1985,10 +2016,10 @@ As of Holoscan v3.0, the dynamic flow control feature is available, enabling ope
 
 Key features include:
 
-  - Implicit input/output execution ports for execution dependency control
-  - The Start operator concept (`start_op()` ({cpp:func}`C++ <holoscan::Fragment::start_op>`/{py:func}`Python <holoscan.core.Fragment.start_op>`)) for managing workflow entry points
-  - Dynamic flow modification using `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) and `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods
-  - Flow information management via the `FlowInfo` ({cpp:class}`C++ <holoscan::Operator::FlowInfo>`/{py:class}`Python <holoscan.core.FlowInfo>`) class
+- Implicit input/output execution ports for execution dependency control
+- The Start operator concept (`start_op()` ({cpp:func}`C++ <holoscan::Fragment::start_op>`/{py:func}`Python <holoscan.core.Fragment.start_op>`)) for managing workflow entry points
+- Dynamic flow modification using `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) and `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods
+- Flow information management via the `FlowInfo` ({cpp:class}`C++ <holoscan::Operator::FlowInfo>`/{py:class}`Python <holoscan.core.FlowInfo>`) class
 
 For details, please refer to the {ref}`Dynamic Flow Control <holoscan-dynamic-flow-control>` section of the user guide.
 
@@ -2194,6 +2225,7 @@ With this approach, the service can be instantiated and registered in Python, an
 **When pure Python services are acceptable**: If your application only uses Python operators to access the service, a pure Python implementation is sufficient.
 
 :::{seealso}
+
 - {cpp:func}`Fragment::register_service <holoscan::Fragment::register_service>` (C++) / {py:func}`Fragment.register_service <holoscan.core.Fragment.register_service>` (Python) for registration API details
 - [Fragment Service Examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/fragment_service) for complete working examples
 - [PoseTreeManager C++ class](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/pose_tree/pose_tree_manager.hpp) and its [Python binding](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/pose_tree/pose_tree.cpp) for a production example of a C++ service with multiple inheritance
@@ -2277,7 +2309,7 @@ As of Holoscan v2.3 (for C++) or v2.4 (for Python) it is possible to send metada
 
 ### Enabling application metadata
 
-As of Holoscan v3.0, the metadata feature is enabled by default (in older releases it had to be explicitly enabled). If the application author does not wish to use the metadata feature it will not hurt to leave the feature enabled. To avoid even the minor overhead of checking for metadata in received messages, the feature can be explicitly disabled as shown below. 
+As of Holoscan v3.0, the metadata feature is enabled by default (in older releases it had to be explicitly enabled). If the application author does not wish to use the metadata feature it will not hurt to leave the feature enabled. To avoid even the minor overhead of checking for metadata in received messages, the feature can be explicitly disabled as shown below.
 
 `````{tab-set}
 ````{tab-item} C++
@@ -2324,7 +2356,6 @@ Metadata is only populated from upstream messages when `receive()` is called. If
 ### Working With Metadata from Operator::compute
 
 Within the operator's {cpp:func}`~holoscan::Operator::compute` method, the {cpp:func}`~holoscan::Operator::metadata` method can be called to get a shared pointer to the {cpp:class}`~holoscan::MetadataDictionary` of the operator. The metadata dictionary provides a similar API to a `std::unordered_map` (C++) or `dict` (Python) where the keys are strings (`std::string` for C++) and the values can store any object type (via a C++ {cpp:type}`~holoscan::MetadataObject` holding a `std::any`).
-
 
 `````{tab-set}
 ````{tab-item} C++

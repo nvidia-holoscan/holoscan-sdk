@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -71,7 +71,7 @@ CudaService::CudaService(const CUuuid& device_uuid) : impl_(new Impl) {
     CUdevice device;
     CudaCheck(cuDeviceGet(&device, i));
     CUuuid uuid;
-    CudaCheck(cuDeviceGetUuid(&uuid, device));
+    CudaCheck(cuDeviceGetUuid_v2(&uuid, device));
     if (std::memcmp(uuid.bytes, device_uuid.bytes, sizeof(CUuuid)) == 0) {
       impl_->device_ = device;
       impl_->device_ordinal_ = i;

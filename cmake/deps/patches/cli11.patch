@@ -1,24 +1,24 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index bad2b00..eb31106 100644
+index 03968f4..6542d14 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -97,8 +97,7 @@ cmake_dependent_option(CLI11_BUILD_EXAMPLES_JSON "Build CLI11 json example" OFF
+@@ -84,9 +84,7 @@ cmake_dependent_option(CLI11_BUILD_EXAMPLES_JSON "Build CLI11 json example" OFF
+ 
  cmake_dependent_option(CLI11_SINGLE_FILE_TESTS "Duplicate all the tests for a single file build"
                         OFF "BUILD_TESTING;CLI11_SINGLE_FILE" OFF)
- 
+-
 -cmake_dependent_option(CLI11_INSTALL "Install the CLI11 folder to include during install process"
 -                       ON "CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME" OFF)
 +option(CLI11_INSTALL "Install the CLI11 folder to include during install process" ON)
  
  cmake_dependent_option(
    CLI11_FORCE_LIBCXX "Force clang to use libc++ instead of libstdc++ (Linux only)" OFF
-@@ -155,14 +154,16 @@ if(CLI11_INSTALL)
+@@ -181,14 +179,14 @@ if(CLI11_INSTALL)
  
    # Make version available in the install
    install(FILES "${PROJECT_BINARY_DIR}/CLI11ConfigVersion.cmake"
 -          DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/CLI11")
-+          DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CLI11"
-+          COMPONENT cli11)
++          DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CLI11")
  
    # Install the export target as a file
    install(
@@ -26,29 +26,7 @@ index bad2b00..eb31106 100644
      FILE CLI11Config.cmake
      NAMESPACE CLI11::
 -    DESTINATION "${CMAKE_INSTALL_DATADIR}/cmake/CLI11")
-+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CLI11"
-+    COMPONENT cli11)
++    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/CLI11")
  
    # Use find_package on the installed package
    export(
-diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
-index 9409b86..2fbbf2f 100644
---- a/src/CMakeLists.txt
-+++ b/src/CMakeLists.txt
-@@ -111,12 +111,13 @@ endif()
- if(CLI11_INSTALL)
- 
-   # Make an export target
--  install(TARGETS CLI11 EXPORT CLI11Targets)
-+  install(TARGETS CLI11 EXPORT CLI11Targets COMPONENT cli11)
-   if(NOT CLI11_SINGLE_FILE)
-     install(FILES ${CLI11_headers} ${CLI11_library_headers}
--            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/CLI")
-+            DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/CLI"
-+            COMPONENT cli11)
-     if(NOT CLI11_COMPILE)
--      install(FILES ${CLI11_impl_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/CLI/impl")
-+      install(FILES ${CLI11_impl_headers} DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/CLI/impl" COMPONENT cli11)
-     endif()
-   endif()
- endif()

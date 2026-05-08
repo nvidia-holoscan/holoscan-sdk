@@ -20,6 +20,7 @@
     holoscan.operators.FormatConverterOp
     holoscan.operators.GXFCodeletOp
     holoscan.operators.HolovizOp
+    holoscan.operators.RawImageProcessorOp
     holoscan.operators.InferenceOp
     holoscan.operators.InferenceProcessorOp
     holoscan.operators.PingRxOp
@@ -39,6 +40,7 @@ _OPERATOR_MODULES = {
     "format_converter": ["FormatConverterOp"],
     "gxf_codelet": ["GXFCodeletOp"],
     "holoviz": ["HolovizOp"],
+    "raw_image_processor": ["RawImageProcessorOp"],
     "inference": ["InferenceOp"],
     "inference_processor": ["InferenceProcessorOp"],
     "ping_rx": ["PingRxOp"],

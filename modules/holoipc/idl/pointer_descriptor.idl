@@ -1,0 +1,40 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use it except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+// DDS type for sharing device pointer metadata (wire format only).
+// handle: opaque bytes (e.g. CUDA IPC handle; size and format are backend-specific).
+// key: same identifier as ControlMessage.key; correlates this descriptor with ACQUIRED/RELEASED/ACK/NACK.
+
+module holoscan {
+  module ipc {
+
+    enum HandleType
+    {
+      CUDA_IPC   // CUDA IPC memory handle (cudaIpcMemHandle_t); handle size 64 bytes (value 0)
+    };
+
+    struct PointerDescriptor
+    {
+      string version;                // Protocol version (for forward compatibility if the protocol changes)
+      sequence<octet> key;
+      HandleType handle_type;        // How to interpret handle bytes (enables multiple backends)
+      sequence<octet> handle;        // Opaque handle bytes (size/format depend on handle_type)
+      string reply_to_topic_name;    // Topic where publisher receives ACQUIRED/RELEASED (subscriber sends reply here)
+    };
+
+  }; // module ipc
+}; // module holoscan

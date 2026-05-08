@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#include "holoscan/utils/operator_runner.hpp"
+#include <holoscan/utils/operator_runner.hpp>
 
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::ops {
 

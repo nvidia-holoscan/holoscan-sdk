@@ -426,3 +426,144 @@ def test_output_queue_policy(tx_queue_policy, capfd):
                 assert f"receiver 'rx' received value: {v}\n" in captured.out
             else:
                 assert f"receiver 'rx' received value: {v}\n" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Tests for queue policy propagation to ANY_SIZE (multi-receiver) ports
+# issue 6057656: IOSpec queue policy not applied to ANY_SIZE ports
+# ---------------------------------------------------------------------------
+
+
+class FastTxOp(Operator):
+    """Fast transmitter that bypasses DownstreamAffordableCondition.
+
+    ConditionType.NONE removes the default DownstreamAffordableCondition so messages
+    are always pushed regardless of the downstream queue state, saturating the receiver.
+    """
+
+    def __init__(self, fragment, *args, **kwargs):
+        self.index = 0
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        spec.output("out").condition(ConditionType.NONE)
+
+    def compute(self, op_input, op_output, context):
+        op_output.emit(self.index, "out")
+        self.index += 1
+
+
+class MultiReceiverQueuePolicyOp(Operator):
+    """Receiver with an ANY_SIZE multi-receiver port and optional queue policy.
+
+    When `policy` is IOSpec.QueuePolicy.POP, the fix under test propagates it to each
+    indexed 'receivers:N' sub-port so the queue silently discards the oldest entry
+    instead of logging 'Push failed'.
+
+    When `policy` is None (default), the behaviour is kFault and warnings ARE expected.
+    """
+
+    def __init__(self, fragment, *args, policy=None, **kwargs):
+        self.policy = policy
+        super().__init__(fragment, *args, **kwargs)
+
+    def setup(self, spec: OperatorSpec):
+        if self.policy is not None:
+            spec.input("receivers", size=IOSpec.ANY_SIZE, policy=self.policy)
+        else:
+            spec.input("receivers", size=IOSpec.ANY_SIZE)
+
+    def compute(self, op_input, op_output, context):
+        values = op_input.receive("receivers")
+        if values:
+            pass  # consume messages; we only care about warning presence
+
+
+class MultiReceiverQueuePolicyApp(Application):
+    """Two fast senders -> one multi-receiver sink.
+
+    tx1 runs under a PeriodicCondition (slow) and tx2 runs freely (fast), so the
+    'receivers:1' sub-queue attached to tx2 is rapidly saturated.
+    """
+
+    def __init__(self, *args, policy=None, count=30, **kwargs):
+        self.policy = policy
+        self.count = count
+        super().__init__(*args, **kwargs)
+
+    def compose(self):
+        # tx1 – slow sender (~5 Hz)
+        slow_period_ns = 200_000_000  # 200 ms
+        tx1 = FastTxOp(
+            self,
+            CountCondition(self, self.count),
+            PeriodicCondition(self, recess_period=slow_period_ns),
+            name="tx1",
+        )
+
+        # tx2 – fast sender (no periodic constraint)
+        tx2 = FastTxOp(
+            self,
+            CountCondition(self, self.count),
+            name="tx2",
+        )
+
+        rx = MultiReceiverQueuePolicyOp(self, policy=self.policy, name="rx")
+
+        self.add_flow(tx1, rx, {("out", "receivers")})
+        self.add_flow(tx2, rx, {("out", "receivers")})
+
+
+def test_multi_receiver_queue_policy_pop(capfd):
+    """With policy=POP the receiver silently discards older messages -- no 'Push failed' warnings.
+
+    This test is RED before the fix (issue 6057656) because the policy is not propagated
+    to the indexed sub-ports ('receivers:0', 'receivers:1').
+    """
+    app = MultiReceiverQueuePolicyApp(policy=IOSpec.QueuePolicy.POP, count=30)
+    app.scheduler(
+        EventBasedScheduler(
+            app,
+            worker_thread_number=4,
+            stop_on_deadlock=True,
+            stop_on_deadlock_timeout=5000,
+            max_duration_ms=15000,
+            name="ebs",
+        )
+    )
+    app.run()
+
+    captured = capfd.readouterr()
+
+    # With kPop the receiver silently discards older messages -- no 'Push failed' warnings.
+    assert "Push failed on receiver 'receivers:" not in captured.err, (
+        "Expected NO 'Push failed on receivers:N' warning when policy=POP, but found one.\n"
+        f"=== STDERR ===\n{captured.err}\n==============\n"
+    )
+
+
+def test_multi_receiver_queue_policy_default_warns(capfd):
+    """Without an explicit policy the default kFault behaviour produces 'Push failed' warnings.
+
+    This is a regression guard -- it must always be GREEN.
+    """
+    app = MultiReceiverQueuePolicyApp(policy=None, count=30)
+    app.scheduler(
+        EventBasedScheduler(
+            app,
+            worker_thread_number=4,
+            stop_on_deadlock=True,
+            stop_on_deadlock_timeout=5000,
+            max_duration_ms=15000,
+            name="ebs",
+        )
+    )
+    app.run()
+
+    captured = capfd.readouterr()
+
+    # With the default kFault policy, 'Push failed on receivers:N' warnings must appear.
+    assert "Push failed on receiver 'receivers:" in captured.err, (
+        "Expected at least one 'Push failed on receivers:N' warning with default policy (kFault).\n"
+        f"=== STDERR ===\n{captured.err}\n==============\n"
+    )

@@ -37,7 +37,6 @@ These conditions fall under various types as detailed below. Often, conditions a
 Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{py:mod}`Python <holoscan.conditions>`.
 :::
 
-
 ## Condition combination logic
 
 **By Default conditions are AND-combined**
@@ -45,7 +44,6 @@ Detailed APIs can be found here: {ref}`C++ <api/holoscan_cpp_api:conditions>`/{p
 An Operator can be associated with multiple conditions that define its execution behavior. By default, conditions are AND combined to describe the operator's current state.
 For an operator to be executed by the scheduler, all conditions must be in the `READY` state. Conversely, the operator is unscheduled whenever any of the scheduling terms reaches the `NEVER` state.
 The priority of various states during AND combine follows the order `NEVER`, `WAIT_EVENT`, `WAIT`, `WAIT_TIME`, and `READY`.
-
 
 **OR combination of conditions**
 
@@ -285,6 +283,7 @@ auto in1_condition = make_condition<MessageAvailableCondition>("in1_condition",
 ```
 
 or equivalently, in Python
+
 ```py
 # assuming that an operator has an input port named "in1" we could explicitly create a condition for this port via
 in1_condition = MessageAvailableCondition(fragment, name="in1_condition", min_size=1, receiver="in");
@@ -388,6 +387,7 @@ For the first time or after periodic time intervals, the scheduling status of th
 The `PeriodicConditionPolicy` enum defines three different policies for handling periodic tasks:
 
 `CatchUpMissedTicks`:
+
 - Tries to catch up on any missed ticks by executing them as quickly as possible
 - If multiple ticks were missed, it will try to execute them in rapid succession
 - For example, if a tick at 100ms was missed and the time at next tick was 250ms, it will still set the next target time as 200ms resulting in possible immediate rescheduling of the operator since we are already at time 250 ms (i.e. next tick is shown at 255 ms in the example below). After this tick at 255 ms, the target time is then 300 ms.
@@ -427,7 +427,7 @@ The `PeriodicConditionPolicy` enum defines three different policies for handling
 
 ## MemoryAvailableCondition
 
-For operators that have an associated `Allocator` ({cpp:class}`C++ <holoscan::Allocator>`/{py:class}`Python <holoscan.resources.Allocator>`), that allocator can be assigned to a `MemoryAvailableCondition` ({cpp:class}`C++ <holoscan::MemoryAvailableCondition>`/{py:class}`Python <holoscan.conditions.MemoryAvailableCondition>`). This condition will prevent the operator from executing unless the allocatore has a specified number of bytes free to be allocated. 
+For operators that have an associated `Allocator` ({cpp:class}`C++ <holoscan::Allocator>`/{py:class}`Python <holoscan.resources.Allocator>`), that allocator can be assigned to a `MemoryAvailableCondition` ({cpp:class}`C++ <holoscan::MemoryAvailableCondition>`/{py:class}`Python <holoscan.conditions.MemoryAvailableCondition>`). This condition will prevent the operator from executing unless the allocatore has a specified number of bytes free to be allocated.
 
 For the `BlockMemoryPool`, the user can optionally specify the condition in terms of the minimum number of memory blocks instead of in terms of raw bytes.
 
@@ -513,6 +513,7 @@ Example code for how the condition would be configured from an application's `co
 ````
 
 (holoscan-conditions-asynchronous)=
+
 ## AsynchronousCondition
 
 `AsynchronousCondition` ({cpp:class}`C++ <holoscan::gxf::AsynchronousCondition>`/{py:class}`Python <holoscan.conditions.AsynchronousCondition>`) is primarily associated with operators which are working with asynchronous events happening outside of their regular execution performed by the scheduler. Since these events are non-periodic in nature, `AsynchronousCondition` prevents the scheduler from polling the operator for its status regularly and reduces CPU utilization. The scheduling status of the operator associated with this condition can either be in `READY`, `WAIT`, `WAIT_EVENT`, or `NEVER` states based on the asynchronous event it's waiting on.
@@ -546,6 +547,7 @@ This condition supports:
 The condition uses `cudaLaunchHostFunc` to register callbacks on each CUDA stream found. An atomic counter tracks pending callbacks, and the operator becomes READY only after all callbacks have fired. In cases where no stream is found in the input message, this condition will allow execution of the operator.
 
 **Parameters:**
+
 - `receivers`: A single port name (string) or list of port names to monitor. For multi-receiver ports (`IOSpec::kAnySize`), specify the base name (e.g., `"receivers"`) and the condition will automatically discover all indexed ports (`receivers:0`, `receivers:1`, etc.).
 - `check_all_messages`: Boolean (default `true`). When `true`, checks streams on all messages in each receiver's queue. When `false`, only checks the first message.
 
@@ -555,11 +557,13 @@ The condition uses `cudaLaunchHostFunc` to register callbacks on each CUDA strea
 The `receiver` parameter (singular) is deprecated and should not be used for new code. Use `receivers` instead. The `receiver` parameter only supports a single input port and does not support specifying multiple ports or multi-receiver ports (`IOSpec::kAnySize`). When the `receiver` parameter is used, a deprecation warning will be logged.
 
 Legacy usage with `receiver` (deprecated):
+
 ```cpp
 // DEPRECATED - use "receivers" instead
 auto stream_cond = make_condition<CudaStreamCondition>("stream_cond",
     Arg("receiver", "in"));
 ```
+
 :::
 
 Example usage:

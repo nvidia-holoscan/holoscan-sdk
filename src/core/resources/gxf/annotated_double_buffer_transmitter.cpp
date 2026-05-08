@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
+#include <holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp>
 
 #include <gxf/core/gxf.h>
 
-#include "holoscan/core/flow_tracking_annotation.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/flow_tracking_annotation.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

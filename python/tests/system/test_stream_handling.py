@@ -15,8 +15,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """  # noqa: E501
 
-import platform
-
 import pytest
 
 try:
@@ -30,7 +28,11 @@ from holoscan.conditions import CountCondition
 from holoscan.core import Application, ConditionType, Operator, OperatorSpec
 from holoscan.operators import PingTensorTxOp
 from holoscan.resources import CudaGreenContext, CudaGreenContextPool, CudaStreamPool
-from tests.conftest import green_context_available
+from tests.conftest import (
+    green_context_available,
+    green_context_device_properties,
+    green_context_partitions_supported,
+)
 
 
 class StreamRxOp(Operator):
@@ -90,23 +92,20 @@ class MyStreamTestApp(Application):
         super().__init__(*args, **kwargs)
 
     def compose(self):
-        arch = platform.machine().lower()
-        if arch in ["x86_64", "amd64"]:
-            partitions = [8, 4]
-        elif arch in ["aarch64", "arm64"]:
-            partitions = [8, 8]
-        else:
-            raise ValueError(f"Unsupported platform architecture: {arch}")
+        props = green_context_device_properties()
+        if not props:
+            raise RuntimeError("Unable to query CUDA device properties.")
+        min_sm_size = props["min_sm_size"]
+        partitions = [min_sm_size, min_sm_size]
 
         cuda_green_context_pool = CudaGreenContextPool(
             self,
             name="cuda_green_context_pool",
             dev_id=0,
-            flags=0,
             num_partitions=2,
             sms_per_partition=partitions,
             default_context_index=-1,
-            min_sm_size=2,
+            min_sm_size=min_sm_size,
         )
         cuda_green_context = CudaGreenContext(
             self,
@@ -174,15 +173,19 @@ class MyCuPyExternalStreamWithGreenContextApp(Application):
         super().__init__(*args, **kwargs)
 
     def compose(self):
+        props = green_context_device_properties()
+        if not props:
+            raise RuntimeError("Unable to query CUDA device properties.")
+        min_sm_size = props["min_sm_size"]
+        partition_size = min_sm_size * 2
         cuda_green_context_pool = CudaGreenContextPool(
             self,
             name="cuda_green_context_pool",
             dev_id=0,
-            flags=0,
             num_partitions=1,
-            sms_per_partition=[16],
+            sms_per_partition=[partition_size],
             default_context_index=-1,
-            min_sm_size=2,
+            min_sm_size=min_sm_size,
         )
         cuda_green_context = CudaGreenContext(
             self,
@@ -294,6 +297,13 @@ def test_stream_pool_methods(rx_enable_pool):
         pytest.skip("no available CUDA device: skipping stream test")
     if not green_context_available():
         pytest.skip("Green Context not available in this environment.")
+    props = green_context_device_properties()
+    if not props:
+        pytest.skip("Unable to query CUDA device properties for stream pool test.")
+    min_sm_size = props["min_sm_size"]
+    # Skip early rather than failing during graph activation in CudaGreenContextPool.
+    if not green_context_partitions_supported([min_sm_size, min_sm_size]):
+        pytest.skip("Insufficient SM count for Green Context stream pool partitions.")
     app = MyStreamTestApp(rx_enable_pool=rx_enable_pool)
     app.run()
 
@@ -316,6 +326,13 @@ def test_cupy_external_stream_with_green_context():
         pytest.skip("no available CUDA device: skipping stream test")
     if not green_context_available():
         pytest.skip("Green Context not available in this environment.")
+    props = green_context_device_properties()
+    if not props:
+        pytest.skip("Unable to query CUDA device properties for external stream test.")
+    min_sm_size = props["min_sm_size"]
+    # Keep this test aligned with pool defaults while ensuring the partition can be created.
+    if not green_context_partitions_supported([min_sm_size * 2]):
+        pytest.skip("Insufficient SM count for Green Context external stream partition.")
     app = MyCuPyExternalStreamWithGreenContextApp()
     app.run()
 

@@ -28,7 +28,7 @@ target_link_libraries(subgraph_ping
   PRIVATE
   holoscan::core
   holoscan::ops::ping_rx
-  holoscan::ops::ping_tx  
+  holoscan::ops::ping_tx
 )
 
 # Testing
@@ -42,4 +42,3 @@ if(BUILD_TESTING)
                        FAIL_REGULAR_EXPRESSION "error"
                       )
 endif()
-

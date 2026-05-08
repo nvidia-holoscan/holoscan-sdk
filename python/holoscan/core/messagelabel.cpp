@@ -24,7 +24,7 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/messagelabel.hpp"
+#include <holoscan/core/messagelabel.hpp>
 #include "messagelabel_pydoc.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
@@ -106,11 +106,11 @@ void init_messagelabel(py::module_& m) {
            static_cast<std::string (MessageLabel::*)() const>(&MessageLabel::to_string),
            doc::MessageLabel::doc_to_string)
       .def("print_all", &MessageLabel::print_all, doc::MessageLabel::doc_print_all)
-      .def("__repr__", [](const MessageLabel& label) {
-        return "<MessageLabel: " + std::to_string(label.num_paths()) + " paths>";
-      })
-      .def("__str__",
-           static_cast<std::string (MessageLabel::*)() const>(&MessageLabel::to_string));
+      .def("__repr__",
+           [](const MessageLabel& label) {
+             return "<MessageLabel: " + std::to_string(label.num_paths()) + " paths>";
+           })
+      .def("__str__", static_cast<std::string (MessageLabel::*)() const>(&MessageLabel::to_string));
 }
 
 }  // namespace holoscan

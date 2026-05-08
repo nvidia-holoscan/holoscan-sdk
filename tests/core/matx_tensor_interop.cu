@@ -46,10 +46,8 @@ TEST(MatXInterop, MatxTensorToHoloscanTensorViaDlpack) {
 
   // Validate data can be accessed (and values are as expected).
   std::vector<float> host(10);
-  auto result = cudaMemcpy(host.data(),
-                           tensor.data(),
-                           host.size() * sizeof(float),
-                           cudaMemcpyDeviceToHost);
+  auto result =
+      cudaMemcpy(host.data(), tensor.data(), host.size() * sizeof(float), cudaMemcpyDeviceToHost);
   ASSERT_EQ(result, cudaSuccess);
 
   for (int i = 0; i < 10; ++i) {

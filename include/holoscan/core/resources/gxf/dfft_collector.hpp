@@ -20,8 +20,8 @@
 
 #include <map>
 
-#include "gxf/std/monitor.hpp"
-#include "holoscan/core/dataflow_tracker.hpp"
+#include <gxf/std/monitor.hpp>
+#include <holoscan/core/dataflow_tracker.hpp>
 
 namespace holoscan {
 

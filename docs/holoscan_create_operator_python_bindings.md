@@ -1,6 +1,6 @@
 (holoscan-create-operators-python-bindings)=
-# Writing Python bindings for a C++ Operator
 
+# Writing Python bindings for a C++ Operator
 
 For convenience while maintaining high performance, {ref}`operators written in C++<holoscan-defining-operators-cpp>` can be wrapped in Python. The general approach uses [Pybind11](https://pybind11.readthedocs.io/en/stable/index.html) to concisely create bindings that provide a familiar, Pythonic experience to application authors.
 
@@ -21,9 +21,11 @@ It is recommended to put any cleanup of resources allocated in the C++ operator'
 :::
 
 (pybind11-operator-tutorial)=
+
 ## Tutorial: binding the ToolTrackingPostprocessorOp class
 
 (pybind11-operator-trampoline)=
+
 ### Creating a PyToolTrackingPostprocessorOp trampoline class
 
 In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) in this case), create a subclass of the C++ Operator class to wrap. The general approach taken is to create a Python-specific class that provides a constructor that takes a `std::variant<Fragment*, Subgraph*>`, an explicit list of the operators parameters with default values for any that are optional, and an operator name. This constructor needs to setup the operator as done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/include/holoscan/core/fragment.hpp#L284), so that it is ready for initialization by the GXF executor. We use the convention of prepending "Py" to the C++ class name for this (so, `PyToolTrackingPostprocessorOp` in this case).
@@ -31,7 +33,7 @@ In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holos
 ```{code-block} cpp
 :caption: tool_tracking_post_processor/python/tool_tracking_post_processor.cpp
 
-#include "holoscan/python/core/component_util.hpp"
+#include <holoscan/python/core/component_util.hpp>
 
 class PyToolTrackingPostprocessorOp : public ToolTrackingPostprocessorOp {
  public:
@@ -74,9 +76,11 @@ This constructor will allow providing a Pythonic experience for creating the ope
 - The other arguments all correspond to the various parameters ({cpp:type}`holoscan::Parameter`) that are defined for the C++ `ToolTrackingPostProcessorOp` class.
   - All other parameters except `cuda_stream_pool` are passed directly in the argument list to the parent `ToolTrackingPostProcessorOp` class. The parameters present on the C++ operator can be seen in its header [here](https://github.com/grlee77/holohub/blob/3adbba16baafb5958950b261a0d6521f7544cfeb/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.hpp#L46-L52) with default values taken from the `setup` method of the source file [here](https://github.com/grlee77/holohub/blob/3adbba16baafb5958950b261a0d6521f7544cfeb/operators/tool_tracking_postprocessor/tool_tracking_postprocessor.cpp#L77-L89). Note that {cpp:class}`CudaStreamHandler` is a utility that will add a parameter of type `Parameter<std::shared_ptr<CudaStreamPool>>`.
   - The `cuda_stream_pool` argument is only conditionally added if it was not `nullptr` (Python's `None`). This is done via
+
     ```cpp
     if (cuda_stream_pool) { this->add_arg(Arg{"cuda_stream_pool", cuda_stream_pool}); }
     ```
+
     instead of passing it as part of the {cpp:class}`holoscan::ArgList` provided to the `ToolTrackingPostprocessorOp` constructor call above.
 
 **Operator initialization:**
@@ -88,6 +92,7 @@ The final line in the constructor uses the `init_operator_base` utility function
 ```
 
 This utility function (defined in `holoscan/python/core/component_util.hpp`) encapsulates the common five-step initialization pattern:
+
 1. Extracts the fragment pointer and qualified name from the `fragment_or_subgraph` variant
 2. Sets the operator's fragment via the public setter
 3. Sets the operator's name (with automatic qualification for Subgraphs)
@@ -109,25 +114,29 @@ Although not recommended, it would be possible to pass `self.fragment` instead o
 :::
 
 (pybind11-operator-module-definition)=
+
 ### Defining the Python module
 
 For this operator, there are no other custom classes aside from the operator itself, so we define a module using `PYBIND11_MODULE` as shown below with only a single class definition. This is done in the same [tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) file where we defined the `PyToolTrackingPostprocessorOp` trampoline class.
 
 The following header will always be needed.
+
 ```cpp
 #include <pybind11/pybind11.h>
 
 namespace py = pybind11;
 using pybind11::literals::operator""_a;
 ```
+
 Here, we typically also add defined the `py` namespace as a shorthand for `pybind11` and indicated that we will use the `_a` literal (it provides a shorthand notation when [defining keyword arguments](https://pybind11.readthedocs.io/en/stable/basics.html#keyword-arguments)).
 
 Often it will be necessary to include the following header if any parameters to the operator involve C++ standard library containers such as `std::vector` or `std::unordered_map`.
+
 ```cpp
 #include <pybind11/stl.h>
 ```
-This allows pybind11 to cast between the C++ container types and corresponding Python types (Python `dict` / C++ `std::unordered_map`, for example).
 
+This allows pybind11 to cast between the C++ container types and corresponding Python types (Python `dict` / C++ `std::unordered_map`, for example).
 
 ```{code-block} cpp
 :caption: tool_tracking_post_processor/python/tool_tracking_post_processor.cpp
@@ -159,8 +168,8 @@ PYBIND11_MODULE(_tool_tracking_postprocessor, m) {
 }  // PYBIND11_MODULE NOLINT
 ```
 
-
 :::{note}
+
 - If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as {ref}`covered below <pybind11-module_name_warning>`).
 - If you are implementing the python wrapping in a standalone CMake project,the `<module_name>` passed to `PYBIND_11_MODULE` **must** match the name of the module passed to the [pybind11-add-module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
 
@@ -178,6 +187,7 @@ The use of `std::variant<Fragment*, Subgraph*>` is handled transparently by Pybi
 :::
 
 (pybind11-operator-docstrings)=
+
 ### Documentation strings
 
 Prepare documentation strings (`const char*`) for your python class and its parameters.
@@ -302,6 +312,7 @@ target_link_libraries(my_python_module
 :::{warning}
 
 The module name passed to `PYBIND11_MODULE` in your bindings needs to match the name of the shared library that you generate in your CMake project.
+
 - In the Holoscan SDK and HoloHub, helper functions prepend an underscore (`_`) to the name of the output shared library, and to the import name of said shared library in the auto-generated `__init__.py` file.
 - When using `pybind11_add_module` directly instead with no changes to the `OUTPUT_NAME` property of the generated CMake target, the name passed to that macro will be used as the name of the shared library, and should match the module name passed to `PYBIND11_MODULE`.
 
@@ -311,6 +322,7 @@ If the name is specified incorrectly, the build will still complete, but at appl
     from ._tool_tracking_postprocessor import ToolTrackingPostprocessorOp
 ImportError: dynamic module does not define module export function (PyInit__tool_tracking_postprocessor)
 ```
+
 :::
 
 (pybind11-abi-compatibility)=
@@ -335,8 +347,8 @@ $ find <holoscan_install_dir> -name "_core.cpython*\.so" | xargs readelf -p .com
 $ find <holoscan_install_dir> -name "_core.cpython*\.so" | xargs readelf -d | grep c++
  0x0000000000000001 (NEEDED)             Shared library: [libstdc++.so.6]
 ```
-:::
 
+:::
 
 ### Importing the class in Python
 
@@ -375,6 +387,7 @@ To imitate HoloHub's behavior, you can also place that file alongside the .so fi
 `````
 
 (pybind11-details)=
+
 ## Additional Examples
 
 In this section we will cover other cases that may occasionally be encountered when writing Python bindings for operators.
@@ -416,6 +429,7 @@ An alternative way to define the constructor would have been to use `std::option
     init_operator_base(this, fragment_or_subgraph, name);
   }
 ```
+
 where now that `min_prob` and `overlay_img_colors` are optional, they are only conditionally added as an argument to ToolTrackingPostprocessorOp when they have a value. If this approach is used, the Python bindings for the constructor should be updated to use `py::none()` as the default as follows:
 
 ```cpp
@@ -436,7 +450,6 @@ where now that `min_prob` and `overlay_img_colors` are optional, they are only c
            "name"_a = "tool_tracking_postprocessor"s,
            doc::ToolTrackingPostprocessorOp::doc_ToolTrackingPostprocessorOp_python);
 ```
-
 
 ### C++ enum parameters as arguments
 
@@ -501,7 +514,7 @@ Similarly, the `emit` method takes a `pybind11::object` (of type `list[HolovizOp
 
 The signature of the `emit` and `receive` methods must exactly match the case shown here.
 
-#### Step 2: Create a register_types method for adding custom types to the EmitterReceiverRegistry.
+#### Step 2: Create a register_types method for adding custom types to the EmitterReceiverRegistry
 
 The bindings in this operators module, should define a method named `register_types` that takes a reference to an `EmitterReceiverRegistry` as its only argument. Within this function there should be a call to `EmitterReceiverRegistry::add_emitter_receiver` for each type that this operator wished to register. The HolovizOp defines this method using a lambda function
 
@@ -529,9 +542,10 @@ that we wrote an `emitter_receiver` for above.
 registry.add_emitter_receiver<std::vector<holoscan::ops::HolovizOp::InputSpec>>(
         "std::vector<HolovizOp::InputSpec>"s);
 ```
+
 Internally the registry stores a mapping between the C++ `std::type_index` of the type specified in the template argument and the `emitter_receiver` defined for that type. The second argument is a string that the user can choose which is a label for the type. As we will see later, this label can be used from Python to indicate that we want to emit using the `emitter_receiver::emit` method that was registered for a particular label.
 
-#### Step 3: In the __init__.py file for the Python module defining the operator call register_types
+#### Step 3: In the **init**.py file for the Python module defining the operator call register_types
 
 To register types with the core SDK, we need to import the `io_type_registry` class (of type `EmitterReceiverRegistry`) from `holoscan.core`. We then pass that class as input to the `register_types` method defined in step 2 to register the 3rd party types with the core SDK.
 
@@ -546,7 +560,7 @@ _register_types(io_type_registry)
 
 where we chose to import `register_types` with an initial underscore as a common Python convention to indicate it is intended to be "private" to this module.
 
-#### In some cases steps 1 and 3 as shown above are not necessary.
+#### In some cases steps 1 and 3 as shown above are not necessary
 
 When creating Python bindings for an Operator on Holohub, the [pybind11_add_holohub_module.cmake](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pybind11_add_holohub_module.cmake) utility mentioned above will take care of autogenerating the `__init__.py` as shown in step 3, so it will not be necessary to manually create it in that case.
 
@@ -561,6 +575,7 @@ After registering a new type, receive of that type on any input port will automa
 Because Python is not strongly typed, on `emit`, the default behavior remains emitting a shared pointer to the Python object itself. If we instead want to `emit` a C++ type, we can pass a 3rd argument to `op_output.emit` to specify the name that we used when registering the types via the `add_emitter_receiver` call as above.
 
 #### Example of emitting a C++ type
+
 As a concrete example, the SDK already registers `std::string` by default. If we wanted, for instance, to emit a Python string as a C++ `std::string` for use by a downstream operator that is wrapping a C++ operator expecting string input, we would add a 3rd argument to the `op_output.emit` call as follows
 
 ```py
@@ -607,4 +622,3 @@ print(io_type_registry.registered_types())
 :::{note}
 For more details on emit/receive behavior for tensor-like types see {ref}`this dedicated section <cpp-python-tensor-interop>`.
 :::
-

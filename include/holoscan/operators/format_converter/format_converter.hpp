@@ -24,12 +24,12 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 
 namespace holoscan::ops {
 

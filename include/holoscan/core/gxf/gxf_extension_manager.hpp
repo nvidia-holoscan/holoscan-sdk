@@ -26,11 +26,11 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/core/gxf.h"
-#include "gxf/std/extension.hpp"
+#include <gxf/core/gxf.h>
+#include <gxf/std/extension.hpp>
 
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/extension_manager.hpp"
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/extension_manager.hpp>
 
 namespace holoscan::gxf {
 
@@ -54,7 +54,7 @@ using GxfExtensionFactory = gxf_result_t(void**);
  *
  * ```cpp
  * #include <yaml-cpp/yaml.h>
- * #include "holoscan/core/gxf/gxf_extension_manager.hpp"
+ * #include <holoscan/core/gxf/gxf_extension_manager.hpp>
  * ...
  *
  * holoscan::gxf::GXFExtensionManager extension_manager(reinterpret_cast<gxf_context_t>(context));

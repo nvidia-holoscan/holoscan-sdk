@@ -28,7 +28,6 @@
 
 namespace holoscan::ops {
 
-
 class DefaultMinSizeRxOp : public Operator {
  public:
   HOLOSCAN_OPERATOR_FORWARD_ARGS(DefaultMinSizeRxOp)
@@ -77,10 +76,9 @@ class QueueSizeWarningDefaultApp : public holoscan::Application {
     using namespace holoscan;
     using namespace std::chrono_literals;
 
-    auto tx = make_operator<ops::PingTxOp>(
-        "tx",
-        make_condition<CountCondition>("count", 2),
-        make_condition<PeriodicCondition>("periodic", 0.01s));
+    auto tx = make_operator<ops::PingTxOp>("tx",
+                                           make_condition<CountCondition>("count", 2),
+                                           make_condition<PeriodicCondition>("periodic", 0.01s));
     auto rx = make_operator<ops::DefaultMinSizeRxOp>("rx");
     add_flow(tx, rx);
   }
@@ -92,10 +90,9 @@ class QueueSizeWarningExplicitMinSizeApp : public holoscan::Application {
     using namespace holoscan;
     using namespace std::chrono_literals;
 
-    auto tx = make_operator<ops::PingTxOp>(
-        "tx",
-        make_condition<CountCondition>("count", 2),
-        make_condition<PeriodicCondition>("periodic", 0.01s));
+    auto tx = make_operator<ops::PingTxOp>("tx",
+                                           make_condition<CountCondition>("count", 2),
+                                           make_condition<PeriodicCondition>("periodic", 0.01s));
     auto rx = make_operator<ops::ExplicitMinSizeRxOp>("rx");
     add_flow(tx, rx);
   }

@@ -1,4 +1,5 @@
 (holoscan-getting-started)=
+
 # Holoscan by Example
 
 In this section, we demonstrate how to use the Holoscan SDK to build applications through a series of examples.

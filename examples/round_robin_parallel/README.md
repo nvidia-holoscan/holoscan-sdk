@@ -44,6 +44,7 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Set values for `num_broadcast` and `worker_thread_number` as desired in `app_config.yaml`.
 
 Then, run:
+
 ```bash
 ./examples/round_robin_parallel/cpp/round_robin
 ```

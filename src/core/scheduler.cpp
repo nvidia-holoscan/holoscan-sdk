@@ -15,13 +15,13 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/scheduler.hpp"
+#include <holoscan/core/scheduler.hpp>
 
 #include <stdexcept>
 #include <string>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
 
 namespace holoscan {
 

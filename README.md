@@ -14,6 +14,7 @@ The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/h
 Visit the Holoscan User Guide to get started with the Holoscan SDK: <https://docs.nvidia.com/holoscan/sdk-user-guide/getting_started.html>
 
 The Holoscan User Guide includes:
+
 - An introduction to the NVIDIA Holoscan platform, including the Holoscan C++/Python SDK;
 - Requirements and setup steps;
 - Detailed SDK documentation, including a developer introduction, examples, and API details.
@@ -40,6 +41,7 @@ before getting started.
 ## Troubleshooting and Feedback
 
 We appreciate community discussion and feedback in support of Holoscan platform users and developers. We ask that users:
+
 - Review the [Holoscan SDK Frequently Asked Questions](docs/hsdk_faq.md) document for common solutions and workarounds.
 - Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
 - Enter SDK issues on the [SDK GitHub Issues board](https://github.com/nvidia-holoscan/holoscan-sdk/issues).

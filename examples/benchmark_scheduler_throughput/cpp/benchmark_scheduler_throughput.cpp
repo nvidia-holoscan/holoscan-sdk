@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "fmt/format.h"
-#include "holoscan/holoscan.hpp"
+#include <fmt/format.h>
+#include <holoscan/holoscan.hpp>
 
 // Increments a counter on each invocation.
 class CountOp : public holoscan::Operator {

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/system/network_utils.hpp"
+#include <holoscan/core/system/network_utils.hpp>
 
 #include "../env_wrapper.hpp"
 #include "utility_apps.hpp"

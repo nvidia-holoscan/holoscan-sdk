@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <regex>
@@ -52,6 +53,17 @@ class TestGPUResidentFragment : public Fragment {
   }
 };
 
+class TestGPUResidentApplication : public Application {
+ public:
+  void compose() override {
+    auto source = make_operator<TestSourceGpuOp>("source");
+    auto compute = make_operator<TestCudaWorkGpuOp>("compute");
+    auto sink = make_operator<TestSinkGpuOp>("sink");
+    add_flow(source, compute);
+    add_flow(compute, sink);
+  }
+};
+
 // Test fixture for GPU-resident operator and fragment tests
 class GPUResidentFragmentTest : public ::testing::Test {
  protected:
@@ -63,7 +75,132 @@ class GPUResidentFragmentTest : public ::testing::Test {
       GTEST_SKIP() << "No CUDA devices available, skipping GPU-resident tests";
     }
   }
+
+  std::string run_gpu_resident_application_and_capture_stdout() {
+    auto app = holoscan::make_application<TestGPUResidentApplication>();
+    app->compose_graph();
+    app->gpu_resident().timeout_ms(0);
+    app->gpu_resident().data_not_ready_sleep_interval_us(5000);
+
+    testing::internal::CaptureStdout();
+    auto future = app->run_async();
+
+    auto start_time = std::chrono::steady_clock::now();
+    while (!app->gpu_resident().is_launched()) {
+      if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
+        app->stop_execution();
+        future.wait_for(std::chrono::seconds(1));
+        ADD_FAILURE() << "Application did not launch within 5 seconds";
+        return testing::internal::GetCapturedStdout();
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    app->gpu_resident().data_ready();
+
+    start_time = std::chrono::steady_clock::now();
+    while (!app->gpu_resident().result_ready()) {
+      if (std::chrono::steady_clock::now() - start_time >= std::chrono::seconds(5)) {
+        app->stop_execution();
+        future.wait_for(std::chrono::seconds(1));
+        ADD_FAILURE() << "Application did not complete one GPU-resident iteration within 5 seconds";
+        return testing::internal::GetCapturedStdout();
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    app->stop_execution();
+
+    auto future_status = future.wait_for(std::chrono::seconds(5));
+    EXPECT_EQ(future_status, std::future_status::ready)
+        << "Application did not stop within 5 seconds";
+    if (future_status == std::future_status::ready) {
+      EXPECT_NO_THROW(future.get());
+    }
+
+    return testing::internal::GetCapturedStdout();
+  }
 };
+
+class GPUResidentFragmentNonDebugLogLevelTest : public GPUResidentFragmentTest,
+                                                public ::testing::WithParamInterface<const char*> {
+};
+
+TEST_F(GPUResidentFragmentTest, TestGPUResidentDebugPrintsEnabledAtDebugLogLevel) {
+  EnvVarWrapper wrapper({
+      std::make_pair("HOLOSCAN_LOG_LEVEL", "DEBUG"),
+  });
+
+  std::string stdout_output = run_gpu_resident_application_and_capture_stdout();
+
+  EXPECT_NE(stdout_output.find("while_controller:"), std::string::npos)
+      << "Expected while_controller debug output when HOLOSCAN_LOG_LEVEL=DEBUG\n"
+      << stdout_output;
+  EXPECT_NE(stdout_output.find("while_end_marker:"), std::string::npos)
+      << "Expected while_end_marker debug output when HOLOSCAN_LOG_LEVEL=DEBUG\n"
+      << stdout_output;
+}
+
+TEST_F(GPUResidentFragmentTest, TestGPUResidentDebugPrintsDisabledWhenLogLevelUnset) {
+  struct ScopedHoloscanLogEnv {
+    bool had_holoscan_log_level_env = false;
+    std::string holoscan_log_level_value;
+    LogLevel log_level_orig{};
+    bool log_level_set_by_user_orig = false;
+
+    ScopedHoloscanLogEnv()
+        : log_level_orig(log_level()),
+          log_level_set_by_user_orig(holoscan::Logger::log_level_set_by_user) {
+      if (const char* p = std::getenv("HOLOSCAN_LOG_LEVEL")) {
+        had_holoscan_log_level_env = true;
+        holoscan_log_level_value = p;
+      }
+      unsetenv("HOLOSCAN_LOG_LEVEL");
+      holoscan::set_log_level(LogLevel::INFO);
+      holoscan::Logger::log_level_set_by_user = false;
+    }
+
+    ~ScopedHoloscanLogEnv() {
+      if (had_holoscan_log_level_env) {
+        setenv("HOLOSCAN_LOG_LEVEL", holoscan_log_level_value.c_str(), 1);
+      } else {
+        unsetenv("HOLOSCAN_LOG_LEVEL");
+      }
+      holoscan::Logger::log_level_set_by_user = log_level_set_by_user_orig;
+      holoscan::set_log_level(log_level_orig);
+    }
+  } scoped_log_env;
+
+  std::string stdout_output = run_gpu_resident_application_and_capture_stdout();
+
+  EXPECT_EQ(stdout_output.find("while_controller:"), std::string::npos)
+      << "Did not expect while_controller debug output when HOLOSCAN_LOG_LEVEL is unset\n"
+      << stdout_output;
+  EXPECT_EQ(stdout_output.find("while_end_marker:"), std::string::npos)
+      << "Did not expect while_end_marker debug output when HOLOSCAN_LOG_LEVEL is unset\n"
+      << stdout_output;
+}
+
+TEST_P(GPUResidentFragmentNonDebugLogLevelTest,
+       TestGPUResidentDebugPrintsDisabledForNonDebugLogLevels) {
+  EnvVarWrapper wrapper({
+      std::make_pair("HOLOSCAN_LOG_LEVEL", GetParam()),
+  });
+
+  std::string stdout_output = run_gpu_resident_application_and_capture_stdout();
+
+  EXPECT_EQ(stdout_output.find("while_controller:"), std::string::npos)
+      << "Did not expect while_controller debug output when HOLOSCAN_LOG_LEVEL=" << GetParam()
+      << "\n"
+      << stdout_output;
+  EXPECT_EQ(stdout_output.find("while_end_marker:"), std::string::npos)
+      << "Did not expect while_end_marker debug output when HOLOSCAN_LOG_LEVEL=" << GetParam()
+      << "\n"
+      << stdout_output;
+}
+
+INSTANTIATE_TEST_SUITE_P(NonDebugLogLevels, GPUResidentFragmentNonDebugLogLevelTest,
+                         ::testing::Values("TRACE", "INFO", "WARN", "ERROR", "CRITICAL", "OFF"));
 
 // ================================================================================================
 // Basic Operator API Tests

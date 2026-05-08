@@ -150,8 +150,15 @@ TEST_F(GPUResidentErrorConditionsTest, TestOneSourceTwoSink) {
   auto sink2 = fragment.make_operator<TestSinkGpuOp>("sink2");
   fragment.add_flow(source, sink1);
 
-  // The following call should throw runtime error
-  EXPECT_THROW(fragment.add_flow(source, sink2), holoscan::RuntimeError);
+  // Fan-out from a single GPU-resident output port should be supported.
+  EXPECT_NO_THROW(fragment.add_flow(source, sink2));
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
+
+  EXPECT_EQ(source->device_memory("out"), sink1->device_memory("in"));
+  EXPECT_EQ(source->device_memory("out"), sink2->device_memory("in"));
 }
 
 TEST_F(GPUResidentErrorConditionsTest, TestZeroSizeMemoryBlock) {

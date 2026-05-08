@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_cuda.hpp"
+#include <holoscan/core/gxf/gxf_cuda.hpp>
 
 #include <gxf/core/gxf.h>
 
@@ -25,15 +25,15 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/cuda/cuda_stream.hpp"
-#include "gxf/cuda/cuda_stream_id.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <gxf/cuda/cuda_stream.hpp>
+#include <gxf/cuda/cuda_stream_id.hpp>
+#include <gxf/cuda/cuda_stream_pool.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan::gxf {
 

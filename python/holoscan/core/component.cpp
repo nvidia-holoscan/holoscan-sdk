@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,12 +24,12 @@
 #include <string>
 #include <utility>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component.hpp>
+#include <holoscan/core/fragment.hpp>
 #include "component.hpp"
 #include "component_pydoc.hpp"
 #include "fragment.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component.hpp"
-#include "holoscan/core/fragment.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

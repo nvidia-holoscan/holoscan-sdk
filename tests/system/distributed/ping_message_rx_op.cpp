@@ -21,9 +21,9 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/operators/holoviz/codecs.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/operators/holoviz/codecs.hpp>
+#include <holoscan/operators/holoviz/holoviz.hpp>
 
 namespace holoscan {
 namespace ops {

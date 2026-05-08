@@ -15,19 +15,19 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
+#include <holoscan/core/resources/gxf/ucx_serialization_buffer.hpp>
 
 #include <stdlib.h>  // setenv
 
+#include <algorithm>
 #include <cctype>  // toupper, tolower
 #include <cstdio>  // sscanf
-#include <algorithm>
 #include <memory>
 #include <string>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
 
 namespace holoscan {
 

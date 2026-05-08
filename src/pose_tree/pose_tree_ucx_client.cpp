@@ -15,13 +15,12 @@
  * limitations under the License.
  */
 
-#include "holoscan/pose_tree/pose_tree_ucx_client.hpp"
+#include <holoscan/pose_tree/pose_tree_ucx_client.hpp>
 
 #include <ucxx/api.h>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -30,8 +29,8 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/pose_tree/pose_tree_ucx_common.hpp"
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/pose_tree/pose_tree_ucx_common.hpp>
 
 namespace holoscan {
 
@@ -162,6 +161,8 @@ PoseTreeUCXClient::expected<void> PoseTreeUCXClient::connect(std::string_view ho
   running_ = true;
   ready_ = false;
   connect_failed_ = false;
+  startup_callbacks_registered_ = false;
+  initial_snapshot_applied_ = !request_snapshot;
 
   try {
     client_thread_ = std::thread(&PoseTreeUCXClient::run, this);
@@ -233,11 +234,43 @@ void PoseTreeUCXClient::run() {
     impl_->context = ucxx::createContext({}, UCP_FEATURE_AM);
     impl_->worker = impl_->context->createWorker();
 
+    auto signal_ready = [this]() {
+      bool should_notify = false;
+      {
+        std::lock_guard<std::mutex> lk(ready_mutex_);
+        if (!ready_.load()) {
+          ready_ = true;
+          should_notify = true;
+        }
+      }
+      if (should_notify) {
+        ready_cv_.notify_all();
+      }
+    };
+
+    auto signal_connect_failed = [this]() {
+      {
+        std::lock_guard<std::mutex> lk(ready_mutex_);
+        connect_failed_ = true;
+      }
+      ready_cv_.notify_all();
+    };
+
+    auto maybe_signal_ready = [this, signal_ready]() {
+      if (!running_.load()) {
+        return;
+      }
+      const bool snapshot_ready = !request_snapshot_ || initial_snapshot_applied_.load();
+      if (startup_callbacks_registered_.load() && snapshot_ready) {
+        signal_ready();
+      }
+    };
+
     // Register AM receiver callbacks
     ucxx::AmReceiverCallbackInfo delta_callback_info("AMClient", MSG_DELTA);
     impl_->worker->registerAmReceiverCallback(
         std::move(delta_callback_info),
-        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
+        [this, signal_connect_failed](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received delta message");
           if (!running_) {
             return;
@@ -316,12 +349,14 @@ void PoseTreeUCXClient::run() {
           } catch (const std::exception& e) {
             HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Error in delta callback: {}", e.what());
             running_ = false;
+            signal_connect_failed();
           }
         });
     ucxx::AmReceiverCallbackInfo snapshot_callback_info("AMClient", MSG_SNAPSHOT_DATA);
     impl_->worker->registerAmReceiverCallback(
         std::move(snapshot_callback_info),
-        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
+        [this, maybe_signal_ready, signal_connect_failed](const std::shared_ptr<ucxx::Request>& req,
+                                                          ucp_ep_h) {
           HOLOSCAN_LOG_TRACE("PoseTreeUCXClient: Received snapshot message");
           if (!running_) {
             return;
@@ -410,17 +445,20 @@ void PoseTreeUCXClient::run() {
                 ack_buffer.get(), sizeof(SnapshotAckMessage), UCS_MEMORY_TYPE_HOST, ack_info);
             // Keep the buffer alive by storing a strong reference alongside the request.
             impl_->pending_requests.emplace_back(std::move(ack_request), ack_buffer);
+            initial_snapshot_applied_ = true;
             is_external_pose_tree_update_ = false;
+            maybe_signal_ready();
           } catch (const std::exception& e) {
             HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Error in snapshot callback: {}", e.what());
             running_ = false;
+            signal_connect_failed();
           }
         });
 
     ucxx::AmReceiverCallbackInfo close_callback_info("AMClient", MSG_CLOSE);
     impl_->worker->registerAmReceiverCallback(
         std::move(close_callback_info),
-        [this](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
+        [this, signal_connect_failed](const std::shared_ptr<ucxx::Request>& req, ucp_ep_h) {
           if (!running_) {
             return;
           }
@@ -429,9 +467,11 @@ void PoseTreeUCXClient::run() {
             HOLOSCAN_LOG_DEBUG("PoseTreeUCXClient: Received shutdown from server.");
             impl_->server_initiated_shutdown = true;
             running_ = false;
+            signal_connect_failed();
           } catch (const std::exception&) {
             if (running_) {
               running_ = false;
+              signal_connect_failed();
             }
           }
         });
@@ -524,11 +564,8 @@ void PoseTreeUCXClient::run() {
       HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Failed to register set edge callback");
     }
 
-    {
-      std::lock_guard<std::mutex> lk(ready_mutex_);
-      ready_ = true;
-    }
-    ready_cv_.notify_one();
+    startup_callbacks_registered_ = true;
+    maybe_signal_ready();
 
     while (running_) {
       DeltaMessage msg;

@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/network_contexts/gxf/ucx_context.hpp"
+#include <holoscan/core/network_contexts/gxf/ucx_context.hpp>
 
 #include <cstdlib>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_network_context.hpp"
-#include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_network_context.hpp>
+#include <holoscan/core/resources/gxf/ucx_entity_serializer.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

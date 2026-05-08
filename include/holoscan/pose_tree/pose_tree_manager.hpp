@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,14 +21,14 @@
 #include <memory>
 #include <utility>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/core/fragment_service.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/pose_tree/pose_tree.hpp"
-#include "holoscan/pose_tree/pose_tree_ucx_client.hpp"
-#include "holoscan/pose_tree/pose_tree_ucx_server.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/fragment_service.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/pose_tree/pose_tree.hpp>
+#include <holoscan/pose_tree/pose_tree_ucx_client.hpp>
+#include <holoscan/pose_tree/pose_tree_ucx_server.hpp>
 
 namespace holoscan {
 

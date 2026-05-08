@@ -206,6 +206,12 @@ window_close_callback : Callable[[], None], optional
     default behavior, which initiates distributed app shutdown when running distributed.
     To preserve the default behavior from a custom callback, call
     ``HolovizOp.default_window_close_callback()`` within your callback.
+interrupt_app_on_window_close : bool, optional
+    When ``False`` (default): on window close, the operator is placed in a NEVER state and the
+    fragment will shutdown once deadlock is detected by the scheduler. If ``True``, the local
+    fragment executor is explicitly interrupted when the window is closed causing immediate
+    shutdown. If `window_close_callback` is set, the execution interrupt occurs after that
+    callback returns. This option is ignored for distributed applications.
 font_path : str, optional
     File path for the font used for rendering text. Default value is ``""``.
 cuda_stream_pool : holoscan.resources.CudaStreamPool, optional

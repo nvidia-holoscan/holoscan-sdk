@@ -26,9 +26,9 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/metadata.hpp>
 #include "gil_guarded_pyobject.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/metadata.hpp"
 #include "kwarg_handling.hpp"
 #include "metadata_pydoc.hpp"
 

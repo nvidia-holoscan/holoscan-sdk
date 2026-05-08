@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,13 +21,13 @@
 #include <memory>
 #include <vector>
 
+#include <gxf/cuda/cuda_stream.hpp>
 #include "../core/operator_spec.hpp"
 #include "../core/parameter.hpp"
 #include "../core/resources/gxf/cuda_stream_pool.hpp"
-#include "gxf/cuda/cuda_stream.hpp"
 // keep the following two gxf/cuda imports in the header for backwards compatibility with 1.0
-#include "gxf/cuda/cuda_stream_id.hpp"
-#include "gxf/cuda/cuda_stream_pool.hpp"
+#include <gxf/cuda/cuda_stream_id.hpp>
+#include <gxf/cuda/cuda_stream_pool.hpp>
 
 namespace holoscan {
 

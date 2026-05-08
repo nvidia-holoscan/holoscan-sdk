@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
-#include "holoscan/core/flow_tracking_annotation.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/flow_tracking_annotation.hpp>
+#include <holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 gxf_result_t HoloscanUcxTransmitter::publish_abi(gxf_uid_t uid) {

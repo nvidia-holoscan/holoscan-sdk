@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp"
+#include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -37,13 +37,13 @@
 #include <utility>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 #define POSIX_CALL(stmt)                                                             \
   ({                                                                                 \
@@ -507,6 +507,8 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
   if (is_metadata_enabled() && pass_through_) {
     auto meta = metadata();
     meta->set("V4L2_pixel_format", FOURCC2STRING(format_desc_.pixelformat));
+    meta->set("V4L2_width", static_cast<int32_t>(format_.fmt.pix.width));
+    meta->set("V4L2_height", static_cast<int32_t>(format_.fmt.pix.height));
     meta->set(
         "V4L2_ycbcr_encoding",
         std::string(magic_enum::enum_name((enum v4l2_ycbcr_encoding)(format_.fmt.pix.ycbcr_enc))));

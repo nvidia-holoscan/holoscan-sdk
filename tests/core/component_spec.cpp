@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/component_spec.hpp"  // must be before argument_setter import
+#include <holoscan/core/component_spec.hpp>  // must be before argument_setter import
 
 #include <gtest/gtest.h>
 #include <yaml-cpp/yaml.h>
@@ -27,11 +27,11 @@
 #include <typeinfo>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/argument_setter.hpp>
+#include <holoscan/core/parameter.hpp>
 #include "../utils.hpp"
 #include "dummy_classes.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/argument_setter.hpp"
-#include "holoscan/core/parameter.hpp"
 
 namespace holoscan {
 

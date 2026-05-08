@@ -63,6 +63,11 @@ install(FILES CMakeLists.min.txt
 if(HOLOSCAN_BUILD_TESTS)
   file(READ ${CMAKE_CURRENT_SOURCE_DIR}/custom_cuda_kernel_multi_sample.yaml CONFIG_STRING)
   string(REPLACE "count: 0" "count: 10" CONFIG_STRING "${CONFIG_STRING}")
+  string(REPLACE
+    "../examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu"
+    "${CMAKE_CURRENT_SOURCE_DIR}/edge_detection.cu"
+    CONFIG_STRING "${CONFIG_STRING}"
+  )
   set(CONFIG_FILE ${CMAKE_CURRENT_BINARY_DIR}/cpp_custom_cuda_kernel_multi_sample_config.yaml)
   file(WRITE ${CONFIG_FILE} "${CONFIG_STRING}")
 

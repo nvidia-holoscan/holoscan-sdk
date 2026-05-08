@@ -42,8 +42,8 @@
 #include "data_logger.hpp"
 #include "dataflow_tracker.hpp"
 #include "executor.hpp"
-#include "fragment_service_provider.hpp"
 #include "flow_graphs/flow_graph.hpp"
+#include "fragment_service_provider.hpp"
 #include "io_spec.hpp"
 #include "network_context.hpp"
 #include "network_contexts/gxf/pubsub_context.hpp"
@@ -226,9 +226,9 @@ class Fragment : public FragmentServiceProvider {
      * writes are globally visible to the host before the
      * result-ready flag is observed.
      *
-     * This option is intended for scenarios where the host controls the GPU-resident graph execution
-     * loop and reads back results between iterations (e.g., via `cudaMemcpy`). It is recommended
-     * for debugging, development, and testing purposes.
+     * This option is intended for scenarios where the host controls the GPU-resident graph
+     * execution loop and reads back results between iterations (e.g., via `cudaMemcpy`). It is
+     * recommended for debugging, development, and testing purposes.
      *
      * @note Enabling this adds latency to each iteration and is not recommended for
      * performance-critical workloads.
@@ -244,10 +244,10 @@ class Fragment : public FragmentServiceProvider {
      * streaming data iteration and the end of the same iteration. Execution time is not measured
      * when the data is not marked as ready.
      *
-     * It is important to note that the GPU-resident graph execution can continue longer than the number
-     * of samples to collect. However, the execution times are only collected for the provided
-     * number of samples. Since the execution times are stored in device memory, they are not
-     * collected for unbounded number of iterations.
+     * It is important to note that the GPU-resident graph execution can continue longer than the
+     * number of samples to collect. However, the execution times are only collected for the
+     * provided number of samples. Since the execution times are stored in device memory, they are
+     * not collected for unbounded number of iterations.
      *
      * @param num_samples the total number of samples to collect. Default is 100.
      */
@@ -1736,10 +1736,10 @@ class Fragment : public FragmentServiceProvider {
 
   // Note: Maintain the order of declarations (executor_ and graph_) to ensure proper destruction
   //       of the executor's context.
-  std::string name_;                      ///< The name of the fragment.
-  Application* app_ = nullptr;            ///< The application that this fragment belongs to.
-  std::shared_ptr<Config> config_;        ///< The configuration of the fragment.
-  std::shared_ptr<Executor> executor_;    ///< The executor for the fragment.
+  std::string name_;                          ///< The name of the fragment.
+  Application* app_ = nullptr;                ///< The application that this fragment belongs to.
+  std::shared_ptr<Config> config_;            ///< The configuration of the fragment.
+  std::shared_ptr<Executor> executor_;        ///< The executor for the fragment.
   std::shared_ptr<OperatorFlowGraph> graph_;  ///< The graph of the fragment.
   mutable std::shared_ptr<Scheduler>
       scheduler_;  ///< Lazily initialized scheduler (mutable for const access).

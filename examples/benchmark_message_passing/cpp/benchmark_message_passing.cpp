@@ -22,8 +22,8 @@
 #include <string>
 #include <vector>
 
-#include "fmt/format.h"
-#include "holoscan/holoscan.hpp"
+#include <fmt/format.h>
+#include <holoscan/holoscan.hpp>
 
 // Sends messages containing the time the message was created.
 class MessageSourceOp : public holoscan::Operator {
@@ -176,8 +176,10 @@ class BenchmarkMessagePassingApp : public holoscan::Application {
 int main() {
   // Construct trial options to benchmark: {num_threads, num_flows}.
   std::vector<BenchmarkMessagePassingApp::Options> trial_options = {
-      BenchmarkMessagePassingApp::Options{1, 1}, BenchmarkMessagePassingApp::Options{2, 2},
-      BenchmarkMessagePassingApp::Options{4, 4}, BenchmarkMessagePassingApp::Options{8, 8},
+      BenchmarkMessagePassingApp::Options{1, 1},
+      BenchmarkMessagePassingApp::Options{2, 2},
+      BenchmarkMessagePassingApp::Options{4, 4},
+      BenchmarkMessagePassingApp::Options{8, 8},
       BenchmarkMessagePassingApp::Options{2, 8},
   };
   std::vector<BenchmarkMessagePassingApp::Results> trial_results;

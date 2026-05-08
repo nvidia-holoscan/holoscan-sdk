@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/async_data_logger.hpp"
+#include <holoscan/core/resources/async_data_logger.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -23,18 +23,19 @@
 #include <future>
 #include <iomanip>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
 
-#include "magic_enum.hpp"
+#include <magic_enum/magic_enum.hpp>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 
@@ -189,8 +190,8 @@ void AsyncDataLoggerResource::initialize() {
 
   // Conditionally create large data queue
   if (enable_large_data_queue_.get()) {
-    large_data_queue_ = create_data_logger_queue<DataEntry>(
-        queue_type_.get(), large_data_max_queue_size_.get());
+    large_data_queue_ =
+        create_data_logger_queue<DataEntry>(queue_type_.get(), large_data_max_queue_size_.get());
   }
 
   // Log which queue type is being used
@@ -544,8 +545,16 @@ void AsyncDataLoggerResource::stop_worker_threads() {
   HOLOSCAN_LOG_DEBUG("AsyncDataLoggerResource: Requesting worker threads shutdown");
   shutdown_requested_.store(true);
 
-  // Wait for queues to drain with configurable timeout
+  HOLOSCAN_LOG_INFO(
+      "AsyncDataLoggerResource '{}': shutdown requested, draining asynchronous log queues", name());
+
   int64_t wait_period_ms = shutdown_wait_period_ms_.get();
+  // Fixed interval. Not user-configurable; adjust log level to suppress.
+  constexpr auto kShutdownDrainProgressLogInterval = std::chrono::seconds(2);
+  // Poll interval while waiting for queues to drain (same for timeout and indefinite wait).
+  // Uses 10 ms to align with the short sleep after setting shutdown_drain_timeout_expired_
+  // when discarding queues (below), avoiding extra wake latency vs a longer poll.
+  constexpr std::chrono::milliseconds kQueueDrainPollSleepMs(10);
 
   // When a timeout is configured, add a brief delay after setting the shutdown flag
   // to give worker threads time to observe the flag before we block on join().
@@ -557,56 +566,114 @@ void AsyncDataLoggerResource::stop_worker_threads() {
                                 std::min(static_cast<int64_t>(500), wait_period_ms / 10));
     std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
   }
-  if (wait_period_ms >= 0) {
-    auto start_time = std::chrono::steady_clock::now();
-    auto timeout = std::chrono::milliseconds(wait_period_ms);
+
+  std::optional<std::chrono::milliseconds> drain_timeout_budget;
+  if (wait_period_ms > 0) {
+    drain_timeout_budget = std::chrono::milliseconds(wait_period_ms);
+    HOLOSCAN_LOG_INFO("AsyncDataLoggerResource '{}': waiting up to {} ms for log queues to empty",
+                      name(),
+                      wait_period_ms);
+  } else if (wait_period_ms < 0) {
+    HOLOSCAN_LOG_INFO(
+        "AsyncDataLoggerResource '{}': waiting for log queues to empty (no timeout; set "
+        "shutdown_wait_period_ms or HOLOSCAN_ASYNC_LOGGER_SHUTDOWN_WAIT_MS to cap wait time)",
+        name());
+  }
+
+  auto discard_queues_after_timeout = [&]() {
+    shutdown_drain_timeout_expired_.store(true);
+    // Brief pause to let workers see the flag and exit their drain loops
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+    size_t discarded_data = 0;
+    size_t discarded_large_data = 0;
+    DataEntry discard_entry;
+    while (data_queue_ && data_queue_->try_dequeue(discard_entry)) {
+      discarded_data++;
+    }
+    while (large_data_queue_ && large_data_queue_->try_dequeue(discard_entry)) {
+      discarded_large_data++;
+    }
+
+    if (discarded_data > 0 || discarded_large_data > 0) {
+      data_dropped_.fetch_add(discarded_data, std::memory_order_relaxed);
+      large_data_dropped_.fetch_add(discarded_large_data, std::memory_order_relaxed);
+      HOLOSCAN_LOG_WARN(
+          "AsyncDataLoggerResource '{}': shutdown timeout ({} ms) expired, discarded {} data "
+          "entries and {} large data entries",
+          name(),
+          wait_period_ms,
+          discarded_data,
+          discarded_large_data);
+    }
+  };
+
+  if (wait_period_ms == 0) {
+    discard_queues_after_timeout();
+  } else {
+    const auto start_time = std::chrono::steady_clock::now();
+    // Steady-clock epoch makes (now - last_progress_log) large on the first iteration so the first
+    // progress log emits immediately without an extra boolean.
+    auto last_progress_log = std::chrono::steady_clock::time_point{};
 
     while (true) {
-      auto elapsed = std::chrono::steady_clock::now() - start_time;
-      if (elapsed >= timeout) {
-        shutdown_drain_timeout_expired_.store(true);
+      const auto now = std::chrono::steady_clock::now();
+      const auto elapsed = now - start_time;
 
-        // Brief pause to let workers see the flag and exit their drain loops
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      if (drain_timeout_budget.has_value() && elapsed >= drain_timeout_budget.value()) {
+        discard_queues_after_timeout();
+        break;
+      }
 
-        // Drain and discard remaining items, updating dropped statistics
-        // (try_dequeue is thread-safe)
-        size_t discarded_data = 0;
-        size_t discarded_large_data = 0;
-        DataEntry discard_entry;
-        while (data_queue_ && data_queue_->try_dequeue(discard_entry)) {
-          discarded_data++;
-        }
-        while (large_data_queue_ && large_data_queue_->try_dequeue(discard_entry)) {
-          discarded_large_data++;
-        }
-
-        if (discarded_data > 0 || discarded_large_data > 0) {
-          data_dropped_.fetch_add(discarded_data, std::memory_order_relaxed);
-          large_data_dropped_.fetch_add(discarded_large_data, std::memory_order_relaxed);
-          HOLOSCAN_LOG_WARN(
-              "AsyncDataLoggerResource: Shutdown timeout ({}ms) expired, discarded {} data "
-              "entries and {} large data entries",
-              wait_period_ms,
-              discarded_data,
-              discarded_large_data);
+      const size_t data_size = get_data_queue_size();
+      const size_t large_data_size = get_large_data_queue_size();
+      if (data_size == 0 && large_data_size == 0) {
+        if (wait_period_ms > 0) {
+          HOLOSCAN_LOG_INFO(
+              "AsyncDataLoggerResource '{}': log queues empty after {} ms; joining worker threads",
+              name(),
+              std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
+        } else {
+          HOLOSCAN_LOG_INFO(
+              "AsyncDataLoggerResource '{}': log queues empty; joining worker threads (workers may "
+              "still be finishing the last log record)",
+              name());
         }
         break;
       }
 
-      // Check if queues are empty
-      size_t data_size = get_data_queue_size();
-      size_t large_data_size = get_large_data_queue_size();
-      if (data_size == 0 && large_data_size == 0) {
-        HOLOSCAN_LOG_DEBUG("AsyncDataLoggerResource: Queues drained before timeout");
-        break;  // Queues are drained
+      if (now - last_progress_log >= kShutdownDrainProgressLogInterval) {
+        if (wait_period_ms > 0) {
+          const int64_t remaining_ms =
+              std::max(static_cast<int64_t>(0),
+                       std::chrono::duration_cast<std::chrono::milliseconds>(
+                           drain_timeout_budget.value() - elapsed)
+                           .count());
+          HOLOSCAN_LOG_INFO(
+              "AsyncDataLoggerResource '{}': Draining log queues ({} ms until timeout): {} data "
+              "and {} large entries pending, {} data and {} large entries processed so far",
+              name(),
+              remaining_ms,
+              data_size,
+              large_data_size,
+              data_processed_.load(std::memory_order_relaxed),
+              large_data_processed_.load(std::memory_order_relaxed));
+        } else {
+          HOLOSCAN_LOG_INFO(
+              "AsyncDataLoggerResource '{}': Draining log queues: {} data and {} large entries "
+              "pending, {} data and {} large entries processed so far",
+              name(),
+              data_size,
+              large_data_size,
+              data_processed_.load(std::memory_order_relaxed),
+              large_data_processed_.load(std::memory_order_relaxed));
+        }
+        last_progress_log = now;
       }
 
-      // Brief sleep to avoid busy waiting
-      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      std::this_thread::sleep_for(kQueueDrainPollSleepMs);
     }
   }
-  // If wait_period_ms < 0, wait indefinitely (current behavior) - no timeout logic needed
 
   // Join worker threads (block until completion)
   if (data_worker_.joinable()) {
@@ -619,6 +686,15 @@ void AsyncDataLoggerResource::stop_worker_threads() {
 
   workers_running_.store(false);
   HOLOSCAN_LOG_DEBUG("AsyncDataLoggerResource: Worker threads stopped");
+
+  HOLOSCAN_LOG_INFO(
+      "AsyncDataLoggerResource '{}': shutdown queue drain complete; processed {} data and {} "
+      "large entries ({} data and {} large enqueued)",
+      name(),
+      data_processed_.load(std::memory_order_relaxed),
+      large_data_processed_.load(std::memory_order_relaxed),
+      data_enqueued_.load(std::memory_order_relaxed),
+      large_data_enqueued_.load(std::memory_order_relaxed));
 
   if (backend_initialized_.load(std::memory_order_acquire) &&
       !backend_shutdown_called_.exchange(true)) {

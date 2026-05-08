@@ -26,10 +26,10 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resource.hpp>
 
 namespace py = pybind11;
 

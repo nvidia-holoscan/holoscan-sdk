@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include <gtest/gtest.h>
 #include <cuda.h>
 #include <cuda_runtime_api.h>
+#include <gtest/gtest.h>
 
 #include <holoscan/operators/segmentation_postprocessor/segmentation_postprocessor.cuh>
 

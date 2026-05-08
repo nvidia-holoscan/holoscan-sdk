@@ -22,12 +22,12 @@
 #include <vector>
 
 #include <gxf/std/cpu_thread.hpp>
-#include "yaml-cpp/yaml.h"
 #include "../../component_spec.hpp"
 #include "../../errors.hpp"
 #include "../../expected.hpp"
 #include "../../gxf/gxf_resource.hpp"
 #include "../../parameter.hpp"
+#include "yaml-cpp/yaml.h"
 
 // YAML conversion support for SchedulingPolicy
 template <>

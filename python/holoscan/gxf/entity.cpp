@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,9 +24,9 @@
 #include "../core/dl_converter.hpp"
 #include "../core/tensor.hpp"
 
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/gxf/entity.hpp>
 #include "entity_pydoc.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/gxf/entity.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

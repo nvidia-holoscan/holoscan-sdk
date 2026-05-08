@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@
 
 #include <cuda_runtime.h>
 
-#include "holoscan/logger/logger.hpp"  // HOLOSCAN_LOG_ERROR, HOLOSCAN_LOG_WARN
+#include <holoscan/logger/logger.hpp>  // HOLOSCAN_LOG_ERROR, HOLOSCAN_LOG_WARN
 
 // Note: ({ ... }) here is a GNU statement expression and not standard C++
 // see: https://gcc.gnu.org/onlinedocs/gcc/Statement-Exprs.html

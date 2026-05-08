@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,23 +15,23 @@
  * limitations under the License.
  */
 
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
+#include <holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp>
 
 #include <any>
 #include <cstddef>
 #include <cstdint>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 #include <memory>  // For std::shared_ptr in parameters
 #include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
 
 namespace holoscan {
 namespace data_loggers {

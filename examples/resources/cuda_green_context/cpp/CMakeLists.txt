@@ -70,4 +70,3 @@ if(HOLOSCAN_BUILD_TESTS)
     SKIP_RETURN_CODE 77  # indicates Green Context is not supported
   )
 endif()
-

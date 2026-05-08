@@ -250,6 +250,37 @@ TEST_F(AsyncDataLoggerShutdownTest, InfiniteTimeoutProcessesAllEntries) {
 }
 
 /**
+ * @brief Verifies visible shutdown logging (resource name, drain progress, completion summary).
+ *
+ * Ensures that INFO-level logs are emitted during async logger shutdown so that
+ * users see progress instead of a silent wait that can look like a hang.
+ */
+TEST_F(AsyncDataLoggerShutdownTest, ShutdownEmitsVisibleProgressLogs) {
+  auto app = make_application<SlowLoggerTestApp>();
+  app->set_num_iterations(30);
+  app->set_process_delay_ms(200);
+  app->set_shutdown_wait_period_ms(-1);
+
+  testing::internal::CaptureStderr();
+  app->run();
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_NE(log_output.find("slow_logger"), std::string::npos)
+      << "Expected logger resource name in shutdown logs\n"
+      << log_output;
+  EXPECT_NE(log_output.find("shutdown requested, draining asynchronous log queues"),
+            std::string::npos)
+      << "Expected shutdown entry log\n"
+      << log_output;
+  EXPECT_NE(log_output.find("Draining log queues"), std::string::npos)
+      << "Expected periodic drain progress log\n"
+      << log_output;
+  EXPECT_NE(log_output.find("shutdown queue drain complete"), std::string::npos)
+      << "Expected shutdown completion summary log\n"
+      << log_output;
+}
+
+/**
  * @brief Test that zero timeout immediately stops without processing remaining entries.
  */
 TEST_F(AsyncDataLoggerShutdownTest, ZeroTimeoutStopsImmediately) {

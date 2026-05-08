@@ -29,13 +29,20 @@ option(HOLOSCAN_BUILD_EXAMPLES "Build Holoscan SDK Examples" ON)
 option(HOLOSCAN_BUILD_PYTHON "Build Holoscan SDK Python Bindings" ON)
 option(HOLOSCAN_DOWNLOAD_DATASETS "Download SDK Datasets" ON)
 option(HOLOSCAN_BUILD_TESTS "Build Holoscan SDK Tests" ON)
-option(HOLOSCAN_USE_CCACHE "Use ccache for building Holoscan SDK" OFF)
-option(HOLOSCAN_USE_SCCACHE "Use sccache for building Holoscan SDK" OFF)
+option(HOLOSCAN_USE_SCCACHE "Use sccache for building Holoscan SDK" ON)
 option(HOLOSCAN_INSTALL_EXAMPLE_SOURCE "Install the example source code" ON)
 option(HOLOSCAN_ENABLE_CLANG_TIDY "Enable use of clang-tidy" OFF)
 option(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS "Enable clang-tidy header checking (requires HOLOSCAN_ENABLE_CLANG_TIDY)" OFF)
 option(HOLOSCAN_ENABLE_GOOGLE_SANITIZER "Enable use of google sanitizer" OFF)
 option(HOLOSCAN_BUILD_GXF_EXTENSIONS "Build GXF Extensions" ON)
+option(HOLOSCAN_BUILD_IPC
+  "Build the holo_ipc module (holoscan::ipc). When OFF, the module is omitted entirely. When ON, the library is built; see HOLOSCAN_IPC_TRANSPORT_FASTDDS for Fast DDS."
+  OFF
+)
+option(HOLOSCAN_IPC_TRANSPORT_FASTDDS
+  "When HOLOSCAN_BUILD_IPC is ON, add the Fast DDS transport (and Fast DDS examples). When OFF, holo_ipc is core-only; no other DDS transport is built in-tree."
+  ON
+)
 option(HOLOSCAN_ALLOW_SYSTEM_INSTALL "Allow installation to system directories" OFF)
 
 # ##############################################################################
@@ -152,9 +159,6 @@ set(HOLOSCAN_CACHE_DIR ".cache" CACHE PATH "Directory for CPM and compiler cache
                                             If relative, it is relative to the source directory (CMAKE_SOURCE_DIR).")
 mark_as_advanced(HOLOSCAN_CACHE_DIR)
 
-# HOLOSCAN_USE_CCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
-# if CCache is not available.
-set(HOLOSCAN_USE_CCACHE_SKIPPED FALSE)
 # HOLOSCAN_USE_SCCACHE_SKIPPED will be set to TRUE by 'include(SetupCache)'
 # if SCCache is not available.
 set(HOLOSCAN_USE_SCCACHE_SKIPPED FALSE)
@@ -219,7 +223,7 @@ add_compile_options(
 )
 
 # ##############################################################################
-# # Build sub modules (holoviz, holoinfer)
+# # Build sub modules (holoviz, holoinfer, holoipc)
 # ##############################################################################
 add_subdirectory(modules)
 
@@ -317,6 +321,7 @@ endif()
 # List targets to export/install
 list(APPEND HOLOSCAN_INSTALL_TARGETS
     core
+    cuda_helper
     gpu_resident_cuda
     holoviz
     holoviz_imgui
@@ -325,7 +330,6 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     infer_utils
     logger
     matx
-    holoscan_matx
     data_loggers_async_console_logger
     data_loggers_basic_console_logger
     op_async_ping_rx
@@ -335,6 +339,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_format_converter
     op_gxf_codelet
     op_holoviz
+    op_raw_image_processor
     op_inference
     op_inference_processor
     op_gpu_resident_inference
@@ -347,7 +352,11 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_video_stream_recorder
     op_video_stream_replayer
     op_v4l2
+    op_video_io
     pose_tree
+    pubsub_common
+    pubsub_in_memory
+    pubsub_runtime
     profiler
     spdlog_logger
 )
@@ -356,6 +365,12 @@ if(HOLOSCAN_BUILD_LIBTORCH)
 endif()
 if(HOLOSCAN_BUILD_ORT)
     list(APPEND HOLOSCAN_INSTALL_TARGETS holoinfer_ort)
+endif()
+if(HOLOSCAN_BUILD_IPC)
+    list(APPEND HOLOSCAN_INSTALL_TARGETS holo_ipc)
+    if(HOLOSCAN_IPC_TRANSPORT_FASTDDS)
+        list(APPEND HOLOSCAN_INSTALL_TARGETS ipc_fastdds_deps pubsub_fastdds)
+    endif()
 endif()
 list(APPEND HOLOSCAN_INSTALL_TARGETS pybind11_abi_config)
 
@@ -435,6 +450,12 @@ install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/HoloscanDownloadData.cmake"
 DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
 COMPONENT "holoscan-core"
 )
+# FindTinyXML2.cmake: used by holoscan-config.cmake when TinyXML2Config.cmake is absent
+# (e.g. Debian libtinyxml2-dev). Must live next to holoscan-config.cmake on CMAKE_MODULE_PATH.
+install(FILES "${CMAKE_SOURCE_DIR}/cmake/modules/FindTinyXML2.cmake"
+        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/holoscan"
+        COMPONENT "holoscan-core"
+)
 
 # Define docs and hooks
 set(holoscan_doc_string [=[
@@ -448,34 +469,7 @@ set(holoscan_install_hook_code_string
 [=[
 include(CMakeFindDependencyMacro)
 find_dependency(CUDAToolkit)
-
-if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL 13.0)
-  set(CCCL_MIN_VERSION 3.0)
-else()
-  set(CCCL_MIN_VERSION 2.5)
-endif()
-
-if(CCCL_FOUND OR TARGET CCCL::CCCL)
-  if(NOT CCCL_VERSION)
-    message(DEBUG "CCCL_VERSION not found, skipping compatibility check")
-  elseif(${CCCL_VERSION} VERSION_LESS ${CCCL_MIN_VERSION})
-    message(WARNING "Found CCCL ${CCCL_VERSION} but need at least CCCL ${CCCL_MIN_VERSION} for the Holoscan SDK.
-Please install a compatible CCCL version from https://github.com/NVIDIA/cccl.git
-and re-configure the project with -DCCCL_ROOT=path/to/cccl to resolve the issue.")
-  else()
-    message(DEBUG "Found CCCL ${CCCL_VERSION} which is compatible with Holoscan SDK")
-  endif()
-else()
-  if(CCCL_MIN_VERSION VERSION_GREATER_EQUAL 3.0)
-    find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
-  else()
-    # Allow compatibility across CCCL major versions
-    find_package(CCCL 3.0 PATHS /usr/local/cuda/lib64/cmake/cccl QUIET)
-    if(NOT CCCL_FOUND)
-      find_dependency(CCCL ${CCCL_MIN_VERSION} PATHS /usr/local/cuda/lib64/cmake/cccl)
-    endif()
-  endif()
-endif()
+find_dependency(CCCL 3.2 PATHS ${CMAKE_CURRENT_LIST_DIR}/../cccl /usr/local/cuda/lib64/cmake/cccl)
 
 find_dependency(yaml-cpp HINTS ${CMAKE_CURRENT_LIST_DIR}/../yaml-cpp)
 # Legacy non-namespaced yaml-cpp linkage required for GXF internal targets
@@ -500,6 +494,7 @@ find_dependency(ucx HINTS ${CMAKE_CURRENT_LIST_DIR}/../ucx)
 
 find_dependency(rapids_logger HINTS ${CMAKE_CURRENT_LIST_DIR}/../rapids_logger)
 find_dependency(rmm HINTS ${CMAKE_CURRENT_LIST_DIR}/../rmm)
+find_dependency(MATX HINTS ${CMAKE_CURRENT_LIST_DIR}/../matx)
 
 # Optional dependency on UCXX for holoscan:pose_tree module
 if(NOT TARGET ucxx::ucxx)
@@ -507,6 +502,19 @@ if(NOT TARGET ucxx::ucxx)
     set(holoscan_ucxx_FIND_QUIET "QUIET")
   endif()
   find_package(ucxx HINTS ${CMAKE_CURRENT_LIST_DIR}/../ucxx ${ucxx_FIND_QUIET})
+endif()
+
+# Optional dependency on Fast DDS and TinyXML2 for holoscan:ipc (holo_ipc).
+# Always QUIET: absence is normal when IPC examples are off or CMAKE_PREFIX_PATH omits Fast DDS;
+# holoscan-config.cmake already prepends this directory to CMAKE_MODULE_PATH for FindTinyXML2.cmake.
+if(NOT TARGET fastdds)
+  find_package(fastdds CONFIG QUIET)
+endif()
+if(NOT TARGET TinyXML2::TinyXML2)
+  find_package(TinyXML2 CONFIG QUIET)
+  if(NOT TinyXML2_FOUND)
+    find_package(TinyXML2 MODULE QUIET)
+  endif()
 endif()
 
 set(_GXF_components @HOLOSCAN_GXF_COMPONENTS@)

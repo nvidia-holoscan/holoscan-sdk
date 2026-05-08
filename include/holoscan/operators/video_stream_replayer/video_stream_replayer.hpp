@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +23,10 @@
 #include <utility>
 #include <vector>
 
-#include "gxf/serialization/file_stream.hpp"
-#include "holoscan/core/conditions/gxf/boolean.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
+#include <gxf/serialization/file_stream.hpp>
+#include <holoscan/core/conditions/gxf/boolean.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
 
 namespace holoscan::ops {
 

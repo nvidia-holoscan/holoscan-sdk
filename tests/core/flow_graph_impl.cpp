@@ -21,8 +21,8 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
 #include <holoscan/holoscan.hpp>
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
 
 namespace holoscan {
 
@@ -95,6 +95,28 @@ TEST_F(FlowGraphImplTest, TestCycleDetectionNoCycle) {
   EXPECT_EQ(cyclic_roots.size(), 0);
 }
 
+TEST_F(FlowGraphImplTest, TestCycleDetectionConvergingDagNoCycle) {
+  auto app = make_application<Application>();
+
+  auto op1 = app->make_operator<TestOp>("op1");
+  auto op2 = app->make_operator<TestOp>("op2");
+  auto op3 = app->make_operator<TestOp>("op3");
+  auto op4 = app->make_operator<TestOp>("op4");
+
+  // Create a diamond DAG:
+  // op1 -> op2 -> op4
+  //    \-> op3 -/
+  app->add_flow(op1, op2);
+  app->add_flow(op1, op3);
+  app->add_flow(op2, op4);
+  app->add_flow(op3, op4);
+
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
+  auto cyclic_roots = graph.has_cycle();
+
+  EXPECT_EQ(cyclic_roots.size(), 0);
+}
+
 TEST_F(FlowGraphImplTest, TestCycleDetectionWithCycle) {
   auto app = make_application<Application>();
 
@@ -109,6 +131,25 @@ TEST_F(FlowGraphImplTest, TestCycleDetectionWithCycle) {
   auto cyclic_roots = graph.has_cycle();
 
   EXPECT_GT(cyclic_roots.size(), 0);
+}
+
+TEST_F(FlowGraphImplTest, TestCycleDetectionDisconnectedComponentWithCycle) {
+  auto app = make_application<Application>();
+
+  auto op1 = app->make_operator<TestOp>("op1");
+  auto op2 = app->make_operator<TestOp>("op2");
+  auto op3 = app->make_operator<TestOp>("op3");
+  auto op4 = app->make_operator<TestOp>("op4");
+
+  // One acyclic component and one disconnected cyclic component.
+  app->add_flow(op1, op2);
+  app->add_flow(op3, op4);
+  app->add_flow(op4, op3);
+
+  auto& graph = static_cast<OperatorFlowGraphImpl&>(app->graph());
+  auto cyclic_roots = graph.has_cycle();
+
+  EXPECT_EQ(cyclic_roots.size(), 1);
 }
 
 TEST_F(FlowGraphImplTest, TestCacheCycleInvalidationOnAddFlow) {

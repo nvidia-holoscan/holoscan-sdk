@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/resources/data_logger.hpp"
+#include <holoscan/core/resources/data_logger.hpp>
 
 #include <chrono>
 #include <memory>
@@ -24,11 +24,11 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/clock.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/scheduler.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/clock.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/scheduler.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

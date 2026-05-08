@@ -94,15 +94,15 @@ We provide multiple ways to install and run the Holoscan SDK:
 ````{tab-item} NGC Container
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-igpu
    ```
 See details and usage instructions on [NGC][container].
 ````
@@ -249,9 +249,6 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 
 [container]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan
 [pypi]: https://pypi.org/project/holoscan
-[conda-forge]: https://conda-forge.org/
-[conda-forge-holoscan]: https://anaconda.org/conda-forge/holoscan
-[conda-forge-libholoscan-dev]: https://anaconda.org/conda-forge/libholoscan-dev
 
 ### Not sure what to choose?
 
@@ -297,7 +294,7 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 [^4]: TensorRT 10.3+ needed for the Inference operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^5]: Vulkan 1.3.204+ loader needed for the HoloViz operator (+ libegl1 for headless rendering). Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
-[^7]: Torchscript support tested with LibTorch 2.9.1.
+[^7]: Torchscript support tested with LibTorch 2.11.0.
 [^8]: To install LibTorch on baremetal, either build it from source, or point to a PyTorch wheel installation. See instructions in the [Inference](./inference.md#libtorch-installation) section.
 [^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
 [^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).

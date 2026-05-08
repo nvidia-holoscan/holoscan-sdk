@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include <string>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/gxf/gxf_network_context.hpp"
+#include <holoscan/core/gxf/gxf_network_context.hpp>
 
-#include "holoscan/core/component_spec.hpp"
+#include <holoscan/core/component_spec.hpp>
 
 // network context initialization is delayed until runtime via
 // `GXFExecutor::initialize_network_context`

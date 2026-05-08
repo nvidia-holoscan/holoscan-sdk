@@ -7,6 +7,7 @@ These examples demonstrate how to build an application configured to use a multi
 ## C++ API
 
 This example shows a simple application using only native operators. There are three operators involved:
+
   1. a transmitter, set to transmit the integer value 0 on port "out"
   2. a set of delay operators that prints the received value, waits a specified delay, and then increments by a user-specified value. The incremented value is then transmitted.
   3. a receiver that prints the sum of all received values
@@ -28,6 +29,7 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Set values for `num_operator`, `delay`, `delay_step` and `worker_thread_number` as desired in `app_config.yaml`.
 
 Then, run:
+
 ```bash
 ./examples/multithread/cpp/multithread
 ```

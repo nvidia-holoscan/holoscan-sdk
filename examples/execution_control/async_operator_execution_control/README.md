@@ -7,6 +7,7 @@ Asynchronous operator execution control is crucial for applications that need fi
 ### Practical Use Cases
 
 This pattern is particularly valuable in the following scenarios:
+
 - Medical imaging workflows where processing steps must occur in a strict sequence
 - Real-time systems that need to synchronize with external hardware or timing signals
 - Applications with dynamic execution paths that depend on runtime decisions
@@ -26,12 +27,14 @@ This asynchronous execution control pattern offers distinct advantages over othe
 ## Overview
 
 The application shows how to:
+
 1. Create operators that can be controlled via their asynchronous scheduling conditions
 2. Execute operators in a specific sequence from outside the Holoscan runtime
 3. Implement a notification mechanism for operators to signal completion
 4. Gracefully shut down an application with asynchronous operators
 
 The example implements:
+
 - A controller operator that manages execution state and coordinates other operators
 - Multiple simple operators that wait for control signals before executing
 - A thread-safe notification mechanism between operators and the controller
@@ -42,6 +45,7 @@ The example uses the `EventBasedScheduler` with multiple worker threads, though 
 ### Application Workflow
 
 The execution flow follows this pattern:
+
 ```
 Main Thread                ControllerOp Thread             SimpleOp Threads (op1, op2, op3)
 -------------              ------------------              --------------------------------
@@ -64,6 +68,7 @@ Application exits
 ## C++ API
 
 The application consists of two operator types:
+
 1. `SimpleOp`: A basic operator that:
    - Initializes in kWait state
    - Executes its compute method when triggered
@@ -77,6 +82,7 @@ The application consists of two operator types:
    - Controls application shutdown by setting appropriate event states
 
 Key implementation aspects:
+
 - SimpleOp operators use `async_condition()->event_state(kWait)` to pause execution
 - The controller uses `async_condition()->event_state(kEventWaiting)` to prevent the application from being terminated at start by the deadlock detector
 - The main thread triggers operators via `controller->execute_operator("op_name")`
@@ -91,6 +97,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/execution_control/async_operator_execution_control/cpp/async_operator_execution_control
 ```
@@ -98,6 +105,7 @@ Then, run:
 ## Python API
 
 The Python implementation demonstrates the same concepts using the Python API. It includes the same two operator types with equivalent functionality:
+
 1. `SimpleOp`: A basic operator that:
    - Initializes in kWait state
    - Executes its compute method when triggered
@@ -110,6 +118,7 @@ The Python implementation demonstrates the same concepts using the Python API. I
    - Controls application shutdown by setting appropriate event states
 
 The Python example demonstrates the same execution control patterns using Python's equivalent APIs:
+
 - Using `async_condition.event_state` to control operator execution states (equivalent to C++ `async_condition()->event_state()`)
 - Implementing notification callbacks between operators
 - Controlling operator execution sequence from outside the runtime
@@ -120,6 +129,7 @@ The Python example demonstrates the same execution control patterns using Python
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/execution_control/async_operator_execution_control/python/async_operator_execution_control.py
 ```
@@ -141,6 +151,7 @@ For more detailed information about the asynchronous condition API, see the Holo
 ### Important Considerations
 
 When implementing this pattern, keep these points in mind:
+
 - **Deadlock prevention**: Ensure at least one operator is in `kEventWaiting` state rather than `kWait` to prevent deadlock detection from terminating the application
 - **Thread safety**: All communication between operators must be thread-safe; use appropriate synchronization primitives
 - **Error handling**: Consider how to handle failures in asynchronously executing operators
@@ -160,6 +171,7 @@ This example demonstrates the basic pattern, but it can be extended in several w
 ## Expected Output
 
 The example will output:
+
 1. An introduction explaining the example and key concepts
 2. Status messages showing operators being executed in sequence (op3 → op2 → op1)
 3. Notification messages when operators complete execution
@@ -167,6 +179,7 @@ The example will output:
 5. Confirmation that the application has completed successfully
 
 Sample output (from the C++ implementation, Python output is similar):
+
 ```
 This example demonstrates async operator execution control.
 The controller operator runs in a separate thread and synchronizes

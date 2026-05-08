@@ -5,10 +5,12 @@ This example demonstrates a simple ping application with two operators connected
 It differs from `ping_simple` in that one can independently choose if the receive and/or transmit operators run asynchronously. One can also optionally choose between the single-threaded greedy scheduler or multi-threaded scheduler.
 
 There are two operators involved in this example:
+
   1. a transmitter, set to transmit a sequence of integers from 1-20 to it's 'out' port
   2. a receiver that prints the received values to the terminal
 
 For the C++ application:
+
 - The transmit operator will be asynchronous if `async_transmit: true` in `ping_async.yaml`.
 - The receive operator will be asynchronous if `async_receive: true` in `ping_async.yaml`.
 - The scheduler to be used can be set via the `scheduler` entry in `ping_async.yaml`. It defaults to `event_based` (an event-based multi-thread scheduler), but can also be set to either `multi_thread` (polling-based) or `greedy` (single thread).
@@ -44,7 +46,8 @@ sed -i -e 's#^multithreaded:.*#multithreaded: true#' ./examples/conditions/async
 ./examples/conditions/asynchronous/cpp/ping_async
 ```
 
-# Python
+## Python
+
 ```bash
 python ./examples/conditions/asynchronous/python/ping_async.py
 ```

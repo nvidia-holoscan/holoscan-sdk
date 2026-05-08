@@ -25,22 +25,53 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resources/gxf/unbounded_allocator.hpp>
 #include "../utils.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 namespace holoscan {
 
 using IOSpecWithGXFContext = TestWithGXFContext;
+
+namespace {
+
+std::optional<uint64_t> uint64_arg_value(const Arg& arg) {
+  if (!arg.has_value()) {
+    return std::nullopt;
+  }
+  try {
+    return std::any_cast<uint64_t>(arg.value());
+  } catch (const std::bad_any_cast&) {
+  }
+  try {
+    return static_cast<uint64_t>(std::any_cast<uint32_t>(arg.value()));
+  } catch (const std::bad_any_cast&) {
+  }
+  try {
+    return static_cast<uint64_t>(std::any_cast<int64_t>(arg.value()));
+  } catch (const std::bad_any_cast&) {
+  }
+  try {
+    return static_cast<uint64_t>(std::any_cast<int32_t>(arg.value()));
+  } catch (const std::bad_any_cast&) {
+  }
+  try {
+    return static_cast<uint64_t>(std::any_cast<int>(arg.value()));
+  } catch (const std::bad_any_cast&) {
+  }
+  return std::nullopt;
+}
+
+}  // namespace
 
 TEST(IOSpec, TestIOSpecInitialize) {
   OperatorSpec op_spec = OperatorSpec();
@@ -227,6 +258,30 @@ TEST(IOSpec, TestIOSpecConnectorUcxReceiver) {
   EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("holoscan::HoloscanUcxReceiver"));
 }
 
+TEST(IOSpec, TestIOSpecConnectorPubSubReceiver) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("a"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  spec.connector(IOSpec::ConnectorType::kPubSub);
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  ASSERT_TRUE(spec.connector() != nullptr);
+  auto receiver = std::dynamic_pointer_cast<PubSubReceiver>(spec.connector());
+  ASSERT_NE(receiver, nullptr);
+  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::PubSubReceiver"));
+  EXPECT_EQ(spec.topic(), std::nullopt);
+
+  spec.connector(IOSpec::ConnectorType::kPubSub,
+                 Arg("capacity", 2),
+                 Arg("policy", 1),
+                 Arg("topic_name", std::string("/capsule/in")));
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  receiver = std::dynamic_pointer_cast<PubSubReceiver>(spec.connector());
+  ASSERT_NE(receiver, nullptr);
+  EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::PubSubReceiver"));
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/capsule/in"));
+}
+
 TEST(IOSpec, TestIOSpecConnectorDoubleBufferTransmitter) {
   OperatorSpec op_spec = OperatorSpec();
   IOSpec spec =
@@ -297,6 +352,184 @@ TEST(IOSpec, TestIOSpecConnectorUcxTransmitter) {
   transmitter = std::dynamic_pointer_cast<UcxTransmitter>(spec.connector());
   EXPECT_EQ(std::string(transmitter->gxf_typename()),
             std::string("holoscan::HoloscanUcxTransmitter"));
+}
+
+TEST(IOSpec, TestIOSpecConnectorPubSubTransmitter) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("a"), IOSpec::IOType::kOutput, &typeid(holoscan::gxf::Entity));
+
+  spec.connector(IOSpec::ConnectorType::kPubSub);
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  ASSERT_TRUE(spec.connector() != nullptr);
+  auto transmitter = std::dynamic_pointer_cast<PubSubTransmitter>(spec.connector());
+  ASSERT_NE(transmitter, nullptr);
+  EXPECT_EQ(std::string(transmitter->gxf_typename()),
+            std::string("nvidia::gxf::PubSubTransmitter"));
+  EXPECT_EQ(spec.topic(), std::nullopt);
+
+  spec.connector(IOSpec::ConnectorType::kPubSub,
+                 Arg("capacity", 2),
+                 Arg("policy", 1),
+                 Arg("topic_name", std::string("/capsule/out")));
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  transmitter = std::dynamic_pointer_cast<PubSubTransmitter>(spec.connector());
+  ASSERT_NE(transmitter, nullptr);
+  EXPECT_EQ(std::string(transmitter->gxf_typename()),
+            std::string("nvidia::gxf::PubSubTransmitter"));
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/capsule/out"));
+}
+
+TEST(IOSpec, TestIOSpecTopicPromotesDefaultConnectorToPubSub) {
+  OperatorSpec op_spec = OperatorSpec();
+  std::vector<IOSpec::IOType> io_types{IOSpec::IOType::kInput, IOSpec::IOType::kOutput};
+
+  for (auto io_type : io_types) {
+    IOSpec spec =
+        IOSpec(&op_spec, std::string("topic_port"), io_type, &typeid(holoscan::gxf::Entity));
+    spec.topic("/capsule/default");
+
+    EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+    ASSERT_TRUE(spec.connector() != nullptr);
+    EXPECT_EQ(spec.topic(), std::optional<std::string>("/capsule/default"));
+    if (io_type == IOSpec::IOType::kInput) {
+      auto receiver = std::dynamic_pointer_cast<PubSubReceiver>(spec.connector());
+      ASSERT_NE(receiver, nullptr);
+      EXPECT_EQ(std::string(receiver->gxf_typename()), std::string("nvidia::gxf::PubSubReceiver"));
+    } else {
+      auto transmitter = std::dynamic_pointer_cast<PubSubTransmitter>(spec.connector());
+      ASSERT_NE(transmitter, nullptr);
+      EXPECT_EQ(std::string(transmitter->gxf_typename()),
+                std::string("nvidia::gxf::PubSubTransmitter"));
+    }
+  }
+}
+
+TEST(IOSpec, TestIOSpecTopicDoesNotDuplicateTopicNameArgs) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec = IOSpec(
+      &op_spec, std::string("topic_port"), IOSpec::IOType::kOutput, &typeid(holoscan::gxf::Entity));
+
+  spec.topic("/capsule/first");
+  spec.topic("/capsule/second");
+
+  ASSERT_TRUE(spec.connector() != nullptr);
+  size_t topic_name_arg_count = 0;
+  for (const auto& arg : spec.connector()->args()) {
+    if (arg.name() == "topic_name") {
+      ++topic_name_arg_count;
+    }
+  }
+
+  EXPECT_EQ(topic_name_arg_count, 1UL);
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/capsule/second"));
+}
+
+TEST(IOSpec, TestIOSpecQosReadsConnectorArgs) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec = IOSpec(
+      &op_spec, std::string("topic_port"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  const auto qos = nvidia::gxf::QoSProfile::SensorData();
+  spec.connector(IOSpec::ConnectorType::kPubSub, Arg("topic_name", std::string("/capsule/in")));
+  ASSERT_TRUE(spec.connector() != nullptr);
+  spec.connector()->add_arg(Arg("qos_profile", qos));
+
+  EXPECT_EQ(spec.qos(), std::optional<nvidia::gxf::QoSProfile>(qos));
+}
+
+TEST(IOSpec, TestIOSpecTopicRebindPreservesExistingQos) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("in"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  // Set topic + explicit QoS
+  const auto qos = nvidia::gxf::QoSProfile::SensorData();
+  spec.topic("/original/topic");
+  spec.qos(qos);
+  ASSERT_TRUE(spec.qos().has_value());
+
+  // Rebind to a different topic without supplying QoS (mimics bind_input_topic with nullopt qos)
+  spec.topic("/rebound/topic");
+
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/rebound/topic"));
+  ASSERT_TRUE(spec.qos().has_value());
+  EXPECT_EQ(spec.qos()->reliability, qos.reliability);
+  EXPECT_EQ(spec.qos()->durability, qos.durability);
+  EXPECT_EQ(spec.qos()->history, qos.history);
+}
+
+TEST(IOSpec, TestIOSpecTopicDoesNotOverrideExplicitNonPubSubConnector) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec = IOSpec(
+      &op_spec, std::string("receivers"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  spec.connector(IOSpec::ConnectorType::kDoubleBuffer, Arg("capacity", 2));
+  spec.topic("/ignored/topic");
+
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kDoubleBuffer);
+  ASSERT_TRUE(spec.connector() != nullptr);
+  auto receiver = std::dynamic_pointer_cast<DoubleBufferReceiver>(spec.connector());
+  ASSERT_NE(receiver, nullptr);
+  EXPECT_EQ(std::string(receiver->gxf_typename()),
+            std::string("nvidia::gxf::DoubleBufferReceiver"));
+  EXPECT_EQ(spec.topic(), std::nullopt);
+}
+
+TEST(IOSpec, TestIOSpecTopicCanReplaceExplicitInputConnectorWithPubSub) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("in"), IOSpec::IOType::kInput, &typeid(holoscan::gxf::Entity));
+
+  spec.connector(IOSpec::ConnectorType::kDoubleBuffer, Arg("capacity", 7), Arg("policy", 1));
+  spec.topic("/rebound/in", true);
+
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  ASSERT_TRUE(spec.connector() != nullptr);
+  auto receiver = std::dynamic_pointer_cast<PubSubReceiver>(spec.connector());
+  ASSERT_NE(receiver, nullptr);
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/rebound/in"));
+
+  std::optional<uint64_t> capacity;
+  std::optional<uint64_t> policy;
+  for (const auto& arg : spec.connector()->args()) {
+    if (arg.name() == "capacity") {
+      capacity = uint64_arg_value(arg);
+    }
+    if (arg.name() == "policy") {
+      policy = uint64_arg_value(arg);
+    }
+  }
+  EXPECT_EQ(capacity, std::optional<uint64_t>(7));
+  EXPECT_EQ(policy, std::optional<uint64_t>(1));
+}
+
+TEST(IOSpec, TestIOSpecTopicCanReplaceExplicitOutputConnectorWithPubSub) {
+  OperatorSpec op_spec = OperatorSpec();
+  IOSpec spec =
+      IOSpec(&op_spec, std::string("out"), IOSpec::IOType::kOutput, &typeid(holoscan::gxf::Entity));
+
+  spec.connector(IOSpec::ConnectorType::kDoubleBuffer, Arg("capacity", 3), Arg("policy", 2));
+  spec.topic("/rebound/out", true);
+
+  EXPECT_EQ(spec.connector_type(), IOSpec::ConnectorType::kPubSub);
+  ASSERT_TRUE(spec.connector() != nullptr);
+  auto transmitter = std::dynamic_pointer_cast<PubSubTransmitter>(spec.connector());
+  ASSERT_NE(transmitter, nullptr);
+  EXPECT_EQ(spec.topic(), std::optional<std::string>("/rebound/out"));
+
+  std::optional<uint64_t> capacity;
+  std::optional<uint64_t> policy;
+  for (const auto& arg : spec.connector()->args()) {
+    if (arg.name() == "capacity") {
+      capacity = uint64_arg_value(arg);
+    }
+    if (arg.name() == "policy") {
+      policy = uint64_arg_value(arg);
+    }
+  }
+  EXPECT_EQ(capacity, std::optional<uint64_t>(3));
+  EXPECT_EQ(policy, std::optional<uint64_t>(2));
 }
 
 TEST(IOSpec, TestIOSpecQueueSize) {

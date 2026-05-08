@@ -20,9 +20,9 @@
 
 #include <memory>
 
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/fragment.hpp>
 #include "executor_pydoc.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/fragment.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

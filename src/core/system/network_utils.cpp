@@ -29,7 +29,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 
@@ -73,7 +73,7 @@ class AddrInfo {
 };
 
 static bool is_port_available(int port) {
-  struct addrinfo hints {};
+  struct addrinfo hints{};
   // Set up the hints structure
   hints.ai_family = AF_INET;
   hints.ai_socktype = SOCK_STREAM;

@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
+#include <holoscan/core/schedulers/gxf/event_based_scheduler.hpp>
 
 #include <memory>
 
-#include "holoscan/core/clock.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
+#include <holoscan/core/clock.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
 
 namespace holoscan {
 

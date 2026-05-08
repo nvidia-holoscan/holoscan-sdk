@@ -3,11 +3,11 @@
 ## Overview
 
 Holoscan provides a test harness interface for testing Holoscan operators with:
+
 - **Input/Output Port Management**: Easy setup of test data and validation
 - **Condition Support**: Add execution conditions like CountCondition, PeriodicCondition
 - **Validation Framework**: Built-in validators for exact equality, floating-point comparison, and custom validation
 - **Fluent API**: Chainable method calls for clean, readable test setup
-
 
 ## Concepts
 
@@ -41,12 +41,14 @@ The `OperatorTestHarness` is a specialized Holoscan application designed to test
 **How It Works:**
 
 When you create a test harness with `create_operator_test<YourOp>()`:
+
 1. The harness creates a Holoscan application with your operator in the middle
 2. For each `add_input_port()` call, it creates a `TestHarnessSourceOp` that feeds test data
 3. For each `add_output_port()` call, it creates a `TestHarnessSinkOp` that collects and validates output
 4. When you call `run_test()`, the entire pipeline executes and validations are performed automatically
 
 The test harness ensures that:
+
 - All input ports receive the same number of data elements
 - Data flows correctly from sources through your operator to sinks
 - Conditions (like `CountCondition`) control execution properly
@@ -64,6 +66,7 @@ Holoscan provides three types of built-in validators:
    - Compares each output against expected values using `operator==`
    - Best for: integers, strings, and other types with well-defined equality
    - Automatically tracks which output index is being validated
+
    ```cpp
    std::vector<int> expected = {2, 4, 6};
    auto validator = create_exact_equality_validator(expected);
@@ -73,6 +76,7 @@ Holoscan provides three types of built-in validators:
    - Compares floating-point values with approximate equality
    - Uses Google Test's `EXPECT_FLOAT_EQ` (default) or `EXPECT_NEAR` (with tolerance)
    - Best for: float, double, and other floating-point types
+
    ```cpp
    std::vector<float> expected = {1.5f, 2.7f, 3.1f};
    auto validator = create_float_equality_validator(expected, 0.01f);
@@ -81,6 +85,7 @@ Holoscan provides three types of built-in validators:
 3. **`create_transform_equality_validator<InputT, OutputT>(expected_values, transform_func)`**
    - Applies a transformation before comparing
    - Best for: complex types where you want to validate a specific property
+
    ```cpp
    auto validator = create_transform_equality_validator<MyStruct, int>(
      {10, 20, 30},
@@ -126,8 +131,8 @@ There are **two ways** to set up tests:
 *Fluent* is a design pattern that enables code to be written in a way that flows naturally, often by chaining method calls together. This style improves readability and expressiveness, making it easier to set up complex objects or configurations in a concise and intuitive manner. The term "fluent API" refers to this general programming approach and is not specific to Holoscan.
 
 ```cpp
-#include "holoscan/test/test_harness.h"
-#include "holoscan/test/validation_functions.h"
+#include <holoscan/test/test_harness.h>
+#include <holoscan/test/validation_functions.h>
 
 using namespace holoscan::test {
 
@@ -154,9 +159,10 @@ TEST_F(OperatorTestBase, BasicFluentTest) {
 ```
 
 ### Approach 2: Step-by-Step Setup
+
 ```cpp
-#include "holoscan/test/test_harness.h"
-#include "holoscan/test/validation_functions.h"
+#include <holoscan/test/test_harness.h>
+#include <holoscan/test/validation_functions.h>
 
 using namespace holoscan::test {
 
@@ -187,6 +193,7 @@ TEST_F(OperatorTestBase, BasicStepByStepTest) {
 ## API Reference
 
 ### Creating Test Harness
+
 ```cpp
 // Without parameters
 auto test = create_operator_test<DoublerOp>();
@@ -220,6 +227,7 @@ test->add_output_port<DataType>("port_name",
 ```
 
 ### Adding Conditions
+
 ```cpp
 test->add_condition<holoscan::CountCondition>("name", count);
 test->add_condition<holoscan::PeriodicCondition>("name",
@@ -227,6 +235,7 @@ test->add_condition<holoscan::PeriodicCondition>("name",
 ```
 
 ### Running Tests
+
 ```cpp
 test->run_test();
 ```

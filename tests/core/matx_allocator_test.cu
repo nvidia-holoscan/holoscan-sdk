@@ -571,8 +571,7 @@ class MatXAllocatorTestOp : public Operator {
     }
     for (int i = 0; i < 8; ++i) {
       if (host[i] != static_cast<float>(i + 1)) {
-        throw std::runtime_error("shared_ptr_basic: tensor data mismatch at " +
-                                 std::to_string(i));
+        throw std::runtime_error("shared_ptr_basic: tensor data mismatch at " + std::to_string(i));
       }
     }
 
@@ -626,8 +625,7 @@ class MatXAllocatorTestOp : public Operator {
       if (host[i] != src[i]) {
         stream_alloc.deallocate(raw, kBytes);
         cudaStreamDestroy(stream);
-        throw std::runtime_error("shared_ptr_stream: data mismatch at " +
-                                 std::to_string(i));
+        throw std::runtime_error("shared_ptr_stream: data mismatch at " + std::to_string(i));
       }
     }
 
@@ -657,8 +655,7 @@ class MatXAllocatorTestOp : public Operator {
     for (int i = 0; i < 16; ++i) {
       if (fptr[i] != static_cast<float>(i * 10)) {
         host_alloc.deallocate(ptr, kBytes);
-        throw std::runtime_error("shared_ptr_host: data mismatch at " +
-                                 std::to_string(i));
+        throw std::runtime_error("shared_ptr_host: data mismatch at " + std::to_string(i));
       }
     }
 
@@ -748,8 +745,7 @@ class MatXAllocatorTestOp : public Operator {
       cudaStream_t stream;
       auto err = cudaStreamCreate(&stream);
       if (err != cudaSuccess) {
-        throw std::runtime_error(
-            "with_stream_validation: failed to create stream");
+        throw std::runtime_error("with_stream_validation: failed to create stream");
       }
 
       bool threw = false;
@@ -763,8 +759,7 @@ class MatXAllocatorTestOp : public Operator {
       }
       cudaStreamDestroy(stream);
       if (!threw) {
-        throw std::runtime_error(
-            "with_stream_validation: expected std::invalid_argument");
+        throw std::runtime_error("with_stream_validation: expected std::invalid_argument");
       }
     }
 
@@ -1081,9 +1076,8 @@ TEST(MatXAllocator, SharedPtrBasicAlloc) {
   testing::internal::CaptureStderr();
   app->run();
   std::string log = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log.find("PASS: shared_ptr_basic") != std::string::npos)
-      << "=== LOG ===\n"
-      << log << "\n===========\n";
+  EXPECT_TRUE(log.find("PASS: shared_ptr_basic") != std::string::npos) << "=== LOG ===\n"
+                                                                       << log << "\n===========\n";
 }
 
 TEST(MatXAllocator, SharedPtrStreamAware) {
@@ -1093,9 +1087,8 @@ TEST(MatXAllocator, SharedPtrStreamAware) {
   testing::internal::CaptureStderr();
   app->run();
   std::string log = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log.find("PASS: shared_ptr_stream") != std::string::npos)
-      << "=== LOG ===\n"
-      << log << "\n===========\n";
+  EXPECT_TRUE(log.find("PASS: shared_ptr_stream") != std::string::npos) << "=== LOG ===\n"
+                                                                        << log << "\n===========\n";
 }
 
 TEST(MatXAllocator, SharedPtrHostMemory) {
@@ -1105,9 +1098,8 @@ TEST(MatXAllocator, SharedPtrHostMemory) {
   testing::internal::CaptureStderr();
   app->run();
   std::string log = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log.find("PASS: shared_ptr_host") != std::string::npos)
-      << "=== LOG ===\n"
-      << log << "\n===========\n";
+  EXPECT_TRUE(log.find("PASS: shared_ptr_host") != std::string::npos) << "=== LOG ===\n"
+                                                                      << log << "\n===========\n";
 }
 
 // --- with_stream() tests ---
@@ -1119,9 +1111,8 @@ TEST(MatXAllocator, WithStream) {
   testing::internal::CaptureStderr();
   app->run();
   std::string log = testing::internal::GetCapturedStderr();
-  EXPECT_TRUE(log.find("PASS: with_stream") != std::string::npos)
-      << "=== LOG ===\n"
-      << log << "\n===========\n";
+  EXPECT_TRUE(log.find("PASS: with_stream") != std::string::npos) << "=== LOG ===\n"
+                                                                  << log << "\n===========\n";
 }
 
 TEST(MatXAllocator, WithStreamValidation) {

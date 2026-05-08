@@ -12,6 +12,7 @@ A clear and concise description of what the bug is.
 
 **To Reproduce**
 Steps to reproduce the behavior:
+
 1. Go to '...'
 2. Click on '....'
 3. Scroll down to '....'
@@ -24,9 +25,10 @@ A clear and concise description of what you expected to happen.
 If applicable, add screenshots to help explain your problem.
 
 **Platform Information (please complete the following information):**
- - Holoscan SDK Version [e.g. 2.1.0]
+
+- Holoscan SDK Version [e.g. 2.1.0]
 - Architecture: [x86_64, arm64]
- - OS: [Ubuntu, RHEL, IGX SW OS]
+- OS: [Ubuntu, RHEL, IGX SW OS]
 
 **Additional context**
 Add any other context about the problem here.

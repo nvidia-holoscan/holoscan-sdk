@@ -19,7 +19,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/holoscan.hpp"
+#include <holoscan/holoscan.hpp>
 
 namespace holoscan::ops {
 

@@ -23,11 +23,11 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
+#include <holoscan/core/gpu_resident_operator.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
 
 #include <holoinfer.hpp>
 #include <holoinfer_buffer.hpp>
@@ -47,14 +47,21 @@ namespace holoscan::ops {
  * - **out_tensor_names**: Output tensors.
  * - **batch_sizes**: Batch sizes per model. Key is model name and value is the batch size.
  * - **model_path_map**: Model to path map. Key is model name and value is the model path.
- * - **pre_processor_map**: Model to Pre processed input data (to the model) map. Key is model name and value is the input tensor names to the model.
- * - **inference_map**: Model to output tensor map. Key is model name and value is the output tensor names from the model.
- * - **tensor_to_buffersize**: Map holding buffer size per tensor. Key is tensor name and value is the buffer size.
- * - **tensor_to_datatype**: Map holding data type per tensor. Key is tensor name and value is the data type.
+ * - **pre_processor_map**: Model to Pre processed input data (to the model) map. Key is model name
+ * and value is the input tensor names to the model.
+ * - **inference_map**: Model to output tensor map. Key is model name and value is the output tensor
+ * names from the model.
+ * - **tensor_to_buffersize**: Map holding buffer size per tensor. Key is tensor name and value is
+ * the buffer size.
+ * - **tensor_to_datatype**: Map holding data type per tensor. Key is tensor name and value is the
+ * data type.
  * - **device_map**: Device map. Key is model name and value is the GPU ID for inference.
- * - **dla_core_map**: DLA core map. Key is model name and value is the DLA core index for inference.
- * - **temporal_map**: Temporal map. Key is model name and value is the frame delay for model inference.
- * - **activation_map**: Activation map. Key is model name and value is the activation state for model inference.
+ * - **dla_core_map**: DLA core map. Key is model name and value is the DLA core index for
+ * inference.
+ * - **temporal_map**: Temporal map. Key is model name and value is the frame delay for model
+ * inference.
+ * - **activation_map**: Activation map. Key is model name and value is the activation state for
+ * model inference.
  * - **backend_map**: Backend map. Key is model name and value is the backend type for inference.
  * - **parallel_inference**: Parallel inference flag.
  * - **infer_on_cpu**: Infer on CPU flag. Always false. Not configurable.

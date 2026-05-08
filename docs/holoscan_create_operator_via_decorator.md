@@ -1,4 +1,5 @@
 (holoscan-operator-from-decorator)=
+
 # Simplified Python operator creation via the create_op decorator
 
 :::{warning}
@@ -33,6 +34,7 @@ By supplying the `inputs` argument we are specifying that there are two input po
 There is also an optional, `cast_tensors` argument to `create_op`. For convenience, this defaults to `True`, which results in any tensor-like objects being automatically cast to a NumPy or CuPy array (for host or device tensors, respectively) before they are passed on to the function. If this is not desired (e.g. due to working with a different third party tensor framework than NumPy or CuPy), the user can set `cast_tensors=False`, and manually handle casting of any `holoscan.Tensor` objects to the desired form in the function body. This casting option applies to either single tensors or a tensor map (`dict[Tensor]`).
 
 This decorated function can then be used within the `compose` method of an `Application` to create an operator corresponding to this computation:
+
 ```{code-block} python
 from holoscan.core import Application, Operator
 
@@ -47,6 +49,7 @@ def MyApp(Application):
 
         # now add any additional operators and create the computation graph using add_flow
 ```
+
 Note that as for all other Operator classes, it is **required** to supply the application (or fragment) as the first argument (`self` here). The `name` kwarg is always supported and is the name that will be assigned to the operator. Due to the use of this `kwarg` to specify the operator name, the wrapped function (`mask_and_offset` in this case) should not use `name` as an argument name. In this case, we specified `offset=0.0` which would override the default value of `offset=1.5` in the function signature.
 
 For completeness, the use of the `create_op` decorator on `mask_and_offset` is equivalent to if the user had defined the following `MaskAndOffsetOp` class and used it in `MyApp.compose`:
@@ -72,6 +75,7 @@ def MaskAndOffsetOp(Operator):
 ```
 
 ## Decorating a function that returns a tuple of arrays
+
 Let's consider another example where function takes in multiple arrays, processes them, and returns a tuple of updated arrays:
 
 ```{code-block} python
@@ -80,6 +84,7 @@ def scale_and_offset(x1, x2, scale=2.0, offset=1.5):
     y2 = x2 + offset
     return y1, y2
 ```
+
 To turn this into a corresponding operator we can add the `create_op` decorator like this:
 
 ```{code-block} python
@@ -95,8 +100,8 @@ def scale_and_offset(x1, x2, scale=2.0, offset=1.5):
 
 As before, the messages received through the ports defined by `inputs`, "x1" and "x2", will be mapped to respective variables `x1` and `x2`. Likewise, the elements of the output tuple, arrays `y1` and `y2`, will be emitted through ports "out1" and "out2", respectively. In contrast to input mapping, which is determined by the naming of ports and variables, the output mapping is determined by the ordering of output ports and elements in the tuple returned by the function.
 
-
 (holoscan-operator-from-decorator-input)=
+
 ## Using the Input class for more control over input ports
 
 This section will cover additional use cases where using a `str` or `Tuple[str]` for the `inputs` argument is insufficient.
@@ -104,13 +109,13 @@ This section will cover additional use cases where using a `str` or `Tuple[str]`
 **Scenario 1:** Assume that the upstream operator sends a tensormap to a given input port and we need to specify which tensor(s) in the tensormap will map to which input port.
 
 For a concrete example, suppose we want to print a tensor's shape using a function like:
+
 ```{code-block} python
 def print_shape(tensor):
     print(f"{tensor.shape = }")
 ```
 
 but the upstream operator outputs a dictionary containing two tensors named "image" and "labels". We could use this operator by specifying which tensor name on a particular input port would map to the function's "tensor" argument. For example:
-
 
 ```{code-block} python
 @create_op(inputs=Input("input_tensor", arg_map={"image": "tensor"}))
@@ -122,19 +127,18 @@ would create an operator with a single input port named "input_tensor" and no ou
 
 **Scenario 2:** we want to override the scheduling condition present on a port. This can be done by specifying Input with the `condition` and optionally `condition_kwargs` arguments. For example, to override the MessageAvailableCondition that is added to the port by default and allow it to call `compute` even when no input message is available:
 
-
 ```{code-block} python
 @create_op(inputs=Input("input_tensor", condition=ConditionType.NONE, condition_kwargs={}))
 ```
 
 **Scenario 3:** we want to override the parameters of the receiver present on a port. For example, we could specify a different policy for the double buffer receiver that is used by default (policy=1 corresponds to discarding incoming messages when the queue is already full)
 
-
 ```{code-block} python
 @create_op(inputs=Input("input_tensor", connector=ConditionType.DOUBLE_BUFFER, connector_kwargs=dict(capacity=1, policy=1)))
 ```
 
 (holoscan-operator-from-decorator-output)=
+
 ## Using the Output class for more control over output ports
 
 To support a case where multiple output ports should be present, the user must have the function return a `dict`. The {py:class}`holoscan.decorator.Output` class then has a `tensor_names` keyword argument that can be specified to indicate which items in the dictionary are to be transmitted on a given output port.
@@ -159,7 +163,6 @@ def xyz_generator(nx=32, ny=32, nz=16):
 
 This operator has no input ports and three optional keyword arguments. It splits the output tensors across two ports as described above. All names used in `tensor_names` must correspond to keys present in the `dict` emitted by the object. Often the `dict` values are tensors, but that is not a requirement.
 
-
 The {py:class}`holoscan.decorator.Output` class also supports `condition`, `condition_kwargs`, `connector` and `connector_kwargs` that work in the same way as shown for {py:class}`holoscan.decorator.Input` above. For example, to override the transmitter queue policy for a single output port named "output_tensor"
 
 ```{code-block} python
@@ -175,6 +178,7 @@ When specifying the `inputs` and `outputs` arguments to `create_op`, please make
 :::
 
 (holoscan-operator-from-decorator-queue-size-policy)=
+
 ## Configuring the queue size and policy for an input or output port
 
 When using the decorator approach to create operators, you can configure the queue size and policy for input and output ports using the `Input` and `Output` classes. Here's how to configure these parameters:
@@ -215,6 +219,7 @@ def another_operator(self, value):
 ### Queue Size Options
 
 The `size` parameter can be set to:
+
 - `IOSpec.SIZE_ONE`: Queue size of 1 (default)
 - `IOSpec.ANY_SIZE`: Any size queue
 - `IOSpec.PRECEDING_COUNT`: Size based on number of preceding connections
@@ -223,6 +228,7 @@ The `size` parameter can be set to:
 ### Queue Policy Options
 
 The `policy` parameter accepts these values:
+
 - `IOSpec.QueuePolicy.POP`: Pop oldest item when queue is full
 - `IOSpec.QueuePolicy.REJECT`: Reject new items when queue is full
 - `IOSpec.QueuePolicy.FAULT`: Log warning and reject when queue is full
@@ -230,6 +236,7 @@ The `policy` parameter accepts these values:
 ### Example Use Cases
 
 1. Throttling execution with POP policy:
+
 ```python
 @create_op(
     op_param="self",
@@ -245,7 +252,8 @@ def execution_throttler_op(self, value):
         return value
 ```
 
-2. Multiple input handling:
+1. Multiple input handling:
+
 ```python
 @create_op(
     op_param="self",
@@ -257,6 +265,7 @@ def multi_input_op(self, value):
 ```
 
 (holoscan-operator-from-decorator-op-param)=
+
 ## Using the op_param argument to access the operator instance
 
 The `op_param` argument to `create_op` can be used to access the operator instance within the function body. This is useful if the operator needs to access its own name or other attributes.
@@ -291,7 +300,6 @@ I am here - node3 (param1: 3, param2: 5)
 
 When this application runs, each operator instance will print its name along with its parameter values. The `op_param` argument allows the function to access operator attributes like `name` through the specified parameter (in this case `self`). This is particularly useful when you need to access operator-specific information or methods within your function's implementation.
 
-
 ## Interoperability with wrapped C++ operators
 
 The SDK includes a [python_decorator example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/python_decorator) showing interoperability of wrapped C++ operators (`VideoStreamReplayerOp` and `HolovizOp`) alongside native Python operators created via the `create_op` decorator.
@@ -324,6 +332,7 @@ def tensor_info(tensor):
     print(f"tensor from 'in' port: shape = {tensor.shape}, " f"dtype = {tensor.dtype.name}")
     return tensor
 ```
+
 The first is created by adding the decorator to a function named `invert` which just inverts the (8-bit RGB) color space values. A second operator, is created by adding the decorator to a function named `tensor_info`, which assumes that the input is a CuPy or NumPy tensor, and prints its shape and data type. Note that `create_op`'s default `cast_tensors=True` option ensures that any host or device tensors are cast to NumPy or CuPy arrays, respectively. This is why it is safe to use NumPy APIs in the function bodies. If the user wants to receive the `holoscan.Tensor` object directly and manually handle the casting to a different type of object in the function body, then `cast_tensors=False` should be specified in the keyword arguments to `create_op`.
 
 Now that we have defined or imported all of the operators, we can build an application in the usual way by inheriting from the {py:class}`~holoscan.core.Application` class and implementing the `compose` method. The remainder of the code for this example is shown below.
@@ -388,13 +397,12 @@ def main():
 if __name__ == "__main__":
     main()
 ```
-The highlighted lines show how Operators corresponding to the `invert` and `tensor_info` functions are created by passing the application itself as the first argument. The `invert_op` and `info_op` variables now correspond to a {py:class}`holoscan.core.Operator` class and can be connected in the usual way using `add_flow` to define the computation. Note that a name was provided for these operators, via the optional `name` keyword argument. In this case each operator is only used once, but if the same operator is to be used more than once in an application, each should be given a unique name.
 
+The highlighted lines show how Operators corresponding to the `invert` and `tensor_info` functions are created by passing the application itself as the first argument. The `invert_op` and `info_op` variables now correspond to a {py:class}`holoscan.core.Operator` class and can be connected in the usual way using `add_flow` to define the computation. Note that a name was provided for these operators, via the optional `name` keyword argument. In this case each operator is only used once, but if the same operator is to be used more than once in an application, each should be given a unique name.
 
 ## Using create_op to turn a generator into an Operator
 
 The `create_op` decorator can be applied to a generator in the same way as for a function. In this case, a `BooleanCondition` will automatically be added to the operator that will stop it from trying to call `compute` again once the generator is exhausted (has no more values to yield). The following is a basic example of decorating a generator for integers from 1 to `count`:
-
 
 ```{code-block} python
 @create_op(outputs="out")
@@ -403,10 +411,10 @@ def source_generator(count):
 ```
 
 The `compose` method can then create an operator from this decorated generator as follows
+
 ```{code-block} python
 count_op = source_generator(self, count=100, name="int_source")
 ```
-
 
 ## Using create_op to turn a class into an Operator
 
@@ -438,6 +446,7 @@ negate_even_op = negate_op_creation_func(self, name="negate_even")  # call the f
 ```
 
 or more concisely as just
+
 ```{code-block} python
 negate_even_op = NegateEven(start_index=0)(self, name="negate_even")
 ```
@@ -480,7 +489,7 @@ class NegateEvenOp(Operator):
 ```
 
 The primary differences between this `NegateEvenOp` class and the decorated `NegateEven` above are:
+
 - `NegateEven` does not need to define a `setup` method
 - `NegateEven` does not inherit from `Operator` and so does not call its `__init__` from the constructor.
 - The `NegateEven::__call__` method is simpler than the `NegateEvenOp::compute` method as `receive` and `emit` methods do not need to be explicitly called and casting to a NumPy or CuPy array is automatically handled for `NegateEven`.
-

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
-#include "holoscan/core/flow_tracking_annotation.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/flow_tracking_annotation.hpp>
+#include <holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

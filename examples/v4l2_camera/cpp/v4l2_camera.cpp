@@ -21,11 +21,11 @@
 #include <typeinfo>
 #include <vector>
 
+#include <gxf/rmm/rmm_allocator.hpp>
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/format_converter/format_converter.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 #include <holoscan/operators/v4l2_video_capture/v4l2_video_capture.hpp>
-#include <gxf/rmm/rmm_allocator.hpp>
 
 #include <v4l2_camera_passthrough_op.hpp>
 
@@ -90,9 +90,8 @@ class App : public holoscan::Application {
     set_dynamic_flows(source, [format_converter, passthrough](const std::shared_ptr<Operator>& op) {
       auto pixel_format = op->metadata()->get<std::string>("V4L2_pixel_format", "");
       const bool is_yuyv =
-          !pixel_format.empty() &&
-          (pixel_format.find("YUYV") != std::string::npos ||
-           pixel_format.find("yuyv") != std::string::npos);
+          !pixel_format.empty() && (pixel_format.find("YUYV") != std::string::npos ||
+                                    pixel_format.find("yuyv") != std::string::npos);
 
       // Route based on pixel format
       if (is_yuyv) {

@@ -29,19 +29,19 @@
 
 #include "./pydoc.hpp"
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/async_data_logger.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/data_loggers/async_console_logger/async_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 #include "../../core/component_util.hpp"
 #include "../../core/gil_guarded_pyobject.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/async_data_logger.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)

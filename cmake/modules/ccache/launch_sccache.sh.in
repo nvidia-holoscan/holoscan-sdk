@@ -21,4 +21,3 @@ export SCCACHE_CACHE_SIZE=${SCCACHE_CACHE_SIZE:-"@SCCACHE_CACHE_SIZE@"}
 
 # Execute sccache
 @SCCACHE_BIN_PATH@ "$@"
-

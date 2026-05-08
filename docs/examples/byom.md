@@ -1,4 +1,5 @@
 (byom-example)=
+
 # Bring Your Own Model (BYOM)
 
 The Holoscan platform is optimized for performing AI inferencing workflows.  This section shows how the user can easily modify the `bring_your_own_model` example to
@@ -16,7 +17,6 @@ The example source code and run instructions can be found in the [examples](http
 ## Operators and Workflow
 
 Here is the diagram of the operators and workflow used in the [byom.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/bring_your_own_model/python/byom.py) example.
-
 
 :::{figure-md} fig-byom-workflow
 :align: center
@@ -69,10 +69,10 @@ To get a better understanding of your model, and if this step is necessary, webs
 :::
 
 (ultrasound-app-customization)=
+
 ## Understanding the Application Code
 
 Before modifying the application, let's look at the existing code to get a better understanding of how it works.
-
 
 `````{tab-set}
 ````{tab-item} Python
@@ -230,8 +230,6 @@ Here, "output" matches the input tensor name of the postprocessor (line `23`).  
 ````
 `````
 
-
-
 Finally, we define the application and workflow.
 
 `````{tab-set}
@@ -275,12 +273,12 @@ if __name__ == "__main__":
 `````
 
 (byom-modifying-app)=
+
 ## Modifying the Application for Ultrasound Segmentation
 
 To create the ultrasound segmentation application, we need to swap out the input video and model to use the ultrasound files, and adjust the parameters to ensure the input video is resized correctly to the model's expectations.
 
 We will need to modify the Python and YAML files to change our application to the ultrasound segmentation application.
-
 
 `````{tab-set}
 ````{tab-item} Python
@@ -394,16 +392,21 @@ Ultrasound Segmentation
 
 :::{note}
 If you run the byom.py application without modification and are using the debian installation, you may run into the following error message:
+
 ```text
 [error] Error in Inference Manager ... TRT Inference: failed to build TRT engine file.
 ```
+
 In this case, modifying the write permissions for the model directory should help (use with caution):
+
 ```bash
 sudo chmod a+w /opt/nvidia/holoscan/examples/bring_your_own_model/model
 ```
+
 :::
 
 (customizing-multiai-op)=
+
 ## Customizing the Inference Operator
 
 The built-in `InferenceOp` operator provides the functionality of the {ref}`holoinfer`.
@@ -420,7 +423,6 @@ backend.  If the input models are in `onnx` format select either `trt` or `onnx`
 - `input_on_cuda`: Indicates whether input tensors are on device or host.
 - `output_on_cuda`: Indicates whether output tensors are on device or host.
 - `transmit_on_cuda`: If True, it means the data transmission from the inference will be on **Device**, otherwise it means the data transmission from the inference will be on **Host**.
-
 
 ## Common Pitfalls Deploying New Models
 

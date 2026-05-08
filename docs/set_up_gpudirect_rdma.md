@@ -6,8 +6,8 @@ Learn more about RDMA in the {ref}`technology overview<gpudirect_rdma>` section.
 
 There are two parts to enabling RDMA for Holoscan:
 
-  - [Enabling RDMA on the ConnectX SmartNIC](#enabling-rdma-on-the-connectx-smartnic)
-  - [Enabling GPUDirect RDMA](#enabling-gpudirect-rdma)
+- [Enabling RDMA on the ConnectX SmartNIC](#enabling-rdma-on-the-connectx-smartnic)
+- [Enabling GPUDirect RDMA](#enabling-gpudirect-rdma)
 
 ## Enabling RDMA on the ConnectX SmartNIC
 
@@ -58,6 +58,7 @@ sudo /etc/init.d/openibd restart
 ### 3. Switch the board Link Layer to Ethernet
 
 The ConnectX SmartNIC can function in two separate modes (called link layer):
+
 - Ethernet (ETH)
 - Infiniband (IB)
 
@@ -102,10 +103,13 @@ CA 'mlx5_1'
                 Port GUID: 0x4ab02dfffeee7a05
                 Link layer: InfiniBand
 ```
+
 If no results appear after `ibstat` and `sudo lsmod | grep ib_core` returns a result like this:
+
 ```sh
 ib_core               425984  1 ib_uverbs
 ```
+
 Consider running the following command or rebooting:
 
 ```bash
@@ -160,8 +164,10 @@ $ sudo ibdev2netdev
 mlx5_0 port 1 ==> eth2 (Down)
 mlx5_1 port 1 ==> eth3 (Up)
 ```
+
 :::{tip}
 For IGX Orin Developer Kits with no live source to connect to the ConnectX QSFP ports, adding `-v` can show you which logical name is mapped to each specific port:
+
 - `0005:03.00.0` is the QSFP port closer to the PCI slots
 - `0005:03.00.1` is the QSFP port closer to the RJ45 ethernet ports
 
@@ -181,6 +187,7 @@ $ sudo dmesg | grep -w mlx5_core
 ...
 [ 3712.267103] mlx5_core 0005:03:00.1: Port module event: module 1, Cable plugged
 ```
+
 ```
 :::
 The next step is to set a static IP on the interface you'd like to use so you can refer to it in your Holoscan applications (e.g., {ref}`Emergent cameras<emergent-vision-tech>`, [distributed applications](./holoscan_create_distributed_app.md)...).
@@ -290,14 +297,18 @@ sender device while the Developer Kit is used as the receiver.
 :::{note}
 The `$rivermax_sdk` variable referenced below corresponds to the path where the Rivermax SDK
 package is installed. If the Rivermax SDK was installed via SDK Manager, this path will be:
+
 ```sh
 rivermax_sdk=$HOME/Documents/Rivermax/1.31.10
 ```
+
 If the Rivermax SDK was installed via a manual download, make sure to export your path to the SDK:
+
 ```sh
 rivermax_sdk=$DOWNLOAD_PATH/1.31.10
 ```
-*The install path might differ in future versions of Rivermax.*
+
+_The install path might differ in future versions of Rivermax._
 :::
 
 1. Determine the logical name for the ConnectX devices that are used by each
@@ -336,22 +347,24 @@ rivermax_sdk=$DOWNLOAD_PATH/1.31.10
    a. Bring up the network:
 
       ```bash
-         $ sudo ifconfig enp9s0f0 up 10.0.0.1
+         sudo ifconfig enp9s0f0 up 10.0.0.1
       ```
 
    b. Build the sample apps:
 
       ```bash
-         $ cd ${rivermax_sdk}/apps
-         $ make
+         cd ${rivermax_sdk}/apps
+         make
       ```
 
    e. Launch the `generic_sender` application:
 
       ```bash
-         $ sudo ./generic_sender -l 10.0.0.1 -d 10.0.0.2 -p 5001 -y 1462 -k 8192 -z 500 -v
+         sudo ./generic_sender -l 10.0.0.1 -d 10.0.0.2 -p 5001 -y 1462 -k 8192 -z 500 -v
       ```
+
       which gives
+
       ```text
          +#############################################
          | Sender index: 0
@@ -384,7 +397,7 @@ rivermax_sdk=$DOWNLOAD_PATH/1.31.10
    a. Bring up the network:
 
       ```bash
-         $ sudo ifconfig enp9s0f0 up 10.0.0.2
+         sudo ifconfig enp9s0f0 up 10.0.0.2
       ```
 
    b. Build the `generic_receiver` app with GPUDirect support from the [Rivermax GitHub Repo](https://github.com/NVIDIA/Rivermax). Before following the instructions to [build with CUDA Toolkit support](https://github.com/NVIDIA/Rivermax/blob/master/generic_receiver/README.md#how-to-build), apply the changes to the file `generic_receiver/generic_receiver.cpp` in [this PR](https://github.com/NVIDIA/Rivermax/pull/3/files). This was tested on the NVIDIA IGX Orin Developer Kit with Rivermax 1.31.10.

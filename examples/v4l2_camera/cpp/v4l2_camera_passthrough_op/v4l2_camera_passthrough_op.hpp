@@ -17,9 +17,9 @@
 
 #pragma once
 
-#include <holoscan/holoscan.hpp>
 #include <gxf/multimedia/video.hpp>
 #include <gxf/std/tensor.hpp>
+#include <holoscan/holoscan.hpp>
 
 namespace holoscan::ops {
 

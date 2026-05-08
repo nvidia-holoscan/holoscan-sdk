@@ -14,6 +14,6 @@ Developer Kit using provided scripts.
 
 There are two options available to set up a build environment and start building Holoscan BSP images using OpenEmbedded.
 
-1. The first sets up a local build environment in which all dependencies are fetched and installed manually by the developer directly on their host machine.
+1. Use an OpenEmbedded/Yocto build container by building the image from the [meta-tegra-holoscan `env` directory](https://github.com/nvidia-holoscan/meta-tegra-holoscan/tree/main/env#readme). The `holoscan-oe-builder` image previously published on NGC has been retired; follow those instructions to build the container locally and run setup, BitBake, and flash workflows from your workspace.
+2. Set up a local build environment in which all dependencies are fetched and installed manually by the developer directly on their host machine.
 Please refer to the [Holoscan OpenEmbedded/Yocto recipes README](https://github.com/nvidia-holoscan/meta-tegra-holoscan/blob/main/README.md) for more information on how to use the local build environment.
-2. The second uses a [Holoscan OpenEmbedded/Yocto Build Container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan-oe-builder) that is provided by NVIDIA on NGC, which contains all of the dependencies and configuration scripts so the entire process of building and flashing a BSP can be done with just a few simple commands.

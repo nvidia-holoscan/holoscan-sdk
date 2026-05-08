@@ -31,27 +31,27 @@
 
 // the default range for enums is 128 which is not enough for the Key enum, increase to 512
 #define MAGIC_ENUM_RANGE_MAX 512  // NOLINT(cppcoreguidelines-macro-usage)
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "../../core/component_util.hpp"
 #include "../operator_util.hpp"
 #include "./pydoc.hpp"
 
 #include <gxf/multimedia/camera.hpp>
+#include <holoscan/core/codec_registry.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/conditions/gxf/boolean.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/operators/holoviz/codecs.hpp>
+#include <holoscan/operators/holoviz/holoviz.hpp>
 #include "../../core/emitter_receiver_registry.hpp"  // EmitterReceiverRegistry
 #include "../../core/io_context.hpp"                 // PyOutputContext
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/conditions/gxf/boolean.hpp"
-#include "holoscan/core/codec_registry.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/operators/holoviz/codecs.hpp"
-#include "holoscan/operators/holoviz/holoviz.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -121,6 +121,7 @@ class PyHolovizOp : public HolovizOp {
       FramebufferSizeCallbackFunction framebuffer_size_callback = FramebufferSizeCallbackFunction(),
       WindowSizeCallbackFunction window_size_callback = WindowSizeCallbackFunction(),
       WindowCloseCallbackFunction window_close_callback = WindowCloseCallbackFunction(),
+      bool interrupt_app_on_window_close = false,
       // NOLINTEND(performance-unnecessary-value-param)
       const std::string& font_path = ""s,
       std::shared_ptr<holoscan::CudaStreamPool> cuda_stream_pool = nullptr,
@@ -148,6 +149,7 @@ class PyHolovizOp : public HolovizOp {
                           Arg{"camera_eye", camera_eye},
                           Arg{"camera_look_at", camera_look_at},
                           Arg{"camera_up", camera_up},
+                          Arg{"interrupt_app_on_window_close", interrupt_app_on_window_close},
                           Arg{"font_path", font_path}}) {
     // only append tensors argument if it is not empty
     //     avoids [holoscan] [error] [gxf_operator.hpp:126] Unable to handle parameter 'tensors'
@@ -286,6 +288,7 @@ PYBIND11_MODULE(_holoviz, m) {
                           ops::HolovizOp::FramebufferSizeCallbackFunction,
                           ops::HolovizOp::WindowSizeCallbackFunction,
                           ops::HolovizOp::WindowCloseCallbackFunction,
+                          bool,
                           const std::string&,
                           std::shared_ptr<holoscan::CudaStreamPool>,
                           std::shared_ptr<holoscan::BooleanCondition>,
@@ -323,6 +326,7 @@ PYBIND11_MODULE(_holoviz, m) {
                  "framebuffer_size_callback"_a = HolovizOp::FramebufferSizeCallbackFunction(),
                  "window_size_callback"_a = HolovizOp::WindowSizeCallbackFunction(),
                  "window_close_callback"_a = HolovizOp::WindowCloseCallbackFunction(),
+                 "interrupt_app_on_window_close"_a = false,
                  "font_path"_a = ""s,
                  "cuda_stream_pool"_a = py::none(),
                  "window_close_condition"_a = py::none(),

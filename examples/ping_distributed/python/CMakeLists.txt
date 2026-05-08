@@ -81,7 +81,7 @@ if(HOLOSCAN_BUILD_TESTS)
     COMMAND bash -c
       "${Python3_EXECUTABLE} ${CMAKE_CURRENT_BINARY_DIR}/ping_distributed.py --help 2>&1 | \
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
-        --pass-pattern 'Usage: ping_distributed.py' \
+        --pass-pattern 'ping_distributed.py \\[OPTIONS\\]' \
         --fail-pattern 'initialized independent of a parent entity' \
         --fail-pattern 'Unable to convert argument type'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}

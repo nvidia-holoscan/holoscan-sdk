@@ -39,18 +39,18 @@
 #include "./common.hpp"
 #include "./component.hpp"
 #include "./condition.hpp"
+#include "./flow_graphs/flow_graph.hpp"
 #include "./forward_def.hpp"
 #include "./gxf/gxf_cuda.hpp"
 #include "./io_spec.hpp"
 #include "./messagelabel.hpp"
 #include "./metadata.hpp"
-#include "./flow_graphs/flow_graph.hpp"
 #include "./operator_spec.hpp"
 #include "./operator_status.hpp"
 #include "./resource.hpp"
 
-#include "gxf/app/graph_entity.hpp"
-#include "gxf/core/gxf.h"
+#include <gxf/core/gxf.h>
+#include <gxf/app/graph_entity.hpp>
 
 #define HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()                                            \
   template <typename ArgT,                                                              \
@@ -640,6 +640,62 @@ class Operator : public ComponentBase {
    * nullopt.
    */
   std::optional<std::shared_ptr<Transmitter>> transmitter(const std::string& port_name);
+
+  /**
+   * @brief Bind an input port to a Pub/Sub topic.
+   *
+   * This is the programmatic override path for topic-mapped ports and takes precedence over any
+   * lower-priority `IOSpec::topic()` default configured in `setup()`.
+   *
+   * @param port_name The input port to bind.
+   * @param topic The topic name to subscribe to.
+   * @param qos Optional QoS profile override. When nullopt, any QoS already configured on the
+   *        port (e.g. in setup()) is preserved.
+   * @param replace_connector If true, replace an explicitly non-PubSub connector on this port
+   *        with a Pub/Sub connector.
+   */
+  void bind_input_topic(const std::string& port_name, const std::string& topic,
+                        const std::optional<nvidia::gxf::QoSProfile>& qos = std::nullopt,
+                        bool replace_connector = false);
+
+  /**
+   * @brief Bind an output port to a Pub/Sub topic.
+   *
+   * This is the programmatic override path for topic-mapped ports and takes precedence over any
+   * lower-priority `IOSpec::topic()` default configured in `setup()`.
+   *
+   * @param port_name The output port to bind.
+   * @param topic The topic name to publish to.
+   * @param qos Optional QoS profile override. When nullopt, any QoS already configured on the
+   *        port (e.g. in setup()) is preserved.
+   * @param replace_connector If true, replace an explicitly non-PubSub connector on this port
+   *        with a Pub/Sub connector.
+   */
+  void bind_output_topic(const std::string& port_name, const std::string& topic,
+                         const std::optional<nvidia::gxf::QoSProfile>& qos = std::nullopt,
+                         bool replace_connector = false);
+
+  /**
+   * @brief Get the configured topic name for an input port, if any.
+   */
+  [[nodiscard]] std::optional<std::string> input_topic(const std::string& port_name) const;
+
+  /**
+   * @brief Get the configured topic name for an output port, if any.
+   */
+  [[nodiscard]] std::optional<std::string> output_topic(const std::string& port_name) const;
+
+  /**
+   * @brief Get the effective QoS profile for an input port, if it is topic-mapped.
+   */
+  [[nodiscard]] std::optional<nvidia::gxf::QoSProfile> input_qos(
+      const std::string& port_name) const;
+
+  /**
+   * @brief Get the effective QoS profile for an output port, if it is topic-mapped.
+   */
+  [[nodiscard]] std::optional<nvidia::gxf::QoSProfile> output_qos(
+      const std::string& port_name) const;
 
   /**@brief Set the queue policy to be used by an input or output port.
    *

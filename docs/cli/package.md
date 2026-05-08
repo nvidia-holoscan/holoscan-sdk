@@ -8,7 +8,6 @@
 
 `holoscan package` [](#cli-help) [](#cli-log-level) [](#cli-package-add) [](#cli-package-config) [](#cli-package-cuda) [](#cli-package-docs) [](#cli-package-models) [](#cli-package-platform) [](#cli-package-timeout) [](#cli-package-version) [](#cli-package-add-host) [](#cli-package-base-image) [](#cli-package-build-image) [](#cli-package-build-cache) [](#cli-package-cmake-args) [](#cli-package-holoscan-sdk-file) [](#cli-package-includes) [](#cli-package-input-data) [](#cli-package-monai-deploy-sdk-file) [](#cli-package-no-cache) [](#cli-package-sdk) [](#cli-package-sdk-version) [](#cli-package-source) [](#cli-package-output) [](#cli-package-tag) [](#cli-package-username) [](#cli-package-uid) [](#cli-package-gid) [](#cli-package-application)
 
-
 ## Examples
 
 The code below package a python application for x86_64 systems:
@@ -58,7 +57,6 @@ Path to the application to be packaged. The following inputs are supported:
 Python (PyPI) modules are installed into the user's (via [](#cli-package-username) argument) directory with the user ID specified via [](#cli-package-uid).
 Therefore, when running a packaged Holoscan application on Kubernetes or other service providers, running Docker with non root user, and running Holoscan CLI `run` command where the logged-on user's ID is different, ensure to specify the `USER ID` that is used when building the application package.
 
-
 For example, include the `securityContext` when running a Holoscan packaged application with `UID=1000` using Argo:
 
 ```yaml
@@ -67,6 +65,7 @@ spec:
     runAsUser: 1000
     runAsNonRoot: true
 ```
+
 :::
 
 ## Flags
@@ -83,6 +82,7 @@ spec:
 - `--add` may be specified multiple times.
 
 For example:
+
 ```bash
 holoscan package --add /path/to/python/module-1 --add /path/to/static-objects
 ```
@@ -114,6 +114,7 @@ The resulting package will contain the following:
     └── my-other-lib.so
 
 ```
+
 (#cli-package-config)=
 
 #### `--config|-c CONFIG`
@@ -125,7 +126,6 @@ Path to the application's [configuration file](./run_config.md). The configurati
 #### `[--docs|-d DOCS]`
 
 An optional directory path of documentation, README, licenses that shall be included in the package.
-
 
 (#cli-package-models)=
 
@@ -156,14 +156,14 @@ my-models/
 └── model-2
     └── my-other-model.ts
 ```
+
 (#cli-package-cuda)=
 
 #### `--cuda CUDA_VERSION`
 
 The CUDA version used to build the application is specified. If not specified, CUDA `13` would be used.
 
-
-`CUDA_VERSION` must be one of: `12`, `13`. 
+`CUDA_VERSION` must be one of: `12`, `13`.
 
 (#cli-package-platform)=
 
@@ -192,7 +192,6 @@ Defaults to `0`.
 
 An optional version number of the application. When specified, it overrides the value specified in the [configuration file](./run_config.md).
 
-
 ### Advanced Build Options
 
 (#cli-package-add-host)=
@@ -212,7 +211,6 @@ Optionally specifies the base container image for building packaged application.
 #### `[--build-image BUILD_IMAGE]`
 
 Optionally specifies the build container image for building C++ applications. It must be a valid Docker image tag either accessible online or via `docker images. By default, the **Packager** picks a build image to use from [NGC](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
-
 
 (#cli-package-build-cache)=
 
@@ -238,7 +236,6 @@ holoscan package --cmake-args "-DCMAKE_BUILD_TYPE=DEBUG -DCMAKE_ARG=VALUE"
 
 Path to the Holoscan SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet depending on the SDK version detected/specified. The `HOLOSCAN_SDK_FILE` filename must have `.deb` or `.whl` file extension for Debian package or PyPI wheel package, respectively.
 
-
 (#cli-package-includes)=
 
 #### `[--includes  [{debug,holoviz,torch,onnx}]]`
@@ -254,13 +251,11 @@ To reduce the size of the packaged application container, the CLI Packager, by d
 Refer to [Developer Resources](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/DEVELOP.md#advanced-local-environment--cmake) for dependency versions.
 :::
 
-
-
 Usage:
+
 ```bash
 holoscan package --includes holoviz torch onnx
 ```
-
 
 (#cli-package-input-data)=
 
@@ -274,7 +269,6 @@ Optionally, embed input data in the package. `INPUT_DATA` must be a valid path t
 
 Path to the MONAI Deploy App SDK Debian or PyPI package. If not specified, the packager downloads the SDK file from the internet based on the SDK version. The `MONAI_DEPLOY_SDK_FILE` package filename must have `.whl` or `.gz` file extension.
 
-
 (#cli-package-no-cache)=
 
 #### `[--no-cache|-n]`
@@ -286,7 +280,6 @@ Do not use cache when building image.
 #### `[--sdk SDK]`
 
 SDK for building the application: Holoscan or MONAI-Deploy. `SDK` must be one of: holoscan, monai-deploy.
-
 
 (#cli-package-sdk-version)=
 
@@ -304,10 +297,9 @@ If the value is a valid directory, the Package scans it for `artifacts.json` or 
 
 For example:
 
-- *URL*: https://my.domain.com/my-file.json
+- *URL*: <https://my.domain.com/my-file.json>
 - *DIR*: /home/me/path/to/artifact-json-files/
 - *FILE*: /home/me/path/to/artifact.json
-
 
 ### Output Options
 

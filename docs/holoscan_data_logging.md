@@ -153,8 +153,8 @@ The `BasicConsoleLogger` and `GXFConsoleLogger` are concrete implementations tha
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
+#include <holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 
 class MyApp : public holoscan::Application {
  public:
@@ -360,7 +360,7 @@ from `DataLoggerResource`, though, only the `DataLogger` interface.
 `````{tab-set}
 ````{tab-item} C++
 ```cpp
-#include "holoscan/core/resources/data_logger.hpp"
+#include <holoscan/core/resources/data_logger.hpp>
 
 class MyCustomLogger : public holoscan::DataLoggerResource {
  public:

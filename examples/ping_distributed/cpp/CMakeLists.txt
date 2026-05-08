@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -113,7 +113,7 @@ if(HOLOSCAN_BUILD_TESTS)
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST PROPERTIES
-    PASS_REGULAR_EXPRESSION "Usage: ping_distributed \\[OPTIONS\\]"
+    PASS_REGULAR_EXPRESSION "ping_distributed \\[OPTIONS\\]"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
   )
 endif()

@@ -5,22 +5,29 @@ This minimal signal processing application generates a time-varying impulse, con
 ## Run instructions
 
 * **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install numpy
   python3 <APP_DIR>/convolve.py
   ```
+
 * **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/numpy_native/convolve.py
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/numpy_native/convolve.py
   ```
+
 * **source (local env)**:
+
   ```bash
   python3 -m pip install numpy
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib

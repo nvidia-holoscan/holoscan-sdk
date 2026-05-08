@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,10 +25,10 @@
 #include <typeinfo>
 
 // clang-format off
-#include "holoscan/core/component_spec.hpp"  // must be before argument_setter import
-#include "holoscan/core/argument_setter.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/arg.hpp"
+#include <holoscan/core/component_spec.hpp>  // must be before argument_setter import
+#include <holoscan/core/argument_setter.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/arg.hpp>
 // clang-format on
 
 namespace holoscan {

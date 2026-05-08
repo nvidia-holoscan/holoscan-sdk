@@ -236,6 +236,27 @@ References
 .. [1] https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html
 )doc")
 
+PYDOC(is_partitioning_supported, R"doc(
+Check whether CUDA Green Context partitioning will succeed on a device.
+
+Verifies that the CUDA driver accepts the requested SM split and
+per-partition resource generation for the given device, partition
+sizes, and minimum SM block size.
+
+Returns ``True`` if partitioning is supported.  Returns ``False`` if
+the driver rejects the split or resource generation for any partition,
+or if the required driver API is unavailable.
+
+Parameters
+----------
+dev_id : int
+    CUDA device index (typically 0).
+min_sm_count : int
+    Minimum SM block size for the pool.
+sms_per_partition : list of int
+    List of SM counts per partition (e.g. ``[8, 8]``).
+)doc")
+
 }  // namespace CudaGreenContextPool
 
 namespace CudaGreenContext {

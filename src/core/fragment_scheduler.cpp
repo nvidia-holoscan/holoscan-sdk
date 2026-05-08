@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/fragment_scheduler.hpp"
+#include <holoscan/core/fragment_scheduler.hpp>
 
 #include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
 
-#include "holoscan/core/schedulers/greedy_fragment_allocation.hpp"
+#include <holoscan/core/schedulers/greedy_fragment_allocation.hpp>
 
 namespace holoscan {
 

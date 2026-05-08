@@ -5,6 +5,7 @@ This example demonstrates how to use `holoscan::MatXAllocator` to create MatX te
 ## Overview
 
 The application consists of two operators:
+
 1. A transmitter (`MatXAllocTxOp`) that creates a MatX tensor using `MatXAllocator` with an `RMMAllocator`, populates it with data, and sends it downstream via DLPack.
 2. A receiver (`MatXAllocRxOp`) that receives the tensor, demonstrates two ways to wrap it as a MatX tensor view (raw pointer and DLPack import), and performs a GPU-accelerated computation (`tensor * 2 + 1`).
 
@@ -23,6 +24,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/matx/matx_allocator/cpp/matx_allocator
 ```
@@ -42,6 +44,7 @@ Then, run:
 The application will print log messages from both operators, showing the tensor creation and computation. The output will look similar to this:
 
 C++:
+
 ```text
 Created MatX tensor with 10 elements using pooled allocator
 Received tensor 'tensor': 40 bytes

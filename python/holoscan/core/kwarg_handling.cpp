@@ -26,11 +26,11 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/resource.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/resource.hpp>
 #include "kwarg_handling.hpp"
 #include "kwarg_handling_pydoc.hpp"
 

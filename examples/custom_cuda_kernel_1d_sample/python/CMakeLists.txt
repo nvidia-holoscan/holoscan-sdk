@@ -71,4 +71,3 @@ if(HOLOSCAN_BUILD_TESTS)
     PASS_REGULAR_EXPRESSION "Reach end of file or playback count reaches to the limit. Stop ticking."
   )
 endif()
-

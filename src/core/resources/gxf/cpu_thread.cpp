@@ -15,17 +15,17 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/cpu_thread.hpp"
+#include <holoscan/core/resources/gxf/cpu_thread.hpp>
 
 #include <gxf/core/gxf.h>
 
 #include <string>
 #include <vector>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 namespace holoscan {
 

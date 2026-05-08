@@ -23,8 +23,8 @@
 
 #include <gxf/std/clock.hpp>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/gxf/gxf_scheduler.hpp>
 
 namespace holoscan::gxf {
 // scheduler initialization is delayed until runtime via `GXFExecutor::initialize_scheduler`

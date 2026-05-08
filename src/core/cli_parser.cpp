@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/cli_parser.hpp"
+#include <holoscan/core/cli_parser.hpp>
 
 #include <algorithm>
 #include <filesystem>
@@ -24,9 +24,9 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/logger/logger.hpp>
 #include "CLI/Config.hpp"
 #include "CLI/Formatter.hpp"
-#include "holoscan/logger/logger.hpp"
 
 namespace holoscan {
 

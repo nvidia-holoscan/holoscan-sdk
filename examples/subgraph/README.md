@@ -3,6 +3,7 @@
 This directory contains examples demonstrating Holoscan's subgraph functionality for creating reusable, composable operator patterns. Subgraphs enable modular application design by encapsulating related operators and exposing clean interfaces for external connections.
 
 Subgraphs provide a powerful way to:
+
 - **Create reusable components** that can be instantiated multiple times within an application
 - **Encapsulate complex logic** behind clean, well-defined interfaces
 - **Enable modular design** patterns that improve code organization and maintainability
@@ -13,6 +14,7 @@ Subgraphs provide a powerful way to:
 ### ping_multi_receiver/
 
 This example demonstrates fundamental subgraph concepts including:
+
 - Reusable subgraph instantiation with qualified naming
 - Interface port mapping between subgraphs and internal operators
 - Multi-receiver patterns for operators that accept input from multiple sources
@@ -37,4 +39,3 @@ The example shows how to build modular applications where the same subgraph logi
 For detailed implementation examples and run instructions, see the individual example directories. Each example includes both C++ and Python implementations demonstrating the same concepts using language-appropriate APIs.
 
 The subgraphs used in these examples are intentionally simple to focus on the API concepts, but the true utility would be realized in real-world applications involving larger graphs. An example might be a multi-stage camera pre-processing pipeline subgraph that could be reused across multiple cameras in the same application or shared across different applications using the same camera processing logic.
-

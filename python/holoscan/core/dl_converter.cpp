@@ -27,10 +27,10 @@
 #include <tuple>
 #include <utility>
 
-#include "gxf/std/dlpack_utils.hpp"  // nvidia::gxf::numpyTypestr
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <gxf/std/dlpack_utils.hpp>  // nvidia::gxf::numpyTypestr
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

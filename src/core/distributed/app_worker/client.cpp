@@ -25,8 +25,8 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::distributed {
 

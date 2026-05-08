@@ -1,5 +1,5 @@
 #!/bin/bash
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -25,8 +25,8 @@ localWorkspaceFolder=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(d
 # Get the holoscan sdk top directory.
 TOP=$(readlink -f "${SCRIPT_DIR}/..")
 
-# Install lint dependencies
-${TOP}/run install_lint_deps
+# Pre-install pre-commit so ./run lint works immediately
+python3 -m pip install -q pre-commit
 
 # Add a snippet to .bashrc/.zshrc that ensures required VSCode or Cursor extensions are installed,
 # so this script doesn't need to run on every container start.

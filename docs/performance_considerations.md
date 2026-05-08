@@ -1,4 +1,5 @@
 (performance_considerations)=
+
 # Performance Considerations
 
 This section discusses key performance considerations when designing and optimizing Holoscan applications.
@@ -33,6 +34,7 @@ The measurements above were obtained using the following configuration:
 
 - **Script:** `scripts/scheduler_overhead_benchmark.py` (installed to `/opt/nvidia/holoscan/bin/scheduler_overhead_benchmark.py`)
 - **Command-line flags:**
+
   ```bash
   --iterations 100000 --warmup-iterations 100 --workers 1
   ```
@@ -48,6 +50,7 @@ The measurements above were obtained using the following configuration:
 ### Practical Guidance
 
 - **Rule of thumb**: If your operator's computation takes less than ~20 µs, the scheduling and message-passing overhead may dominate the total execution time. Consider combining such operations into a single operator.
+- **Event-based scheduler latency tuning**: For latency-sensitive Linux workloads using `EventBasedScheduler`, you can isolate the scheduler's dispatcher thread with `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>`. This is separate from the scheduler `pin_cores` parameter, which only affects worker threads, and can reduce jitter when the dispatcher competes with time-critical work.
 - **GPU-resident pipelines**: When using [GPU-resident operators](./gpu_resident.md) within a CUDA Graph, kernel transition latency is significantly lower (~0.5–2 µs), allowing for finer-grained operator decomposition.
 - **Profiling is essential**: Use {ref}`NSight Systems traces <nsight-profiling>` and {ref}`data flow tracking <holoscan-flow-tracking>`
  to measure actual overhead in your specific application.

@@ -2,7 +2,19 @@
 
 These are the operators included as part of the Holoscan SDK:
 
-- **aja_source**: support AJA capture card as source
+## Video acquisition / transmission (`video_io`)
+
+The vendor-agnostic bases **`VideoAcquisitionOperator`** and **`VideoTransmissionOperator`**, capability types, and the **`video_io`** registry live in the shared library built as CMake target **`op_video_io`** (import target **`holoscan::ops::video_io`**). They are **on by default** when you build the Holoscan SDK from source; no extra CMake flag is required.
+
+- **Configure / build** (from the `public/` tree or via `./run build`; see [DEVELOP.md](../../../DEVELOP.md)): a normal SDK build produces **`libholoscan_op_video_io.so`** (name may vary by platform) and installs headers under `include/holoscan/operators/video_io/`.
+- **Link your app / operator**: `target_link_libraries(<your_target> PRIVATE holoscan::core holoscan::ops::video_io)` (or `PUBLIC` if you expose the bases in your API).
+
+There is **no separate flag** for "transmission only": acquisition and transmission share **`op_video_io`**.
+
+> **Note:** This release provides the **base library and subclass contract only**. Concrete vendor-specific operator implementations are not included in this version; they will be added once vendor integration testing is complete. To integrate a new capture card, subclass `VideoAcquisitionOperator` or `VideoTransmissionOperator`, call the base `setup()` to inherit all common parameters and ports, and implement `start()`, `compute()`, `stop()`, and optionally `query_capture_capabilities()` / `query_transmit_capabilities()`.
+
+---
+
 - **bayer_demosaic**: perform color filter array (CFA) interpolation for 1-channel inputs of 8 or 16-bit unsigned integer and outputs an RGB or RGBA image
 - **format_converter**: provides common video or tensor operations in inference pipelines to change datatypes, resize images, reorder channels, and normalize and scale values.
 - **gxf_codelet**: Provides a generic import interface for a GXF Codelet.
@@ -15,5 +27,6 @@ These are the operators included as part of the Holoscan SDK:
 - **tensor_rt** *(deprecated)*: perform AI inference with TensorRT
 - **test_ops** : operators intended primarily for use in test cases. Currently contains a `DataTypeTxTestOp` which is a source operator which can be configured to emit data of many different basic C++ types. It also contains a `DataTypeRxTestOp` which receives via `std::any` and prints the type name of the received type. These are being used in Python test applications to test automated conversion from C++ types to/from equivalent Python types on receive or emit of various data types from a native Python operator. It also includes `PoseTreeManagerLookupOp` for validating fragment service lookup from C++ when a service is registered in Python.
 - **v4l2_video_capture**: V4L2 Video Capture
+- **video_io**: vendor-agnostic base operators (`VideoAcquisitionOperator`, `VideoTransmissionOperator`) for multi-stream video capture and playout. Hardware vendors subclass these to provide SDK-native integration. See the [Vendor Implementation Guide](../../../docs/video_io_vendor_implementation_guide.md) for details.
 - **video_stream_recorder**: write a video stream output as `.gxf_entities` + `.gxf_index` files on disk
 - **video_stream_replayer**: read `.gxf_entities` + `.gxf_index` files on disk as a video stream input

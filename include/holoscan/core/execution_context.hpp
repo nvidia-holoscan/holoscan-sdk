@@ -27,11 +27,11 @@ extern "C" {
 typedef struct CUstream_st* cudaStream_t;
 }
 
+#include <holoscan/profiler/profiler.hpp>
 #include "./common.hpp"
 #include "./errors.hpp"
 #include "./expected.hpp"
 #include "./operator_status.hpp"
-#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan {
 // Forward declarations to break circular dependency with io_context.hpp

@@ -40,17 +40,20 @@ namespace holoscan {
  *
  * - **dev_id** (int32_t, optional): The CUDA device id specifying which device the green context
  * pool will use (Default: 0).
- * - **flags** (uint32_t, optional): The flags passed to the underlying CUDA runtime API call when
- * the green contexts for this pool are created (Default: 0).
+ * - **green_context_flags** (uint32_t, optional): The flags passed to the underlying CUDA runtime
+ * API call when the green contexts for this pool are created
+ * (Default: cudaStreamNonBlocking, matching GXF).
+ * Python kwarg: ``flags``.
  * - **num_partitions** (uint32_t, optional): The number of partitions to create for the green
  * context pool (Default: 1).
  * - **sms_per_partition** (std::vector<uint32_t>, optional): The number of SMs to allocate per
  * partition. If empty, and num_partitions is 0, one green context will be created using all the SMs
  * available on the device.
- * - **default_context_index** (int32_t, optional): The index of the default green context to use.
+ * - **default_context** (int32_t, optional): The index of the default green context to use.
  * When index < 0, the last partition's index will be used. (Default: -1).
- * - **min_sm_size** (uint32_t, optional): The minimum number of SMs to allocate per partition.
- * (Default: 2).
+ * Python kwarg: ``default_context_index``.
+ * - **min_sm_count** (uint32_t, optional): The minimum number of SMs to allocate per partition.
+ * (Default: 2). Python kwarg: ``min_sm_size``.
  */
 class CudaGreenContextPool : public gxf::GXFResource {
  public:
@@ -79,6 +82,22 @@ class CudaGreenContextPool : public gxf::GXFResource {
   void setup(ComponentSpec& spec) override;
 
   nvidia::gxf::CudaGreenContextPool* get() const;
+
+  /**
+   * @brief Check whether CUDA Green Context partitioning will succeed on a device.
+   *
+   * Verifies that the CUDA driver accepts the requested SM split and
+   * per-partition resource generation for the given device, partition sizes,
+   * and minimum SM block size.
+   *
+   * @param dev_id CUDA device index (typically 0).
+   * @param min_sm_count Minimum SM block size for the pool.
+   * @param sms_per_partition SM counts per partition (e.g. {8, 8}).
+   * @return true if partitioning is supported; false if the driver rejects the
+   *         configuration or the required driver API is unavailable.
+   */
+  static bool is_partitioning_supported(int32_t dev_id, uint32_t min_sm_count,
+                                        const std::vector<uint32_t>& sms_per_partition);
 
  private:
   Parameter<int32_t> dev_id_;

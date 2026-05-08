@@ -19,18 +19,23 @@ package distributions. Use the Holoscan SDK development container on a supported
 
 ## C++ Run instructions
 
-* **from NGC container**:
+- **from NGC container**:
+
   ```bash
   cd ./examples
   ./custom_cuda_kernel_multi_sample/cpp/custom_cuda_kernel_multi_sample
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   cd ./examples
   ./custom_cuda_kernel_multi_sample/cpp/custom_cuda_kernel_multi_sample
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   cd ${BUILD_OR_INSTALL_DIR}
   cd ./examples

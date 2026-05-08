@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +21,9 @@
 
 #include "./mock_allocator.hpp"
 
+#include <gxf/core/gxf.h>         // GxfResultStr
+#include <gxf/core/expected.hpp>  // nvidia::gxf::Expected, nvidia::gxf::ForwardError, nvidia::gxf::Success
 #include "common/logger.hpp"  // GXF_LOG*
-#include "gxf/core/gxf.h"     // GxfResultStr
-#include "gxf/core/expected.hpp"  // nvidia::gxf::Expected, nvidia::gxf::ForwardError, nvidia::gxf::Success
 
 #ifndef HOLOSCAN_TESTS_CODECS_MEMORY_BUFFER_HPP
 #define HOLOSCAN_TESTS_CODECS_MEMORY_BUFFER_HPP

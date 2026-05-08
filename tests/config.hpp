@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +18,8 @@
 #ifndef HOLOSCAN_TESTS_CONFIG_H
 #define HOLOSCAN_TESTS_CONFIG_H
 
-#include <string>
 #include <cstdlib>
+#include <string>
 
 #define XSTR(x) STR(x)
 #define STR(x) #x

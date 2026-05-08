@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/test_ops/tx_dtype_test.hpp"
+#include <holoscan/operators/test_ops/tx_dtype_test.hpp>
 
 #include <any>
 #include <complex>

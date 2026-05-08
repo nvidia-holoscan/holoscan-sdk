@@ -20,6 +20,12 @@ list(APPEND CMAKE_MESSAGE_CONTEXT "deps")
 set(_SAVED_CMAKE_IGNORE_PREFIX_PATH ${CMAKE_IGNORE_PREFIX_PATH})
 list(APPEND CMAKE_IGNORE_PREFIX_PATH "${CMAKE_BINARY_DIR}")
 
+# Set the default installation component name for source dependencies
+# such that we can include or exclude components at installation time with the command:
+# "cmake --install <build_dir> --prefix <install_dir> --component holoscan-dependencies"
+# Note that "set" only applies to this subdirectory scope.
+set(CMAKE_INSTALL_DEFAULT_COMPONENT_NAME "holoscan-dependencies")
+
 # Disable FetchContent_Populate deprecation warnings for older CPM version
 # See: https://cmake.org/cmake/help/latest/policy/CMP0169.html
 # TODO: Re-enable this warning when we update rapids-cmake
@@ -40,11 +46,7 @@ endfunction()
 # Establish the CPM and preset package infrastructure for the project
 # (This uses CPM_SOURCE_CACHE and ENV{CPM_SOURCE_CACHE} to cache the downloaded source code)
 # https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_versions.html#cpm-version-format
-#
-# Note: When multiple CPM packages are available, the first one takes precedence.
-#       Since matx depends on cccl library via rapids-cmake and Holoscan's rapids-cmake version is
-#       old, we need to override cccl library to 2.8.0+.
-rapids_cpm_init(OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deps/rapids-cmake-packages.json")
+rapids_cpm_init()
 
 # Temporarily disable clang-tidy for third-party dependencies to avoid warnings from external code
 set(_SAVED_CMAKE_CXX_CLANG_TIDY "${CMAKE_CXX_CLANG_TIDY}")
@@ -81,6 +83,7 @@ superbuild_depend(yaml-cpp_rapids)
 superbuild_depend(gxf)
 superbuild_depend(eigen3_urm)
 superbuild_depend(ucxx_rapids)
+
 superbuild_depend(matx)
 
 # Testing dependencies

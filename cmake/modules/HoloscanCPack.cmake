@@ -21,11 +21,23 @@ install(FILES "${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt"
 )
 
 # Copy LICENSE file for installation
+include(GNUInstallDirs)
 if(HOLOSCAN_ALLOW_SYSTEM_INSTALL)
   set(LICENSE_DESTINATION "/usr/share/doc/holoscan/")
 else()
-  set(LICENSE_DESTINATION ".")
+  set(LICENSE_DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 endif()
+
+# Copy LICENSE.txt from source to binary dir at configuration time,
+# or use a pre-populated LICENSE.txt file if it already exists
+if(NOT EXISTS "${CMAKE_BINARY_DIR}/LICENSE.txt")
+  configure_file(
+    "${CMAKE_SOURCE_DIR}/LICENSE.txt"
+    "${CMAKE_BINARY_DIR}/LICENSE.txt"
+    COPYONLY
+  )
+endif()
+
 install(FILES "${CMAKE_BINARY_DIR}/LICENSE.txt"
     DESTINATION ${LICENSE_DESTINATION}
     RENAME copyright
@@ -73,12 +85,18 @@ set(CPACK_COMPONENTS_ALL
   concurrentqueue
   dlpack
   fmt
+  matx
   nvtx3
   rapids_logger
   rmm
   spdlog
   tl-expected
   ucxx
+  CCCL
+  CUB
+  cudax
+  libcudacxx
+  Thrust
 )
 
 
@@ -108,15 +126,15 @@ endif()
 # - libnvinfer-bin: meta package including required nvinfer libs.
 #   Needed for all inference backends
 #   Note: only libnvinfer, libnvonnxparsers, libnvinfer-plugin needed at runtime
-# - libcublas: needed by CuPy, libtorch, and OnnxRuntime
+# - libcublas: needed by CuPy (runtime), libtorch (runtime), MatX (dev), and OnnxRuntime (runtime)
 #   Note: also a dependency of the libnvinfer packages
 # - cuda-nvrtc: libtorch & CuPy dependency
 #   Note: also a dependency of cuda-nvcc
 #   Note: should be able to use libnvrtc.so.12, but doesn't work as of Holoscan SDK 2.4
-# - libcufft: needed by cupy and OnnxRuntime inference backend
-# - libcurand: needed by libtorch and cupy
-# - libcusolver: needed by cupy
-# - libcusparse: needed by cupy
+# - libcufft: needed by cupy, MatX (dev headers), OnnxRuntime inference backend
+# - libcurand: needed by CuPy (runtime), libtorch (runtime), and MatX (dev)
+# - libcusolver: needed by CuPy (runtime), MatX (dev)
+# - libcusparse: needed by CuPy (runtime), MatX (dev)
 # - libnpp-dev: needed for format_converter and bayer_demosaic operators
 #   Note: only libnpp (non dev) needed at runtime
 # - libnvjitlink: needed by cupy
@@ -129,11 +147,11 @@ endif()
 if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
   set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
     libnvinfer-bin (>=10.13), \
-    libcublas-13-0 | libcublas.so.13, \
-    libcufft-13-0 | libcufft.so.12, \
-    libcurand-13-0 | libcurand.so.10, \
-    libcusolver-13-0 | libcusolver.so.12, \
-    libcusparse-13-0 | libcusparse.so.12, \
+    libcublas-dev-13-0 | libcublas.so.13-dev, \
+    libcufft-dev-13-0 | libcufft.so.12-dev, \
+    libcurand-dev-13-0 | libcurand.so.10-dev, \
+    libcusolver-dev-13-0 | libcusolver.so.12-dev, \
+    libcusparse-dev-13-0 | libcusparse.so.12-dev, \
     libnpp-dev-13-0 | libnpp.so.13-dev, \
     libnvjitlink-13-0 | libnvJitLink.so.13, \
     libnccl2 | libnccl.so.2, \
@@ -149,11 +167,11 @@ if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
 elseif(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12")
   set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "\
     libnvinfer-bin (>=10.3), \
-    libcublas-12-6 | libcublas.so.12, \
-    libcufft-12-6 | libcufft.so.11, \
-    libcurand-12-6 | libcurand.so.10, \
-    libcusolver-12-6 | libcusolver.so.11, \
-    libcusparse-12-6 | libcusparse.so.12, \
+    libcublas-dev-12-6 | libcublas.so.12-dev, \
+    libcufft-dev-12-6 | libcufft.so.11-dev, \
+    libcurand-dev-12-6 | libcurand.so.10-dev, \
+    libcusolver-dev-12-6 | libcusolver.so.11-dev, \
+    libcusparse-dev-12-6 | libcusparse.so.12-dev, \
     libnpp-dev-12-6 | libnpp.so.12-dev, \
     libnvjitlink-12-6 | libnvjitlink.so.12, \
     libnccl2 | libnccl.so.2, \
@@ -176,11 +194,6 @@ if(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "13")
   set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
     cuda-cupti-13-0 | libcupti.so.13, \
     cuda-nvtx-13-0, \
-    libcublas-dev-13-0 | libcublas.so.13-dev, \
-    libcufft-dev-13-0 | libcufft.so.12-dev, \
-    libcurand-dev-13-0 | libcurand.so.10-dev, \
-    libcusolver-dev-13-0 | libcusolver.so.12-dev, \
-    libcusparse-dev-13-0 | libcusparse.so.12-dev, \
     libcudnn9-cuda-13-0 | libcudnn9-cuda-13, \
     libcusparselt0-cuda-13, \
     libjpeg-turbo8, \
@@ -190,11 +203,6 @@ elseif(CUDAToolkit_VERSION VERSION_GREATER_EQUAL "12")
   set(CPACK_DEBIAN_PACKAGE_SUGGESTS "\
     cuda-cupti-12-6 | libcupti.so.12, \
     cuda-nvtx-12-6 | libnvToolsExt.so.1, \
-    libcublas-dev-12-6 | libcublas.so.12-dev, \
-    libcufft-dev-12-6 | libcufft.so.11-dev, \
-    libcurand-dev-12-6 | libcurand.so.10-dev, \
-    libcusolver-dev-12-6 | libcusolver.so.11-dev, \
-    libcusparse-dev-12-6 | libcusparse.so.12-dev, \
     libcudnn9-cuda-12, \
     libcusparselt0-cuda-12, \
     libjpeg-turbo8, \

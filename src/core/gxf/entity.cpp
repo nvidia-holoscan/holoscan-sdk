@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/entity.hpp"
+#include <holoscan/core/gxf/entity.hpp>
 
 #include <mutex>
 #include <string>
 #include <utility>
 
-#include "holoscan/core/common.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <holoscan/core/common.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 namespace holoscan::gxf {
 

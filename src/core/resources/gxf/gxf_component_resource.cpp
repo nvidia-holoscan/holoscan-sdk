@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/gxf_component_resource.hpp"
+#include <holoscan/core/resources/gxf/gxf_component_resource.hpp>
 
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/fragment.hpp"
+#include <holoscan/core/fragment.hpp>
 
 namespace holoscan {
 

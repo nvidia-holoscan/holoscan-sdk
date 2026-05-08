@@ -13,18 +13,21 @@ This example demonstrates how to build an application that combines execution th
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Execution Throttling**: Using an execution throttler to handle different processing rates between operators
 2. **Conditional Flow**: Dynamic routing of data based on event detection
 3. **Parallel Processing**: Running visualization and event detection in parallel
 4. **Cyclic Flow**: Implementing a cyclic flow pattern with controlled iterations
 
 The key aspects of this application include:
+
 - Configuration of queue policies to prevent push failures
 - Use of metadata to share state between operators
 - Dynamic flow control based on runtime conditions
 - Parallel execution of operators using multi-threaded scheduling
 
 The application demonstrates:
+
 - How to handle operators with different processing rates
 - How to implement conditional flows based on detected events
 - How to use metadata to share state between operators
@@ -36,12 +39,14 @@ The application demonstrates:
 This example demonstrates cyclic flow using `start_op()`. Here's when to choose different flow control patterns:
 
 **start_op() + Cyclic Flow**
+
 - Best for: Dynamic routing, feedback loops, runtime-adaptive flows
 - Use when: Flow patterns depend on data content or need to change during execution
 - Advantages: Flexible, handles complex routing
 - Trade-offs: More complex to debug, slightly higher runtime overhead
 
 **Generator (root operator) with condition (CountCondition, PeriodicCondition, etc.)**
+
 - Best for: Fixed iteration counts, simple linear flows
 - Use when: Number of iterations is known in advance (or infinite), static flow patterns
 - Advantages: Simple to implement, better performance, easier to debug
@@ -52,6 +57,7 @@ This example demonstrates cyclic flow using `start_op()`. Here's when to choose 
 ## C++ API
 
 The application consists of several operators:
+
 1. `GenSignalOp`: Generates sequential integer values
 2. `ProcessSignalOp`: Processes the input value with a simulated delay
 3. `ExecutionThrottlerOp`: Controls the flow of messages between operators with different processing rates
@@ -70,6 +76,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/streaming_with_monitor/cpp/streaming_with_monitor
 ```
@@ -77,6 +84,7 @@ Then, run:
 ## Python API
 
 The application demonstrates the same flow control patterns using the Python API. It consists of several operators:
+
 1. `GenSignalOp`: Generates sequential integer values
 2. `ProcessSignalOp`: Processes the input value with a simulated delay
 3. `ExecutionThrottlerOp`: Controls the flow of messages between operators with different processing rates
@@ -95,6 +103,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/streaming_with_monitor/python/streaming_with_monitor.py
 ```

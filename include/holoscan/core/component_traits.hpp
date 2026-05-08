@@ -33,7 +33,12 @@ class MemoryAvailableCondition;
 class MessageAvailableCondition;
 class MultiMessageAvailableCondition;
 class MultiMessageAvailableTimeoutCondition;
+#ifdef HOLOSCAN_HAS_PENDING_EXPORT_CONDITION
+class PendingExportCondition;
+#endif
 class PeriodicCondition;
+class PublisherAvailableCondition;
+class SubscriberAvailableCondition;
 
 // Forward declarations for resource types
 class AsyncBufferReceiver;
@@ -80,6 +85,8 @@ class GreedyScheduler;
 class MultiThreadScheduler;
 
 // Forward declarations for network context types
+class FastDdsPubSubNetworkContext;
+class InMemoryPubSubNetworkContext;
 class PubSubContext;
 class UcxContext;
 
@@ -92,6 +99,7 @@ class DataTypeRxTestOp;
 class DataTypeTxTestOp;
 class FormatConverterOp;
 class HolovizOp;
+class RawImageProcessorOp;
 class InferenceOp;
 class InferenceProcessorOp;
 class PingRxOp;
@@ -184,9 +192,26 @@ struct condition_default_name<MultiMessageAvailableTimeoutCondition> {
   static constexpr const char* value = "multi_message_timeout_condition";
 };
 
+#ifdef HOLOSCAN_HAS_PENDING_EXPORT_CONDITION
+template <>
+struct condition_default_name<PendingExportCondition> {
+  static constexpr const char* value = "pending_export_condition";
+};
+#endif
+
 template <>
 struct condition_default_name<PeriodicCondition> {
   static constexpr const char* value = "periodic_condition";
+};
+
+template <>
+struct condition_default_name<PublisherAvailableCondition> {
+  static constexpr const char* value = "publisher_available_condition";
+};
+
+template <>
+struct condition_default_name<SubscriberAvailableCondition> {
+  static constexpr const char* value = "subscriber_available_condition";
 };
 
 /**
@@ -463,6 +488,16 @@ struct network_context_default_name<UcxContext> {
   static constexpr const char* value = "ucx_context";
 };
 
+template <>
+struct network_context_default_name<InMemoryPubSubNetworkContext> {
+  static constexpr const char* value = "in_memory_pubsub_network_context";
+};
+
+template <>
+struct network_context_default_name<FastDdsPubSubNetworkContext> {
+  static constexpr const char* value = "dds_pubsub_network_context";
+};
+
 /**
  * @brief Helper template variable for easier access to network context default names (C++17).
  *
@@ -527,6 +562,11 @@ struct operator_default_name<ops::GXFCodeletOp> {
 template <>
 struct operator_default_name<ops::HolovizOp> {
   static constexpr const char* value = "holoviz_op";
+};
+
+template <>
+struct operator_default_name<ops::RawImageProcessorOp> {
+  static constexpr const char* value = "raw_image_processor";
 };
 
 template <>

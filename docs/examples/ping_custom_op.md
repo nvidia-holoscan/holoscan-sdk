@@ -1,4 +1,5 @@
 (ping-custom-op-example)=
+
 # Ping Custom Op
 
 In this section, we will modify the previous `ping_simple` example to add a custom operator into the workflow.  We've already seen a custom operator defined in the `hello_world` example but skipped over some of the details.
@@ -138,6 +139,7 @@ class PingMxOp(Operator):
 - In the `compute()` method, we receive the integer data from the operator's "in" port (line `22`), print its value, multiply its value by the multiplicative factor, and send the new value downstream (line `28`).
 ````
 `````
+
 Now that the custom operator has been defined, we create the application, operators, and define the workflow.
 
 <!-- Note that NVIDIA's public user guide doesn't seem to support the `lineno-start` tag, such as `:lineno-start: 35` in the code block, so we are removing it. -->
@@ -207,7 +209,6 @@ if __name__ == "__main__":
 ````
 `````
 
-
 ## Message Data Types
 
 For the C++ API, the messages that are passed between the operators are the objects of the data type at the inputs and outputs, so the `value` variable from lines 20 and 25 of the example above has the type `int`.  For the Python API, the messages passed between operators can be arbitrary Python objects so no special consideration is needed since it is not restricted to the stricter parameter typing used for C++ API operators.
@@ -221,7 +222,7 @@ Let's look at the code snippet for the built-in **PingTxOp** class and see if th
 :emphasize-lines: 6, 11
 :name: holoscan-one-operator-workflow-cpp
 
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
 
 namespace holoscan::ops {
 

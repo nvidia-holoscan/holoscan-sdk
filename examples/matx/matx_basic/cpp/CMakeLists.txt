@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ add_executable(matx_basic
 target_link_libraries(matx_basic
   PUBLIC
   holoscan::core
-  holoscan::matx
+  matx::matx
 )
 
 # Suppress NVCC warning from CLI11 third-party library

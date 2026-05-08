@@ -30,15 +30,20 @@ The example application illustrates the use of make_subgraph for creating subgra
 ### C++ Run Instructions
 
 * **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/subgraph/ping_multi_receiver/cpp/subgraph_ping
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/subgraph/ping_multi_receiver/cpp/subgraph_ping
   ```
+
 * **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/subgraph/ping_multi_receiver/cpp/subgraph_ping
   ```
@@ -55,21 +60,28 @@ The Python application provides the same functionality as the C++ version, demon
 ### Python Run Instructions
 
 * **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/subgraph_ping.py
   ```
+
 * **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/subgraph/ping_multi_receiver/python/subgraph_ping.py
   ```
+
 * **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/subgraph/ping_multi_receiver/python/subgraph_ping.py
   ```
+
 * **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   python3 ${BUILD_OR_INSTALL_DIR}/examples/subgraph/ping_multi_receiver/python/subgraph_ping.py
@@ -92,8 +104,8 @@ The Python application provides the same functionality as the C++ version, demon
 ## Expected Output
 
 The application will show:
-- Printing of port mapping information showing the final graph structure once all subgraphs have been composed.
-- Successful message transmission and reception via logging of received message information
+
+* Printing of port mapping information showing the final graph structure once all subgraphs have been composed.
+* Successful message transmission and reception via logging of received message information
 
 This example serves as a foundation for understanding how to build complex, modular Holoscan applications using reusable subgraph components.
-

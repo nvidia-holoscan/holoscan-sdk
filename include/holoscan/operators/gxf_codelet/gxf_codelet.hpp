@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,16 +18,16 @@
 #ifndef HOLOSCAN_OPERATORS_GXF_CODELET_GXF_CODELET_HPP
 #define HOLOSCAN_OPERATORS_GXF_CODELET_GXF_CODELET_HPP
 
-#include "holoscan/core/gxf/gxf_operator.hpp"
+#include <holoscan/core/gxf/gxf_operator.hpp>
 
 #include <list>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <vector>
 #include <utility>
+#include <vector>
 
-#include "holoscan/core/gxf/gxf_component_info.hpp"
+#include <holoscan/core/gxf/gxf_component_info.hpp>
 
 /**
  * @brief Wrap a GXF Codelet as a Holoscan Operator.

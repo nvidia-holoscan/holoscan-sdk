@@ -21,10 +21,10 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/holoscan.hpp"
-#include "holoscan/operators/bayer_demosaic/bayer_demosaic.hpp"
-#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
+#include <holoscan/holoscan.hpp>
+#include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
+#include <holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp>
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 
 #include "distributed_app_fixture.hpp"
 #include "utility_apps.hpp"

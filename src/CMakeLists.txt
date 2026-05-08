@@ -109,20 +109,6 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # ##############################################################################
-# # Add library holoscan::matx
-# ##############################################################################
-# Create an INTERFACE library to wrap the matx dependency.
-# This avoids a name collision with the 'matx' target created by rapids-cmake (CPM).
-add_library(holoscan_matx INTERFACE)
-add_library(holoscan::matx ALIAS holoscan_matx)
-
-target_link_libraries(holoscan_matx
-    INTERFACE
-        matx::matx
-)
-
-
-# ##############################################################################
 # # Add library holoscan::profiler
 # ##############################################################################
 add_holoscan_library(profiler
@@ -152,6 +138,80 @@ target_link_libraries(pose_tree
         Eigen3::Eigen
         ucxx::ucxx
 )
+
+# ##############################################################################
+# # Add library: holoscan::pubsub_runtime
+# ##############################################################################
+set(PUBSUB_RUNTIME_SOURCES
+    pubsub/runtime/conditions/publisher_available.cpp
+    pubsub/runtime/conditions/subscriber_available.cpp
+)
+if(HOLOSCAN_BUILD_IPC AND HOLOSCAN_IPC_TRANSPORT_FASTDDS)
+    list(APPEND PUBSUB_RUNTIME_SOURCES
+        pubsub/runtime/conditions/pending_export_condition.cpp
+    )
+endif()
+add_holoscan_library(pubsub_runtime
+    ${PUBSUB_RUNTIME_SOURCES}
+)
+target_link_libraries(pubsub_runtime
+    PUBLIC
+        holoscan::core
+)
+if(HOLOSCAN_BUILD_IPC AND HOLOSCAN_IPC_TRANSPORT_FASTDDS)
+    target_compile_definitions(pubsub_runtime PUBLIC HOLOSCAN_HAS_PENDING_EXPORT_CONDITION)
+endif()
+
+# ##############################################################################
+# # Add library: holoscan::pubsub_common
+# ##############################################################################
+add_holoscan_library(pubsub_common
+    pubsub/common/holoscan_component_payloads.cpp
+    pubsub/common/pubsub_context_utils.cpp
+    pubsub/common/sidecar_dispatch_queue.cpp
+)
+target_link_libraries(pubsub_common
+    PUBLIC
+        holoscan::core
+        CUDA::cudart
+)
+
+# ##############################################################################
+# # Add library: holoscan::pubsub_in_memory
+# ##############################################################################
+add_holoscan_library(pubsub_in_memory
+    pubsub/in_memory/network_contexts/gxf/in_memory_pubsub_network_context.cpp
+    pubsub/in_memory/network_contexts/gxf/in_memory_pubsub_session.cpp
+)
+target_link_libraries(pubsub_in_memory
+    PUBLIC
+        holoscan::core
+)
+
+# ##############################################################################
+# # Add library: holoscan::pubsub_fastdds
+# ##############################################################################
+if(HOLOSCAN_BUILD_IPC AND HOLOSCAN_IPC_TRANSPORT_FASTDDS)
+    add_holoscan_library(pubsub_fastdds
+        pubsub/fastdds/network_contexts/gxf/fastdds_pubsub_network_context.cpp
+        pubsub/fastdds/pubsub/fastdds_discovery.cpp
+        pubsub/fastdds/pubsub/fastdds_endpoint.cpp
+        pubsub/fastdds/pubsub/fastdds_holoscan_entity_type_support.cpp
+        pubsub/fastdds/pubsub/fastdds_native_buffer_adapter.cpp
+        pubsub/fastdds/pubsub/fastdds_serializer.cpp
+        pubsub/fastdds/pubsub/fastdds_transport.cpp
+        pubsub/fastdds/resources/fastdds_pubsub_context.cpp
+    )
+    target_link_libraries(pubsub_fastdds
+        PUBLIC
+            holoscan::core
+            holoscan::pubsub_common
+            holoscan::pubsub_runtime
+            holoscan::ipc
+            ipc_fastdds_deps
+            CUDA::cudart
+    )
+endif()
 
 # ##############################################################################
 # # Add library: holoscan::core
@@ -403,6 +463,23 @@ target_link_libraries(infer_utils
     PUBLIC
         holoscan::core
         holoscan::holoinfer_utils
+)
+
+# ##############################################################################
+# # Add library: holoscan::cuda_helper
+# ##############################################################################
+add_holoscan_library(cuda_helper
+    utils/cuda/cuda_rtc.cpp
+)
+target_link_libraries(cuda_helper
+    PUBLIC
+        fmt::fmt-header-only
+        CUDA::cuda_driver
+        CUDA::nvrtc
+)
+target_compile_definitions(cuda_helper
+    INTERFACE
+        FMT_HEADER_ONLY=1
 )
 
 # ##############################################################################

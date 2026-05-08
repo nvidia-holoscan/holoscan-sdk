@@ -22,7 +22,7 @@
 #include <memory>
 #include <stdexcept>
 
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/utils/cuda_macros.hpp>
 
 /// The code is partially copied from modules/holoinfer/src/include/holoinfer_buffer.hpp
 /// When time comes, we will merge these two implementations, so that not only holoinfer, but also

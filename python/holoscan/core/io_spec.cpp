@@ -24,10 +24,10 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/operator_spec.hpp"
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resource.hpp>
 #include "io_spec_pydoc.hpp"
 #include "kwarg_handling.hpp"
 
@@ -109,11 +109,12 @@ void init_io_spec(py::module_& m) {
            [](IOSpec& io_spec, std::shared_ptr<Resource> connector) {
              return io_spec.connector(std::move(connector));
            })
-      .def("topic",
-           &IOSpec::topic,
-           py::arg("name"),
-           doc::IOSpec::doc_topic,
-           py::return_value_policy::reference_internal)
+      .def(
+          "topic",
+          [](IOSpec& io_spec, const std::string& name) -> IOSpec& { return io_spec.topic(name); },
+          py::arg("name"),
+          doc::IOSpec::doc_topic,
+          py::return_value_policy::reference_internal)
       .def_property("queue_size",
                     py::overload_cast<>(&IOSpec::queue_size, py::const_),
                     py::overload_cast<int64_t>(&IOSpec::queue_size),

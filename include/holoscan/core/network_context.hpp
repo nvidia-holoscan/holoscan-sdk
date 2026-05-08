@@ -31,12 +31,12 @@
 #include <utility>
 #include <vector>
 
-#include "./parameter.hpp"
-#include "./type_traits.hpp"
 #include "./arg.hpp"
 #include "./component.hpp"
 #include "./forward_def.hpp"
+#include "./parameter.hpp"
 #include "./resource.hpp"
+#include "./type_traits.hpp"
 
 #define HOLOSCAN_NETWORK_CONTEXT_FORWARD_TEMPLATE()                                   \
   template <typename ArgT,                                                            \

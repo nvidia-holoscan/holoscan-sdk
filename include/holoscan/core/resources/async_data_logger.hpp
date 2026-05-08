@@ -31,14 +31,14 @@
 
 #include "yaml-cpp/yaml.h"
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/core/resources/data_logger_queue.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/core/resources/data_logger_queue.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 
@@ -232,7 +232,9 @@ class AsyncDataLoggerBackend {
  * in the queue(s) to be processed during shutdown. A negative value (default) means wait
  * indefinitely, 0 means don't wait at all, and a positive value specifies the timeout in
  * milliseconds. The `HOLOSCAN_ASYNC_LOGGER_SHUTDOWN_WAIT_MS` environment variable can be used to
- * override this value.
+ * override this value. During shutdown, this resource emits INFO logs that include the component
+ * name, approximate queue depths, entries processed so far, and a final summary when worker
+ * threads have finished; WARN is used if a drain timeout expires and entries are discarded.
  *
  * Inherited parameters from DataLoggerResource:
  * - **log_inputs**: bool (optional, default: true)

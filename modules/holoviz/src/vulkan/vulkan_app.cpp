@@ -34,6 +34,8 @@
 #include <imgui_internal.h>
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <filesystem>
 #include <list>
 #include <memory>
@@ -43,7 +45,7 @@
 #include <utility>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
 #include "resource.hpp"
 
@@ -86,6 +88,79 @@ VULKAN_HPP_INLINE void resultCheck(Result result, char const* message) {
 #endif
 
 namespace holoscan::viz {
+
+namespace {
+
+bool uuid_matches(const CUuuid& cuda_uuid, const std::array<uint8_t, VK_UUID_SIZE>& vulkan_uuid) {
+  CUuuid vulkan_cuda_uuid = {};
+  std::copy(vulkan_uuid.begin(), vulkan_uuid.end(), vulkan_cuda_uuid.bytes);
+  return std::memcmp(cuda_uuid.bytes, vulkan_cuda_uuid.bytes, sizeof(cuda_uuid.bytes)) == 0;
+}
+
+std::vector<vk::PhysicalDevice> match_compatible_devices_with_cuda(
+    const std::vector<vk::PhysicalDevice>& compatible_physical_devices) {
+  if (compatible_physical_devices.empty()) {
+    return {};
+  }
+
+  int cuda_device_count = 0;
+  std::vector<CUuuid> cuda_device_uuids;
+  try {
+    CudaCheck(cuInit(0));
+    CudaCheck(cuDeviceGetCount(&cuda_device_count));
+    cuda_device_uuids.reserve(cuda_device_count);
+    for (int cuda_device_index = 0; cuda_device_index < cuda_device_count; ++cuda_device_index) {
+      CUdevice cuda_device = 0;
+      CudaCheck(cuDeviceGet(&cuda_device, cuda_device_index));
+
+      CUuuid cuda_uuid;
+      CudaCheck(cuDeviceGetUuid_v2(&cuda_uuid, cuda_device));
+      cuda_device_uuids.push_back(cuda_uuid);
+    }
+  } catch (const std::exception& e) {
+    throw std::runtime_error(fmt::format(
+        "Failed to query CUDA devices while matching compatible Vulkan devices: {}", e.what()));
+  }
+
+  if (cuda_device_uuids.empty()) {
+    throw std::runtime_error(
+        "CUDA did not report any devices while matching compatible Vulkan devices.");
+  }
+
+  std::vector<vk::PhysicalDevice> matched_physical_devices;
+  matched_physical_devices.reserve(compatible_physical_devices.size());
+  for (const vk::PhysicalDevice& physical_device : compatible_physical_devices) {
+    const auto properties =
+        physical_device
+            .getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
+    const auto& vulkan_uuid = properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID;
+    const bool visible_to_cuda = std::any_of(
+        cuda_device_uuids.begin(),
+        cuda_device_uuids.end(),
+        [&vulkan_uuid](const CUuuid& cuda_uuid) { return uuid_matches(cuda_uuid, vulkan_uuid); });
+    if (visible_to_cuda) {
+      matched_physical_devices.push_back(physical_device);
+    }
+  }
+
+  if (matched_physical_devices.empty()) {
+    HOLOSCAN_LOG_WARN(
+        "None of the {} compatible Vulkan devices are visible to CUDA (CUDA reports {} device(s)).",
+        compatible_physical_devices.size(),
+        cuda_device_uuids.size());
+    return {};
+  }
+
+  if (matched_physical_devices.size() != compatible_physical_devices.size()) {
+    HOLOSCAN_LOG_INFO("Matched {} of {} compatible Vulkan devices against CUDA-visible UUIDs.",
+                      matched_physical_devices.size(),
+                      compatible_physical_devices.size());
+  }
+
+  return matched_physical_devices;
+}
+
+}  // namespace
 
 class Vulkan::Impl {
  public:
@@ -289,7 +364,6 @@ class Vulkan::Impl {
   bool has_present_wait_extension_ = false;
   bool has_line_rasterization_extension_ = false;
   bool has_present_id_extension_ = false;
-
   /// Drawing/Surface
   std::unique_ptr<FramebufferSequence> fb_sequence_;
   /// All framebuffers, correspond to the Swapchain
@@ -467,11 +541,17 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
     compatible_physical_devices.push_back(vk::PhysicalDevice(physical_devices[compatible_device]));
   }
 
+  const std::vector<vk::PhysicalDevice> cuda_visible_physical_devices =
+      match_compatible_devices_with_cuda(compatible_physical_devices);
+  if (cuda_visible_physical_devices.empty()) {
+    throw std::runtime_error("No compatible Vulkan devices are visible to CUDA.");
+  }
+
   // Let the window select the device to use (e.g. the one connected to the display if we opened
   // a visible windows)
-  const uint32_t device_index = window_->select_device(instance_, compatible_physical_devices);
+  const uint32_t device_index = window_->select_device(instance_, cuda_visible_physical_devices);
   // Finally initialize the device
-  nvvk_.vk_ctx_.initDevice(compatible_physical_devices[device_index], context_info);
+  nvvk_.vk_ctx_.initDevice(cuda_visible_physical_devices[device_index], context_info);
   device_ = nvvk_.vk_ctx_.m_device;
   physical_device_ = nvvk_.vk_ctx_.m_physicalDevice;
 
@@ -2494,10 +2574,10 @@ void Vulkan::Impl::read_framebuffer(Vulkan* vulkan, ImageFormat fmt, uint32_t wi
 
 bool Vulkan::Impl::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
   if (!has_present_wait_extension_) {
-    HOLOSCAN_LOG_ERROR(
+    throw std::runtime_error(
         "Waiting for presents is not supported since the required Vulkan device extension "
-        "`VK_KHR_present_wait` is not available.");
-    return false;
+        "`VK_KHR_present_wait` is not available. Use an alternative present-completion "
+        "mechanism or run on a platform where this extension is supported.");
   }
   vk::Result result = fb_sequence_->wait_for_present(present_id, timeout_ns);
   if (result == vk::Result::eTimeout) {

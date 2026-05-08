@@ -27,7 +27,7 @@ should be no errors logged on shutdown). Clean shutdown via a leaf node (`Visual
 ## Data
 
 The following dataset is used by this example:
-[📦️ (NGC) Sample RacerX Video Data](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/
+[📦️ (NGC) Sample RacerX Video Data](<https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/>
 holoscan_racerx_video/files?version=20231009).
 
 ## C++ Run instructions
@@ -36,7 +36,8 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 
 ### Prerequisites
 
-* **using deb package install**:
+- **using deb package install**:
+
   ```bash
   sudo /opt/nvidia/holoscan/examples/download_example_data
   export HOLOSCAN_INPUT_PATH=/opt/nvidia/holoscan/data
@@ -45,19 +46,24 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/cpp
   ```
 
-* **from NGC container**:
+- **from NGC container**:
+
   ```bash
   # Set the application folder
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/cpp
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree (default: `build`)
 
   # Set the application folder
   APP_DIR=./examples/video_replayer_distributed/cpp
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   # Set the application folder
   APP_DIR=${BUILD_OR_INSTALL_DIR}/examples/video_replayer_distributed/cpp
@@ -85,7 +91,8 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
 
 ### Prerequisites
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
@@ -95,19 +102,25 @@ Please refer to the [user guide](https://docs.nvidia.com/holoscan/sdk-user-guide
   # Set the application folder
   APP_DIR=<APP_DIR>
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   # Set the application folder
   APP_DIR=/opt/nvidia/holoscan/examples/video_replayer_distributed/python
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree (default: `build`)
 
   # Set the application folder
   APP_DIR=./examples/video_replayer_distributed/python
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib

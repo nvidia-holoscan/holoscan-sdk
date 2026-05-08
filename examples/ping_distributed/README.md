@@ -12,6 +12,7 @@ The `--gpu` command line argument can be provided to indicate that the tensor sh
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_create_distributed_app.html) to learn more about distributed applications.*
 
 #### Note on error logged by the application
+
 Note that it is currently expected that this application logs the following error during shutdown
 
 ```text
@@ -68,7 +69,6 @@ ${APP_DIR}/ping_distributed
 ```
 
 Note that for this application "fragment1" sends the video frames and "fragment2" receives them (these fragment names were assigned during the `make_fragment` calls within the `App::compose` method for this app. In this case, "fragment2" has the receiver operator that logs messages to the terminal, so the process that runs that fragment will display the application output. We could omit the `--fragments` arguments altogether if we wanted to let holoscan automatically decide which nodes to run each fragment on. We chose to explicitly specify the fragments here so the user of the application knows which node to expect to see the output on.
-
 
 ## Python Run instructions
 

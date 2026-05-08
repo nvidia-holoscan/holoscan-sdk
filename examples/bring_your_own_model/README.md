@@ -7,6 +7,7 @@ This example shows how to run inference with Holoscan and provides a mechanism, 
 ## Data
 
 The following datasets are used by this example:
+
 - [📦️ (NGC) Sample RacerX Video Data](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/resources/holoscan_racerx_video/files?version=20231009).
 - [(Git) Identity ONNX model](model/identity_model.onnx)
 
@@ -17,7 +18,8 @@ will look similar to the `video_replayer` example.  To get the most from this ex
 in this [section](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/byom.html) will walk you
 through how to modify the python example code to run the application with an ultrasound segmentation model.
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
@@ -25,16 +27,22 @@ through how to modify the python example code to run the application with an ult
   # [Optional] Start the virtualenv where holoscan is installed
   python3 <APP_DIR>/python/byom.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/bring_your_own_model/python/byom.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/bring_your_own_model/python/byom.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
   export HOLOSCAN_INPUT_PATH=${SRC_DIR}/data

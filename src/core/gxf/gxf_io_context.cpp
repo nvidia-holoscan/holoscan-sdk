@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/gxf/gxf_io_context.hpp"
+#include <holoscan/core/gxf/gxf_io_context.hpp>
 
 #include <cstdlib>
 #include <memory>
@@ -25,26 +25,26 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_cuda.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/message.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/profiler/profiler.hpp"
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_cuda.hpp>
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/message.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/profiler/profiler.hpp>
 
-#include "gxf/core/gxf.h"
-#include "gxf/multimedia/video.hpp"
-#include "gxf/std/receiver.hpp"
-#include "gxf/std/tensor.hpp"
-#include "gxf/std/timestamp.hpp"
-#include "gxf/std/transmitter.hpp"
+#include <gxf/core/gxf.h>
+#include <gxf/multimedia/video.hpp>
+#include <gxf/std/receiver.hpp>
+#include <gxf/std/tensor.hpp>
+#include <gxf/std/timestamp.hpp>
+#include <gxf/std/transmitter.hpp>
 
 namespace holoscan::gxf {
 
@@ -463,7 +463,7 @@ std::vector<std::optional<cudaStream_t>> GXFInputContext::receive_cuda_streams(
 }
 
 std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool no_error_message,
-                                       bool omit_data_logging) {
+                                       bool omit_data_logging, bool allow_any_size) {
   std::string input_name = holoscan::get_well_formed_name(name, inputs_);
   PROF_SCOPED_EVENT(op_->id(), event_receive_impl);
   HOLOSCAN_LOG_TRACE("GXFInputContext::receive_impl for op: {}, input_name: {}, in_type: {}",
@@ -538,6 +538,16 @@ std::any GXFInputContext::receive_impl(const char* name, InputType in_type, bool
     }
   }
   auto io_spec = it->second;
+  if (!allow_any_size &&
+      io_spec->queue_size() == static_cast<int64_t>(holoscan::IOSpec::kAnySize)) {
+    auto error_message = fmt::format(
+        "Unable to receive non-vector data from the input port '{}' with the queue size "
+        "'IOSpec::kAnySize'. Please call 'op_input.receive<std::vector<T>>()' instead of "
+        "'op_input.receive<T>()'.",
+        input_name);
+    HOLOSCAN_LOG_ERROR(error_message);
+    throw std::invalid_argument(error_message);
+  }
   auto receiver = get_gxf_receiver(io_spec);
   if (!receiver) {
     auto no_accessible_error_message = NoAccessibleMessageType(fmt::format(

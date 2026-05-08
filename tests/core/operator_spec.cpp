@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,13 +26,13 @@
 #include <typeinfo>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/parameter.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/parameter.hpp>
 // clang-format off
-#include "holoscan/core/operator_spec.hpp"  // must be before argument_setter import
-#include "holoscan/core/argument_setter.hpp"
+#include <holoscan/core/operator_spec.hpp>  // must be before argument_setter import
+#include <holoscan/core/argument_setter.hpp>
 // clang-format on
 
 namespace holoscan {

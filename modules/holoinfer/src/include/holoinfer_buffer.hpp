@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <map>
@@ -31,7 +32,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include <functional>
 
 #include "holoinfer_activation_spec.hpp"
 #include "holoinfer_constants.hpp"

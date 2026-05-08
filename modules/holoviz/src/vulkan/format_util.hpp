@@ -26,7 +26,7 @@
 #include <type_traits>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 #include <vulkan/vulkan.hpp>
 
 #include "../holoviz/color_space.hpp"
@@ -142,9 +142,9 @@ T GetAlphaValueForFormat(ImageFormat format) {
             fmt::format("Unhandled format {}.", magic_enum::enum_name(format)));
     }
   } else {
-    static_assert(std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> ||
-                      std::is_same_v<T, uint32_t>,
-                  "GetAlphaValueForFormat only supports uint8_t, uint16_t, or uint32_t");
+    static_assert(
+        std::is_same_v<T, uint8_t> || std::is_same_v<T, uint16_t> || std::is_same_v<T, uint32_t>,
+        "GetAlphaValueForFormat only supports uint8_t, uint16_t, or uint32_t");
   }
 }
 

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,17 +18,17 @@
 #ifndef HOLOSCAN_CORE_GXF_GXF_SCHEDULING_TERM_WRAPPER_HPP
 #define HOLOSCAN_CORE_GXF_GXF_SCHEDULING_TERM_WRAPPER_HPP
 
-#include "holoscan/core/gxf/gxf_condition.hpp"
+#include <holoscan/core/gxf/gxf_condition.hpp>
 
 #include <memory>
 #include <utility>
 
+#include <gxf/core/parameter_parser_std.hpp>
+#include <gxf/core/registrar.hpp>
+#include <gxf/std/scheduling_condition.hpp>
+#include <gxf/std/scheduling_term.hpp>
 #include "../condition.hpp"
 #include "./gxf_execution_context.hpp"
-#include "gxf/core/parameter_parser_std.hpp"
-#include "gxf/core/registrar.hpp"
-#include "gxf/std/scheduling_condition.hpp"
-#include "gxf/std/scheduling_term.hpp"
 
 namespace holoscan::gxf {
 

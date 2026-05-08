@@ -25,11 +25,11 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/holoscan.hpp>
+#include <holoscan/operators/format_converter/format_converter.hpp>
+#include <holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp>
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 #include "../config.hpp"
-#include "holoscan/holoscan.hpp"
-#include "holoscan/operators/format_converter/format_converter.hpp"
-#include "holoscan/operators/ping_tensor_rx/ping_tensor_rx.hpp"
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 namespace holoscan {
 

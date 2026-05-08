@@ -1,4 +1,5 @@
 (ping-simple-example)=
+
 # Ping Simple
 
 Most applications will require more than one operator.  In this example, we will create two operators where one operator will produce and send data while the other operator will receive and print the data.  The code in this example makes use of the built-in **PingTxOp** and **PingRxOp** operators that are defined in the `holoscan::ops` namespace.
@@ -34,7 +35,6 @@ In this example, the source operator **PingTxOp** produces integers from 1 to 10
 ## Connecting Operators
 
 We can connect two operators by calling `add_flow()` ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) in the application's `compose()` method.
-
 
 The `add_flow()` method ({cpp:func}`C++ <holoscan::Fragment::add_flow>`/{py:func}`Python <holoscan.core.Fragment.add_flow>`) takes the source operator, the destination operator, and the optional port name pairs.
 The port name pair is used to connect the output port of the source operator to the input port of the destination operator.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/conditions/gxf/memory_available.hpp"
+#include <holoscan/core/conditions/gxf/memory_available.hpp>
 
-#include "holoscan/core/component_spec.hpp"
+#include <holoscan/core/component_spec.hpp>
 
 namespace holoscan {
 void MemoryAvailableCondition::setup(ComponentSpec& spec) {

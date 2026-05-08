@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2024 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,11 +23,11 @@
 #include <cstdint>
 #include <vector>
 
-#include "gxf/std/allocator.hpp"
-#include "gxf/std/codelet.hpp"
-#include "gxf/core/parameter_parser_std.hpp"
-#include "gxf/std/tensor.hpp"
-#include "gxf/std/transmitter.hpp"
+#include <gxf/core/parameter_parser_std.hpp>
+#include <gxf/std/allocator.hpp>
+#include <gxf/std/codelet.hpp>
+#include <gxf/std/tensor.hpp>
+#include <gxf/std/transmitter.hpp>
 
 #ifndef CUDA_TRY
 #define CUDA_TRY(stmt)                                                                     \

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
 
 #include <signal.h>
 
@@ -25,6 +25,7 @@
 #include <list>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -38,63 +39,63 @@
 #include <common/assert.hpp>
 #include <common/logger.hpp>
 
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/conditions/gxf/downstream_affordable.hpp"
-#include "holoscan/core/conditions/gxf/expiring_message.hpp"
-#include "holoscan/core/conditions/gxf/message_available.hpp"
-#include "holoscan/core/conditions/gxf/multi_message_available.hpp"
-#include "holoscan/core/conditions/gxf/multi_message_available_timeout.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/distributed/common/forward_op.hpp"
-#include "holoscan/core/distributed/common/virtual_operator.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/executors/gxf/gxf_logger.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/gxf/entity_group.hpp"
-#include "holoscan/core/gxf/gxf_extension_registrar.hpp"
-#include "holoscan/core/gxf/gxf_network_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
-#include "holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
-#include "holoscan/core/message.hpp"
-#include "holoscan/core/messagelabel.hpp"
-#include "holoscan/core/network_contexts/gxf/pubsub_context.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp"
-#include "holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp"
-#include "holoscan/core/resources/gxf/condition_combiner.hpp"
-#include "holoscan/core/resources/gxf/dfft_collector.hpp"
-#include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
-#include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
-#include "holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp"
-#include "holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp"
-#include "holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp"
-#include "holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp"
-#include "holoscan/core/resources/gxf/system_resources.hpp"
-#include "holoscan/core/schedulers/gxf/event_based_scheduler.hpp"
-#include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
-#include "holoscan/core/schedulers/gxf/multithread_scheduler.hpp"
-#include "holoscan/core/signal_handler.hpp"
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/conditions/gxf/downstream_affordable.hpp>
+#include <holoscan/core/conditions/gxf/expiring_message.hpp>
+#include <holoscan/core/conditions/gxf/message_available.hpp>
+#include <holoscan/core/conditions/gxf/multi_message_available.hpp>
+#include <holoscan/core/conditions/gxf/multi_message_available_timeout.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/distributed/common/forward_op.hpp>
+#include <holoscan/core/distributed/common/virtual_operator.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/executors/gxf/gxf_logger.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/gxf/entity_group.hpp>
+#include <holoscan/core/gxf/gxf_extension_registrar.hpp>
+#include <holoscan/core/gxf/gxf_network_context.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/gxf/gxf_scheduler.hpp>
+#include <holoscan/core/gxf/gxf_scheduling_term_wrapper.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/gxf/gxf_wrapper.hpp>
+#include <holoscan/core/message.hpp>
+#include <holoscan/core/messagelabel.hpp>
+#include <holoscan/core/network_contexts/gxf/pubsub_context.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/core/resources/gxf/annotated_double_buffer_receiver.hpp>
+#include <holoscan/core/resources/gxf/annotated_double_buffer_transmitter.hpp>
+#include <holoscan/core/resources/gxf/condition_combiner.hpp>
+#include <holoscan/core/resources/gxf/dfft_collector.hpp>
+#include <holoscan/core/resources/gxf/double_buffer_receiver.hpp>
+#include <holoscan/core/resources/gxf/double_buffer_transmitter.hpp>
+#include <holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp>
+#include <holoscan/core/resources/gxf/holoscan_async_buffer_transmitter.hpp>
+#include <holoscan/core/resources/gxf/holoscan_ucx_receiver.hpp>
+#include <holoscan/core/resources/gxf/holoscan_ucx_transmitter.hpp>
+#include <holoscan/core/resources/gxf/system_resources.hpp>
+#include <holoscan/core/schedulers/gxf/event_based_scheduler.hpp>
+#include <holoscan/core/schedulers/gxf/greedy_scheduler.hpp>
+#include <holoscan/core/schedulers/gxf/multithread_scheduler.hpp>
+#include <holoscan/core/signal_handler.hpp>
 
-#include "gxf/app/arg.hpp"
-#include "gxf/std/clock.hpp"
-#include "gxf/std/default_extension.hpp"
-#include "gxf/std/extension_factory_helper.hpp"
-#include "gxf/std/monitor.hpp"
-#include "gxf/std/receiver.hpp"
-#include "gxf/std/scheduling_term.hpp"
-#include "gxf/test/components/entity_monitor.hpp"
+#include <gxf/app/arg.hpp>
+#include <gxf/std/clock.hpp>
+#include <gxf/std/default_extension.hpp>
+#include <gxf/std/extension_factory_helper.hpp>
+#include <gxf/std/monitor.hpp>
+#include <gxf/std/receiver.hpp>
+#include <gxf/std/scheduling_term.hpp>
+#include <gxf/test/components/entity_monitor.hpp>
 
 namespace holoscan::gxf {
 
@@ -173,6 +174,65 @@ bool has_topic_name_arg(const std::shared_ptr<Resource>& resource) {
     }
   }
   return false;
+}
+
+bool is_direct_pubsub_any_size_input(const std::shared_ptr<IOSpec>& io_spec) {
+  return io_spec && io_spec->queue_size() == static_cast<int64_t>(IOSpec::kAnySize) &&
+         io_spec->connector_type() == IOSpec::ConnectorType::kPubSub;
+}
+
+bool has_indexed_input_ports_for_base(
+    const std::unordered_map<std::string, std::shared_ptr<IOSpec>>& inputs,
+    const std::string& base) {
+  const std::string prefix = base + ":";
+  return std::any_of(inputs.begin(), inputs.end(), [&prefix](const auto& item) {
+    return item.first.rfind(prefix, 0) == 0;
+  });
+}
+
+std::optional<std::string> indexed_input_base_name(const std::string& port_name) {
+  const auto separator = port_name.rfind(':');
+  if (separator == std::string::npos || separator == 0 || separator + 1 >= port_name.size()) {
+    return std::nullopt;
+  }
+  return port_name.substr(0, separator);
+}
+
+void validate_any_size_pubsub_input_mode(Operator& op, const IOSpec& io_spec) {
+  const auto op_spec = op.spec();
+  if (!op_spec) {
+    return;
+  }
+
+  const auto& inputs = op_spec->inputs();
+  const auto& port_name = io_spec.name();
+
+  if (is_direct_pubsub_any_size_input(inputs.count(port_name) ? inputs.at(port_name) : nullptr)) {
+    if (has_indexed_input_ports_for_base(inputs, port_name)) {
+      throw std::runtime_error(
+          fmt::format("Operator '{}': kAnySize input '{}' cannot mix direct Pub/Sub topic binding "
+                      "with indexed ports ('{}:N')",
+                      op.name(),
+                      port_name,
+                      port_name));
+    }
+    return;
+  }
+
+  auto base_name = indexed_input_base_name(port_name);
+  if (!base_name.has_value()) {
+    return;
+  }
+
+  auto base_it = inputs.find(base_name.value());
+  if (base_it != inputs.end() && is_direct_pubsub_any_size_input(base_it->second)) {
+    throw std::runtime_error(fmt::format(
+        "Operator '{}': indexed kAnySize input '{}' cannot be used because base port '{}' is "
+        "directly bound to a Pub/Sub topic",
+        op.name(),
+        port_name,
+        base_name.value()));
+  }
 }
 
 /// Validate that a PubSub connector has a topic_name set; throw if not.
@@ -588,10 +648,18 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
   const char* rx_name = io_spec->name().c_str();  // input port name
   auto rx_type = io_spec->connector_type();
 
+  validate_any_size_pubsub_input_mode(*op, *io_spec);
+
   int64_t queue_size = io_spec->queue_size();
   if (queue_size == static_cast<int64_t>(IOSpec::kAnySize)) {
-    // Do not create a receiver for this as we are using the parameterized receiver method.
-    return;
+    if (rx_type == IOSpec::ConnectorType::kPubSub) {
+      // A directly bound Pub/Sub kAnySize input uses one concrete base-port receiver.
+      // Vector receive() drains that receiver until it is empty.
+      queue_size = 1;
+    } else {
+      // Do not create a receiver for this as we are using the parameterized receiver method.
+      return;
+    }
   }
 
   // If the queue size is 0 (IOSpec::kPrecedingCount), then we need to calculate the default queue
@@ -1063,8 +1131,8 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
 namespace {  // unnamed namespace for implementation details
 
 using ConnectionMapType = std::unordered_map<
-holoscan::OperatorFlowGraph::NodeType,
-std::unordered_map<std::string, std::vector<std::shared_ptr<holoscan::ConnectionItem>>>>;
+    holoscan::OperatorFlowGraph::NodeType,
+    std::unordered_map<std::string, std::vector<std::shared_ptr<holoscan::ConnectionItem>>>>;
 
 ConnectionMapType generate_connection_map(
     OperatorFlowGraph& graph,
@@ -2232,6 +2300,26 @@ bool GXFExecutor::add_receivers(const std::shared_ptr<Operator>& op,
   const std::string& new_input_label = fmt::format("{}:{}", receivers_name, iospec_vector.size());
   HOLOSCAN_LOG_TRACE("add_receivers: Creating new input port with label '{}'", new_input_label);
   auto& input_port = downstream_op_spec->input<holoscan::gxf::Entity>(new_input_label);
+
+  // Propagate queue_policy from the kAnySize parent IOSpec to the new indexed port.
+  // The parent IOSpec for "receivers" (kAnySize) holds the user-specified policy, but
+  // the indexed sub-ports ("receivers:0", "receivers:1", ...) are created fresh here with
+  // no policy set.  Without this propagation the kFault default is always used, causing
+  // spurious "Push failed" warnings even when the user requested kPop or kReject.
+  {
+    const auto& op_inputs = downstream_op_spec->inputs();
+    auto parent_it = op_inputs.find(receivers_name);
+    if (parent_it != op_inputs.end()) {
+      auto parent_policy = parent_it->second->queue_policy();
+      if (parent_policy.has_value()) {
+        input_port.queue_policy(parent_policy.value());
+        HOLOSCAN_LOG_TRACE("add_receivers: propagating queue_policy {} from '{}' to '{}'",
+                           static_cast<int>(parent_policy.value()),
+                           receivers_name,
+                           new_input_label);
+      }
+    }
+  }
 
   // Add the new input port to the vector.
   iospec_vector.push_back(&input_port);

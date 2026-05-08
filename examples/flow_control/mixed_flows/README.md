@@ -9,16 +9,19 @@ This example demonstrates how to implement mixed flow patterns using Holoscan SD
 ```
 
 The example demonstrates several key flow control patterns:
+
 1. **Dynamic Flow Control**: Using dynamic flows to conditionally route data
 2. **Conditional Routing**: Routing data based on value conditions
 3. **Mixed Flow Patterns**: Combining different flow control patterns in one application
 
 The key aspects of this application include:
+
 - Dynamic routing based on message values
 - Explicit port naming for complex routing
 - Combination of static and dynamic flows
 
 The application demonstrates:
+
 - How to implement conditional routing based on data values
 - How to combine multiple flow patterns in one application
 - How to use explicit port naming for complex flows
@@ -28,6 +31,7 @@ The application demonstrates:
 ## C++ API
 
 The application consists of several operators:
+
 1. `PingTx`: Transmits sequential integer values
 2. `PingRx`: Receives and displays values
 3. `SimpleOp`: Demonstrates basic operator functionality with name printing
@@ -43,6 +47,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/flow_control/mixed_flows/cpp/mixed_flows_execution
 ```
@@ -50,6 +55,7 @@ Then, run:
 ## Python API
 
 The application demonstrates the same flow control patterns using the Python API. It consists of several operators:
+
 1. `PingTx`: Transmits sequential integer values
 2. `PingRx`: Receives and displays values
 3. `SimpleOp`: Demonstrates basic operator functionality with name printing
@@ -65,6 +71,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/flow_control/mixed_flows/python/mixed_flows_execution.py
 ```

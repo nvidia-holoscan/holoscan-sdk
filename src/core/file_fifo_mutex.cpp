@@ -28,8 +28,8 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/file_fifo_mutex.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/file_fifo_mutex.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

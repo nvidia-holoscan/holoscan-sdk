@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -27,7 +27,7 @@
 #include <string_view>
 #include <thread>
 
-#include "holoscan/core/expected.hpp"
+#include <holoscan/core/expected.hpp>
 
 namespace holoscan {
 
@@ -182,6 +182,10 @@ class PoseTreeUCXClient {
   std::thread client_thread_;            ///< The worker thread handling UCX communication
   std::atomic<bool> is_external_pose_tree_update_{
       false};  ///< Flag to prevent feedback loops during updates
+  std::atomic<bool> startup_callbacks_registered_{
+      false};  ///< True once local PoseTree callbacks are registered
+  std::atomic<bool> initial_snapshot_applied_{
+      true};  ///< True once the initial requested snapshot has been applied
 
   std::mutex ready_mutex_;            ///< Mutex for synchronizing connection startup
   std::condition_variable ready_cv_;  ///< Condition variable for signaling connection readiness

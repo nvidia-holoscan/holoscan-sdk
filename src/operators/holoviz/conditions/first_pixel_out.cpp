@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/holoviz/conditions/first_pixel_out.hpp"
+#include <holoscan/operators/holoviz/conditions/first_pixel_out.hpp>
 
 #include <atomic>
 #include <memory>
 #include <thread>
 #include <utility>
 
-#include "holoscan/operators/holoviz/holoviz.hpp"
+#include <holoscan/operators/holoviz/holoviz.hpp>
 
 namespace holoscan {
 

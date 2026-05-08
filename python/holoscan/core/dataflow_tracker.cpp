@@ -21,8 +21,8 @@
 #include <memory>
 #include <string>
 
+#include <holoscan/core/dataflow_tracker.hpp>
 #include "dataflow_tracker_pydoc.hpp"
-#include "holoscan/core/dataflow_tracker.hpp"
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

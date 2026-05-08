@@ -23,6 +23,7 @@ import cupy as cp
 
 from holoscan.conditions import CountCondition, CudaStreamCondition
 from holoscan.core import Application, Operator, OperatorSpec
+from holoscan.logger import LogLevel, set_log_level
 from holoscan.operators import PingTensorRxOp
 from holoscan.resources import CudaGreenContext, CudaGreenContextPool, CudaStreamPool
 
@@ -31,6 +32,7 @@ GREEN_CONTEXT_REQUIREMENT_DOC_URL = "https://docs.nvidia.com/holoscan/sdk-user-g
 
 
 def _cuda_driver_version():
+    """Return ``cudaDriverGetVersion()`` as an integer (e.g. 12040 for 12.4), or None on failure."""
     try:
         return int(cp.cuda.runtime.driverGetVersion())
     except cp.cuda.runtime.CUDARuntimeError:
@@ -38,8 +40,106 @@ def _cuda_driver_version():
 
 
 def _green_context_supported_by_cuda_driver():
+    """Return True if the installed driver meets the minimum for Green Context (CUDA 12.4+ API)."""
     version = _cuda_driver_version()
     return version is not None and version >= MIN_GREEN_CONTEXT_CUDA_DRIVER_VERSION
+
+
+def _green_context_min_sm_size_for_device_major(device_major):
+    """Return a typical minimum SM block size for Green Context pools by architecture.
+
+    This example uses the value for ``min_sm_size`` on ``CudaGreenContextPool`` together with
+    ``sms_per_partition`` so partition sizes stay compatible with the driver's SM grouping.
+
+    Args:
+        device_major: CUDA compute capability major: the ``major`` field from CuPy
+            ``getDeviceProperties(0)`` (same as ``cudaDeviceProp.major``):
+            - 7: Volta/Turing (SM 7.x)
+            - 8: Ampere (SM 8.x)
+            - 9: Hopper (SM 9.x)
+            - 10+: Blackwell and newer (SM 10.x+)
+
+    Returns:
+        int: Minimum SMs per block for the pool. Holoscan exposes this as ``min_sm_size``;
+        GXF receives it as ``min_sm_count``.
+
+    Note:
+        For reference on some aarch64 boards when sizing partitions: Jetson Orin AGX has 16 SMs;
+        Jetson Orin Nano has 8; Jetson AGX Thor has 20 (Blackwell sm_110).
+    """
+    if device_major == 7:
+        return 2
+    if device_major in (8, 9):
+        return 4
+    if device_major >= 10:
+        return 8
+    return 2
+
+
+def _green_context_device_properties():
+    """Return CUDA device properties needed by Green Context examples.
+
+    Returns:
+        dict | None: ``{"major": int, "sm_count": int, "min_sm_size": int}`` on success,
+        otherwise ``None`` when CUDA is unavailable or properties cannot be queried.
+    """
+    try:
+        props = cp.cuda.runtime.getDeviceProperties(0)
+        major = int(props["major"])
+        sm_count = int(props["multiProcessorCount"])
+        return {
+            "major": major,
+            "sm_count": sm_count,
+            "min_sm_size": _green_context_min_sm_size_for_device_major(major),
+        }
+    except (RuntimeError, cp.cuda.runtime.CUDARuntimeError) as exc:
+        print(f"Unable to query CUDA device properties: {exc}", file=sys.stderr)
+        return None
+
+
+def _green_context_resolve_min_sm_size(partitions):
+    """Pick the largest ``min_sm_size`` for which the CUDA driver accepts *partitions*.
+
+    The architecture-default heuristic in
+    :func:`_green_context_min_sm_size_for_device_major` is intentionally
+    coarse and may not match every GPU's actual SM-grouping granularity.
+    For example, on IGX Thor (compute capability 11.x, ``sm_count=20``)
+    the Blackwell-class default of ``8`` is too large for the example's
+    aarch64 partitioning of ``[4, 4]`` even though the driver itself
+    accepts the smaller ``min_sm_size=4`` grouping just fine.
+
+    To stay portable across such GPUs, this helper probes candidate
+    ``min_sm_size`` values starting at the architecture default and
+    halving down to ``2``, returning the largest value for which both
+    the arithmetic constraints and
+    :meth:`CudaGreenContextPool.is_partitioning_supported` succeed.
+
+    Returns ``None`` when device properties cannot be read or no
+    candidate is accepted.
+    """
+    props = _green_context_device_properties()
+    if props is None:
+        return None
+    sm_count = props["sm_count"]
+    total = sum(partitions)
+    if sm_count < total:
+        return None
+
+    candidates = []
+    candidate = props["min_sm_size"]
+    while candidate >= 2:
+        candidates.append(candidate)
+        candidate //= 2
+
+    for min_sm in candidates:
+        if any(p < min_sm or p % min_sm != 0 for p in partitions):
+            continue
+        remainder = sm_count - total
+        if remainder != 0 and remainder % min_sm != 0:
+            continue
+        if CudaGreenContextPool.is_partitioning_supported(0, min_sm, partitions):
+            return min_sm
+    return None
 
 
 class CuPySourceOp(Operator):
@@ -146,11 +246,13 @@ class CuPyExampleApp(Application):
         count=10,
         use_default_stream=False,
         use_green_context=False,
+        green_context_min_sm_size=None,
         **kwargs,
     ):
         self.count = count
         self.use_default_stream = use_default_stream
         self.use_green_context = use_green_context
+        self.green_context_min_sm_size = green_context_min_sm_size
 
         super().__init__(*args, **kwargs)
 
@@ -163,12 +265,20 @@ class CuPyExampleApp(Application):
                 partitions = [4, 4]
             else:
                 raise ValueError(f"Unsupported platform architecture: {arch}")
+            min_sm_size = self.green_context_min_sm_size
+            if min_sm_size is None:
+                min_sm_size = _green_context_resolve_min_sm_size(partitions)
+            if min_sm_size is None:
+                raise RuntimeError(
+                    "Green Context partitioning is not supported on this GPU; "
+                    "the application launcher should have skipped before reaching compose()."
+                )
             cuda_green_context_pool = CudaGreenContextPool(
                 self,
                 dev_id=0,
-                flags=0,
                 num_partitions=2,
                 sms_per_partition=partitions,
+                min_sm_size=min_sm_size,
                 name="cuda_green_context_pool",
             )
             cuda_green_context = CudaGreenContext(
@@ -275,6 +385,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.count < 1:
         raise ValueError("count must be a positive integer")
+
+    # Honor HOLOSCAN_LOG_LEVEL for code that runs before the ``Application``
+    # constructor -- notably ``CudaGreenContextPool.is_partitioning_supported``
+    # called by ``_green_context_resolve_min_sm_size`` below.  Without this
+    # call, ``Logger::set_level()`` is only invoked from the ``Application``
+    # constructor, so any HOLOSCAN_LOG_DEBUG output emitted earlier is
+    # silently dropped.
+    #
+    # Note: this does NOT force the level to INFO.  ``set_log_level()`` reads
+    # HOLOSCAN_LOG_LEVEL first and overrides the passed-in level when the
+    # env var is set to a recognized value (TRACE, DEBUG, INFO, WARN, ERROR,
+    # CRITICAL, OFF; case-insensitive).  INFO is only the fallback when the
+    # env var is unset.  See ``Logger::set_level`` in
+    # ``src/logger/logger.cpp``.
+    set_log_level(LogLevel.INFO)
+
     if args.green_context and not _green_context_supported_by_cuda_driver():
         version = _cuda_driver_version()
         version_display = "unknown" if version is None else str(version)
@@ -286,9 +412,25 @@ if __name__ == "__main__":
         )
         sys.exit(77)
 
+    green_context_min_sm_size = None
+    if args.green_context:
+        arch = platform.machine().lower()
+        partitions = [8, 8] if arch in ["x86_64", "amd64"] else [4, 4]
+        green_context_min_sm_size = _green_context_resolve_min_sm_size(partitions)
+        if green_context_min_sm_size is None:
+            props = _green_context_device_properties()
+            sm_info = f" (sm_count={props['sm_count']})" if props else ""
+            print(
+                f"Green Context partitioning with {partitions} is not supported"
+                f" on this GPU{sm_info}. See {GREEN_CONTEXT_REQUIREMENT_DOC_URL}",
+                file=sys.stderr,
+            )
+            sys.exit(77)
+
     app = CuPyExampleApp(
         count=args.count,
         use_default_stream=args.default_stream,
         use_green_context=args.green_context,
+        green_context_min_sm_size=green_context_min_sm_size,
     )
     app.run()

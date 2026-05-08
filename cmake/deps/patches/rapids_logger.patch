@@ -1,5 +1,5 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index f5a878e..1f487b3 100644
+index f5a878e..1e6abaf 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -161,8 +161,8 @@ rapids_cmake_build_type(Release)
@@ -22,38 +22,3 @@ index f5a878e..1f487b3 100644
    include(CTest)
    add_subdirectory(tests)
  endif()
-@@ -235,9 +235,11 @@ install(
-   TARGETS rapids_logger
-   DESTINATION ${lib_dir}
-   EXPORT rapids-logger-exports
-+  COMPONENT rapids_logger
- )
- install(DIRECTORY ${RAPIDS_LOGGER_SOURCE_DIR}/include/rapids_logger
-         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-+  COMPONENT rapids_logger
- )
- 
- # Both the function to create macros and the template must be installed so that they are available
-@@ -245,9 +247,11 @@ install(DIRECTORY ${RAPIDS_LOGGER_SOURCE_DIR}/include/rapids_logger
- # alongside the CMake file in lib, but this is easiest for now
- install(FILES ${CMAKE_CURRENT_LIST_DIR}/cmake/logger_macros.hpp.in
-         DESTINATION "${lib_dir}/cmake/rapids_logger"
-+  COMPONENT rapids_logger
- )
- install(FILES ${CMAKE_CURRENT_LIST_DIR}/cmake/create_logger_macros.cmake
-         DESTINATION "${lib_dir}/cmake/rapids_logger"
-+  COMPONENT rapids_logger
- )
- 
- # cmake-lint: disable=E1126
-diff --git a/cmake/create_logger_macros.cmake b/cmake/create_logger_macros.cmake
-index d11ec3b..e6e9943 100644
---- a/cmake/create_logger_macros.cmake
-+++ b/cmake/create_logger_macros.cmake
-@@ -26,5 +26,5 @@ function(create_logger_macros macro_prefix default_logger header_dir)
- 
-   set(MACROS_OUTPUT_FILE ${BUILD_DIR}/logger_macros.hpp)
-   configure_file(${CMAKE_CURRENT_FUNCTION_LIST_DIR}/logger_macros.hpp.in ${MACROS_OUTPUT_FILE})
--  install(FILES ${MACROS_OUTPUT_FILE} DESTINATION ${INSTALL_DIR})
-+  install(FILES ${MACROS_OUTPUT_FILE} DESTINATION ${INSTALL_DIR} COMPONENT rapids_logger)
- endfunction()

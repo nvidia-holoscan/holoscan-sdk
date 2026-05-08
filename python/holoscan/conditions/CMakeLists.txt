@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,4 +28,26 @@ holoscan_pybind11_module(conditions
     multi_message_available.cpp
     multi_message_available_timeout.cpp
     periodic.cpp
+    publisher_available.cpp
+    subscriber_available.cpp
 )
+
+target_link_libraries(conditions_python
+    PRIVATE
+        holoscan::pubsub_runtime
+)
+
+if(TARGET holoscan::pubsub_fastdds)
+    target_sources(conditions_python
+        PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR}/pending_export_condition.cpp
+    )
+    target_link_libraries(conditions_python
+        PRIVATE
+            holoscan::pubsub_fastdds
+    )
+    target_compile_definitions(conditions_python
+        PRIVATE
+            HOLOSCAN_PYTHON_HAS_PENDING_EXPORT_CONDITION=1
+    )
+endif()

@@ -30,8 +30,8 @@
 
 #include <string>
 
-#include "holoscan/holoscan.hpp"
-#include "holoscan/operators/ping_tx/ping_tx.hpp"
+#include <holoscan/holoscan.hpp>
+#include <holoscan/operators/ping_tx/ping_tx.hpp>
 
 namespace holoscan {
 namespace ops {

@@ -31,12 +31,12 @@
 #include <utility>  // for std::pair
 #include <vector>
 
-#include "holoscan/core/common.hpp"
+#include <holoscan/core/common.hpp>
 
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/fragment_scheduler.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
-#include "holoscan/core/io_spec.hpp"
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
+#include <holoscan/core/fragment_scheduler.hpp>
+#include <holoscan/core/io_spec.hpp>
 
 namespace holoscan {
 

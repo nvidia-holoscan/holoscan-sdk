@@ -23,14 +23,15 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/utils/holoinfer_utils.hpp>
 
-#include "holoinfer.hpp"
-#include "holoinfer_buffer.hpp"
+#include <holoinfer.hpp>
+#include <holoinfer_buffer.hpp>
 
 namespace HoloInfer = holoscan::inference;
 
@@ -191,6 +192,10 @@ class InferenceProcessorOp : public holoscan::Operator {
   /// Map holding dimensions per model. Key is model name and value is a vector with
   /// dimensions.
   std::map<std::string, std::vector<int>> dims_per_tensor_;
+
+  /// Persistent cache for the output GXF entity and per-tensor allocation metadata.
+  /// Avoids creating a new entity and allocating tensor buffers on every compute() call.
+  holoscan::utils::TensorTransmitCache transmit_cache_;
 
   /// Operator Identifier, used in reporting.
   const std::string module_{"Inference Processor Operator"};

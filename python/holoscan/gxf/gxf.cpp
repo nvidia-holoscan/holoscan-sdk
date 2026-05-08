@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,21 +26,21 @@
 #include "entity.hpp"
 #include "gxf_pydoc.hpp"
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_component.hpp"
-#include "holoscan/core/gxf/gxf_condition.hpp"
-#include "holoscan/core/gxf/gxf_execution_context.hpp"
-#include "holoscan/core/gxf/gxf_extension_manager.hpp"
-#include "holoscan/core/gxf/gxf_extension_registrar.hpp"
-#include "holoscan/core/gxf/gxf_io_context.hpp"
-#include "holoscan/core/gxf/gxf_operator.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/gxf/gxf_wrapper.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_component.hpp>
+#include <holoscan/core/gxf/gxf_condition.hpp>
+#include <holoscan/core/gxf/gxf_execution_context.hpp>
+#include <holoscan/core/gxf/gxf_extension_manager.hpp>
+#include <holoscan/core/gxf/gxf_extension_registrar.hpp>
+#include <holoscan/core/gxf/gxf_io_context.hpp>
+#include <holoscan/core/gxf/gxf_operator.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/gxf/gxf_wrapper.hpp>
 
 #include "../core/resource.hpp"
 
-#include "gxf/core/gxf.h"
+#include <gxf/core/gxf.h>
 
 using pybind11::literals::operator""_a;  // NOLINT(misc-unused-using-decls)
 

@@ -30,18 +30,18 @@
 #include <variant>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/parameter.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 #include "../../core/gil_guarded_pyobject.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/parameter.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
 
 namespace py = pybind11;
 

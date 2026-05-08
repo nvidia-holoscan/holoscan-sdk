@@ -19,7 +19,7 @@
 // Logger configuration is done from main thread at startup.
 // Array access by LogLevel enum is safe since enum values are bounded.
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 #include <algorithm>
 #include <cstdlib>
@@ -27,8 +27,8 @@
 #include <string>
 #include <utility>
 
+#include <holoscan/logger/holoscan_logger.hpp>
 #include "common/logger/spdlog_logger.hpp"
-#include "holoscan/logger/holoscan_logger.hpp"
 
 namespace holoscan {
 

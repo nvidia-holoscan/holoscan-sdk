@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,17 +15,17 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/gxf_codelet/gxf_codelet.hpp"
+#include <holoscan/operators/gxf_codelet/gxf_codelet.hpp>
 
-#include <vector>
 #include <memory>
+#include <vector>
 
-#include "gxf/core/common_expected_macro.hpp"
-#include "gxf/core/expected_macro.hpp"
-#include "gxf/core/parameter_registrar.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <gxf/core/common_expected_macro.hpp>
+#include <gxf/core/expected_macro.hpp>
+#include <gxf/core/parameter_registrar.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 namespace holoscan::ops {
 

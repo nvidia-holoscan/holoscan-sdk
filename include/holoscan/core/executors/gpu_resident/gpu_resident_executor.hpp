@@ -28,10 +28,10 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/utils/cuda/buffer.hpp>
 #include "gpu_resident_deck.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/utils/cuda/buffer.hpp"
 
 namespace holoscan {
 
@@ -75,13 +75,16 @@ class GPUResidentExecutor : public Executor {
   }
 
   /**
-   * @brief This function prepares the data flow connections between operators
-   * It allocates a device memory block for each connection according to the memory block size
-   * specified in the operator spec
+   * @brief Prepare data flow connections for a topologically ordered GPU-resident graph.
    *
-   * @param graph The operator graph
+   * This initializes operator specs, assigns per-port unique IDs, and allocates/connects device
+   * memory for every supported edge in the graph.
+   *
+   * @param graph The operator graph.
+   * @param topo_ordered_operators Operators flattened in deterministic topological order.
    */
-  void prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph);
+  void prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph,
+                         const std::vector<std::shared_ptr<Operator>>& topo_ordered_operators);
 
   /**
    * @brief This function initializes CUDA. Currently, it sets the device to 0 by default.
@@ -101,11 +104,14 @@ class GPUResidentExecutor : public Executor {
   void* device_memory(std::shared_ptr<Operator> op, const std::string& port_name);
 
   /**
-   * @brief This function verifies the graph topology is supported by the GPU-resident graph execution.
-   * Currently, it checks if the graph is a linear chain of operators.
+   * @brief Verify the graph topology and flatten it in topological order.
    *
-   * @param graph The operator graph
-   * @return True if the graph topology is supported by the GPU-resident graph execution, false otherwise
+   * GPU-resident execution currently supports acyclic graphs with exactly one source operator.
+   * This method only validates and flattens the operator graph itself.
+   *
+   * @param graph The operator graph.
+   * @param topo_ordered_operators Output vector populated in deterministic topological order.
+   * @return True if the graph topology is supported by GPU-resident execution, false otherwise.
    */
   virtual bool verify_graph_topology(
       std::shared_ptr<OperatorFlowGraph> graph,
@@ -237,18 +243,14 @@ class GPUResidentExecutor : public Executor {
    * @param source_port Name of the output port on source_op.
    * @param destination_port Name of the input port on dest_op.
    */
-  void connect_ports(std::shared_ptr<Operator> source_op,
-                     std::shared_ptr<Operator> dest_op,
-                     const std::string& source_port,
-                     const std::string& destination_port);
+  void connect_ports(std::shared_ptr<Operator> source_op, std::shared_ptr<Operator> dest_op,
+                     const std::string& source_port, const std::string& destination_port);
 
   void allocate_io_device_buffer(std::shared_ptr<Operator> source_op,
-                                 std::shared_ptr<Operator> dest_op,
-                                 const std::string& source_port, const std::string& target_port,
-                                 size_t memory_block_size);
+                                 std::shared_ptr<Operator> dest_op, const std::string& source_port,
+                                 const std::string& target_port, size_t memory_block_size);
 
-  void connect_io_device_ptr(std::shared_ptr<Operator> source_op,
-                             std::shared_ptr<Operator> dest_op,
+  void connect_io_device_ptr(std::shared_ptr<Operator> source_op, std::shared_ptr<Operator> dest_op,
                              const std::string& source_port, const std::string& target_port,
                              void* device_ptr);
   /**

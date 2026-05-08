@@ -11,11 +11,13 @@ Community feedback helps us improve the Holoscan SDK platform to better meet use
 limited support to Holoscan SDK users.
 
 Consider reviewing existing issues or opening a new issue if you:
+
 - Have a question about using a Holoscan SDK feature
 - Notice errors or unexpected behavior coming from Holoscan SDK
 - Have an idea for a change that might benefit other users
 
 When reporting an error, please include relevant details that will help our team investigate the issue. Details might include:
+
 - A summary of the problem
 - The behavior you have observed
 - The behavior you expected

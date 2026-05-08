@@ -24,13 +24,13 @@
 #include <utility>
 #include <variant>
 
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/resources/gxf/gxf_component_resource.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "../core/component_util.hpp"
 #include "./gxf_component_resource_pydoc.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/resources/gxf/gxf_component_resource.hpp"
-#include "holoscan/core/subgraph.hpp"
 
 #include "../operators/operator_util.hpp"
 

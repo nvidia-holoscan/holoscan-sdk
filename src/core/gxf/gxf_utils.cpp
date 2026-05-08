@@ -26,10 +26,10 @@
 #include <gxf/core/entity.hpp>
 #include <gxf/std/codelet.hpp>
 #include <gxf/std/resources.hpp>  // GPUDevice
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace fmt {
 

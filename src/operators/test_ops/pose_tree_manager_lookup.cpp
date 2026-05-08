@@ -18,12 +18,12 @@
 #include <stdexcept>
 #include <string>
 
-#include "holoscan/operators/test_ops/pose_tree_manager_lookup.hpp"
+#include <holoscan/operators/test_ops/pose_tree_manager_lookup.hpp>
 
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/logger/logger.hpp"
-#include "holoscan/pose_tree/pose_tree_manager.hpp"
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/logger/logger.hpp>
+#include <holoscan/pose_tree/pose_tree_manager.hpp>
 
 namespace holoscan::ops {
 

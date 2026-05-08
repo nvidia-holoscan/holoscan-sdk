@@ -24,8 +24,8 @@
 
 #include <holoscan/holoscan.hpp>
 
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
 
 namespace holoscan {
 
@@ -158,8 +158,9 @@ TEST(Application, TestAppHelpOption) {
   EXPECT_EXIT(make_application<Application>(args), ::testing::ExitedWithCode(0), ".*");
 
   std::string log_output = testing::internal::GetCapturedStdout();
-  EXPECT_TRUE(log_output.find("Usage: ") != std::string::npos) << "=== LOG ===\n"
-                                                               << log_output << "\n===========\n";
+  EXPECT_TRUE(log_output.find("my_app [OPTIONS]") != std::string::npos)
+      << "=== LOG ===\n"
+      << log_output << "\n===========\n";
 }
 
 TEST(Application, TestAppVersionOption) {

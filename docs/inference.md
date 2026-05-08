@@ -1,4 +1,5 @@
 (holoinfer)=
+
 # Inference
 
 ## Overview
@@ -12,45 +13,45 @@ The core inference functionality in the Holoscan SDK is provided by the Inferenc
 Required parameters and related features available with the Holoscan Inference Module are listed below.
 
 - Data Buffer Parameters: Parameters are provided in the inference settings to enable data buffer locations at several stages of the inference. As shown in the figure below, three parameters `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be set by the user.
-    - `input_on_cuda` refers to the location of the data going into the inference.
-        - If value is `true`, it means the input data is on the device.
-        - If value is `false`, it means the input data is on the host.
-        - Default value: `true`
-    - `output_on_cuda` refers to the data location of the inferred data.
-        - If value is `true`, it means the inferred data is on the device.
-        - If value is `false`, it means the inferred data is on the host.
-        - Default value: `true`
-    - `transmit_on_cuda` refers to the data transmission.
-        - If value is `true`, it means the data transmission from the inference extension will be on __Device__.
-        - If value is `false`, it means the data transmission from the inference extension will be on __Host__.
-        - Default value: `true`
+  - `input_on_cuda` refers to the location of the data going into the inference.
+    - If value is `true`, it means the input data is on the device.
+    - If value is `false`, it means the input data is on the host.
+    - Default value: `true`
+  - `output_on_cuda` refers to the data location of the inferred data.
+    - If value is `true`, it means the inferred data is on the device.
+    - If value is `false`, it means the inferred data is on the host.
+    - Default value: `true`
+  - `transmit_on_cuda` refers to the data transmission.
+    - If value is `true`, it means the data transmission from the inference extension will be on __Device__.
+    - If value is `false`, it means the data transmission from the inference extension will be on __Host__.
+    - Default value: `true`
 - Inference Parameters
-    - `backend` parameter is set to either `trt` for TensorRT, `onnxrt` for ONNX runtime, or `torch` for libtorch. If there are multiple models in the inference application, all models will use the same backend. If it is desired to use different backends for different models, specify the `backend_map` parameter instead.
-        - TensorRT:
-            - CUDA-based inference supported both on x86_64 and aarch64.
-            - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
-            - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
-            - TensorRT backend expects input models to be in `tensorrt engine file` format or `onnx` format.
-                - if models are in `tensorrt engine file` format, parameter `is_engine_path` must be set to `true`.
-                - if models are in `onnx` format, it will be automatically converted into `tensorrt engine file` by the Holoscan inference module.
-        - Torch:
-            - CUDA and CPU based inference supported both on x86_64 and aarch64.
-            - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
-            - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
-            - Torch backend expects input models to be in `torchscript` format.
-                - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
-                - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
-        - __Model Configuration Requirement__: The torch backend requires a companion `model.yaml` configuration file alongside each torchscript model file.
-          - The YAML file must have the same name as the model file but with a `.yaml` extension (e.g., if the model is `my_model.pt`, the configuration file should be `my_model.yaml`).
-          - The configuration file defines the input and output tensor formats, dimensions, and data types, enabling support for complex tensor structures beyond simple tensors.
-          - The system automatically validates that the YAML configuration matches the actual model schema extracted from the torchscript model.
-          - See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed configuration examples and supported formats.
-        - ONNX runtime:
-            - CUDA and CPU based inference supported both on x86_64 and aarch64.
-            - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
-            - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
+  - `backend` parameter is set to either `trt` for TensorRT, `onnxrt` for ONNX runtime, or `torch` for libtorch. If there are multiple models in the inference application, all models will use the same backend. If it is desired to use different backends for different models, specify the `backend_map` parameter instead.
+    - TensorRT:
+      - CUDA-based inference supported both on x86_64 and aarch64.
+      - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
+      - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
+      - TensorRT backend expects input models to be in `tensorrt engine file` format or `onnx` format.
+        - if models are in `tensorrt engine file` format, parameter `is_engine_path` must be set to `true`.
+        - if models are in `onnx` format, it will be automatically converted into `tensorrt engine file` by the Holoscan inference module.
+    - Torch:
+      - CUDA and CPU based inference supported both on x86_64 and aarch64.
+      - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
+      - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
+      - Torch backend expects input models to be in `torchscript` format.
+        - It is recommended to use the same version of torch for `torchscript` model generation, as used in the HOLOSCAN SDK on the respective architectures.
+        - Additionally, it is recommended to generate the `torchscript` model on the same architecture on which it will be executed. For example, `torchscript` model must be generated on `x86_64` to be executed in an application running on `x86_64` only.
+    - __Model Configuration Requirement__: The torch backend requires a companion `model.yaml` configuration file alongside each torchscript model file.
+      - The YAML file must have the same name as the model file but with a `.yaml` extension (e.g., if the model is `my_model.pt`, the configuration file should be `my_model.yaml`).
+      - The configuration file defines the input and output tensor formats, dimensions, and data types, enabling support for complex tensor structures beyond simple tensors.
+      - The system automatically validates that the YAML configuration matches the actual model schema extracted from the torchscript model.
+      - See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed configuration examples and supported formats.
+    - ONNX runtime:
+      - CUDA and CPU based inference supported both on x86_64 and aarch64.
+      - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
+      - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
 
-    - `infer_on_cpu` parameter is set to `true` if CPU based inference is desired.
+  - `infer_on_cpu` parameter is set to `true` if CPU based inference is desired.
 
         The tables below demonstrate the supported features related to the data buffer and the inference with `trt`, `torch` and `onnxrt` based backend.
 
@@ -60,86 +61,90 @@ Required parameters and related features available with the Holoscan Inference M
         | Supported values for `torch`  | `true` or `false`  | `true` or `false` | `true` or `false` | `true` or `false` |
         | Supported values for `onnxrt`  | `true` or `false`  | `true` or `false` | `true` or `false` | `true` or `false` |
 
-    - `model_path_map`: User can design single or multi AI inference pipeline by populating `model_path_map` in the config file.
-        - With a single entry, it is single inference; with more than one entry, multi AI inference is enabled.
-        - Each entry in `model_path_map` has a unique keyword as key (used as an identifier by the Holoscan Inference Module), and the path to the model as value.
-        - All model entries must have the models either in __onnx__ or __tensorrt engine file__ or __torchscript__ format.
-    - `pre_processor_map`: input tensor to the respective model is specified in `pre_processor_map` in the config file.
-        - The Holoscan Inference Module supports same input for multiple models or unique input per model.
-        - Each entry in `pre_processor_map` has a unique keyword representing the model (same as used in `model_path_map`), and a vector of tensor names as the value.
-        - The Holoscan Inference Module supports multiple input tensors per model.
-    - `inference_map`: output tensors per model after inference is specified in `inference_map` in the config file.
-        - Each entry in `inference_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a vector of the output tensor names as the value.
-        - The Holoscan Inference Module supports multiple output tensors per model.
-    - `parallel_inference`: Parallel or Sequential execution of inferences.
-        - If multiple models are input, you can execute models in parallel.
-        - Parameter `parallel_inference` can be either `true` or `false`. Default value is `true`.
-        - Inferences are launched in parallel without any check of the available GPU resources. You must ensure that there is enough memory and compute available to run all the inferences in parallel.
-    - `enable_fp16`: Generation of the TensorRT engine files with FP16 option
-        - If `backend` is set to `onnx` or `trt` if the input models are in __onnx__ format, then you can generate the engine file with fp16 option to accelerate inferencing.
-        - It takes few minutes to generate the engine files for the first time.
-        - It can be either `true` or `false`. Default value is `false`.
-    - `enable_cuda_graphs`: Enable usage of CUDA Graphs for backends which support it.
-        - Enabled by default for the TensorRT backend.
-        - Using CUDA Graphs reduces CPU launch costs and enables optimizations which might not be possible with the piecewise work submission mechanism of streams.
-        - Models including loops or conditions are not supported with CUDA Graphs. For these models usage of CUDA Graphs needs to be disabled.
-        - It can be either `true` or `false`. Default value is `true`.
-    - `dla_core`: The DLA core index to execute the engine on, starts at `0`.
-        - It can be either `-1` or the DLA core index. Default value is `-1`.
-    - `dla_gpu_fallback`: Enable DLA GPU fallback
-        - If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is disabled, engine creation will fail if a layer cannot executed on DLA.
-        - It can be either `true` or `false`. Default value is `true`.
-    - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.
-    - `in_tensor_names`: Input tensor names to be used by `pre_processor_map`. This parameter is optional. If absent in the parameter map, values are derived from `pre_processor_map`.
-    - `out_tensor_names`: Output tensor names to be used by `inference_map`. This parameter is optional. If absent in the parameter map, values are derived from `inference_map`.
-    - `device_map`: Multi-GPU inferencing is enabled if `device_map` is populated in the parameter set.
-        - Each entry in `device_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and GPU identifier as the value. This GPU ID is used to execute the inference for the specified model.
-        - GPUs specified in the `device_map` must have P2P (peer to peer) access and they must be connected to the same PCIE configuration. If P2P access is not possible among GPUs, the host (CPU memory) will be used to transfer the data.
-        - Multi-GPU inferencing is supported for all backends.
-    - `dla_core_map`: DLA cores are used for inferencing if `dla_core_map` is populated in the parameter set.
-        - Each entry in `dla_core_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a DLA core index as the value. This DLA core index is used to execute the inference for the specified model.
-    - `temporal_map`: Temporal inferencing is enabled if `temporal_map` is populated in the parameter set.
-        - Each entry in `temporal_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and frame delay as the value. Frame delay represents the frame count that are skipped by the operator in doing the inference for that particular model. A model with the value of 1, is inferred per frame. A model with a value of 10 is inferred for every 10th frame coming into the operator, which is the 1st frame, 11th frame, 21st frame and so on. Additionally, the operator will transmit the last inferred result for all the frames that are not inferred. For example, a model with a value of 10 will be inferred at 11th frame and from 12th to 20th frame, the result from 11th frame is transmitted.
-        - If the `temporal_map` is absent in the parameter set, all models are inferred for all the frames.
-        - All models are not mandatory in the `temporal_map`.  The missing models are inferred per frame.
-        - Temporal map based inferencing is supported for all backends.
-    - `activation_map`: Dynamic inferencing can be enabled with this parameter. It is populated in the parameter set and is updated at runtime.
-        - Each entry in `activation_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and activation state as the value. Activation state represents whether the model will be used for inferencing or not on a given frame. Any model(s) with a value of 1 will be active and will be used for inference, and any model(s) with a value of 0 will not run. The activation map must be initialized in the parameter set for all the models that need to be activated or deactivated dynamically.
-        - When the activation state is 0 for a particular model in the `activation_map`, the inference operator will not launch the inference for the model and will emits the last inferred result for the model.
-        - If the `activation_map` is absent in the parameter set, all of the models are inferred for all frames.
-        - All models are not mandatory in the `activation_map`.  The missing models are active on every frame.
-        - Dynamic inferenceing based on `activation_map` along with the `model_activation_specs` input port is supported for all backends.
-    - `backend_map`: Multiple backends can be used in the same application with this parameter.
-        - Each entry in `backend_map` has a unique keyword representing the model (same as used in `model_path_map`), and the `backend` as the value.
-        - A sample backend_map is shown below. In the example, model_1 uses the `tensorRT` backend, and model 2 and model 3 uses the `torch` backend for inference.
+  - `model_path_map`: User can design single or multi AI inference pipeline by populating `model_path_map` in the config file.
+    - With a single entry, it is single inference; with more than one entry, multi AI inference is enabled.
+    - Each entry in `model_path_map` has a unique keyword as key (used as an identifier by the Holoscan Inference Module), and the path to the model as value.
+    - All model entries must have the models either in __onnx__ or __tensorrt engine file__ or __torchscript__ format.
+  - `pre_processor_map`: input tensor to the respective model is specified in `pre_processor_map` in the config file.
+    - The Holoscan Inference Module supports same input for multiple models or unique input per model.
+    - Each entry in `pre_processor_map` has a unique keyword representing the model (same as used in `model_path_map`), and a vector of tensor names as the value.
+    - The Holoscan Inference Module supports multiple input tensors per model.
+  - `inference_map`: output tensors per model after inference is specified in `inference_map` in the config file.
+    - Each entry in `inference_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a vector of the output tensor names as the value.
+    - The Holoscan Inference Module supports multiple output tensors per model.
+  - `parallel_inference`: Parallel or Sequential execution of inferences.
+    - If multiple models are input, you can execute models in parallel.
+    - Parameter `parallel_inference` can be either `true` or `false`. Default value is `true`.
+    - Inferences are launched in parallel without any check of the available GPU resources. You must ensure that there is enough memory and compute available to run all the inferences in parallel.
+  - `enable_fp16`: Generation of the TensorRT engine files with FP16 option
+    - If `backend` is set to `onnx` or `trt` if the input models are in __onnx__ format, then you can generate the engine file with fp16 option to accelerate inferencing.
+    - It takes few minutes to generate the engine files for the first time.
+    - It can be either `true` or `false`. Default value is `false`.
+  - `enable_cuda_graphs`: Enable usage of CUDA Graphs for backends which support it.
+    - Enabled by default for the TensorRT backend.
+    - Using CUDA Graphs reduces CPU launch costs and enables optimizations which might not be possible with the piecewise work submission mechanism of streams.
+    - Models including loops or conditions are not supported with CUDA Graphs. For these models usage of CUDA Graphs needs to be disabled.
+    - It can be either `true` or `false`. Default value is `true`.
+  - `dla_core`: The DLA core index to execute the engine on, starts at `0`.
+    - It can be either `-1` or the DLA core index. Default value is `-1`.
+  - `dla_gpu_fallback`: Enable DLA GPU fallback
+    - If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is disabled, engine creation will fail if a layer cannot executed on DLA.
+    - It can be either `true` or `false`. Default value is `true`.
+  - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.
+  - `in_tensor_names`: Input tensor names to be used by `pre_processor_map`. This parameter is optional. If absent in the parameter map, values are derived from `pre_processor_map`.
+  - `out_tensor_names`: Output tensor names to be used by `inference_map`. This parameter is optional. If absent in the parameter map, values are derived from `inference_map`.
+  - `device_map`: Multi-GPU inferencing is enabled if `device_map` is populated in the parameter set.
+    - Each entry in `device_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and GPU identifier as the value. This GPU ID is used to execute the inference for the specified model.
+    - GPUs specified in the `device_map` must have P2P (peer to peer) access and they must be connected to the same PCIE configuration. If P2P access is not possible among GPUs, the host (CPU memory) will be used to transfer the data.
+    - Multi-GPU inferencing is supported for all backends.
+  - `dla_core_map`: DLA cores are used for inferencing if `dla_core_map` is populated in the parameter set.
+    - Each entry in `dla_core_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a DLA core index as the value. This DLA core index is used to execute the inference for the specified model.
+  - `temporal_map`: Temporal inferencing is enabled if `temporal_map` is populated in the parameter set.
+    - Each entry in `temporal_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and frame delay as the value. Frame delay represents the frame count that are skipped by the operator in doing the inference for that particular model. A model with the value of 1, is inferred per frame. A model with a value of 10 is inferred for every 10th frame coming into the operator, which is the 1st frame, 11th frame, 21st frame and so on. Additionally, the operator will transmit the last inferred result for all the frames that are not inferred. For example, a model with a value of 10 will be inferred at 11th frame and from 12th to 20th frame, the result from 11th frame is transmitted.
+    - If the `temporal_map` is absent in the parameter set, all models are inferred for all the frames.
+    - All models are not mandatory in the `temporal_map`.  The missing models are inferred per frame.
+    - Temporal map based inferencing is supported for all backends.
+  - `activation_map`: Dynamic inferencing can be enabled with this parameter. It is populated in the parameter set and is updated at runtime.
+    - Each entry in `activation_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and activation state as the value. Activation state represents whether the model will be used for inferencing or not on a given frame. Any model(s) with a value of 1 will be active and will be used for inference, and any model(s) with a value of 0 will not run. The activation map must be initialized in the parameter set for all the models that need to be activated or deactivated dynamically.
+    - When the activation state is 0 for a particular model in the `activation_map`, the inference operator will not launch the inference for the model and will emits the last inferred result for the model.
+    - If the `activation_map` is absent in the parameter set, all of the models are inferred for all frames.
+    - All models are not mandatory in the `activation_map`.  The missing models are active on every frame.
+    - Dynamic inferenceing based on `activation_map` along with the `model_activation_specs` input port is supported for all backends.
+  - `backend_map`: Multiple backends can be used in the same application with this parameter.
+    - Each entry in `backend_map` has a unique keyword representing the model (same as used in `model_path_map`), and the `backend` as the value.
+    - A sample backend_map is shown below. In the example, model_1 uses the `tensorRT` backend, and model 2 and model 3 uses the `torch` backend for inference.
+
             ```yaml
                 backend_map:
                     "model_1_unique_identifier": "trt"
                     "model_2_unique_identifier": "torch"
                     "model_3_unique_identifier": "torch"
             ```
-    - `trt_opt_profile`: This parameter is optional and is activated with TensorRT backend. This parameter is applicable on models with dynamic input shapes.
-        - Parameter is specified as a map of vector of strings. For every model, optimization profiles for input dimensions are specified as a vector of strings. Each string represents optimization profile for each input.
-        - For example, if the model (`model_1`) has one input with shape of `[c, h, w]` and `c` is dynamic, then the optimization profile is specified as: `"model_1": ["i, j, k"]`. The first value in the string is the minimum batch size for dimension c, the second is the optimum batch size and the third value is the maximum batch size. Each dynamic dimension must be accompanied by these three values (minimum, optimum and maximum). In the same example, if dimension `c` and `h` are both dynamic, then the three values for the second dimension must follow the three values of the first dimension in the same string. The optimization profile in this case will look like `"model_1": ["i, j, k, p, q, r"]`, where `i, j, k` are the optimization profile for dimension `c` and `p, q, r` are the optimization profiles for dimension `h`.
-        - If there are multiple dynamic inputs, we must use another string in the optimization profile. For example, if a model (`model_1`) has two inputs and both are dynamic, then the optimization profile must be specified as `"model_1": ["profile_for_first_input", "profile_for_second_input"]`
-        - TensorRT optimization profiles are supported for multiple models. For example if there are two models (`model_1` and `model_2`) with single input and in both the models the inputs are dynamic, the optimization profiles are specified as shown below.
+
+  - `trt_opt_profile`: This parameter is optional and is activated with TensorRT backend. This parameter is applicable on models with dynamic input shapes.
+    - Parameter is specified as a map of vector of strings. For every model, optimization profiles for input dimensions are specified as a vector of strings. Each string represents optimization profile for each input.
+    - For example, if the model (`model_1`) has one input with shape of `[c, h, w]` and `c` is dynamic, then the optimization profile is specified as: `"model_1": ["i, j, k"]`. The first value in the string is the minimum batch size for dimension c, the second is the optimum batch size and the third value is the maximum batch size. Each dynamic dimension must be accompanied by these three values (minimum, optimum and maximum). In the same example, if dimension `c` and `h` are both dynamic, then the three values for the second dimension must follow the three values of the first dimension in the same string. The optimization profile in this case will look like `"model_1": ["i, j, k, p, q, r"]`, where `i, j, k` are the optimization profile for dimension `c` and `p, q, r` are the optimization profiles for dimension `h`.
+    - If there are multiple dynamic inputs, we must use another string in the optimization profile. For example, if a model (`model_1`) has two inputs and both are dynamic, then the optimization profile must be specified as `"model_1": ["profile_for_first_input", "profile_for_second_input"]`
+    - TensorRT optimization profiles are supported for multiple models. For example if there are two models (`model_1` and `model_2`) with single input and in both the models the inputs are dynamic, the optimization profiles are specified as shown below.
+
             ```yaml
                 trt_opt_profile:
                     "model_1": ["opt_profile_input_model1"]
                     "model_2": ["opt_profile_input_model2"]
             ```
-        - This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
-    - `dynamic_input_dims`: This parameter is optional and if activated, allows the Inference Operator to ingest dynamic inputs. The parameter is supported for all the backends. It must be set to `true` in the inference parameter set.
-        - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested.
-        - For `onnx` and `torch` backend, maximum allowed buffer size in bytes for each input is 2GB.
-        - With `tensorRT` backend, user **must** specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `"1,1,1"` will be used.
-        - Maximum allowed batch size for `tensorRT` backend is 256
+
+    - This profile is then used in engine creation. User must clear the cache to apply the updated optimization profile.
+  - `dynamic_input_dims`: This parameter is optional and if activated, allows the Inference Operator to ingest dynamic inputs. The parameter is supported for all the backends. It must be set to `true` in the inference parameter set.
+    - With `onnx` and `torch` backend, the dynamic inputs are automatically ingested.
+    - For `onnx` and `torch` backend, maximum allowed buffer size in bytes for each input is 2GB.
+    - With `tensorRT` backend, user __must__ specify `trt_opt_profile` along with this parameter. If `trt_opt_profile` is not specified or is incorrect, the default optimization profile `"1,1,1"` will be used.
+    - Maximum allowed batch size for `tensorRT` backend is 256
 
 - Model dependencies: If one model consumes the output of another, you no longer need separate `InferenceOp` instances. The operator derives a dependency graph from `pre_processor_map` and `inference_map`, builds a topological execution plan, and runs all dependent models inside a single `InferenceOp`.
-    - Inputs: only *external* tensors (consumed but not produced by any model) are ingested and allocated.
-    - Outputs: by default, only *external* outputs (produced but not consumed by any other model) are transmitted. If you set `out_tensor_names`, internal outputs will also be transmitted.
-    - Execution order: models are run respecting dependencies; models in the same level still run in parallel if `parallel_inference=true`.
-    - No extra parameters are required; the dependency map is derived automatically from the existing maps.
+  - Inputs: only *external* tensors (consumed but not produced by any model) are ingested and allocated.
+  - Outputs: by default, only *external* outputs (produced but not consumed by any other model) are transmitted. If you set `out_tensor_names`, internal outputs will also be transmitted.
+  - Execution order: models are run respecting dependencies; models in the same level still run in parallel if `parallel_inference=true`.
+  - No extra parameters are required; the dependency map is derived automatically from the existing maps.
 
 - Other features: The table below illustrates other features and supported values in the current release.
 
@@ -154,9 +159,9 @@ Required parameters and related features available with the Holoscan Inference M
     | Model Type  | `All onnx` or `all torchscript` or `all trt engine` type or a `combination of torch and trt engine`  |
 
 - Multi Receiver and Single Transmitter support
-    - The Holoscan Inference Module provides an API to extract the data from multiple receivers.
-    - The Holoscan Inference Module provides an API to transmit multiple tensors via a single transmitter.
-    - The Holoscan Inference Module provides an API to allow selecting the set of active models for inference at runtime (see example under the directory `examples/activation_map`).
+  - The Holoscan Inference Module provides an API to extract the data from multiple receivers.
+  - The Holoscan Inference Module provides an API to transmit multiple tensors via a single transmitter.
+  - The Holoscan Inference Module provides an API to allow selecting the set of active models for inference at runtime (see example under the directory `examples/activation_map`).
 
 ### Parameter Specification
 
@@ -240,11 +245,15 @@ inference:
 ```
 
 ### Complex Structure Examples
+
 #### Dictionary Input
+
 This corresponds to calling the model with a dictionary:
+
 ```python
 result = model.forward({"input1": feature1, "input2": feature2})
 ```
+
 ```yaml
 inference:
   input_nodes:
@@ -263,10 +272,13 @@ inference:
 ```
 
 #### List Input
+
 This corresponds to calling the model with a list:
+
 ```python
 result = model.forward([tensor1, tensor2])
 ```
+
 ```yaml
 inference:
   input_nodes:
@@ -285,8 +297,10 @@ inference:
 ```
 
 #### Nested Structures
+
 The system supports complex nested combinations of lists and dictionaries for both inputs and outputs:
 This corresponds to the following function call where detections is a dictionary.
+
 ```python
 classification_result, detections = model.forward([{"feature1": tensor1}, {"feature1": tensor2, "feature2": tensor3}])
 ```
@@ -318,7 +332,9 @@ inference:
 ```
 
 #### Ignoring outputs
+
 There may be cases where some outputs of a model should not be forwarded. In these cases, enter a null value in the YAML to ignore an entire subtree on the output.
+
 ```python
 _, detections = model.forward([img])
 ```
@@ -343,6 +359,7 @@ inference:
 ### Supported Input/Output Formats
 
 The torch backend supports the following tensor structure types:
+
 - `Tensor`: Single tensor
 - `Tensor[]`: List of tensors
 - `Dict(str, Tensor)`: Dictionary mapping strings to tensors
@@ -381,8 +398,8 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     When using the `torch` backend, ensure that a corresponding `model.yaml` configuration file exists alongside your torchscript model file. The YAML file must define the input and output tensor specifications as described in the [Torch Backend Model Configuration](#torch-backend-model-configuration) section.
     :::
 
-
 - Single model inference using `TensorRT` backend with multiple outputs.
+
     ``` yaml
         backend: "trt"
         model_path_map:
@@ -398,6 +415,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     As shown in example above, the Holoscan Inference module automatically maps the model outputs to the named tensors in the parameter set. You must be sure to use the named tensors in the same sequence in which the model generates the output. Similar logic holds for multiple inputs.
 
 - Single model inference using fp16 precision.
+
     ``` yaml
         backend: "trt"
         model_path_map:
@@ -414,6 +432,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     If a `tensorRT` engine file is not available for fp16 precision, it will be automatically generated by the Holoscan Inference module on the first execution. The file is cached for future executions.
 
 - Single model inference on CPU.
+
     ``` yaml
         backend: "onnxrt"
         model_path_map:
@@ -428,6 +447,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     Note that the backend can only be `onnxrt` or `torch` for CPU-based inference.
 
 - Single model inference with input/output data on Host.
+
     ```yaml
         backend: "trt"
         model_path_map:
@@ -443,6 +463,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     Data in the core inference engine is passed through the host and is received on the host. Inference can happen on the GPU. Parameters `input_on_cuda` and `output_on_cuda` define the location of the data before and after inference respectively.
 
 - Single model inference with data transmission via Host.
+
     ```yaml
         backend: "trt"
         model_path_map:
@@ -456,8 +477,8 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
 
     Data from inference operator to the next connected operator in the application is transmitted via the host.
 
-
 - Multi model inference with a single backend.
+
     ```yaml
         backend: "trt"
         model_path_map:
@@ -476,8 +497,8 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
 
     By default, multiple model inferences are launched in parallel. The backend specified via parameter `backend` is used for all models in the application.
 
-
 - Multi model inference with sequential inference.
+
     ```yaml
         backend: "trt"
         model_path_map:
@@ -498,6 +519,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     `parallel_inference` is set to `true` by default. To launch model inferences in sequence, `parallel_inference` must be set to `false`.
 
 - Multi model inference with multiple backends.
+
     ```yaml
         backend_map:
             "model_1_unique_identifier": "trt"
@@ -524,6 +546,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     :::
 
 - Multi model inference with a single backend on multi-GPU.
+
     ```yaml
         backend: "trt"
         device_map:
@@ -547,6 +570,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     In the sample above, model 1 and model 3 will do inference on the GPU with ID 1 and model 2 will do inference on the GPU with ID 0. GPUs must have P2P (peer to peer) access among them. If it is not enabled, the Holoscan inference module enables it by default. If P2P access is not possible between GPUs, then the data transfer will happen via the Host.
 
 - Multi model inference with multiple backends on multiple GPUs.
+
     ```yaml
         backend_map:
             "model_1_unique_identifier": "trt"
@@ -598,10 +622,10 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
     ```
 
     Behavior:
-    - Derived dependency map: `decoder -> encoder`; execution runs encoder then decoder inside one `InferenceOp`.
-    - Ingested inputs: only `input_image` (external to the graph).
-    - Transmitted outputs: `dec_out` by default; `enc_out` is also sent if listed in `out_tensor_names`.
-    - Models at the same dependency level still run in parallel when `parallel_inference=true`.
+  - Derived dependency map: `decoder -> encoder`; execution runs encoder then decoder inside one `InferenceOp`.
+  - Ingested inputs: only `input_image` (external to the graph).
+  - Transmitted outputs: `dec_out` by default; `enc_out` is also sent if listed in `out_tensor_names`.
+  - Models at the same dependency level still run in parallel when `parallel_inference=true`.
 
 ## Creating an Inference Operator
 
@@ -713,7 +737,7 @@ inference:
     parallel_inference: false
 ```
 
-**Note:** When using parallel inference, ensure you have enough GPU memory and compute resources to run all models simultaneously.
+__Note:__ When using parallel inference, ensure you have enough GPU memory and compute resources to run all models simultaneously.
 
 ### Using Different Backends
 
@@ -743,7 +767,7 @@ inference:
         "onnx_model": ["output_4"]
 ```
 
-**Important:** Ensure that the combination of backends supports all other parameters you plan to use. For example, the combination of `onnxrt` and `trt` backends with CPU-based inference is not supported.
+__Important:__ Ensure that the combination of backends supports all other parameters you plan to use. For example, the combination of `onnxrt` and `trt` backends with CPU-based inference is not supported.
 
 ### CPU-Based Inference
 
@@ -761,7 +785,7 @@ inference:
     infer_on_cpu: true
 ```
 
-**Note:** The TensorRT backend (`trt`) does not support CPU-based inference. You must use `onnxrt` or `torch` backends for CPU inference.
+__Note:__ The TensorRT backend (`trt`) does not support CPU-based inference. You must use `onnxrt` or `torch` backends for CPU inference.
 
 ### Recipe: Running a PyTorch Model
 
@@ -790,7 +814,8 @@ scripted_model = torch.jit.script(model)
 traced_model.save('model.pt')
 ```
 
-**Best practices:**
+__Best practices:__
+
 - Use the same PyTorch version for model conversion as used in the Holoscan SDK container
 - Generate the TorchScript model on the same architecture where it will be executed (e.g., x86_64 to x86_64, aarch64 to aarch64)
 
@@ -885,29 +910,32 @@ This section addresses common issues and errors encountered when using the Infer
 
 ### Input Tensor Rank Limitations
 
-**Problem:** The Inference Operator rejects input shapes for models with 5-dimensional tensors (e.g., CNN-LSTM models with shape `[batch, temporal_dim, channels, width, height]`).
+__Problem:__ The Inference Operator rejects input shapes for models with 5-dimensional tensors (e.g., CNN-LSTM models with shape `[batch, temporal_dim, channels, width, height]`).
 
-**Cause:** In Holoscan SDK v2.4 and earlier, the InferenceOp supports tensor ranks only between 2 and 4 dimensions.
+__Cause:__ In Holoscan SDK v2.4 and earlier, the InferenceOp supports tensor ranks only between 2 and 4 dimensions.
 
-**Solution:**
+__Solution:__
+
 - Reshape your input tensor to fit within the 2-4 dimension constraint
 - For temporal models, consider flattening the temporal dimension into the batch dimension or channels
 - Alternative: Create a custom preprocessing operator that handles the 5D tensor and converts it to a supported format
 
-**Supported tensor dimensions:**
+__Supported tensor dimensions:__
+
 - ONNX and TensorRT model formats: Maximum 8 dimensions
 - PyTorch (torch) backend: 3 dimensions (CHW) or 4 dimensions (NCHW)
 - InferenceOp input tensors (SDK v2.4 and earlier): 2-4 dimensions only
 
 ### PyTorch Model Format Issues
 
-**Problem:** Attempting to use a `.pth` PyTorch model file directly results in errors or the model is not loaded.
+__Problem:__ Attempting to use a `.pth` PyTorch model file directly results in errors or the model is not loaded.
 
-**Cause:** The Holoscan SDK torch backend is based on libtorch and requires models in TorchScript format (`.pt`). The `.pth` format contains Python-specific state dictionaries that cannot be loaded by libtorch.
+__Cause:__ The Holoscan SDK torch backend is based on libtorch and requires models in TorchScript format (`.pt`). The `.pth` format contains Python-specific state dictionaries that cannot be loaded by libtorch.
 
-**Solution:** Convert your `.pth` model to TorchScript format. See the [Recipe: Running a PyTorch Model](#recipe-running-a-pytorch-model) section above for detailed instructions.
+__Solution:__ Convert your `.pth` model to TorchScript format. See the [Recipe: Running a PyTorch Model](#recipe-running-a-pytorch-model) section above for detailed instructions.
 
-**Quick conversion example:**
+__Quick conversion example:__
+
 ```python
 import torch
 
@@ -923,11 +951,11 @@ For best performance, consider converting to ONNX and using the TensorRT backend
 
 ### Missing model.yaml Configuration
 
-**Problem:** When using the torch backend, you encounter errors about missing input/output specifications or tensor format mismatches.
+__Problem:__ When using the torch backend, you encounter errors about missing input/output specifications or tensor format mismatches.
 
-**Cause:** The torch backend requires a companion `model.yaml` configuration file alongside each TorchScript model file.
+__Cause:__ The torch backend requires a companion `model.yaml` configuration file alongside each TorchScript model file.
 
-**Solution:** Create a YAML configuration file with the same base name as your model file. For example, if your model is `my_model.pt`, create `my_model.yaml`:
+__Solution:__ Create a YAML configuration file with the same base name as your model file. For example, if your model is `my_model.pt`, create `my_model.yaml`:
 
 ```yaml
 inference:
@@ -945,31 +973,33 @@ The system automatically validates that the YAML configuration matches the actua
 
 ### Triton Backend Support
 
-**Problem:** Attempting to use models written as Triton Python backends (like NVIDIA's FoundationPose) with the Inference Operator.
+__Problem:__ Attempting to use models written as Triton Python backends (like NVIDIA's FoundationPose) with the Inference Operator.
 
-**Cause:** Triton backends are not currently supported by the Holoscan SDK Inference Operator.
+__Cause:__ Triton backends are not currently supported by the Holoscan SDK Inference Operator.
 
-**Solution:** The Inference Operator supports only three backends:
+__Solution:__ The Inference Operator supports only three backends:
+
 - TensorRT (`trt`)
 - ONNX Runtime (`onnxrt`)
 - PyTorch/libtorch (`torch`)
 
 To use models designed for Triton:
+
 1. Export the model to one of the supported formats (ONNX, TorchScript, or TensorRT engine)
 2. If the model includes complex preprocessing or postprocessing, implement custom operators to handle these steps
 3. For TensorRT, you can create engine files with specific optimizations using the `trtexec` tool
 
 ### PyTorch CUDA Linear Algebra Errors (Jetson/JetPack 6)
 
-**Problem:** When using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6 (IGX Orin or AGX Orin), you encounter errors like:
+__Problem:__ When using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6 (IGX Orin or AGX Orin), you encounter errors like:
 
 ```
 RuntimeError: Error in dlopen: .../torch/lib/libtorch_cuda_linalg.so: undefined symbol: cusolverDnXsyevBatched_bufferSize, version libcusolver.so.11
 ```
 
-**Cause:** The PyTorch distribution requires libcusolver version 11.7.1.2, which is newer than what's available in the default L4T 36.4 repository (11.6.4.69).
+__Cause:__ The PyTorch distribution requires libcusolver version 11.7.1.2, which is newer than what's available in the default L4T 36.4 repository (11.6.4.69).
 
-**Solution:** Install the required libcusolver version manually:
+__Solution:__ Install the required libcusolver version manually:
 
 ```bash
 # Download and install libcusolver 11.7.1.2 for arm64
@@ -980,11 +1010,11 @@ rm libcusolver.deb
 
 After installing the updated libcusolver package, PyTorch CUDA operations (such as `torch.linalg.inv()`) should work correctly.
 
-**Note:** This is a known compatibility issue when using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6. The Holoscan SDK container images already include this fix.
+__Note:__ This is a known compatibility issue when using PyTorch from the Jetson AI Labs registry on bare metal JetPack 6. The Holoscan SDK container images already include this fix.
 
 ### PyTorch 2.9.x Segmentation Faults (Holoscan SDK v3.10 CUDA 12)
 
-**Problem:** When running Holoscan SDK v3.10 with CUDA 12 and PyTorch 2.9.x, you encounter segmentation faults during application teardown:
+__Problem:__ When running Holoscan SDK v3.10 with CUDA 12 and PyTorch 2.9.x, you encounter segmentation faults during application teardown:
 
 ```
 Fatal Python error: Segmentation fault
@@ -994,12 +1024,12 @@ Current thread 0x00007f07e53d0740 (most recent call first):
   ...
 ```
 
-**Cause:** Holoscan SDK v3.10 CUDA 12 binaries are built with libtorch 2.8.0, and there is a compatibility issue with PyTorch 2.9.x that affects application deactivation.
+__Cause:__ Holoscan SDK v3.10 CUDA 12 binaries are built with libtorch 2.8.0, and there is a compatibility issue with PyTorch 2.9.x that affects application deactivation.
 
-**Solution:** Downgrade to PyTorch 2.8.x, which maintains full compatibility:
+__Solution:__ Downgrade to PyTorch 2.8.x, which maintains full compatibility:
 
 ```bash
 pip install torch==2.8.0
 ```
 
-**Note:** This issue specifically affects the CUDA 12 variant of Holoscan SDK v3.10 when used with PyTorch 2.9.x. Future releases of Holoscan SDK are expected to include updated libtorch binaries to restore PyTorch 2.9.x compatibility.
+__Note:__ This issue specifically affects the CUDA 12 variant of Holoscan SDK v3.10 when used with PyTorch 2.9.x. Future releases of Holoscan SDK are expected to include updated libtorch binaries to restore PyTorch 2.9.x compatibility.

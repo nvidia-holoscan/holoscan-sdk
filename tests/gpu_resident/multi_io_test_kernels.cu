@@ -33,7 +33,6 @@ void launch_init_pattern_kernel(int* data, int port_id, int size, cudaStream_t s
   init_pattern_kernel<<<1, 1, 0, stream>>>(data, port_id, size);
 }
 
-void launch_copy_add_kernel(int* dst, const int* src, int add_val, int size,
-                            cudaStream_t stream) {
+void launch_copy_add_kernel(int* dst, const int* src, int add_val, int size, cudaStream_t stream) {
   copy_add_kernel<<<1, 1, 0, stream>>>(dst, src, add_val, size);
 }

@@ -22,10 +22,10 @@
 
 #include <cstdint>
 
-#include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator_spec.hpp"
+#include <holoscan/core/gpu_resident_operator.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator_spec.hpp>
 
 namespace holoscan::ops {
 
@@ -57,7 +57,8 @@ namespace holoscan::ops {
  * - **width**: Image width in pixels. Must be an even number.
  * - **height**: Image height in pixels. Must be an even number.
  * - **pixel_type**: Pixel type (0 = uint8, 1 = uint16). Default: 0.
- * - **interpolation_mode**: The interpolation model for demosaicing. Default: 0 (NPPI_INTER_UNDEFINED).
+ * - **interpolation_mode**: The interpolation model for demosaicing. Default: 0
+ * (NPPI_INTER_UNDEFINED).
  * - **bayer_grid_pos**: The Bayer grid position. Default: 2 (NPPI_BAYER_GBRG).
  *   - NPPI_BAYER_BGGR (0): Default registration position BGGR.
  *   - NPPI_BAYER_RGGB (1): Registration position RGGB.

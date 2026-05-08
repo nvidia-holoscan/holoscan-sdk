@@ -24,9 +24,9 @@
 #include <thread>
 #include <vector>
 
-#include "holoscan/core/forward_def.hpp"
+#include <holoscan/core/forward_def.hpp>
 
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
 
 // Forward declaration of gRPC server
 namespace grpc {

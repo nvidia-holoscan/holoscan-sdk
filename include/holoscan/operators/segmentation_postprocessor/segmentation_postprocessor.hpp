@@ -22,11 +22,11 @@
 #include <string>
 #include <utility>
 
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 #include "segmentation_postprocessor.cuh"
 
 using holoscan::ops::segmentation_postprocessor::DataFormat;

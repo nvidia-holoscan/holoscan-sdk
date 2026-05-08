@@ -24,17 +24,18 @@
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/conditions/gxf/boolean.hpp"
-#include "holoscan/core/file_fifo_mutex.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <holoscan/core/conditions/gxf/boolean.hpp>
+#include <holoscan/core/file_fifo_mutex.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
 
 #include <holoviz/callbacks.hpp>
 
@@ -286,6 +287,18 @@ struct BufferInfo;
  *   - type: `WindowSizeCallbackFunction`
  * - **window_close_callback**: The callback function is called when the window is closed.
  *   - type: `WindowCloseCallbackFunction`
+ * - **interrupt_app_on_window_close**: When false (default): on window close, the operator is
+ *   placed in a NEVER state and the fragment will shutdown once deadlock is detected by the
+ *   scheduler. If true, the local fragment executor is explicitly interrupted when the window
+ *   is closed causing immediate shutdown. If `window_close_callback` is set, the execution
+ *   interrupt occurs after that callback returns. This option is ignored for distributed
+ *   applications.
+ * If true, interrupts the local fragment executor when the
+ *   window is closed after `window_close_callback` completes. This is useful for prompt shutdown
+ *   in single-fragment event-driven applications where background transport activity could
+ *   otherwise keep the scheduler alive after the Holoviz operator itself enters `NEVER`. Ignored
+ *   for distributed applications. (default: `false`)
+ *   - type: `bool`
  * - **layer_callback**: The callback function is called when HolovizOp processed all layers
  *   defined by the input specification. It can be used to add extra layers.
  *   - type: `LayerCallbackFunction`
@@ -415,6 +428,7 @@ class HolovizOp : public Operator {
   HOLOSCAN_OPERATOR_FORWARD_ARGS(HolovizOp)
 
   HolovizOp() = default;
+  ~HolovizOp() override;
 
   void setup(OperatorSpec& spec) override;
   void initialize() override;
@@ -1216,6 +1230,7 @@ class HolovizOp : public Operator {
   holoscan::Parameter<FramebufferSizeCallbackFunction> framebuffer_size_callback_;
   holoscan::Parameter<WindowSizeCallbackFunction> window_size_callback_;
   holoscan::Parameter<WindowCloseCallbackFunction> window_close_callback_;
+  holoscan::Parameter<bool> interrupt_app_on_window_close_;
   holoscan::Parameter<LayerCallbackFunction> layer_callback_;
 
   // internal state
@@ -1233,6 +1248,7 @@ class HolovizOp : public Operator {
 
   std::vector<float> lut_;
   std::vector<InputSpec> initial_input_spec_;
+  std::thread interrupt_thread_;  ///< Thread used to dispatch executor interrupt asynchronously
   bool render_buffer_input_enabled_ = false;
   bool render_buffer_output_enabled_ = false;
   bool depth_buffer_input_enabled_ = false;

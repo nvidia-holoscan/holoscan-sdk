@@ -23,16 +23,16 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/io_spec.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/io_spec.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/utils/holoinfer_utils.hpp>
 
 #include <holoinfer.hpp>
 
 namespace HoloInfer = holoscan::inference;
-
 namespace holoscan::ops {
 /**
  * @brief Inference Operator class to perform single/multi model inference.
@@ -265,6 +265,10 @@ class InferenceOp : public holoscan::Operator {
 
   /// @brief Parameter to validate incoming tensor dimensions with model input dimensions
   bool validate_tensor_dimensions_ = true;
+
+  /// Persistent cache for the output GXF entity and per-tensor allocation metadata.
+  /// Avoids creating a new entity and allocating tensor buffers on every compute() call.
+  holoscan::utils::TensorTransmitCache transmit_cache_;
 };
 
 }  // namespace holoscan::ops

@@ -23,9 +23,9 @@
 #include <string>
 #include <vector>
 
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/conditions/gxf/count.hpp"
-#include "holoscan/core/conditions/gxf/periodic.hpp"
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/conditions/gxf/count.hpp>
+#include <holoscan/core/conditions/gxf/periodic.hpp>
 
 #include "sample_test_graphs.hpp"
 

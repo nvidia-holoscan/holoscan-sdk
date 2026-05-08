@@ -30,7 +30,11 @@ from holoscan.resources import (
     CudaStreamPool,
     UnboundedAllocator,
 )
-from tests.conftest import green_context_available
+from tests.conftest import (
+    green_context_available,
+    green_context_device_properties,
+    green_context_partitions_supported,
+)
 
 from ..utils import requires_torch_cuda
 
@@ -98,14 +102,19 @@ class InferenceOpTestApp(Application):
         )
 
         if self.green_context:
-            partitions = [4, 4]
+            props = green_context_device_properties()
+            if not props:
+                raise RuntimeError("Unable to query CUDA device properties.")
+            min_sm = props["min_sm_size"]
+            partitions = [min_sm, min_sm]
             cuda_green_context_pool = CudaGreenContextPool(
                 self,
                 dev_id=0,
-                flags=0,
                 num_partitions=len(partitions),
                 sms_per_partition=partitions,
                 name="cuda_green_context_pool",
+                default_context_index=-1,
+                min_sm_size=min_sm,
             )
             cuda_green_context = CudaGreenContext(
                 self,
@@ -179,6 +188,16 @@ class InferenceOpTestApp(Application):
 def test_inference_torch(green_context: bool):
     if green_context and not green_context_available():
         pytest.skip("Green Context not available in this environment.")
+    if green_context:
+        props = green_context_device_properties()
+        if not props:
+            pytest.fail(
+                "Green context inference test requires CuPy and a visible CUDA device: "
+                "could not read device properties for device index 0."
+            )
+        min_sm = props["min_sm_size"]
+        if not green_context_partitions_supported([min_sm, min_sm]):
+            pytest.skip("Insufficient SM count for Green Context inference partitions.")
     app = InferenceOpTestApp(green_context)
     app.run()
 

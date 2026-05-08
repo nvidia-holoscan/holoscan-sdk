@@ -21,9 +21,9 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/holoscan.hpp>
+#include <holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp>
 #include "../config.hpp"
-#include "holoscan/holoscan.hpp"
-#include "holoscan/operators/ping_tensor_tx/ping_tensor_tx.hpp"
 
 namespace holoscan {
 

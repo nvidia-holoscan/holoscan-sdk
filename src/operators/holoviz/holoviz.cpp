@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/holoviz/holoviz.hpp"
+#include <holoscan/operators/holoviz/holoviz.hpp>
 
 #include <cuda_runtime.h>
 
@@ -26,25 +26,25 @@
 #include <utility>
 #include <vector>
 
-#include <magic_enum.hpp>
+#include <magic_enum/magic_enum.hpp>
 
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/condition.hpp"
-#include "holoscan/core/conditions/gxf/boolean.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/file_fifo_mutex.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/operators/holoviz/buffer_info.hpp"
-#include "holoscan/operators/holoviz/codecs.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/condition.hpp>
+#include <holoscan/core/conditions/gxf/boolean.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/file_fifo_mutex.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/operators/holoviz/buffer_info.hpp>
+#include <holoscan/operators/holoviz/codecs.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 
-#include "gxf/multimedia/camera.hpp"
-#include "gxf/multimedia/video.hpp"
-#include "gxf/std/tensor.hpp"
+#include <gxf/multimedia/camera.hpp>
+#include <gxf/multimedia/video.hpp>
+#include <gxf/std/tensor.hpp>
 #include "holoviz/holoviz.hpp"  // holoviz module
 
 namespace viz = holoscan::viz;
@@ -228,6 +228,12 @@ HolovizOp::InputSpec::InputSpec(const std::string& tensor_name, const std::strin
     return;
   }
   type_ = maybe_type.value();
+}
+
+HolovizOp::~HolovizOp() {
+  if (interrupt_thread_.joinable()) {
+    interrupt_thread_.join();
+  }
 }
 
 void HolovizOp::setup(OperatorSpec& spec) {
@@ -466,6 +472,16 @@ void HolovizOp::setup(OperatorSpec& spec) {
              "default window close callback will be used, which initiates distributed app shutdown "
              "if the application is distributed.",
              std::function<void()>([this]() { default_window_close_callback(); }));
+  spec.param(
+      interrupt_app_on_window_close_,
+      "interrupt_app_on_window_close",
+      "Interrupt App On Window Close",
+      "When false (default): on window close, the operator is placed in a NEVER state and the"
+      "fragment will shutdown once deadlock is detected by the scheduler. If true, the local"
+      "fragment executor is explicitly interrupted when the window is closed causing immediate"
+      "shutdown. If `window_close_callback` is set, the execution interrupt occurs after that"
+      "callback returns. This option is ignored for distributed applications.",
+      false);
   spec.param(layer_callback_,
              "layer_callback",
              "Layer Callback",
@@ -1834,6 +1850,21 @@ void HolovizOp::disable_via_window_close() {
   window_close_condition_->disable_tick();
   if (window_close_callback_.has_value()) {
     window_close_callback_.get()();
+  }
+  if (interrupt_app_on_window_close_.get()) {
+    auto* frag = fragment();
+    auto* app = frag ? frag->application() : nullptr;
+    const bool is_distributed = app && !app->fragment_graph().is_empty();
+    if (!is_distributed && frag) {
+      // Dispatch interrupt from a separate thread: calling it directly from this worker thread can
+      // deadlock against the EventBasedScheduler shutdown path when worker threads are joined.
+      // Store the thread to avoid a detached thread outliving the fragment (use-after-free risk).
+      // The thread is joined in the destructor, which runs after the executor shutdown completes.
+      if (interrupt_thread_.joinable()) {
+        interrupt_thread_.join();
+      }
+      interrupt_thread_ = std::thread([frag]() { frag->executor().interrupt(); });
+    }
   }
 }
 

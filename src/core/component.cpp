@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/component.hpp"
+#include <holoscan/core/component.hpp>
 
 #include <memory>
 #include <string>
@@ -22,7 +22,7 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/fragment.hpp"
+#include <holoscan/core/fragment.hpp>
 
 namespace holoscan {
 

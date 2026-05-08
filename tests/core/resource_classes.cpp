@@ -18,45 +18,47 @@
 #include <gtest/gtest.h>
 #include <gxf/core/gxf.h>
 
+#include <cuda_runtime.h>
+
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/gxf/async_buffer_receiver.hpp>
+#include <holoscan/core/resources/gxf/async_buffer_transmitter.hpp>
+#include <holoscan/core/resources/gxf/block_memory_pool.hpp>
+#include <holoscan/core/resources/gxf/condition_combiner.hpp>
+#include <holoscan/core/resources/gxf/cpu_thread.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context_pool.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/core/resources/gxf/double_buffer_receiver.hpp>
+#include <holoscan/core/resources/gxf/double_buffer_transmitter.hpp>
+#include <holoscan/core/resources/gxf/manual_clock.hpp>
+#include <holoscan/core/resources/gxf/pubsub_receiver.hpp>
+#include <holoscan/core/resources/gxf/pubsub_transmitter.hpp>
+#include <holoscan/core/resources/gxf/realtime_clock.hpp>
+#include <holoscan/core/resources/gxf/rmm_allocator.hpp>
+#include <holoscan/core/resources/gxf/serialization_buffer.hpp>
+#include <holoscan/core/resources/gxf/std_component_serializer.hpp>
+#include <holoscan/core/resources/gxf/std_entity_serializer.hpp>
+#include <holoscan/core/resources/gxf/stream_ordered_allocator.hpp>
+#include <holoscan/core/resources/gxf/synthetic_clock.hpp>
+#include <holoscan/core/resources/gxf/system_resources.hpp>
+#include <holoscan/core/resources/gxf/ucx_component_serializer.hpp>
+#include <holoscan/core/resources/gxf/ucx_entity_serializer.hpp>
+#include <holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp>
+#include <holoscan/core/resources/gxf/ucx_receiver.hpp>
+#include <holoscan/core/resources/gxf/ucx_serialization_buffer.hpp>
+#include <holoscan/core/resources/gxf/ucx_transmitter.hpp>
+#include <holoscan/core/resources/gxf/unbounded_allocator.hpp>
 #include "../config.hpp"
 #include "../utils.hpp"
 #include "common/assert.hpp"
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/gxf/async_buffer_receiver.hpp"
-#include "holoscan/core/resources/gxf/async_buffer_transmitter.hpp"
-#include "holoscan/core/resources/gxf/block_memory_pool.hpp"
-#include "holoscan/core/resources/gxf/condition_combiner.hpp"
-#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
-#include "holoscan/core/resources/gxf/cuda_green_context_pool.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/resources/gxf/cpu_thread.hpp"
-#include "holoscan/core/resources/gxf/double_buffer_receiver.hpp"
-#include "holoscan/core/resources/gxf/double_buffer_transmitter.hpp"
-#include "holoscan/core/resources/gxf/manual_clock.hpp"
-#include "holoscan/core/resources/gxf/pubsub_receiver.hpp"
-#include "holoscan/core/resources/gxf/pubsub_transmitter.hpp"
-#include "holoscan/core/resources/gxf/realtime_clock.hpp"
-#include "holoscan/core/resources/gxf/rmm_allocator.hpp"
-#include "holoscan/core/resources/gxf/serialization_buffer.hpp"
-#include "holoscan/core/resources/gxf/std_component_serializer.hpp"
-#include "holoscan/core/resources/gxf/std_entity_serializer.hpp"
-#include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
-#include "holoscan/core/resources/gxf/synthetic_clock.hpp"
-#include "holoscan/core/resources/gxf/system_resources.hpp"
-#include "holoscan/core/resources/gxf/ucx_component_serializer.hpp"
-#include "holoscan/core/resources/gxf/ucx_entity_serializer.hpp"
-#include "holoscan/core/resources/gxf/ucx_holoscan_component_serializer.hpp"
-#include "holoscan/core/resources/gxf/ucx_receiver.hpp"
-#include "holoscan/core/resources/gxf/ucx_serialization_buffer.hpp"
-#include "holoscan/core/resources/gxf/ucx_transmitter.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
 
 using namespace std::string_literals;
 
@@ -107,7 +109,7 @@ TEST_F(ResourceClassesWithGXFContext, TestCudaGreenContextPool) {
   std::vector<uint32_t> sms_per_partition{4, 4};
   ArgList arglist{
       Arg{"dev_id", static_cast<int32_t>(0)},
-      Arg{"flags", static_cast<uint32_t>(0)},
+      Arg{"green_context_flags", static_cast<uint32_t>(cudaStreamNonBlocking)},
       Arg{"num_partitions", static_cast<uint32_t>(2)},
       Arg{"sms_per_partition", sms_per_partition},
   };

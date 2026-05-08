@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,12 +31,12 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/gxf/gxf_io_context.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/profiler/profiler.hpp>
 #include "gil_guarded_pyobject.hpp"
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/gxf/gxf_io_context.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/profiler/profiler.hpp"
 
 // Python-specific IO profiling events
 PROF_DEFINE_EVENT(event_py_receive, "py_receive", 0x66, 0xEE, 0xAA);

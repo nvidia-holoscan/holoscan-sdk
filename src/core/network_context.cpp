@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/network_context.hpp"
+#include <holoscan/core/network_context.hpp>
 
 #include <stdexcept>
 #include <string>
 
-#include "holoscan/core/fragment.hpp"
+#include <holoscan/core/fragment.hpp>
 
 namespace holoscan {
 

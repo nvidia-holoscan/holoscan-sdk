@@ -87,6 +87,7 @@ py::class_<MyMultiService, Resource, DistributedAppService, std::shared_ptr<MyMu
 Without `py::multiple_inheritance()`, pybind11 cannot properly handle runtime casts to non-primary base classes. This can cause silent failures where, for example, a service intended to be registered as a `FragmentService` gets registered only as a `Resource`, breaking distributed application behavior.
 
 With this approach, the service can be:
+
 - Instantiated and registered in Python
 - Retrieved by type from both Python and C++ operators
 
@@ -95,6 +96,7 @@ See [PoseTreeManager](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/
 ### When Pure Python Services Are Acceptable
 
 Pure Python fragment services are acceptable when:
+
 1. Your application is Python-only (no C++ operators need to access the service)
 2. The service is only accessed from Python operators using `self.service(MyService, "id")`
 

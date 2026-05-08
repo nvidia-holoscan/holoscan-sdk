@@ -31,7 +31,7 @@
 #include <common/backtrace.hpp>
 #include <common/type_name.hpp>
 #include <gxf/multimedia/video.hpp>
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::gxf {
 

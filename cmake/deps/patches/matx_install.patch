@@ -1,0 +1,30 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3c67ee0..649eb72 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -55,7 +55,7 @@ if (NOT CMAKE_CUDA_ARCHITECTURES)
+ endif()
+ message(STATUS "Using GPU architectures ${CMAKE_CUDA_ARCHITECTURES}")
+ 
+-rapids_cmake_write_version_file(include/matx/version_config.h)
++rapids_cmake_write_version_file(${MATX_BINARY_DIR}/include/matx/version_config.h)
+ 
+ # Command line options
+ option(MATX_BUILD_EXAMPLES "Build examples" OFF)
+@@ -364,13 +364,13 @@ endif()
+ 
+ # Build config files if the user isn't adding this as a subdirectory. At this point our transitive target
+ # should have all build properties needed based on the options passed in
+-if (NOT_SUBPROJECT)
++if (ON)
+     include(GNUInstallDirs)
+     include(CMakePackageConfigHelpers)
+ 
+     install(TARGETS matx EXPORT matx-exports)
+-    install(DIRECTORY include/ DESTINATION include)
+-    install(FILES ${CMAKE_BINARY_DIR}/include/matx/version_config.h DESTINATION include)
++    install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/3rdparty/matx)
++    install(FILES ${MATX_BINARY_DIR}/include/matx/version_config.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/3rdparty/matx)
+ 
+     set(doc_string
+     [=[

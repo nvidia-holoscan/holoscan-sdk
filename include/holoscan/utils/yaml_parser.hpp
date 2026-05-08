@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -28,8 +28,8 @@
 #include <utility>
 #include <vector>
 
-#include "common/yaml_parser.hpp"  // YAML parser for std::complex types
 #include "../core/common.hpp"
+#include "common/yaml_parser.hpp"  // YAML parser for std::complex types
 
 // Note: GXF provides a custom YAML parser for std::complex types.
 //

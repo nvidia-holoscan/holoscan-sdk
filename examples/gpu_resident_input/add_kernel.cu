@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,10 +15,10 @@
  * limitations under the License.
  */
 
-#include <stdio.h>
 #include <cuda_runtime.h>
+#include <cstdio>
 
-#include "holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh"
+#include <holoscan/core/executors/gpu_resident/gpu_resident_dev.cuh>
 
 // Simple CUDA kernel that adds 5 to each element in the input array
 __global__ void add_five_kernel(int* input, int* output, int size) {

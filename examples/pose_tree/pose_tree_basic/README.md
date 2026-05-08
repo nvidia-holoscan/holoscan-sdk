@@ -5,18 +5,20 @@ This example demonstrates how to use the `PoseTree` feature in applications buil
 ## Overview
 
 The application shows how to:
-1.  Create a `PoseTreeManager` as a shared resource.
-2.  Define and connect operators that share the pose tree.
-3.  Use one operator (`OrbitSetterOp`) to update poses in the tree based on a simulated clock.
-4.  Use another operator (`TransformPrinterOp`) to query the transformations between different coordinate frames at specific times.
-5.  The simulation runs for 365 days, printing the poses at each daily step.
+
+1. Create a `PoseTreeManager` as a shared resource.
+2. Define and connect operators that share the pose tree.
+3. Use one operator (`OrbitSetterOp`) to update poses in the tree based on a simulated clock.
+4. Use another operator (`TransformPrinterOp`) to query the transformations between different coordinate frames at specific times.
+5. The simulation runs for 365 days, printing the poses at each daily step.
 
 ## C++ API
 
 The C++ application consists of three main components:
-1.  `OrbitSetterOp`: At each step, it calculates the new positions and orientations of the Earth and Moon and updates their poses in the shared `PoseTree`. It uses a simulated clock that advances by one day per tick.
-2.  `TransformPrinterOp`: At each step, it queries the `PoseTree` for the transformations between `sun`, `earth`, and `moon` frames and logs them to the console.
-3.  `PoseTreeOrbitApp`: The main application class that sets up the `PoseTreeManager` resource and connects the two operators.
+
+1. `OrbitSetterOp`: At each step, it calculates the new positions and orientations of the Earth and Moon and updates their poses in the shared `PoseTree`. It uses a simulated clock that advances by one day per tick.
+2. `TransformPrinterOp`: At each step, it queries the `PoseTree` for the transformations between `sun`, `earth`, and `moon` frames and logs them to the console.
+3. `PoseTreeOrbitApp`: The main application class that sets up the `PoseTreeManager` resource and connects the two operators.
 
 The example also demonstrates how to define a custom `fmt::formatter` for `holoscan::Pose3d` to enable easy printing with `HOLOSCAN_LOG_INFO`.
 
@@ -29,6 +31,7 @@ Built with the SDK, see instructions from the top level README.
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 ./examples/pose_tree/pose_tree_basic/cpp/pose_tree_basic
 ```
@@ -36,15 +39,17 @@ Then, run:
 ## Python API
 
 The Python implementation mirrors the C++ version, demonstrating the same concepts using the Python API. It includes:
-1.  `OrbitSetterOp`: A Python operator that updates poses in the `PoseTree`. It uses `numpy` and `holoscan.pose_tree.SO3` to calculate transformations.
-2.  `TransformPrinterOp`: A Python operator that queries and prints the poses.
-3.  `PoseTreeOrbitApp`: The Python application that configures the `PoseTreeManager` and the workflow.
+
+1. `OrbitSetterOp`: A Python operator that updates poses in the `PoseTree`. It uses `numpy` and `holoscan.pose_tree.SO3` to calculate transformations.
+2. `TransformPrinterOp`: A Python operator that queries and prints the poses.
+3. `PoseTreeOrbitApp`: The Python application that configures the `PoseTreeManager` and the workflow.
 
 ### Run instructions
 
 First, go in your `build` or `install` directory (automatically done by `./run launch`).
 
 Then, run:
+
 ```bash
 python3 ./examples/pose_tree/pose_tree_basic/python/pose_tree_basic.py
 ```
@@ -65,6 +70,7 @@ python3 ./examples/pose_tree/pose_tree_basic/python/pose_tree_basic.py
 The application will run for 365 steps (simulated days). For each day, it will print the poses for the Sun->Earth, Earth->Moon, and Sun->Moon transformations. The output will look similar to this:
 
 C++:
+
 ```text
 [day 1] Sun → Earth : T=(1.000,0.017,0.000) Q=(0.000,0.000,0.713,0.701)
 [day 1] Earth → Moon : T=(0.002,0.001,0.000) Q=(0.000,0.000,0.115,0.993)
@@ -76,6 +82,7 @@ C++:
 ```
 
 Python:
+
 ```
 [day    1] Sun→Earth : T=[0.99985204 0.01720158 0.        ], Q=SO3(quaternion=       0        0 0.713163 0.700999)
 [day    1] Earth→Moon: T=[0.00249519 0.00058419 0.        ], Q=SO3(quaternion=       0        0 0.114739 0.993396)

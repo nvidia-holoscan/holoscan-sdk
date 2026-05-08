@@ -1,6 +1,7 @@
 # HolovizOp usage
 
 Includes multiple examples showing how to use various features of the Holoviz operator
+
 - use the [camera with 3d primitives](#holovizop-camera-usage)
 - use the [geometry layer and the image layer](#holovizop-geometry-layer-usage)
 - use the [geometry layer with 3d primitives](#holovizop-3d-geometry-layer-usage)
@@ -18,16 +19,21 @@ The `CameraPoseRxOp` receives camera pose information and prints to the console 
 
 ### C++ Run instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/holoviz/cpp/holoviz_camera
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/holoviz/cpp/holoviz_camera
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/holoviz/cpp/holoviz_camera
   ```
@@ -35,6 +41,7 @@ The `CameraPoseRxOp` receives camera pose information and prints to the console 
 ## HolovizOp geometry layer usage
 
 As for `example/tensor_interop/python/tensor_interop.py`, this application demonstrates interoperability between a native operator (`ImageProcessingOp`) and two operators (`VideoStreamReplayerOp` and `HolovizOp`) that wrap existing C++-based operators. This application also demonstrates two additional aspects:
+
 - capability to add multiple tensors to the message sent on the output port of a native operator (`ImageProcessingOp`)
 - expected tensor shapes and arguments needed for HolovizOp in order to display overlays of various geometric primitives onto an underlying color video.
 
@@ -45,23 +52,29 @@ The following dataset is used by this example:
 
 ### C++ Run instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/holoviz/cpp/holoviz_geometry
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/holoviz/cpp/holoviz_geometry
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/holoviz/cpp/holoviz_geometry
   ```
 
 ### Python Run instructions
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
@@ -70,16 +83,22 @@ The following dataset is used by this example:
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_geometry.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/holoviz/python/holoviz_geometry.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   python3 -m pip install "numpy<2.0"
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
@@ -90,28 +109,36 @@ The following dataset is used by this example:
 ## HolovizOp 3D geometry layer usage
 
 As for `example/tensor_interop/python/tensor_interop.py`, this application demonstrates interoperability between a native operator (`Geometry3dOp`) and an operator (`HolovizOp`) that wraps an existing C++-based operator. This application also demonstrates two additional aspects:
+
 - capability to add multiple tensors to the message sent on the output port of a native operator (`Geometry3dOp`)
 - expected tensor shapes and arguments needed for HolovizOp in order to display overlays of various geometric primitives.
 
 ### Run instructions
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download example .py file below to `APP_DIR`
   # [Optional] Start the virtualenv where holoscan is installed
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_geometry_3d.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_geometry_3d.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/holoviz/python/holoviz_geometry_3d.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   python3 -m pip install "numpy<2.0"
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
@@ -134,7 +161,8 @@ The following dataset is used by this example:
 
 ### Run instructions
 
-* **using python wheel**:
+- **using python wheel**:
+
   ```bash
   # [Prerequisite] Download NGC dataset above to `DATA_DIR`
   export HOLOSCAN_INPUT_PATH=<DATA_DIR>
@@ -143,16 +171,22 @@ The following dataset is used by this example:
   python3 -m pip install "numpy<2.0"
   python3 <APP_DIR>/holoviz_views.py
   ```
-* **from NGC container**:
+
+- **from NGC container**:
+
   ```bash
   python3 /opt/nvidia/holoscan/examples/holoviz/python/holoviz_views.py
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   python3 ./examples/holoviz/python/holoviz_views.py
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   python3 -m pip install "numpy<2.0"
   export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
@@ -168,25 +202,30 @@ This example demonstrates the use of Holoviz's synchronization conditions, inclu
 
 The example supports the following command line options:
 
-* `-h, --help` - Display help information
-* `-c, --count <N>` - Limit the number of frames to display before the application exits. Default is -1 (unlimited). Any positive integer will limit the number of frames displayed.
-* `-t, --type <TYPE>` - Select the condition type to use for synchronization. Default is `present_done`.
-  * `first_pixel_out` - Use FirstPixelOutCondition to wait for the first pixel out signal from the display
-  * `present_done` - Use PresentDoneCondition to wait for presentation completion
-* `-v, --vsync` - Enable vsync for the visualizer. Default is disabled.
+- `-h, --help` - Display help information
+- `-c, --count <N>` - Limit the number of frames to display before the application exits. Default is -1 (unlimited). Any positive integer will limit the number of frames displayed.
+- `-t, --type <TYPE>` - Select the condition type to use for synchronization. Default is `present_done`.
+  - `first_pixel_out` - Use FirstPixelOutCondition to wait for the first pixel out signal from the display
+  - `present_done` - Use PresentDoneCondition to wait for presentation completion
+- `-v, --vsync` - Enable vsync for the visualizer. Default is disabled.
 
 ### C++ Run instructions
 
-* **using deb package install or NGC container**:
+- **using deb package install or NGC container**:
+
   ```bash
   /opt/nvidia/holoscan/examples/holoviz/cpp/holoviz_conditions
   ```
-* **source (dev container)**:
+
+- **source (dev container)**:
+
   ```bash
   ./run launch # optional: append `install` for install tree
   ./examples/holoviz/cpp/holoviz_conditions
   ```
-* **source (local env)**:
+
+- **source (local env)**:
+
   ```bash
   ${BUILD_OR_INSTALL_DIR}/examples/holoviz/cpp/holoviz_conditions
   ```

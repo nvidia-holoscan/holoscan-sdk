@@ -501,7 +501,7 @@
 /* #undef HWLOC_HAVE_32BITS_PCI_DOMAIN */
 
 /* Whether your compiler has __attribute__ or not */
-#define HWLOC_HAVE_ATTRIBUTE 
+#define HWLOC_HAVE_ATTRIBUTE
 
 /* Whether your compiler has __attribute__ aligned or not */
 #define HWLOC_HAVE_ATTRIBUTE_ALIGNED 1

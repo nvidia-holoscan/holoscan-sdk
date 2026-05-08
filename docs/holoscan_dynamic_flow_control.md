@@ -1,4 +1,5 @@
 (holoscan-dynamic-flow-control)=
+
 # Dynamic Flow Control
 
 Dynamic Flow Control is a feature introduced in Holoscan SDK v3.0 that allows operators to modify their connections with other operators at runtime. This enables creating complex workflows with conditional branching, loops, and dynamic routing patterns.
@@ -13,6 +14,7 @@ Traditional static workflows in Holoscan define fixed connections between operat
 - Implement complex branching logic
 
 Common use cases include:
+
 - Conditional processing pipelines
 - Adaptive workflow routing
 - Iterative processing with dynamic termination
@@ -210,14 +212,15 @@ if __name__ == "__main__":
 ````
 `````
 
-### Key Points to Remember:
+### Key Points to Remember
 
 1. Optionally use `start_op()` ({cpp:func}`C++ <holoscan::Fragment::start_op>`/{py:func}`Python <holoscan.core.Fragment.start_op>`) to get the initial operator in your flow
 2. Connect operators with `add_flow()`
 3. Use `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`) to define runtime routing logic. An identically named method is also available on `Subgraph` ({cpp:func}`C++ <holoscan::Subgraph::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Subgraph.set_dynamic_flows>`) for applications making use of subgraphs containing dynamic flows.
 4. Implement flow control logic in the callback function passed to `set_dynamic_flows()` ({cpp:func}`C++ <holoscan::Fragment::set_dynamic_flows>`/{py:func}`Python <holoscan.core.Application.set_dynamic_flows>`)
-  - The callback function takes an operator as input and returns void
-  - The callback function can add dynamic flows using the operator's `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods
+
+- The callback function takes an operator as input and returns void
+- The callback function can add dynamic flows using the operator's `add_dynamic_flow()` ({cpp:func}`C++ <holoscan::Operator::add_dynamic_flow>`/{py:func}`Python <holoscan.core.Operator.add_dynamic_flow>`) methods
 
 For more complex patterns and detailed explanations, see the sections below.
 
@@ -228,6 +231,7 @@ For more complex patterns and detailed explanations, see the sections below.
 Before Holoscan SDK v3.0, operators needed input and output ports to be connected via `add_flow()` and there is no way to specify the execution dependency if the operator does not have any input or output ports.
 
 However, in some cases, the requirements were different:
+
 - An 'execution order dependency' was needed instead of a 'data flow dependency'.
 - Execution control was required rather than keeping a node running continuously.
 - The pipeline should run only once unless explicitly specified to loop.
@@ -235,6 +239,7 @@ However, in some cases, the requirements were different:
 To address these needs, Holoscan SDK v3.0 introduced implicit input/output 'execution ports' (`__input_exec__` / `__output_exec__`), inspired by Unreal Engine's [Blueprints](https://www.unrealengine.com/en-US/blog/introduction-to-blueprints) (particularly [execution pins](https://forums.unrealengine.com/t/execution-pins/226127)).
 
 The output execution port (`__output_exec__`. `holoscan::Operator::kOutputExecPortName` in C++ and `holoscan.core.Operator.OUTPUT_EXEC_PORT_NAME` in Python) of a source operator and the input execution port (`__input_exec__`, `holoscan::Operator::kInputExecPortName` in C++ and `holoscan.core.Operator.INPUT_EXEC_PORT_NAME` in Python) of a target operator are implicitly added when **both** of the following are true:
+
 - Two operators are connected using `add_flow()` without specifying a port map.
 - The target operator does not have an explicit input port.
 
@@ -323,7 +328,6 @@ In the example from [flow_control/conditional](https://github.com/nvidia-holosca
      |       |
    node3   node5
 ```
-
 
 `````{tab-set}
 ````{tab-item} C++
@@ -456,6 +460,7 @@ In this case, current operator's implicit output execution port will be connecte
 ### Flow Information
 
 The `FlowInfo` ({cpp:class}`C++ <holoscan::Operator::FlowInfo>`/{py:class}`Python <holoscan.core.FlowInfo>`) class represents information about a connection between operators and takes the following arguments in the constructor:
+
 - `curr_operator`: The source operator of the flow connection
 - `curr_output_port`: The name of the output port on the source operator
 - `next_operator`: The destination operator of the flow connection
@@ -563,15 +568,18 @@ The `find_all_flow_info()` ({cpp:func}`C++ <holoscan::Operator::find_all_flow_in
 If you want to get a vector of all the next flows, you can use `op->next_flows()` in C++ or `op.next_flows` in Python.
 
 (using-dynamic-flow-control-with-subgraphs)=
+
 ### Using Dynamic Flow Control with Subgraphs
 
 Subgraphs can expose execution interface ports that work seamlessly with dynamic flow control features. This allows you to encapsulate sequences of operators and treat them as single units in your control flow.
 
 Subgraphs support both data and execution interface ports:
+
 - **Data interface ports**: Expose operator data input/output ports using `add_input_interface_port()` and `add_output_interface_port()`
 - **Execution interface ports**: Expose operator execution ports using `add_input_exec_interface_port()` and `add_output_exec_interface_port()`
 
 When connecting Subgraphs in control flow:
+
 - If a Subgraph has only one execution interface port (input or output), `add_flow()` will automatically resolve to that port
 - Subgraphs can be used with `start_op()`, just like regular operators
 - Dynamic flow routing works with Subgraphs through their interface ports
@@ -584,12 +592,14 @@ For a complete example, see [sequential_with_subgraph](https://github.com/nvidia
 Here's when to choose different flow control patterns:
 
 **start_op() + Cyclic Flow**
+
 - Best for: Dynamic routing, feedback loops, runtime-adaptive flows
 - Use when: Flow patterns depend on data content or need to change during execution
 - Advantages: Flexible, handles complex routing
 - Trade-offs: More complex to debug, slightly higher runtime overhead
 
 **Generator (root operator) with condition (CountCondition, PeriodicCondition, etc.)**
+
 - Best for: Fixed iteration counts, simple linear flows
 - Use when: Number of iterations is known in advance (or infinite), static flow patterns
 - Advantages: Simple to implement, better performance, easier to debug

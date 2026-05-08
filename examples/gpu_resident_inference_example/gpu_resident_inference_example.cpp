@@ -23,9 +23,9 @@
 #include <filesystem>
 #include <future>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
-#include <string>
 
 #include <holoscan/core/gpu_resident_operator.hpp>
 #include <holoscan/holoscan.hpp>
@@ -93,14 +93,14 @@ class GpuResidentFragment : public holoscan::Fragment {
     using namespace holoscan;
 
     auto source_op = make_operator<ops::SourceGpuOp>("source_op");
-    auto infer_op = make_operator<ops::GPUResidentInferenceOp>(
-        "infer_op", config_path_);
+    auto infer_op = make_operator<ops::GPUResidentInferenceOp>("infer_op", config_path_);
 
     auto destination_op = make_operator<ops::DestinationGpuOp>("destination_op");
 
     add_flow(source_op, infer_op);
     add_flow(infer_op, destination_op);
   }
+
  private:
   std::string config_path_;
 };

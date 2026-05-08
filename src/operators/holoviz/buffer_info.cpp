@@ -15,15 +15,15 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/holoviz/buffer_info.hpp"
+#include <holoscan/operators/holoviz/buffer_info.hpp>
 
 #include <string>
 #include <tuple>
 #include <vector>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
-#include "gxf/multimedia/video.hpp"
+#include <gxf/multimedia/video.hpp>
 
 namespace viz = holoscan::viz;
 

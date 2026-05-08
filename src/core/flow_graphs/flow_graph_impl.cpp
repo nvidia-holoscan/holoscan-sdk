@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
 
 #include <yaml-cpp/yaml.h>
 
@@ -31,9 +31,9 @@
 #include <utility>
 #include <vector>
 
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
 
 namespace holoscan {
 
@@ -251,50 +251,53 @@ FlowGraphImpl<NodeT, EdgeDataElementT>::has_cycle() const {
   }
 
   std::vector<NodeType> cyclic_roots;
+  std::unordered_set<NodeType> seen_cyclic_roots;
+  enum class VisitState { kUnvisited, kVisiting, kVisited };
+  std::unordered_map<NodeType, VisitState> visit_states;
+  visit_states.reserve(ordered_nodes_.size());
 
-  // List of visited nodes across DFS from multiple roots
-  std::unordered_set<NodeType> global_visited;
+  // Treat nodes missing from the state map as unvisited.
+  std::function<VisitState(const NodeType&)> visit_state = [&](const NodeType& node) {
+    auto it = visit_states.find(node);
+    return (it == visit_states.end()) ? VisitState::kUnvisited : it->second;
+  };
 
-  // Do an iterative DFS from all the root nodes
-  auto root_nodes = get_root_nodes();
+  struct DFSFrame {
+    NodeType node;
+    std::vector<NodeType> successors;
+    size_t next_successor_index = 0;
+  };
 
-  if (root_nodes.size() == 0) {
-    // There is no implicit root. Therefore, we need to start from somewhere.
-    // Start from the first added node which is user-defined root.
-    // FIXME Currently, this function is not supported for a disconnected graph.
-    if (!ordered_nodes_.empty()) {
-      root_nodes.push_back(ordered_nodes_.front());
-    }
-  }
+  // Traverse all graph components in insertion order so cycle detection also works for
+  // disconnected graphs and cyclic components with no root nodes.
+  for (const auto& node : ordered_nodes_) {
+    if (visit_state(node) == VisitState::kUnvisited) {
+      std::vector<DFSFrame> stack;
+      stack.reserve(ordered_nodes_.size());
+      visit_states[node] = VisitState::kVisiting;
+      stack.push_back({node, get_next_nodes(node), 0});
 
-  for (const auto& node : root_nodes) {
-    std::unordered_set<NodeType> current_visited;
-    std::vector<NodeType> stack;
-    stack.push_back(node);
+      while (!stack.empty()) {
+        auto& frame = stack.back();
 
-    while (!stack.empty()) {
-      auto node = stack.back();
-      stack.pop_back();
+        if (frame.next_successor_index >= frame.successors.size()) {
+          visit_states[frame.node] = VisitState::kVisited;
+          stack.pop_back();
+          continue;
+        }
 
-      current_visited.insert(node);
-
-      // This node has already been visited in a previous DFS traversal
-      if (global_visited.find(node) != global_visited.end()) {
-        continue;
-      }
-
-      global_visited.insert(node);
-
-      auto succ_it = succ_.find(node);
-      if (succ_it != succ_.end()) {
-        for (const auto& [node_next, _] : succ_it->second) {
-          if (current_visited.find(node_next) != current_visited.end()) {
-            // The currently visited set of nodes already includes the successor node
-            // Therefore, it must be a cycle
+        const auto& node_next = frame.successors[frame.next_successor_index++];
+        auto next_state = visit_state(node_next);
+        if (next_state == VisitState::kVisiting) {
+          // A back-edge to a node on the active DFS stack indicates a cycle.
+          if (seen_cyclic_roots.insert(node_next).second) {
             cyclic_roots.push_back(node_next);
-            continue;  // skip adding the node to the stack
           }
-          stack.push_back(node_next);
+          continue;
+        }
+        if (next_state == VisitState::kUnvisited) {
+          visit_states[node_next] = VisitState::kVisiting;
+          stack.push_back({node_next, get_next_nodes(node_next), 0});
         }
       }
     }
@@ -412,7 +415,7 @@ size_t FlowGraphImpl<NodeT, EdgeDataElementT>::get_indegree(const NodeType& node
 
 template <typename NodeT, typename EdgeDataElementT>
 std::pair<std::map<std::string, std::vector<std::string>>,
-std::map<std::string, std::vector<std::string>>>
+          std::map<std::string, std::vector<std::string>>>
 FlowGraphImpl<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
   std::map<std::string, std::vector<std::string>> input_to_output_map;
   std::map<std::string, std::vector<std::string>> output_to_input_map;

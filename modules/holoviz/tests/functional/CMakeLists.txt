@@ -49,6 +49,7 @@ target_sources(${PROJECT_NAME}
         instance_test.cpp
         layer_test.cpp
         present_mode_test.cpp
+        present_wait_fallback_test.cpp
         read_framebuffer_test.cpp
         render_mode_test.cpp
         surface_format_test.cpp

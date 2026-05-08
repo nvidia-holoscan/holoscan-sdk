@@ -32,6 +32,7 @@
 #include <holoscan/utils/cuda_macros.hpp>
 
 #include "multi_io_test_kernels.cuh"
+#include "test_operators.hpp"
 
 namespace holoscan {
 
@@ -119,6 +120,193 @@ class MismatchedMultiPortSourceOp : public GPUResidentOperator {
                [[maybe_unused]] ExecutionContext& context) override {}
 };
 
+/// Two-output source with per-port configurable memory-backed vs externally managed outputs.
+template <bool Output0UsesDevicePtr, bool Output1UsesDevicePtr>
+class MixedTwoOutputSourceGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
+  explicit MixedTwoOutputSourceGpuOp(ArgT&& arg, ArgsT&&... args)
+      : GPUResidentOperator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
+  MixedTwoOutputSourceGpuOp() = default;
+
+  ~MixedTwoOutputSourceGpuOp() override {
+    if (dev_ptr_0_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_0_));
+    }
+    if (dev_ptr_1_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_1_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    if constexpr (Output0UsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_0_, sizeof(int) * kElems),
+                                     "Failed to allocate device memory");
+      spec.device_output("out0", reinterpret_cast<CUdeviceptr>(dev_ptr_0_));
+    } else {
+      spec.device_output("out0", sizeof(int) * kElems);
+    }
+
+    if constexpr (Output1UsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_1_, sizeof(int) * kElems),
+                                     "Failed to allocate device memory");
+      spec.device_output("out1", reinterpret_cast<CUdeviceptr>(dev_ptr_1_));
+    } else {
+      spec.device_output("out1", sizeof(int) * kElems);
+    }
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    cudaStream_t stream = *cuda_stream();
+    auto* out0 = static_cast<int*>(device_memory("out0"));
+    auto* out1 = static_cast<int*>(device_memory("out1"));
+    if (out0) {
+      launch_init_pattern_kernel(out0, 0, kElems, stream);
+    }
+    if (out1) {
+      launch_init_pattern_kernel(out1, 1, kElems, stream);
+    }
+  }
+
+ private:
+  void* dev_ptr_0_ = nullptr;
+  void* dev_ptr_1_ = nullptr;
+};
+
+/// Single-output source with configurable memory-backed vs externally managed output.
+template <bool OutputUsesDevicePtr>
+class MixedSingleOutputSourceGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
+  explicit MixedSingleOutputSourceGpuOp(ArgT&& arg, ArgsT&&... args)
+      : GPUResidentOperator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
+  MixedSingleOutputSourceGpuOp() = default;
+
+  ~MixedSingleOutputSourceGpuOp() override {
+    if (dev_ptr_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    if constexpr (OutputUsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_, sizeof(int) * kElems),
+                                     "Failed to allocate device memory");
+      spec.device_output("out0", reinterpret_cast<CUdeviceptr>(dev_ptr_));
+    } else {
+      spec.device_output("out0", sizeof(int) * kElems);
+    }
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    cudaStream_t stream = *cuda_stream();
+    auto* out0 = static_cast<int*>(device_memory("out0"));
+    if (out0) {
+      launch_init_pattern_kernel(out0, 0, kElems, stream);
+    }
+  }
+
+ private:
+  void* dev_ptr_ = nullptr;
+};
+
+/// Single-port compute operator with independently configurable input/output storage type.
+template <bool InputUsesDevicePtr, bool OutputUsesDevicePtr>
+class MixedSingleIOComputeGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
+  explicit MixedSingleIOComputeGpuOp(ArgT&& arg, ArgsT&&... args)
+      : GPUResidentOperator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
+  MixedSingleIOComputeGpuOp() = default;
+
+  ~MixedSingleIOComputeGpuOp() override {
+    if (in_dev_ptr_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(in_dev_ptr_));
+    }
+    if (out_dev_ptr_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(out_dev_ptr_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    if constexpr (InputUsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&in_dev_ptr_, sizeof(int) * kElems),
+                                     "Failed to allocate input device memory");
+      spec.device_input("in0", reinterpret_cast<CUdeviceptr>(in_dev_ptr_));
+    } else {
+      spec.device_input("in0", sizeof(int) * kElems);
+    }
+
+    if constexpr (OutputUsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&out_dev_ptr_, sizeof(int) * kElems),
+                                     "Failed to allocate output device memory");
+      spec.device_output("out0", reinterpret_cast<CUdeviceptr>(out_dev_ptr_));
+    } else {
+      spec.device_output("out0", sizeof(int) * kElems);
+    }
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {
+    cudaStream_t stream = *cuda_stream();
+    auto* in_ptr = static_cast<const int*>(device_memory("in0"));
+    auto* out_ptr = static_cast<int*>(device_memory("out0"));
+    if (in_ptr && out_ptr) {
+      launch_copy_add_kernel(out_ptr, in_ptr, 1, kElems, stream);
+    }
+  }
+
+ private:
+  void* in_dev_ptr_ = nullptr;
+  void* out_dev_ptr_ = nullptr;
+};
+
+/// Two-input sink with per-port configurable memory-backed vs externally managed inputs.
+template <bool Input0UsesDevicePtr, bool Input1UsesDevicePtr>
+class MixedTwoInputSinkGpuOp : public GPUResidentOperator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_TEMPLATE()
+  explicit MixedTwoInputSinkGpuOp(ArgT&& arg, ArgsT&&... args)
+      : GPUResidentOperator(std::forward<ArgT>(arg), std::forward<ArgsT>(args)...) {}
+  MixedTwoInputSinkGpuOp() = default;
+
+  ~MixedTwoInputSinkGpuOp() override {
+    if (dev_ptr_0_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_0_));
+    }
+    if (dev_ptr_1_) {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(dev_ptr_1_));
+    }
+  }
+
+  void setup(OperatorSpec& spec) override {
+    if constexpr (Input0UsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_0_, sizeof(int) * kElems),
+                                     "Failed to allocate input device memory");
+      spec.device_input("in0", reinterpret_cast<CUdeviceptr>(dev_ptr_0_));
+    } else {
+      spec.device_input("in0", sizeof(int) * kElems);
+    }
+
+    if constexpr (Input1UsesDevicePtr) {
+      HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&dev_ptr_1_, sizeof(int) * kElems),
+                                     "Failed to allocate input device memory");
+      spec.device_input("in1", reinterpret_cast<CUdeviceptr>(dev_ptr_1_));
+    } else {
+      spec.device_input("in1", sizeof(int) * kElems);
+    }
+  }
+
+  void compute([[maybe_unused]] InputContext& op_input, [[maybe_unused]] OutputContext& op_output,
+               [[maybe_unused]] ExecutionContext& context) override {}
+
+ private:
+  void* dev_ptr_0_ = nullptr;
+  void* dev_ptr_1_ = nullptr;
+};
+
 /// Sink operator: N input ports, no-op compute.
 template <int N>
 class MultiInputSinkGpuOp : public GPUResidentOperator {
@@ -158,6 +346,20 @@ struct MultiIOGraph {
   std::shared_ptr<MultiInputSinkGpuOp<N>> sink;
 };
 
+struct DiamondGraph {
+  std::shared_ptr<MultiOutputSourceGpuOp<2>> source;
+  std::shared_ptr<MultiIOComputeGpuOp<1>> left;
+  std::shared_ptr<MultiIOComputeGpuOp<1>> right;
+  std::shared_ptr<MultiInputSinkGpuOp<2>> sink;
+};
+
+struct FanOutGraph {
+  std::shared_ptr<MultiOutputSourceGpuOp<1>> source;
+  std::shared_ptr<MultiIOComputeGpuOp<1>> left;
+  std::shared_ptr<MultiIOComputeGpuOp<1>> right;
+  std::shared_ptr<MultiInputSinkGpuOp<2>> sink;
+};
+
 // chain_length = 0: source -> sink
 // chain_length = 1: source -> compute_0 -> sink
 // ... and so on
@@ -179,6 +381,92 @@ MultiIOGraph<N> build_graph(Fragment& fragment, int chain_length) {
   g.sink = fragment.make_operator<MultiInputSinkGpuOp<N>>("sink");
   fragment.add_flow(prev, g.sink, pm);
   return g;
+}
+
+DiamondGraph build_diamond_graph(Fragment& fragment) {
+  DiamondGraph g;
+  g.source = fragment.make_operator<MultiOutputSourceGpuOp<2>>("source");
+  g.left = fragment.make_operator<MultiIOComputeGpuOp<1>>("left");
+  g.right = fragment.make_operator<MultiIOComputeGpuOp<1>>("right");
+  g.sink = fragment.make_operator<MultiInputSinkGpuOp<2>>("sink");
+
+  fragment.add_flow(g.source, g.left, {{"out0", "in0"}});
+  fragment.add_flow(g.source, g.right, {{"out1", "in0"}});
+  fragment.add_flow(g.left, g.sink, {{"out0", "in0"}});
+  fragment.add_flow(g.right, g.sink, {{"out0", "in1"}});
+
+  return g;
+}
+
+FanOutGraph build_fan_out_graph(Fragment& fragment) {
+  FanOutGraph g;
+  g.source = fragment.make_operator<MultiOutputSourceGpuOp<1>>("source");
+  g.left = fragment.make_operator<MultiIOComputeGpuOp<1>>("left");
+  g.right = fragment.make_operator<MultiIOComputeGpuOp<1>>("right");
+  g.sink = fragment.make_operator<MultiInputSinkGpuOp<2>>("sink");
+
+  fragment.add_flow(g.source, g.left, {{"out0", "in0"}});
+  fragment.add_flow(g.source, g.right, {{"out0", "in0"}});
+  fragment.add_flow(g.left, g.sink, {{"out0", "in0"}});
+  fragment.add_flow(g.right, g.sink, {{"out0", "in1"}});
+
+  return g;
+}
+
+template <bool SourceOut0UsesDevicePtr, bool SourceOut1UsesDevicePtr, bool LeftInputUsesDevicePtr,
+          bool LeftOutputUsesDevicePtr, bool RightInputUsesDevicePtr, bool RightOutputUsesDevicePtr,
+          bool SinkIn0UsesDevicePtr, bool SinkIn1UsesDevicePtr>
+std::shared_ptr<GPUResidentOperator> build_mixed_diamond_graph(Fragment& fragment) {
+  auto source = fragment.make_operator<
+      MixedTwoOutputSourceGpuOp<SourceOut0UsesDevicePtr, SourceOut1UsesDevicePtr>>("source");
+  auto left = fragment.make_operator<
+      MixedSingleIOComputeGpuOp<LeftInputUsesDevicePtr, LeftOutputUsesDevicePtr>>("left");
+  auto right = fragment.make_operator<
+      MixedSingleIOComputeGpuOp<RightInputUsesDevicePtr, RightOutputUsesDevicePtr>>("right");
+  auto sink =
+      fragment.make_operator<MixedTwoInputSinkGpuOp<SinkIn0UsesDevicePtr, SinkIn1UsesDevicePtr>>(
+          "sink");
+
+  fragment.add_flow(source, left, {{"out0", "in0"}});
+  fragment.add_flow(source, right, {{"out1", "in0"}});
+  fragment.add_flow(left, sink, {{"out0", "in0"}});
+  fragment.add_flow(right, sink, {{"out0", "in1"}});
+
+  return sink;
+}
+
+template <bool SourceOutputUsesDevicePtr, bool LeftInputUsesDevicePtr, bool LeftOutputUsesDevicePtr,
+          bool RightInputUsesDevicePtr, bool RightOutputUsesDevicePtr, bool SinkIn0UsesDevicePtr,
+          bool SinkIn1UsesDevicePtr>
+std::shared_ptr<GPUResidentOperator> build_mixed_fan_out_graph(Fragment& fragment) {
+  auto source =
+      fragment.make_operator<MixedSingleOutputSourceGpuOp<SourceOutputUsesDevicePtr>>("source");
+  auto left = fragment.make_operator<
+      MixedSingleIOComputeGpuOp<LeftInputUsesDevicePtr, LeftOutputUsesDevicePtr>>("left");
+  auto right = fragment.make_operator<
+      MixedSingleIOComputeGpuOp<RightInputUsesDevicePtr, RightOutputUsesDevicePtr>>("right");
+  auto sink =
+      fragment.make_operator<MixedTwoInputSinkGpuOp<SinkIn0UsesDevicePtr, SinkIn1UsesDevicePtr>>(
+          "sink");
+
+  fragment.add_flow(source, left, {{"out0", "in0"}});
+  fragment.add_flow(source, right, {{"out0", "in0"}});
+  fragment.add_flow(left, sink, {{"out0", "in0"}});
+  fragment.add_flow(right, sink, {{"out0", "in1"}});
+
+  return sink;
+}
+
+std::shared_ptr<GPUResidentOperator> build_asymmetric_fan_out_graph(Fragment& fragment) {
+  auto source = fragment.make_operator<MixedSingleOutputSourceGpuOp<true>>("source");
+  auto compute = fragment.make_operator<MixedSingleIOComputeGpuOp<false, false>>("compute");
+  auto sink = fragment.make_operator<MixedTwoInputSinkGpuOp<true, false>>("sink");
+
+  fragment.add_flow(source, sink, {{"out0", "in0"}});
+  fragment.add_flow(source, compute, {{"out0", "in0"}});
+  fragment.add_flow(compute, sink, {{"out0", "in1"}});
+
+  return sink;
 }
 
 bool wait_for_launch(Fragment& fragment, int timeout_sec = 10) {
@@ -241,6 +529,66 @@ void verify_sink_data(const std::shared_ptr<MultiInputSinkGpuOp<N>>& sink, int c
   }
 }
 
+void verify_diamond_sink_data(const std::shared_ptr<GPUResidentOperator>& sink) {
+  std::vector<int> host_data(kElems);
+
+  for (int port = 0; port < 2; ++port) {
+    std::string port_name = "in" + std::to_string(port);
+    void* dev_ptr = sink->device_memory(port_name);
+    ASSERT_NE(dev_ptr, nullptr) << "sink." << port_name << " device_memory is null";
+
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaMemcpy(host_data.data(), dev_ptr, sizeof(int) * kElems, cudaMemcpyDeviceToHost),
+        "cudaMemcpy failed");
+
+    for (int i = 0; i < kElems; ++i) {
+      int expected = port * 1000 + i + 1;
+      EXPECT_EQ(host_data[i], expected) << "sink." << port_name << "[" << i << "]: expected "
+                                        << expected << " got " << host_data[i];
+    }
+  }
+}
+
+void verify_fan_out_sink_data(const std::shared_ptr<GPUResidentOperator>& sink) {
+  std::vector<int> host_data(kElems);
+
+  for (int port = 0; port < 2; ++port) {
+    std::string port_name = "in" + std::to_string(port);
+    void* dev_ptr = sink->device_memory(port_name);
+    ASSERT_NE(dev_ptr, nullptr) << "sink." << port_name << " device_memory is null";
+
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaMemcpy(host_data.data(), dev_ptr, sizeof(int) * kElems, cudaMemcpyDeviceToHost),
+        "cudaMemcpy failed");
+
+    for (int i = 0; i < kElems; ++i) {
+      int expected = i + 1;
+      EXPECT_EQ(host_data[i], expected) << "sink." << port_name << "[" << i << "]: expected "
+                                        << expected << " got " << host_data[i];
+    }
+  }
+}
+
+void verify_asymmetric_fan_out_sink_data(const std::shared_ptr<GPUResidentOperator>& sink) {
+  std::vector<int> host_data(kElems);
+
+  for (int port = 0; port < 2; ++port) {
+    std::string port_name = "in" + std::to_string(port);
+    void* dev_ptr = sink->device_memory(port_name);
+    ASSERT_NE(dev_ptr, nullptr) << "sink." << port_name << " device_memory is null";
+
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(
+        cudaMemcpy(host_data.data(), dev_ptr, sizeof(int) * kElems, cudaMemcpyDeviceToHost),
+        "cudaMemcpy failed");
+
+    for (int i = 0; i < kElems; ++i) {
+      int expected = (port == 0) ? i : i + 1;
+      EXPECT_EQ(host_data[i], expected) << "sink." << port_name << "[" << i << "]: expected "
+                                        << expected << " got " << host_data[i];
+    }
+  }
+}
+
 // ================================================================================================
 // Test Fixture
 // ================================================================================================
@@ -255,6 +603,96 @@ class GPUResidentMultiIOTest : public ::testing::Test {
     }
   }
 };
+
+enum class MixedDagCorrectnessVariant {
+  Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem,
+  Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem,
+  Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr,
+  FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem,
+  FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem,
+  FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem,
+  FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem,
+  FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr,
+};
+
+std::string mixed_dag_correctness_variant_name(MixedDagCorrectnessVariant variant) {
+  switch (variant) {
+    case MixedDagCorrectnessVariant::
+        Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+      return "Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem";
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem:
+      return "Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem";
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return "Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr";
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+      return "FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem";
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem:
+      return "FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem";
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+      return "FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem";
+    case MixedDagCorrectnessVariant::FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+      return "FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem";
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return "FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr";
+  }
+
+  return "Unknown";
+}
+
+class GPUResidentMixedDagCorrectnessTest
+    : public GPUResidentMultiIOTest,
+      public ::testing::WithParamInterface<MixedDagCorrectnessVariant> {};
+
+std::shared_ptr<GPUResidentOperator> build_mixed_correctness_graph(
+    Fragment& fragment, MixedDagCorrectnessVariant variant) {
+  switch (variant) {
+    case MixedDagCorrectnessVariant::
+        Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+      return build_mixed_diamond_graph<false, true, true, false, false, false, false, false>(
+          fragment);
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem:
+      return build_mixed_diamond_graph<true, false, false, false, true, true, true, false>(
+          fragment);
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return build_mixed_diamond_graph<true, true, true, true, true, true, true, true>(fragment);
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+      return build_mixed_fan_out_graph<true, true, false, false, false, false, false>(fragment);
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem:
+      return build_mixed_fan_out_graph<true, false, false, true, false, false, false>(fragment);
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+      return build_mixed_fan_out_graph<true, false, false, false, true, true, false>(fragment);
+    case MixedDagCorrectnessVariant::FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+      return build_mixed_fan_out_graph<false, false, false, false, true, true, false>(fragment);
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return build_mixed_fan_out_graph<true, true, true, true, true, true, true>(fragment);
+  }
+
+  throw std::runtime_error("Unhandled mixed DAG correctness variant");
+}
+
+bool is_diamond_variant(MixedDagCorrectnessVariant variant) {
+  switch (variant) {
+    case MixedDagCorrectnessVariant::
+        Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem:
+    case MixedDagCorrectnessVariant::
+        Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return true;
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem:
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem:
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+    case MixedDagCorrectnessVariant::FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem:
+    case MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr:
+      return false;
+  }
+
+  return false;
+}
 
 // ================================================================================================
 // Section 1: Port Setup Verification
@@ -363,6 +801,69 @@ TEST_F(GPUResidentMultiIOTest, FragmentInit_10Ports_Chain0) {
 }
 TEST_F(GPUResidentMultiIOTest, FragmentInit_20Ports_Chain0) {
   test_fragment_init<20>(0);
+}
+
+TEST_F(GPUResidentMultiIOTest, FragmentInit_DiamondDag) {
+  Fragment fragment;
+  auto g = build_diamond_graph(fragment);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
+
+  EXPECT_NE(g.source->device_memory("out0"), nullptr);
+  EXPECT_NE(g.source->device_memory("out1"), nullptr);
+  EXPECT_NE(g.left->device_memory("in0"), nullptr);
+  EXPECT_NE(g.left->device_memory("out0"), nullptr);
+  EXPECT_NE(g.right->device_memory("in0"), nullptr);
+  EXPECT_NE(g.right->device_memory("out0"), nullptr);
+  EXPECT_NE(g.sink->device_memory("in0"), nullptr);
+  EXPECT_NE(g.sink->device_memory("in1"), nullptr);
+
+  EXPECT_EQ(g.source->device_memory("out0"), g.left->device_memory("in0"));
+  EXPECT_EQ(g.source->device_memory("out1"), g.right->device_memory("in0"));
+  EXPECT_EQ(g.left->device_memory("out0"), g.sink->device_memory("in0"));
+  EXPECT_EQ(g.right->device_memory("out0"), g.sink->device_memory("in1"));
+
+  EXPECT_NE(g.source->device_memory("out0"), g.source->device_memory("out1"));
+  EXPECT_NE(g.sink->device_memory("in0"), g.sink->device_memory("in1"));
+}
+
+TEST_F(GPUResidentMultiIOTest, FragmentInit_FanOutAcrossOperators) {
+  Fragment fragment;
+  auto g = build_fan_out_graph(fragment);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
+
+  EXPECT_NE(g.source->device_memory("out0"), nullptr);
+  EXPECT_NE(g.left->device_memory("in0"), nullptr);
+  EXPECT_NE(g.right->device_memory("in0"), nullptr);
+  EXPECT_NE(g.left->device_memory("out0"), nullptr);
+  EXPECT_NE(g.right->device_memory("out0"), nullptr);
+  EXPECT_NE(g.sink->device_memory("in0"), nullptr);
+  EXPECT_NE(g.sink->device_memory("in1"), nullptr);
+
+  EXPECT_EQ(g.source->device_memory("out0"), g.left->device_memory("in0"));
+  EXPECT_EQ(g.source->device_memory("out0"), g.right->device_memory("in0"));
+  EXPECT_EQ(g.left->device_memory("out0"), g.sink->device_memory("in0"));
+  EXPECT_EQ(g.right->device_memory("out0"), g.sink->device_memory("in1"));
+}
+
+TEST_F(GPUResidentMultiIOTest, FragmentInit_FanOutSingleCall) {
+  Fragment fragment;
+  auto source = fragment.make_operator<MultiOutputSourceGpuOp<1>>("source");
+  auto sink = fragment.make_operator<MultiInputSinkGpuOp<2>>("sink");
+
+  fragment.add_flow(source, sink, {{"out0", "in0"}, {"out0", "in1"}});
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
+
+  EXPECT_EQ(source->device_memory("out0"), sink->device_memory("in0"));
+  EXPECT_EQ(source->device_memory("out0"), sink->device_memory("in1"));
 }
 
 // Varying chain lengths, 3 ports
@@ -561,6 +1062,93 @@ TEST_F(GPUResidentMultiIOTest, Correctness_20Ports_Chain1) {
   test_correctness<20>(1);
 }
 
+TEST_F(GPUResidentMultiIOTest, Correctness_DiamondDag) {
+  Fragment fragment;
+  auto g = build_diamond_graph(fragment);
+
+  fragment.gpu_resident().sync_with_host();
+
+  auto future = fragment.run_async();
+  ASSERT_TRUE(wait_for_launch(fragment)) << "Fragment did not launch within timeout";
+
+  fragment.gpu_resident().data_ready();
+  ASSERT_TRUE(wait_for_result(fragment)) << "Result not ready within timeout";
+
+  verify_diamond_sink_data(g.sink);
+  teardown_fragment(fragment, future);
+}
+
+TEST_F(GPUResidentMultiIOTest, Correctness_FanOutAcrossOperators) {
+  Fragment fragment;
+  auto g = build_fan_out_graph(fragment);
+
+  fragment.gpu_resident().sync_with_host();
+
+  auto future = fragment.run_async();
+  ASSERT_TRUE(wait_for_launch(fragment)) << "Fragment did not launch within timeout";
+
+  fragment.gpu_resident().data_ready();
+  ASSERT_TRUE(wait_for_result(fragment)) << "Result not ready within timeout";
+
+  verify_fan_out_sink_data(g.sink);
+  teardown_fragment(fragment, future);
+}
+
+TEST_F(GPUResidentMultiIOTest, Correctness_FanOutAsymmetricDepth_SourcePtr) {
+  Fragment fragment;
+  auto sink = build_asymmetric_fan_out_graph(fragment);
+
+  fragment.gpu_resident().sync_with_host();
+
+  auto future = fragment.run_async();
+  ASSERT_TRUE(wait_for_launch(fragment)) << "Fragment did not launch within timeout";
+
+  fragment.gpu_resident().data_ready();
+  ASSERT_TRUE(wait_for_result(fragment)) << "Result not ready within timeout";
+
+  verify_asymmetric_fan_out_sink_data(sink);
+  teardown_fragment(fragment, future);
+}
+
+TEST_P(GPUResidentMixedDagCorrectnessTest, Correctness_MixedDagAndFanOut) {
+  Fragment fragment;
+  auto variant = GetParam();
+  auto sink = build_mixed_correctness_graph(fragment, variant);
+
+  fragment.gpu_resident().sync_with_host();
+
+  auto future = fragment.run_async();
+  ASSERT_TRUE(wait_for_launch(fragment)) << "Fragment did not launch within timeout";
+
+  fragment.gpu_resident().data_ready();
+  ASSERT_TRUE(wait_for_result(fragment)) << "Result not ready within timeout";
+
+  if (is_diamond_variant(variant)) {
+    verify_diamond_sink_data(sink);
+  } else {
+    verify_fan_out_sink_data(sink);
+  }
+  teardown_fragment(fragment, future);
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MixedDagCorrectnessCoverage, GPUResidentMixedDagCorrectnessTest,
+    testing::Values(
+        MixedDagCorrectnessVariant::
+            Diamond_SourceMemPtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem,
+        MixedDagCorrectnessVariant::
+            Diamond_SourcePtrMem_ComputeInputsMemPtr_OutputsMemPtr_SinkPtrMem,
+        MixedDagCorrectnessVariant::
+            Diamond_SourcePtrPtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr,
+        MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrMem_OutputsMemMem_SinkMemMem,
+        MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemPtr_OutputsMemMem_SinkMemMem,
+        MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem,
+        MixedDagCorrectnessVariant::FanOut_SourceMem_ComputeInputsMemMem_OutputsMemPtr_SinkPtrMem,
+        MixedDagCorrectnessVariant::FanOut_SourcePtr_ComputeInputsPtrPtr_OutputsPtrPtr_SinkPtrPtr),
+    [](const testing::TestParamInfo<MixedDagCorrectnessVariant>& info) {
+      return mixed_dag_correctness_variant_name(info.param);
+    });
+
 // ================================================================================================
 // Section 5: Multiple Iterations
 //
@@ -609,33 +1197,254 @@ TEST_F(GPUResidentMultiIOTest, MultipleIterations_20Ports_Chain0_5Iters) {
 }
 
 // ================================================================================================
-// Section 6: Error Conditions Specific to Multi-IO
+// Section 6: Fan-out with mixed connection types
 // ================================================================================================
 
-// Fan-out: one source port mapped to two destination ports must be rejected.
-// The add_flow call may succeed (it checks indegree per dest port, not source
-// fan-out), but prepare_data_flow / initialize_fragment must throw because
-// GPU-resident requires exactly 1 destination per source port.
-TEST_F(GPUResidentMultiIOTest, ErrorFanOutSingleCall) {
+TEST_F(GPUResidentMultiIOTest, FanOut_DevicePtrSource_TwoMemorySinks) {
   Fragment fragment;
-  auto source = fragment.make_operator<MultiOutputSourceGpuOp<1>>("source");
-  auto sink = fragment.make_operator<MultiInputSinkGpuOp<2>>("sink");
+  auto source = fragment.make_operator<DevicePtrSourceOp>("source");
+  auto sink1 = fragment.make_operator<TestSinkGpuOp>("sink1");
+  auto sink2 = fragment.make_operator<TestSinkGpuOp>("sink2");
 
-  std::set<std::pair<std::string, std::string>> pm{{"out0", "in0"}, {"out0", "in1"}};
+  fragment.add_flow(source, sink1);
+  fragment.add_flow(source, sink2);
 
-  bool threw_at_add_flow = false;
-  try {
-    fragment.add_flow(source, sink, pm);
-  } catch (const std::exception&) {
-    threw_at_add_flow = true;
-  }
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
 
-  if (!threw_at_add_flow) {
-    auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
-    ASSERT_NE(executor, nullptr);
-    EXPECT_THROW(executor->initialize_fragment(), std::runtime_error);
-  }
+  auto source_out = source->device_memory("out");
+  auto sink1_in = sink1->device_memory("in");
+  auto sink2_in = sink2->device_memory("in");
+
+  EXPECT_EQ(source_out, source->dev_ptr());
+  EXPECT_EQ(source_out, sink1_in);
+  EXPECT_EQ(source_out, sink2_in);
 }
+
+TEST_F(GPUResidentMultiIOTest, FanOut_DevicePtrSource_MemoryAndDevicePtrSinks) {
+  Fragment fragment;
+  auto source = fragment.make_operator<DevicePtrSourceOp>("source");
+  auto sink_mem = fragment.make_operator<TestSinkGpuOp>("sink_mem");
+  auto sink_ptr = fragment.make_operator<DevicePtrSinkOp>("sink_ptr");
+
+  fragment.add_flow(source, sink_mem);
+  fragment.add_flow(source, sink_ptr);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  testing::internal::CaptureStderr();
+  EXPECT_TRUE(executor->initialize_fragment());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  EXPECT_TRUE(log_output.find("Both source") != std::string::npos &&
+              log_output.find("have device pointers") != std::string::npos)
+      << "Expected error about both sides having device pointers not found in:\n"
+      << log_output;
+
+  auto source_out = source->device_memory("out");
+  auto sink_mem_in = sink_mem->device_memory("in");
+  auto sink_ptr_in = sink_ptr->device_memory("in");
+
+  EXPECT_EQ(source_out, source->dev_ptr());
+  EXPECT_EQ(source_out, sink_mem_in);
+  EXPECT_EQ(source_out, sink_ptr_in);
+  EXPECT_NE(sink_ptr_in, sink_ptr->dev_ptr());
+}
+
+TEST_F(GPUResidentMultiIOTest, FanOut_DevicePtrSource_TwoDevicePtrSinks) {
+  Fragment fragment;
+  auto source = fragment.make_operator<DevicePtrSourceOp>("source");
+  auto sink_ptr1 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr1");
+  auto sink_ptr2 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr2");
+
+  fragment.add_flow(source, sink_ptr1);
+  fragment.add_flow(source, sink_ptr2);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  testing::internal::CaptureStderr();
+  EXPECT_TRUE(executor->initialize_fragment());
+  std::string log_output = testing::internal::GetCapturedStderr();
+
+  size_t first_match = log_output.find("Both source");
+  ASSERT_NE(first_match, std::string::npos)
+      << "Expected first error about both sides having device pointers not found in:\n"
+      << log_output;
+  EXPECT_NE(log_output.find("Both source", first_match + 1), std::string::npos)
+      << "Expected second error about both sides having device pointers not found in:\n"
+      << log_output;
+  EXPECT_TRUE(log_output.find("have device pointers") != std::string::npos)
+      << "Expected error about both sides having device pointers not found in:\n"
+      << log_output;
+
+  auto source_out = source->device_memory("out");
+  auto sink_ptr1_in = sink_ptr1->device_memory("in");
+  auto sink_ptr2_in = sink_ptr2->device_memory("in");
+
+  EXPECT_EQ(source_out, source->dev_ptr());
+  EXPECT_EQ(source_out, sink_ptr1_in);
+  EXPECT_EQ(source_out, sink_ptr2_in);
+  EXPECT_NE(sink_ptr1_in, sink_ptr1->dev_ptr());
+  EXPECT_NE(sink_ptr2_in, sink_ptr2->dev_ptr());
+}
+
+TEST_F(GPUResidentMultiIOTest, FanOut_NoneSource_TwoMemorySinks) {
+  Fragment fragment;
+  auto source = fragment.make_operator<ZeroSizeOutputMemoryOp>("source");
+  auto sink1 = fragment.make_operator<TestSinkGpuOp>("sink1");
+  auto sink2 = fragment.make_operator<TestSinkGpuOp>("sink2");
+
+  fragment.add_flow(source, sink1);
+  fragment.add_flow(source, sink2);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+  EXPECT_TRUE(executor->initialize_fragment());
+
+  auto source_out = source->device_memory("out");
+  auto sink1_in = sink1->device_memory("in");
+  auto sink2_in = sink2->device_memory("in");
+
+  EXPECT_NE(source_out, nullptr);
+  EXPECT_EQ(source_out, sink1_in);
+  EXPECT_EQ(source_out, sink2_in);
+}
+
+TEST_F(GPUResidentMultiIOTest, ErrorFanOut_NoneSource_DevicePtrThenMemorySink) {
+  Fragment fragment;
+  auto source = fragment.make_operator<ZeroSizeOutputMemoryOp>("source");
+  auto sink_ptr = fragment.make_operator<DevicePtrSinkOp>("sink_ptr");
+  auto sink_mem = fragment.make_operator<TestSinkGpuOp>("sink_mem");
+
+  fragment.add_flow(source, sink_ptr);
+  fragment.add_flow(source, sink_mem);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  std::string msg;
+  try {
+    executor->initialize_fragment();
+  } catch (const std::runtime_error& e) {
+    msg = e.what();
+  }
+
+  EXPECT_FALSE(msg.empty()) << "Expected std::runtime_error to be thrown";
+  EXPECT_TRUE(msg.find("already connected through externally managed device pointers") !=
+              std::string::npos)
+      << "Expected message about source port already bound to externally managed device pointers, "
+         "got: "
+      << msg;
+}
+
+TEST_F(GPUResidentMultiIOTest, ErrorFanOut_NoneSource_MemoryThenDevicePtrSink) {
+  Fragment fragment;
+  auto source = fragment.make_operator<ZeroSizeOutputMemoryOp>("source");
+  auto sink_mem = fragment.make_operator<TestSinkGpuOp>("sink_mem");
+  auto sink_ptr = fragment.make_operator<DevicePtrSinkOp>("sink_ptr");
+
+  fragment.add_flow(source, sink_mem);
+  fragment.add_flow(source, sink_ptr);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  std::string msg;
+  try {
+    executor->initialize_fragment();
+  } catch (const std::runtime_error& e) {
+    msg = e.what();
+  }
+
+  EXPECT_FALSE(msg.empty()) << "Expected std::runtime_error to be thrown";
+  EXPECT_TRUE(msg.find("already connected through executor-allocated device buffers") !=
+              std::string::npos)
+      << "Expected message about source port already bound to executor-allocated device buffers, "
+         "got: "
+      << msg;
+}
+
+TEST_F(GPUResidentMultiIOTest, ErrorFanOut_NoneSource_TwoDevicePtrSinks) {
+  Fragment fragment;
+  auto source = fragment.make_operator<ZeroSizeOutputMemoryOp>("source");
+  auto sink_ptr1 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr1");
+  auto sink_ptr2 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr2");
+
+  fragment.add_flow(source, sink_ptr1);
+  fragment.add_flow(source, sink_ptr2);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  std::string msg;
+  try {
+    executor->initialize_fragment();
+  } catch (const std::runtime_error& e) {
+    msg = e.what();
+  }
+
+  EXPECT_FALSE(msg.empty()) << "Expected std::runtime_error to be thrown";
+  EXPECT_TRUE(msg.find("already connected to a different externally managed device pointer") !=
+              std::string::npos)
+      << "Expected message about conflicting externally managed device pointers, got: " << msg;
+}
+
+TEST_F(GPUResidentMultiIOTest, ErrorFanOut_MemorySource_MemoryThenDevicePtrSink) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto sink_mem = fragment.make_operator<TestSinkGpuOp>("sink_mem");
+  auto sink_ptr = fragment.make_operator<DevicePtrSinkOp>("sink_ptr");
+
+  fragment.add_flow(source, sink_mem);
+  fragment.add_flow(source, sink_ptr);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  std::string msg;
+  try {
+    executor->initialize_fragment();
+  } catch (const std::runtime_error& e) {
+    msg = e.what();
+  }
+
+  EXPECT_FALSE(msg.empty()) << "Expected std::runtime_error to be thrown";
+  EXPECT_TRUE(msg.find("already connected through executor-allocated device buffers") !=
+              std::string::npos)
+      << "Expected message about conflicting buffer/device-pointer connection, got: " << msg;
+}
+
+TEST_F(GPUResidentMultiIOTest, ErrorFanOut_MemorySource_TwoDevicePtrSinks) {
+  Fragment fragment;
+  auto source = fragment.make_operator<TestSourceGpuOp>("source");
+  auto sink_ptr1 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr1");
+  auto sink_ptr2 = fragment.make_operator<DevicePtrSinkOp>("sink_ptr2");
+
+  fragment.add_flow(source, sink_ptr1);
+  fragment.add_flow(source, sink_ptr2);
+
+  auto executor = std::dynamic_pointer_cast<GPUResidentExecutor>(fragment.executor_shared());
+  ASSERT_NE(executor, nullptr);
+
+  std::string msg;
+  try {
+    executor->initialize_fragment();
+  } catch (const std::runtime_error& e) {
+    msg = e.what();
+  }
+
+  EXPECT_FALSE(msg.empty()) << "Expected std::runtime_error to be thrown";
+  EXPECT_TRUE(msg.find("already connected to a different externally managed device pointer") !=
+              std::string::npos)
+      << "Expected message about conflicting externally managed device pointers, got: " << msg;
+}
+
+// ================================================================================================
+// Section 7: Error Conditions Specific to Multi-IO
+// ================================================================================================
 
 // Mismatched memory block size on one port out of three.
 // Source: out0=128B, out1=256B, out2=128B.  Sink: in0=128B, in1=128B, in2=128B.

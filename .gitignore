@@ -211,6 +211,7 @@ CMakeFiles
 
 # TensorRT Engine files
 *.engine
+*.engine.fp32
 
 # Test data
 test_data/

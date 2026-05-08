@@ -15,6 +15,7 @@ See [HoloHub](https://github.com/nvidia-holoscan/holohub) to find additional ref
    cmake -S $src_dir -B $build_dir -D Holoscan_ROOT="/opt/nvidia/holoscan"
    cmake --build $build_dir -j
    ```
+
 - **Debian package**: Run pre-built examples under `/opt/nvidia/holoscan/examples` or rebuild the C++ examples as shown above. Debian packages
 support C++ examples only.
 
@@ -68,69 +69,81 @@ The following examples demonstrate the basics of the Holoscan core API, and are 
 
 The following examples illustrate the use of specific **schedulers** to define when operators are run:
 
-* [**Multithread or Event-Based Schedulers**](multithread): run operators in parallel
-* [**Round-Robin Broadcast and Gather**](round_robin_parallel): Illustrates processing of multiple sequential frames in parallel to allow removing a bottleneck. Multiple copies of a "slow" operator are launched in parallel for subsequent frames and then results are gathered back into a common pipeline for further processing/display. This app makes use of the event-based scheduler for this purpose.
-* [**Multi-Rate Pipeline**](multi_branch_pipeline): Demonstrates how to override default operator port properties to allow parallel downstream branches of a pipeline to operate at different frame rates
+- [**Multithread or Event-Based Schedulers**](multithread): run operators in parallel
+- [**Round-Robin Broadcast and Gather**](round_robin_parallel): Illustrates processing of multiple sequential frames in parallel to allow removing a bottleneck. Multiple copies of a "slow" operator are launched in parallel for subsequent frames and then results are gathered back into a common pipeline for further processing/display. This app makes use of the event-based scheduler for this purpose.
+- [**Multi-Rate Pipeline**](multi_branch_pipeline): Demonstrates how to override default operator port properties to allow parallel downstream branches of a pipeline to operate at different frame rates
 
 The following examples illustrate the use of specific **conditions** to modify the behavior of operators:
 
-* [**PeriodicCondition**](conditions/periodic): trigger an operator at a user-defined time interval
-* [**AsynchronousCondition**](conditions/asynchronous): allow operators to run asynchronously (C++ API only)
-* [**ExpiringMessageAvailableCondition**](conditions/expiring_message): allow operators to run when a certain number of messages have arrived or after a specified time interval has elapsed.
-* [**MultiMessageAvailableCondition**, **MultiMessageAvailableTimeoutCondition**](conditions/multi_message): allow operators to run only once a certain number of messages have arrived across multiple associated input ports (optionally with a timeout on the interval to wait for messages).
-* [**native Conditions**](conditions/native): demonstrates how a Holoscan native Condition (not wrapping an underlying GXF SchedulingTerm) can be created and used.
-* [**OrConditionCombiner**](conditions/or_combiner): This example shows the use of the `or_combine_port_conditions` method to add a `OrConditionCombiner` resource that notifies the scheduler to use an OR combination instead of AND combination for the conditions present on the specified input ports.
+- [**PeriodicCondition**](conditions/periodic): trigger an operator at a user-defined time interval
+- [**AsynchronousCondition**](conditions/asynchronous): allow operators to run asynchronously (C++ API only)
+- [**ExpiringMessageAvailableCondition**](conditions/expiring_message): allow operators to run when a certain number of messages have arrived or after a specified time interval has elapsed.
+- [**MultiMessageAvailableCondition**, **MultiMessageAvailableTimeoutCondition**](conditions/multi_message): allow operators to run only once a certain number of messages have arrived across multiple associated input ports (optionally with a timeout on the interval to wait for messages).
+- [**native Conditions**](conditions/native): demonstrates how a Holoscan native Condition (not wrapping an underlying GXF SchedulingTerm) can be created and used.
+- [**OrConditionCombiner**](conditions/or_combiner): This example shows the use of the `or_combine_port_conditions` method to add a `OrConditionCombiner` resource that notifies the scheduler to use an OR combination instead of AND combination for the conditions present on the specified input ports.
 
 The following examples illustrate the use of specific resource classes that can be passed to operators or schedulers:
 
-* [**Clock**](resources/clock): demonstrate assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
+- [**Clock**](resources/clock): demonstrate assignment of a user-configured clock to the Holoscan SDK scheduler and how its runtime methods can be accessed from an operator's compute method.
 
-* [**ThreadPool**](resources/thread_pool): demonstrates pinning of operators to specific CPU threads in a thread pool.
+- [**ThreadPool**](resources/thread_pool): demonstrates pinning of operators to specific CPU threads in a thread pool.
 
-* [**native Resources**](resources/native): demonstrates how a Holoscan native Resource (not wrapping an underlying GXF Component) can be created and used.
+- [**native Resources**](resources/native): demonstrates how a Holoscan native Resource (not wrapping an underlying GXF Component) can be created and used.
 
-* [**CudaStreamPool** and **CudaStreamCondition**](resources/cuda_stream_pool): demonstrates how Python apps can make use of a `CudaStreamPool` resource and `CudaStreamCondition` condition. Also demonstrates how to use stream-related API from native Python operator `compute` methods and have CuPy calls within `compute` use the desired stream.
+- [**CudaStreamPool** and **CudaStreamCondition**](resources/cuda_stream_pool): demonstrates how Python apps can make use of a `CudaStreamPool` resource and `CudaStreamCondition` condition. Also demonstrates how to use stream-related API from native Python operator `compute` methods and have CuPy calls within `compute` use the desired stream.
 
-* [**CudaGreenContext**](resources/cuda_green_context): demonstrates the usage of  `CudaGreenContext` when creating `CudaStreamPool`. It is backward compatible when `CudaGreenContext` is not configured for a `CudaStreamPool`.
+- [**CudaGreenContext**](resources/cuda_green_context): demonstrates the usage of  `CudaGreenContext` when creating `CudaStreamPool`. It is backward compatible when `CudaGreenContext` is not configured for a `CudaStreamPool`.
 
 ## Decorator-based Python API
 
-* [**Python Functions as Operators**](python_decorator): demonstrates how to use a decorator to convert a Python function into an Operator.
+- [**Python Functions as Operators**](python_decorator): demonstrates how to use a decorator to convert a Python function into an Operator.
 
 ## Visualization
-* [**Holoviz**](holoviz): display overlays of various geometric primitives
+
+- [**Holoviz**](holoviz): display overlays of various geometric primitives
 
 ## Inference
-* [**Activation-map**](activation_map): A simple inference pipeline demonstrates selecting a subset of models.
-* [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications.
+
+- [**Activation-map**](activation_map): A simple inference pipeline demonstrates selecting a subset of models.
+- [**Bring-Your-Own-Model**](bring_your_own_model): create a simple inference pipeline for ML applications.
 
 ### Working with third-party frameworks
 
 The following examples demonstrate how to seamlessly leverage third-party frameworks in holoscan applications:
 
-* [**NumPy native**](numpy_native): signal processing on the CPU using numpy arrays
-* [**CuPy native**](cupy_native): basic computation on the GPU using cupy arrays
-* [**PyTorch native**](pytorch_native): basic computation on the GPU (or CPU fallback) using PyTorch tensors
-* [**MatX basic**](matx/matx_basic): basic C++ computation on the GPU using MatX tensors (via DLPack zero-copy interop with `holoscan::Tensor`)
-* [**MatX allocator**](matx/matx_allocator): create MatX tensors backed by a Holoscan memory pool (`RMMAllocator`) using the `MatXAllocator` adapter, with DLPack interop and GPU computation
+- [**NumPy native**](numpy_native): signal processing on the CPU using numpy arrays
+- [**CuPy native**](cupy_native): basic computation on the GPU using cupy arrays
+- [**PyTorch native**](pytorch_native): basic computation on the GPU (or CPU fallback) using PyTorch tensors
+- [**MatX basic**](matx/matx_basic): basic C++ computation on the GPU using MatX tensors (via DLPack zero-copy interop with `holoscan::Tensor`)
+- [**MatX allocator**](matx/matx_allocator): create MatX tensors backed by a Holoscan memory pool (`RMMAllocator`) using the `MatXAllocator` adapter, with DLPack interop and GPU computation
 
 ### Sensors
 
 The following examples demonstrate how sensors can be used as input streams to your holoscan applications:
 
-* [**v4l2 camera**](v4l2_camera): for USB and HDMI input, such as USB cameras or HDMI output of laptop
-* [**AJA capture**](aja_capture): for AJA capture cards
+- [**v4l2 camera**](v4l2_camera): for USB and HDMI input, such as USB cameras or HDMI output of laptop
+- [**AJA capture**](aja_capture): for AJA capture cards
 
 ### GXF and Holoscan
 
-* [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
-* [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
-* [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications
-* [**Wrap Holoscan as GXF Extension**](wrap_holoscan_as_gxf_extension): wrap Holoscan native operators and resources as GXF codelets and components within a single GXF extension for use in GXF applications
+- [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
+- [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
+- [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications
+- [**Wrap Holoscan as GXF Extension**](wrap_holoscan_as_gxf_extension): wrap Holoscan native operators and resources as GXF codelets and components within a single GXF extension for use in GXF applications
+
+## Pub/Sub (Inter-Process Communication)
+
+The following examples demonstrate inter-process pub/sub communication using the Fast-DDS backend.
+They are only built when `HOLOSCAN_BUILD_IPC=ON` and `HOLOSCAN_IPC_TRANSPORT_FASTDDS=ON`.
+
+> **Note:** Pub/sub support is currently an experimental feature and its API is subject to change.
+
+- [**Ping Tensor**](pubsub/ping_tensor): publish and subscribe to tensors (host or GPU) between two processes using Fast-DDS, with optional CUDA IPC zero-copy transfer.
+- [**Video Replayer**](pubsub/video_replayer): stream video frames from a publisher process to one or more subscriber displays over Fast-DDS, with optional native buffer (CUDA IPC) support.
 
 ## GPU-Resident Execution
 
-* [**GPU-Resident**](gpu_resident_example): basic GPU-resident operator pipeline
-* [**GPU-Resident Input**](gpu_resident_input): GPU-resident operators with a data-ready handler for external sensor inputs
-* [**GPU-Resident Multi-IO**](gpu_resident_multi_io): GPU-resident pipeline with multiple input/output ports per operator
-* [**GPU-Resident-Inference**](gpu_resident_inference_example): a simple inference sample to demonstrate usage of GPUResidentInferenceOp.
+- [**GPU-Resident**](gpu_resident_example): basic GPU-resident operator pipeline
+- [**GPU-Resident Input**](gpu_resident_input): GPU-resident operators with a data-ready handler for external sensor inputs
+- [**GPU-Resident Multi-IO**](gpu_resident_multi_io): GPU-resident pipeline with multiple input/output ports per operator
+- [**GPU-Resident-Inference**](gpu_resident_inference_example): a simple inference sample to demonstrate usage of GPUResidentInferenceOp.

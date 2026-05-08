@@ -23,12 +23,12 @@
 #include <unordered_map>
 #include <vector>
 
+#include <gxf/core/handle.hpp>
+#include <gxf/std/receiver.hpp>
+#include <holoscan/profiler/profiler.hpp>
 #include "../expected.hpp"
 #include "../io_context.hpp"
 #include "./gxf_cuda.hpp"
-#include "gxf/core/handle.hpp"
-#include "gxf/std/receiver.hpp"
-#include "holoscan/profiler/profiler.hpp"
 
 PROF_DEFINE_EVENT(event_log_backend_specific, "log_backend_specific", 0x99, 0x33, 0xFF);
 
@@ -109,7 +109,8 @@ class GXFInputContext : public InputContext {
  protected:
   bool empty_impl(const char* name = nullptr) override;
   std::any receive_impl(const char* name = nullptr, InputType in_type = InputType::kAny,
-                        bool no_error_message = false, bool omit_data_logging = false) override;
+                        bool no_error_message = false, bool omit_data_logging = false,
+                        bool allow_any_size = false) override;
 
   gxf_result_t retrieve_cuda_streams(nvidia::gxf::Entity& message, const std::string& input_name);
 

@@ -21,11 +21,11 @@
 #include <pybind11/pybind11.h>
 
 #include <memory>
-#include <unordered_map>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
-#include "holoscan/core/domain/tensor.hpp"
+#include <holoscan/core/domain/tensor.hpp>
 
 namespace py = pybind11;
 

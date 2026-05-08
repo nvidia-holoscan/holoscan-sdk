@@ -15,9 +15,9 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp"
-#include "holoscan/core/flow_tracking_annotation.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/flow_tracking_annotation.hpp>
+#include <holoscan/core/resources/gxf/holoscan_async_buffer_receiver.hpp>
+#include <holoscan/logger/logger.hpp>
 
 #include <gxf/std/async_buffer_receiver.hpp>
 

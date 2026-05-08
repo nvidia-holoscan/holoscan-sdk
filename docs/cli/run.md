@@ -4,10 +4,8 @@
 
 `holoscan run` - simplifies running a packaged Holoscan application by reducing the number of arguments required compared to `docker run`. In addition, it follows the guidelines of [HAP specification](./hap.md) when launching your packaged Holoscan application.
 
-
 :::{warning}
 When running a packaged Holoscan application on Kubernetes or other service providers, running Docker with non root user, and running Holoscan CLI `run` command where the logged-on user's ID is different, ensure to specify the `USER ID` that is used when building the application package.
-
 
 For example, include the `securityContext` when running a Holoscan packaged application with `UID=1000` using Argo:
 
@@ -17,6 +15,7 @@ spec:
     runAsUser: 1000
     runAsNonRoot: true
 ```
+
 :::
 
 ## Synopsis
@@ -77,7 +76,6 @@ Ensure that the directory on the host is accessible by the current user or the u
 :::{note}
 Use the host system path when running applications inside Docker (DooD).
 :::
-
 
 (#cli-run-output)=
 
@@ -144,7 +142,6 @@ For advanced uses, first create a network using `docker network create` and pass
 
 Name of the network interface to use with a distributed multi-fragment application. This option sets `UCX_NET_DEVICES` environment variable with the value specified and is required when running a distributed multi-fragment application across multiple nodes. See {ref}`UCX Network Interface Selection <ucx-network-selection>` for details.
 
-
 (#cli-run-use-all-nics)=
 
 ### `[--use-all-nics]`
@@ -152,7 +149,6 @@ Name of the network interface to use with a distributed multi-fragment applicati
 When set, this option allows UCX to control the selection of network interface cards for data transfer. Otherwise, the network interface card specified with '--nic' is used. This option sets the environment variable `UCX_CM_USE_ALL_DEVICES` to `y` (default: False).
 
 When this option is not set, the CLI runner always sets `UCX_CM_USE_ALL_DEVICES` to `n`.
-
 
 (#cli-run-render)=
 
@@ -197,7 +193,6 @@ For example:
 --device video1 --device /dev/ajantv2
 ```
 
-
 :::{warning}
 When using the `--device` option, append `--` after the last item to avoid misinterpretation by the CLI. For example:
 
@@ -205,14 +200,14 @@ When using the `--device` option, append `--` after the last item to avoid misin
 holoscan run --render --device ajantv0 video1 -- my-application-image:1.0
 
 ```
-:::
 
+:::
 
 (#cli-run-gpu)=
 
 ### `[--gpu]`
 
-Override the value of the `NVIDIA_VISIBLE_DEVICES` environment variable with the default value set to 
+Override the value of the `NVIDIA_VISIBLE_DEVICES` environment variable with the default value set to
 the value defined in the [package manifest file](./hap.md#package-manifest) or `all` if undefined.
 
 Refer to the [GPU Enumeration](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/docker-specialized.html#gpu-enumeration)

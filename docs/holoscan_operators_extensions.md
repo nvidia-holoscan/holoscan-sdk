@@ -5,6 +5,7 @@ The units of work of Holoscan applications are implemented within Operators, as 
 ___
 
 (holoscan-operators)=
+
 ## Operators
 
 The operators below are defined under the `holoscan::ops` namespace for C++ and CMake, and under the `holoscan.operators` module in Python.
@@ -81,5 +82,5 @@ ___
 
 ### Holohub
 
-Holohub is an open collection of reusable Holoscan operators, applications, workflows, and supporting tools designed to accelerate Holoscan-based development. You can browse the full set of operators directly in the [Holohub repository](https://github.com/nvidia-holoscan/holohub/tree/main/operators) or explore them with detailed documentation and search features on the [Holohub documentation website](https://nvidia-holoscan.github.io/holohub/operators/).  
+Holohub is an open collection of reusable Holoscan operators, applications, workflows, and supporting tools designed to accelerate Holoscan-based development. You can browse the full set of operators directly in the [Holohub repository](https://github.com/nvidia-holoscan/holohub/tree/main/operators) or explore them with detailed documentation and search features on the [Holohub documentation website](https://nvidia-holoscan.github.io/holohub/operators/).
 For a quick overview of Holohub, see the {ref}`Holohub Overview <holohub>`.

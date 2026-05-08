@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/executors/gxf/gxf_logger.hpp"
+#include <holoscan/core/executors/gxf/gxf_logger.hpp>
 
 #include <cstdio>
 #include <cstdlib>
@@ -24,7 +24,7 @@
 
 #include <common/logger.hpp>
 
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::gxf {
 

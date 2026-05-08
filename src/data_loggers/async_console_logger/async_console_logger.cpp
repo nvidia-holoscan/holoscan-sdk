@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
+#include <holoscan/data_loggers/async_console_logger/async_console_logger.hpp>
 
 #include <chrono>
 #include <memory>
@@ -24,17 +24,17 @@
 #include <string>
 #include <utility>
 
-#include "gxf/core/entity.hpp"
-#include "gxf/core/handle.hpp"
-#include "gxf/multimedia/video.hpp"
-#include "gxf/std/tensor.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/core/domain/tensor_map.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/data_loggers/async_console_logger/async_console_backend.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <gxf/core/entity.hpp>
+#include <gxf/core/handle.hpp>
+#include <gxf/multimedia/video.hpp>
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/core/domain/tensor_map.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/data_loggers/async_console_logger/async_console_backend.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 namespace data_loggers {

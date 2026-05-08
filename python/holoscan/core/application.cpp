@@ -29,12 +29,12 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/operator.hpp>
 #include "application_pydoc.hpp"
 #include "fragment.hpp"
 #include "fragment_pydoc.hpp"
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/operator.hpp"
 #include "operator.hpp"
 #include "tensor.hpp"
 

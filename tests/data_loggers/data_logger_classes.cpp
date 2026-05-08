@@ -22,17 +22,17 @@
 #include <string>
 #include <vector>
 
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/data_logger.hpp>
+#include <holoscan/data_loggers/async_console_logger/async_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp>
+#include <holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp>
 #include "../config.hpp"
 #include "../utils.hpp"
 #include "common/assert.hpp"
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/data_logger.hpp"
-#include "holoscan/data_loggers/async_console_logger/async_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/basic_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/gxf_console_logger.hpp"
-#include "holoscan/data_loggers/basic_console_logger/simple_text_serializer.hpp"
 
 using namespace std::string_literals;
 

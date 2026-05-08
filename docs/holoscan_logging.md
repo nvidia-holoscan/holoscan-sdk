@@ -1,4 +1,5 @@
 (holoscan-logging)=
+
 # Logging
 
 ## Overview
@@ -8,7 +9,6 @@ severity of a message and as a way to control the number and verbosity of messag
 
 - Logger level
 - Logger format
-
 
 ### Logger Level
 
@@ -53,11 +53,13 @@ if __name__ == "__main__":
     main()
 ```
 ````
+
 Additionally, at runtime, the user can set the `HOLOSCAN_LOG_LEVEL` environment variable to one of the values listed above. This provides users with the flexibility to enable printing of diagnostic information for debugging purposes when an issue occurs.
 
 ```bash
 export HOLOSCAN_LOG_LEVEL=TRACE
 ```
+
 :::{note}
 Under the hood, Holoscan SDK uses GXF to execute the computation graph. By default, this GXF layer uses the same logging level as Holoscan SDK. If it is desired to override the logging level of this executor independently of the Holoscan SDK logging level, environment variable `HOLOSCAN_EXECUTOR_LOG_LEVEL` can be used. It supports the same levels as `HOLOSCAN_LOG_LEVEL`.
 :::
@@ -71,6 +73,7 @@ For distributed applications, it can sometimes be useful to also enable addition
 When a message is printed out, the default message format shows the message severity level, filename:linenumber, and Sthe message to be printed.
 
 For example:
+
 ```
 [info] [ping_multi_port.cpp:114] Rx message value1: 51
 [info] [ping_multi_port.cpp:115] Rx message value2: 54
@@ -114,17 +117,22 @@ if __name__ == "__main__":
     main()
 ```
 ````
+
 With this logger format, the above application would display messages with the following format:
+
 ```
 [info] Rx message value1: 51
 [info] Rx message value2: 54
 ```
+
 Alternatively, the pattern string can be a custom pattern to customize the logger format.  Using this string pattern:
+
 ```
 "[%Y-%m-%d %H:%M:%S.%e] [%n] [%^%l%$] [%s:%#] %v";
 ```
 
 The following format will be displayed:
+
 ```
 [2023-06-27 14:22:36.073] [holoscan] [info] [ping_multi_port.cpp:114] Rx message value1: 51
 [2023-06-27 14:22:36.073] [holoscan] [info] [ping_multi_port.cpp:115] Rx message value2: 54
@@ -149,7 +157,6 @@ When `HOLOSCAN_LOG_FORMAT` is set, it determines the logging format. If this env
 
 The **C++ API** uses the {ref}`HOLOSCAN_LOG_XXX() macros <api/holoscan_cpp_api:logging>` to log messages in the application. These macros use the [fmtlib format string syntax](https://fmt.dev/latest/syntax.html) for their format strings.
 
-
 :::{note}
 Holoscan automatically checks `HOLOSCAN_LOG_LEVEL` environment variable and sets the log level when the Application class instance is created. However, those log level settings are for Holoscan core or C++ operator (C++)'s logging message (such as `HOLOSCAN_LOG_INFO` macro), not for Python's logging. Users of the **Python API** should use the built-in [`logging`](https://docs.python.org/3/howto/logging.html) module to log messages. You must configure the logger before use (`logging.basicConfig(level=logging.INFO)`):
 
@@ -161,4 +168,5 @@ Holoscan automatically checks `HOLOSCAN_LOG_LEVEL` environment variable and sets
 >>> logger.info('hello')
 INFO:main:hello
 ```
+
 :::

@@ -21,7 +21,6 @@ A2: The core components include:
 
 A3: The Holoscan SDK is a domain and sensor agnostic SDK optimized for the easy construction and deployment of high-performance, high bandwidth, and real-time AI applications. By marrying high speed instruments to NVIDIA software, Holoscan is the platform for a future of self-driving, software defined, and scalable sensor processing solutions, touching industries from scientific computing and instrumentation to medical devices.
 
-
 ## Installation and Setup
 
 **Q1: How do I install the Holoscan SDK?**
@@ -32,19 +31,19 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.1.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-igpu
   ```
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
@@ -130,7 +129,7 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.1 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.2 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -146,8 +145,8 @@ A2: The prerequisites include:
 * [Quadro/NVIDIA RTX](https://www.nvidia.com/en-gb/design-visualization/desktop-graphics/) necessary for GPUDirect RDMA support
 * Tested with [NVIDIA RTX A6000](https://www.nvidia.com/en-us/design-visualization/rtx-a6000/) and [NVIDIA RTX ADA 6000](https://www.nvidia.com/en-us/products/workstations/rtx-6000/)
 * [NVIDIA dGPU drivers](https://docs.nvidia.com/datacenter/tesla/tesla-installation-notes): 535 or above.
-    * x86 workstations: Tested with [OpenRM drivers](https://github.com/NVIDIA/open-gpu-kernel-modules) >= R550.
-    * [CUDA Green Context](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html) features require CUDA Driver API version >= 12.4 (where Green Context was introduced). This typically requires either CUDA display driver >=R560 or else configuring [CUDA forward compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
+  * x86 workstations: Tested with [OpenRM drivers](https://github.com/NVIDIA/open-gpu-kernel-modules) >= R550.
+  * [CUDA Green Context](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__GREEN__CONTEXTS.html) features require CUDA Driver API version >= 12.4 (where Green Context was introduced). This typically requires either CUDA display driver >=R560 or else configuring [CUDA forward compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/forward-compatibility.html).
 
 **Q3: Are there any additional setup steps required?**
 
@@ -159,7 +158,6 @@ A3: Additional setup steps to achieve peak performance may include:
 * [Enabling Exclusive Display Mode](https://docs.nvidia.com/holoscan/sdk-user-guide/enable_exclusive_display.html)
 * [Use both Integrated and Discrete GPUs on NVIDIA Developer Kits](https://docs.nvidia.com/holoscan/sdk-user-guide/use_igpu_with_dgpu.html)
 * [Deployment Software Stack](https://docs.nvidia.com/holoscan/sdk-user-guide/deployment_stack.html)
-
 
 ## Getting Started
 
@@ -174,7 +172,6 @@ A1: To get started:
 **Q2: Are there any pre-trained models available in the SDK?**
 
 A2: Yes, the SDK includes pre-trained AI models for various medical imaging tasks such as segmentation, classification, and object detection. These models can be fine-tuned or used directly in your applications. For more details, please refer to the endoscopy tool tracking [example](https://github.com/nvidia-holoscan/holohub/tree/main/applications/endoscopy_tool_tracking) in Holohub and the body pose estimation [example](https://github.com/nvidia-holoscan/holohub/tree/main/applications/body_pose_estimation).
-
 
 ## Development
 
@@ -271,7 +268,6 @@ class VideoReplayerApp : public holoscan::Application {
 
 
 ```
-
 
 ```
 ./run build
@@ -375,6 +371,7 @@ To terminate the application smoothly, it is recommended to rely on the stop-on-
 ```c
 fragment()->executor().interrupt();
 ```
+
 Please note that  using interrupt() forces to terminate the execution and can cause error messages,
 and the recommendation is using  deadlock-based approach.
 
@@ -391,9 +388,6 @@ For example, if you want to run the application 100 times and then stop it:
 ```c
 auto my_operator = make_operator<MyOperator>("my_operator", make_condition<CountCondition>(100));
 ```
-
-
-
 
 **Q15:How can I loop an output.emit() call within the operator?**
 
@@ -575,8 +569,10 @@ class MyPingApp(Application):
 In this example, the PeriodicCondition is used to ensure that C executes only after a specified period (20 milliseconds in this case) has elapsed. This can help control the timing of data processing between different branches. b. Custom Operator: Developing a custom native operator could provide more control over the message flow. This operator could sequentially check for messages on each port, ensuring that frames are processed and displayed in the correct order. c. Data Copying: To avoid issues with inline updates affecting shared data, consider implementing a mechanism to create copies of the data for each branch. This ensures that modifications in one branch don't unintentionally affect the other.
 
 1. Limitations and Considerations:
+
 * The GXF Gather codelet may not inherently preserve the order in which inference operations were called.
 * When using mock objects for testing (as mentioned in the background information), modifying the original pipeline structure might be challenging. In such cases, focusing on data copying or careful timing control might be more feasible.
+
 1. Future Improvements: Updating the graph structure to use std::map instead of `std::unordered_map` for `succ_` and `pred_` could potentially provide more predictable behavior in terms of connection creation order.
 
 **Q24:I'm inquiring about the availability of a Holoscan example that demonstrates distributed processing across two networked computers. Specifically, I'm interested in a scenario where:**
@@ -685,9 +681,9 @@ A7:Yes, you can save GXF job statistics to a JSON file by setting the `HOLOSCAN_
 
 A8: The scheduling and message-passing overhead in Holoscan is approximately 10–20 µs per operator execution. As a rule of thumb:
 
-- If your computation takes **less than ~20 µs**, the overhead may outweigh the computation—consider combining operations into a single operator.
-- If your computation takes **more than ~100 µs**, splitting into separate operators is generally beneficial for modularity and potential parallelism.
-- For **GPU-resident pipelines**, kernel transition latency is much lower (~0.5–2 µs), allowing finer-grained operators.
+* If your computation takes **less than ~20 µs**, the overhead may outweigh the computation—consider combining operations into a single operator.
+* If your computation takes **more than ~100 µs**, splitting into separate operators is generally beneficial for modularity and potential parallelism.
+* For **GPU-resident pipelines**, kernel transition latency is much lower (~0.5–2 µs), allowing finer-grained operators.
 
 You can measure the overhead in your environment using the `scripts/scheduler_overhead_benchmark.py` script. For detailed measurements and guidance, see {ref}`performance_considerations`.
 
@@ -699,6 +695,7 @@ A11:This is how NVTX markers added to a Holoscan application work:
 * `EntityExecutor::executeEntity()` calls the `EntityExecutor::EntityItem::execute()` GXF method for the given entity ID
 * The `EntityExecutor::EntityItem::execute()` method checks the scheduling status of the entity (Holoscan Operator) and then calls the `EntityExecutor::EntityItem::tick()` method in GXF
 * In the EntityExecutor::EntityItem::tick() method it is where the annotation happens, the following steps occur:
+
 1. router-\>syncInbox(entity); is called to synchronize the inbox. For example, for the given Holoscan operator, UCXReceiver (input port) receives data from the network and pushes it into the queue in the UCXReceiver object. Data in the queue can be retrieved by calling the receive() method within the Operator::compute() method.
 1. For each codelet in the entity (in Holoscan, an entity can have only one codelet), EntityExecutor::EntityItem::tickCodelet() is called, which in turn calls Codelet::tick() (in Holoscan, this is the Operator::compute() method) (Figure 5).
 1. router-\>syncOutbox(entity); is called to synchronize the outbox. For example, for the given Holoscan operator, the data pushed to the queue in the UCXTransmitter object (output port) via emit() method calls in the Operator::compute() method is sent to the network using UCX.
@@ -720,10 +717,10 @@ It is important to note that the tick codelet NVTX annotation doesn't cover rout
 * **Replayer: 24.145 ms**
 * **ImageProcessing: 18.289 ms**
 * **Preprocessor: 1.213 ms**
-*  **Inference: 23.861 ms**
-*  **Postprocessor: 0.275 ms**
-*  **PostImageProcessing: 2.695 ms**
-*  **Viz: 1.575 ms**
+* **Inference: 23.861 ms**
+* **Postprocessor: 0.275 ms**
+* **PostImageProcessing: 2.695 ms**
+* **Viz: 1.575 ms**
 
 A12: The following scheduler mechanisms can potentially impact the performance of your application:
 
@@ -806,14 +803,11 @@ It's worth noting that the `VideoReplayerOp` currently doesn't support this CUDA
 1. **What is the timing of memory allocation in relation to the compute() method execution? Is memory allocated: a) Each time compute() is called, or b) Once at the beginning of execution and then reused?**
 1. **What types of CUDA memory are utilized in Holoscan operations? Specifically: a) Is pinned memory used? b) Is CUDA managed memory employed? c) Do all memory exchanges remain within device (GPU) memory?**
 
-
 A15:Memory allocation can be done either once and reused or separately on each compute call. It depends on how the user write the compute method. We provide a BlockMemoryPool allocator class that allows reusing the same memory blocks on each call.  Similarly there is ability to use CUDA streams and asynchronous memory allocation calls (CudaStreamPool). We hope to refactor over the coming months to make these easier to use than they are currently, but the capability is there now. BlockMemoryPool currently uses on device memory only. There is an UnboundedAllocator that can allocate on one of three places
 
 * system memory (i.e. C++ new/delete)
 * pinned host memory (cudaMallocHost / cudaFreeHost)
 * device memory (cudaMalloc / cudaFree)
-
-
 
 **Q16: I'm running  the endoscopy tool tracking application with a configuration that separates compute and graphics operations onto two distinct GPUs. I have a query about the data transfer mechanism between these GPUs:**
 
@@ -845,7 +839,6 @@ For debugging applications in Holoscan repo, refer to the [Debugging Section](ht
 **Q3: Is it possible to debug both C++ and Python components simultaneously in Holoscan SDK?**
 
 A3:Yes, you can use the Python C++ Debugger extension in VSCode to debug both C++ and Python components simultaneously. For more information, please refer to the Debugging [section](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_debugging.html) in the Holoscan SDK User Guide.
-
 
 **Q4: How do I analyze a core dump file when my application crashes?**
 
@@ -917,12 +910,9 @@ A8: You can use
 
 * install it with pip
 * run your application with coverage
-*  generate reports using commands like coverage report or coverage html
+* generate reports using commands like coverage report or coverage html
 
   For more detailed information, please refer to [Measuring Code Coverage](https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_debugging.html\#measuring-code-coverage) section in the Holoscan User Guide.
-
-
-
 
 **Q9: How can I trace function calls in my Python application?**
 
@@ -942,11 +932,10 @@ A10: Holoscan SDK offers to do the task piecemeal and get feedback from you as i
 
 **A4**:In Python, both coverage measurement and Python debugger is using [sys.settrace()](https://docs.python.org/3/library/sys.html\#sys.settrace) or [PyEval_SetTrace()](https://docs.python.org/3/c-api/init.html\#c.PyEval_SetTrace) method to register a trace method for the current thread. When [coverage.py](https://github.com/nedbat/coveragepy) or Python debugger is running, it calls those method (and [threading.settrace](https://docs.python.org/3/library/threading.html\#threading.settrace) for newly-created threads) for tracing Python code execution.However, when Python methods (such as compute()) are called by the threads (worker(s) of GreedyScheduler/MultiThreadScheduler) in Holoscan SDK, which is not derived from the Python's main thread, [sys.settrace()](https://docs.python.org/3/library/sys.html\#sys.settrace) (or [PyEval_SetTrace()](https://docs.python.org/3/c-api/init.html\#c.PyEval_SetTrace)) is not called properly for those threads.The resolution is:
 
-1\.	Capture the current trace method (by using sys.gettrace(), let's say `CURR_TRACE_METHOD`- if it exists when `Application.run()` method is called.
-2\.	When Python methods (such as Operator.compute()/Fragment.compose()/Operator.initialize()/Operator.start()/Operator.stop()) are called, get current trace method (by using sys.gettrace()) and call [sys.settrace](https://docs.python.org/3/library/sys.html\#sys.settrace)(`CURR_TRACE_METHOD`) and set current stack frame's `f_trace` to `CURR_TRACE_METHOD` (current stack frame is available through [inspect.currentframe()](https://docs.python.org/3/library/inspect.html\#inspect.currentframe)) if no trace method was set before.
+1\. Capture the current trace method (by using sys.gettrace(), let's say `CURR_TRACE_METHOD`- if it exists when `Application.run()` method is called.
+2\. When Python methods (such as Operator.compute()/Fragment.compose()/Operator.initialize()/Operator.start()/Operator.stop()) are called, get current trace method (by using sys.gettrace()) and call [sys.settrace](https://docs.python.org/3/library/sys.html\#sys.settrace)(`CURR_TRACE_METHOD`) and set current stack frame's `f_trace` to `CURR_TRACE_METHOD` (current stack frame is available through [inspect.currentframe()](https://docs.python.org/3/library/inspect.html\#inspect.currentframe)) if no trace method was set before.
 
 * This process can be sped up by storing thread id-\> \<trace method\> map (or using thread local variable) and checking if trace method is already registered to the current thread.
-
 
 Python's cProfile module is using [sys.setprofile()](https://github.com/python/cpython/blob/main/Lib/profile.py\#L422) instead of [sys.settrace()](https://docs.python.org/3/library/sys.html\#sys.settrace) (because the profile method is called per method, which is more effective), and we can apply similar approach for enabling profiler on Holoscan's Python Operator methods.
 
@@ -1027,20 +1016,17 @@ cat /proc/sys/kernel/perf_event_paranoid
 sudo sh -c 'echo 2 >/proc/sys/kernel/perf_event_paranoid'
 ```
 
-*  To make the change permanent, edit `/etc/sysctl.conf`: Add or modify the line:
+* To make the change permanent, edit `/etc/sysctl.conf`: Add or modify the line:
 
 ```text
 update /etc/sysctl.conf
 ```
-
-
 
 * Then apply the changes:
 
 ```bash
 sudo sysctl -p
 ```
-
 
 * If you need to allow use of almost all events by all users, you can set the value to \-1 instead of 2\.
 * The values and their meanings:
@@ -1170,8 +1156,8 @@ This indicates that the requested memory sizes on host and/or device exceed the 
 
 A21: If you encounter "X11: Failed to open display :0 [...] Failed to initialize GLFW" errors, enable permissions to your X server from Docker by either:
 
-- Passing `-u $(id -u):$(id -g)` to `docker run`, or
-- Running `xhost +local:docker` on your host
+* Passing `-u $(id -u):$(id -g)` to `docker run`, or
+* Running `xhost +local:docker` on your host
 
 **Q22: How do I resolve GLX context creation errors on virtual machines or headless systems?**
 
@@ -1201,9 +1187,9 @@ A25: AJA device errors like the following indicate that you don't have AJA suppo
 
 To resolve this:
 
-- Double check that you have installed the AJA ntv2 driver
-- Load the driver after every reboot
-- If running in a docker container, specify `--device /dev/ajantv20:/dev/ajantv20` in the `docker run` command
+* Double check that you have installed the AJA ntv2 driver
+* Load the driver after every reboot
+* If running in a docker container, specify `--device /dev/ajantv20:/dev/ajantv20` in the `docker run` command
 
 **Q26: How do I fix GXF format converter errors?**
 
@@ -1221,11 +1207,13 @@ Try increasing the current num_block number by 1 in the yaml file for all format
 A27: When running the V4L2 codelet, you may encounter video device errors:
 
 **"Failed to open device, OPEN: No such file or directory"**
-- Ensure you have a video device connected (ex: USB webcam) and listed when running `ls -l /dev/video*`
+
+* Ensure you have a video device connected (ex: USB webcam) and listed when running `ls -l /dev/video*`
 
 **"Failed to open device, OPEN: Permission denied"**
-- This means the `/dev/video*` device is not available to the user from within docker
-- Add `--group-add video` to the `docker run` command
+
+* This means the `/dev/video*` device is not available to the user from within docker
+* Add `--group-add video` to the `docker run` command
 
 **Q28: How do I fix HolovizOp failures on hybrid GPU systems?**
 
@@ -1284,10 +1272,8 @@ Figure 5
 ![](images/image8.png)
 Figure 6
 
-
 **Q5: I'm encountering difficulties implementing the `PYBIND11_OVERRIDE_PURE` mechanism in pybind11. Specifically, I'm trying to override a pure virtual C++ method with a Python subclass, but it's not working as expected. The Python subclass doesn't seem to be successfully overriding the C++ method.**
 A5:A potential fix is to keep a global reference to the Python object.Please refer to the fix provide [here](https://github.com/pybind/pybind11/issues/1333).
-
 
 This code addresses a potential issue in pybind11's handling of class inheritance and instance management. The problem arises when mocking the C++ `RoceReceiverOp` class with a Python `InstrumentedReceiverOperator` class. Here's a breakdown of the situation:
 
@@ -1311,5 +1297,6 @@ This solution ensures the mocked class instance remains available throughout the
 **Q2: How can I contribute to the Holoscan SDK?**
 
 A2: The Holoscan SDK is open-source. You can contribute by:
+
 * Submitting pull requests for bug fixes or new features. For more detailed information on how to contribute, please refer to [this](https://www.google.com/url?q=https://github.com/nvidia-holoscan/holohub/blob/main/CONTRIBUTING.md\&sa=D\&source=docs\&ust=1722121019335970\&usg=AOvVaw1XzBLsoVDnaqHi74NpGCLq) link.
 * Participating in community discussions on the [Holoscan SDK forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all)

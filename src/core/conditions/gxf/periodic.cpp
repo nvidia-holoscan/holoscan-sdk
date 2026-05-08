@@ -15,12 +15,12 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/conditions/gxf/periodic.hpp"
+#include <holoscan/core/conditions/gxf/periodic.hpp>
 
 #include <string>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
 
 template <>
 struct YAML::convert<nvidia::gxf::PeriodicSchedulingPolicy> {

@@ -1,45 +1,27 @@
 diff --git a/cpp/CMakeLists.txt b/cpp/CMakeLists.txt
-index fb3f645..0d8cd48 100644
+index 1f2241d..f6885cb 100644
 --- a/cpp/CMakeLists.txt
 +++ b/cpp/CMakeLists.txt
-@@ -76,11 +76,11 @@ rapids_find_package(
+@@ -69,12 +69,18 @@ rapids_find_package(
  # add third party dependencies using CPM
  rapids_cpm_init()
  
 -include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
 -rapids_cpm_rapids_logger(BUILD_EXPORT_SET rmm-exports INSTALL_EXPORT_SET rmm-exports)
-+#include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
-+#rapids_cpm_rapids_logger(BUILD_EXPORT_SET rmm-exports INSTALL_EXPORT_SET rmm-exports)
++if(NOT RAPIDS_LOGGER_SOURCE_DIR)
++  include(${rapids-cmake-dir}/cpm/rapids_logger.cmake)
++  rapids_cpm_rapids_logger(BUILD_EXPORT_SET rmm-exports INSTALL_EXPORT_SET rmm-exports)
++endif()
  create_logger_macros(RMM "rmm::default_logger()" include/rmm)
  
 -include(cmake/thirdparty/get_cccl.cmake)
-+find_package(CCCL REQUIRED)
- include(cmake/thirdparty/get_nvtx.cmake)
+-include(cmake/thirdparty/get_nvtx.cmake)
++if(NOT CCCL_SOURCE_DIR)
++  include(cmake/thirdparty/get_cccl.cmake)
++endif()
++if(NOT nvtx3_SOURCE_DIR)
++  include(cmake/thirdparty/get_nvtx.cmake)
++endif()
  
  # ##################################################################################################
-@@ -173,10 +173,12 @@ include(GNUInstallDirs)
- include(CPack)
- 
- # install export targets
--install(TARGETS rmm EXPORT rmm-exports)
--install(DIRECTORY include/rmm/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rmm)
-+install(TARGETS rmm EXPORT rmm-exports
-+  COMPONENT rmm)
-+install(DIRECTORY include/rmm/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rmm COMPONENT rmm)
- install(FILES ${RMM_BINARY_DIR}/include/rmm/version_config.hpp
--        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rmm)
-+        DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/rmm
-+        COMPONENT rmm)
- 
- set(doc_string
-     [=[
-@@ -194,7 +196,8 @@ rapids_export(
-   EXPORT_SET rmm-exports
-   GLOBAL_TARGETS rmm
-   NAMESPACE rmm::
--  DOCUMENTATION doc_string)
-+  DOCUMENTATION doc_string
-+  COMPONENT rmm)
- 
- # ##################################################################################################
- # * build export -----------------------------------------------------------------------------------
+ # * library targets --------------------------------------------------------------------------------

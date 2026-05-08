@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,8 +30,14 @@
     holoscan.conditions.MultiMessageAvailableTimeoutCondition
     holoscan.conditions.PeriodicCondition
     holoscan.conditions.PeriodicConditionPolicy
+    holoscan.conditions.PublisherAvailableCondition
+    holoscan.conditions.SubscriberAvailableCondition
+
+``PendingExportCondition`` is only available when the SDK is built with
+``HOLOSCAN_BUILD_IPC=ON`` and ``HOLOSCAN_IPC_TRANSPORT_FASTDDS=ON``.
 """
 
+from . import _conditions
 from ._conditions import (
     AsynchronousCondition,
     AsynchronousEventState,
@@ -48,6 +54,8 @@ from ._conditions import (
     MultiMessageAvailableTimeoutCondition,
     PeriodicCondition,
     PeriodicConditionPolicy,
+    PublisherAvailableCondition,
+    SubscriberAvailableCondition,
 )
 
 __all__ = [
@@ -66,7 +74,13 @@ __all__ = [
     "MultiMessageAvailableTimeoutCondition",
     "PeriodicCondition",
     "PeriodicConditionPolicy",
+    "PublisherAvailableCondition",
+    "SubscriberAvailableCondition",
 ]
+
+if hasattr(_conditions, "PendingExportCondition"):
+    PendingExportCondition = _conditions.PendingExportCondition
+    __all__.append("PendingExportCondition")
 
 
 # expose the SamplingMode enum from MultiMessageAvailableCondition

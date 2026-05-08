@@ -40,7 +40,6 @@ FetchContent_Declare(
     GIT_REPOSITORY ${SPDLOG_GITHUB_REPOSITORY}
     GIT_TAG        ${SPDLOG_TAG}
     GIT_SHALLOW    TRUE
-    PATCH_COMMAND patch -p1 -i ${CMAKE_CURRENT_LIST_DIR}/patches/spdlog.patch
     UPDATE_DISCONNECTED TRUE
 )
 FetchContent_MakeAvailable(spdlog)

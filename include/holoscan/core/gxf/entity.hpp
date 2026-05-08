@@ -29,13 +29,13 @@
 // Since it has code that causes a warning as an error, we disable it here.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-#include "gxf/core/entity.hpp"
+#include <gxf/core/entity.hpp>
 #pragma GCC diagnostic pop
 
-#include "gxf/multimedia/video.hpp"
-#include "gxf/std/tensor.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/core/type_traits.hpp"
+#include <gxf/multimedia/video.hpp>
+#include <gxf/std/tensor.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/core/type_traits.hpp>
 
 // Forward declaration
 namespace holoscan {

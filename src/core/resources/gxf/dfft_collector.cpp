@@ -15,13 +15,13 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/dfft_collector.hpp"
+#include <holoscan/core/resources/gxf/dfft_collector.hpp>
 
 #include <utility>
 
-#include "gxf/std/codelet.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <gxf/std/codelet.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

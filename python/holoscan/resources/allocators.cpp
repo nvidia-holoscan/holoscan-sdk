@@ -18,6 +18,9 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <cuda.h>  // CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING
+#include <cuda_runtime.h>
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -25,22 +28,22 @@
 #include <variant>
 #include <vector>
 
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/component_traits.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/gxf_resource.hpp>
+#include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/block_memory_pool.hpp>
+#include <holoscan/core/resources/gxf/cuda_allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context_pool.hpp>
+#include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include <holoscan/core/resources/gxf/rmm_allocator.hpp>
+#include <holoscan/core/resources/gxf/stream_ordered_allocator.hpp>
+#include <holoscan/core/resources/gxf/unbounded_allocator.hpp>
+#include <holoscan/core/subgraph.hpp>
 #include "../core/component_util.hpp"
 #include "./allocators_pydoc.hpp"
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/component_traits.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/gxf_resource.hpp"
-#include "holoscan/core/resources/gxf/allocator.hpp"
-#include "holoscan/core/resources/gxf/block_memory_pool.hpp"
-#include "holoscan/core/resources/gxf/cuda_allocator.hpp"
-#include "holoscan/core/resources/gxf/cuda_green_context.hpp"
-#include "holoscan/core/resources/gxf/cuda_green_context_pool.hpp"
-#include "holoscan/core/resources/gxf/cuda_stream_pool.hpp"
-#include "holoscan/core/resources/gxf/rmm_allocator.hpp"
-#include "holoscan/core/resources/gxf/stream_ordered_allocator.hpp"
-#include "holoscan/core/resources/gxf/unbounded_allocator.hpp"
-#include "holoscan/core/subgraph.hpp"
 
 using std::string_literals::operator""s;  // NOLINT(misc-unused-using-decls)
 using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
@@ -115,17 +118,17 @@ class PyCudaGreenContextPool : public CudaGreenContextPool {
   // Define a constructor that fully initializes the object.
   explicit PyCudaGreenContextPool(
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph, int32_t dev_id = 0,
-      uint32_t flags = 0, uint32_t num_partitions = 0,
+      uint32_t flags = CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING, uint32_t num_partitions = 0,
       const std::vector<uint32_t>& sms_per_partition = {}, int32_t default_context_index = -1,
       uint32_t min_sm_size = 2,
       const std::string& name = resource_default_name_v<CudaGreenContextPool>)
       : CudaGreenContextPool(ArgList{
             Arg{"dev_id", dev_id},
-            Arg{"flags", flags},
+            Arg{"green_context_flags", flags},
             Arg{"num_partitions", num_partitions},
             Arg{"sms_per_partition", sms_per_partition},
-            Arg{"default_context_index", default_context_index},
-            Arg{"min_sm_size", min_sm_size},
+            Arg{"default_context", default_context_index},
+            Arg{"min_sm_count", min_sm_size},
         }) {
     init_component_base(this, fragment_or_subgraph, name, "resource");
   }
@@ -256,13 +259,23 @@ void init_allocators(py::module_& m) {
                     const std::string&>(),
            "fragment"_a,
            "dev_id"_a = 0,
-           "flags"_a = 0U,
+           // Cast the enum to uint32_t: pybind11's ``py::arg::operator=`` templates on the
+           // value type and cannot auto-convert the ``CUdev_SM_resource_split_flags_enum``
+           // enum into a Python object, which would fail module import with
+           // ``ImportError: arg(): could not convert default argument into a Python object``.
+           "flags"_a = static_cast<uint32_t>(CU_DEV_SM_RESOURCE_SPLIT_IGNORE_SM_COSCHEDULING),
            "num_partitions"_a = 0U,
            "sms_per_partition"_a = py::cast(std::vector<uint32_t>{}),
            "default_context_index"_a = -1,
            "min_sm_size"_a = 2U,
            "name"_a = std::string(resource_default_name_v<CudaGreenContextPool>),
-           doc::CudaGreenContextPool::doc_CudaGreenContextPool);
+           doc::CudaGreenContextPool::doc_CudaGreenContextPool)
+      .def_static("is_partitioning_supported",
+                  &CudaGreenContextPool::is_partitioning_supported,
+                  "dev_id"_a,
+                  "min_sm_count"_a,
+                  "sms_per_partition"_a,
+                  doc::CudaGreenContextPool::doc_is_partitioning_supported);
 
   py::class_<CudaGreenContext,
              PyCudaGreenContext,

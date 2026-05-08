@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/system_resources.hpp"
+#include <holoscan/core/resources/gxf/system_resources.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -25,12 +25,12 @@
 #include <vector>
 
 #include <gxf/std/resources.hpp>
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/gxf/entity_group.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/gxf/cpu_thread.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/gxf/entity_group.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/gxf/cpu_thread.hpp>
 
 namespace holoscan {
 

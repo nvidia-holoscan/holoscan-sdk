@@ -222,7 +222,7 @@ Holoscan provides a `IOSpec::or_combine_port_conditions` method which can be cal
 
 ## System Resources
 
-The components in this "system resources" section are related to system resources such as CPU Threads that can be used by operators. 
+The components in this "system resources" section are related to system resources such as CPU Threads that can be used by operators.
 
 ### ThreadPool
 
@@ -274,7 +274,6 @@ To ensure that messages from a specific operator maintain strict FIFO order in t
 
 If strict global FIFO ordering across all operators is required (based on enqueue timestamps), use the `Ordered` queue type instead, though this will result in lower throughput due to mutex contention.
 
-
 ## CUDA Green Context Resources
 
 CUDA Green Context is an advanced feature that enables partitioning of a GPU into multiple isolated execution contexts, each with its own set of Streaming Multiprocessors (SMs). This allows for fine-grained control over GPU resource allocation, enabling multiple operators or applications to share a single GPU without interfering with each other's workloads. Holoscan provides resource classes to manage and utilize CUDA Green Contexts.
@@ -300,6 +299,7 @@ This resource represents a single CUDA Green Context, which is a partition of th
 By assigning different `CudaGreenContext` resources to different operators, users can ensure that each operator runs in its own isolated GPU partition, improving performance isolation and resource management in complex applications.
 
 (cuda-stream-resources)=
+
 ## CUDA Stream and Event Types
 
 The following types are used internally by the Holoscan SDK's execution runtime for managing CUDA streams and events during operator execution. They originate from the underlying GXF (Graph Execution Framework) CUDA extension and may be encountered when working with GPU-accelerated operators. For guidance on handling CUDA streams in your operators, see the [CUDA Stream Handling](../holoscan_cuda_stream_handling.md) guide.
@@ -327,6 +327,7 @@ A synchronization component that must be placed in the pipeline after all CUDA o
 :::
 
 (multimedia-data-types)=
+
 ## Multimedia Data Types
 
 The following data types are used by Holoscan SDK operators that process audio and video data. They originate from the underlying GXF multimedia extension and define the buffer formats and metadata used when passing media data between operators.

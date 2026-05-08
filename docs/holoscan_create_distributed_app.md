@@ -21,7 +21,6 @@ Defining a single fragment ({cpp:class}`C++ <holoscan::Fragment>`/{py:class}`Pyt
 
 The application will then be defined by initializing fragments within the application's `compose()` method. The `add_flow()` method ({cpp:func}`C++ <holoscan::Application::add_flow>`/{py:func}`Python <holoscan.core.Application.add_flow>`) can be used to define the connections across fragments.
 
-
 `````{tab-set}
 ````{tab-item} C++
 - We define the `Fragment1` and `Fragment2` classes that inherit from the {cpp:class}`Fragment <holoscan::Fragment>` base class.
@@ -124,8 +123,8 @@ if __name__ == "__main__":
 
 Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.org/) library. In order to transmit data, it must be serialized into a binary form suitable for transmission over a network. For Tensors ({cpp:class}`C++ <holoscan::Tensor>`/{py:class}`Python <holoscan.core.Tensor>`), strings and various scalar and vector numeric types, serialization is already built in. For more details on concrete examples of how to extend the data serialization support to additional user-defined classes, see the separate page on {ref}`serialization<object-serialization>`.
 
-
 (building-and-running-a-distributed-application)=
+
 ## Building and running a Distributed Application
 
 `````{tab-set}
@@ -141,6 +140,7 @@ Python applications do not require building. See {ref}`building-and-running-your
 Running an application in a distributed setting requires launching the application binary on all nodes involved in the distributed application. A single node must be selected to act as the application driver. This is achieved by using the `--driver` command-line option. Worker nodes are initiated by launching the application with the `--worker` command-line option. It's possible for the driver node to also serve as a worker if both options are specified.
 
 The address of the driver node must be specified for each process (both the driver and worker(s)) to identify the appropriate network interface for communication. This can be done via the `--address` command-line option, which takes a value in the form of `[<IPv4/IPv6 address or hostname>][:<port>]` (e.g., `--address 192.168.50.68:10000`):
+
 - The driver's IP (or hostname) **MUST** be set for each process (driver and worker(s)) when running distributed applications on multiple nodes (default: `0.0.0.0`). It can be set without the port (e.g., `--address 192.168.50.68`).
 - In a single-node application, the driver's IP (or hostname) can be omitted, allowing any network interface (`0.0.0.0`) to be selected by the [UCX](https://openucx.readthedocs.io/en/master/faq.html#which-network-devices-does-ucx-use) library.
 - The port is always optional (default: `57777`). It can be set without the IP (e.g., `--address :10000`).
@@ -153,6 +153,7 @@ The `--fragments` command-line option is used in combination with `--worker` to 
 The `--config` command-line option can be used to designate a path to a configuration file to be used by the application.
 
 Below is an example launching a three fragment application named `my_app` on two separate nodes:
+
 - The application driver is launched at `192.168.50.68:10000` on the first node (A), with a worker running two fragments, "fragment1" and "fragment3."
 - On a separate node (B), the application launches a worker for "fragment2," which will connect to the driver at the address above.
 
@@ -177,6 +178,7 @@ python3 my_app.py --worker --address 192.168.50.68:10000 --fragments fragment2
 `````
 
 (ucx-network-selection)=
+
 `````{note}
 ### UCX Network Interface Selection
 
@@ -198,6 +200,7 @@ ucx_info -d | grep Device: | awk '{print $3}' | sort | uniq
 ip -o -4 addr show | awk '{print $2, $4}' # to show interface name and IP
 ```
 `````
+
 `````{warning}
 ### Known limitations
 
@@ -226,6 +229,7 @@ IGX devices come with two ethernet ports, noted as port #4 and #5 in the [NVIDIA
 
 Holoscan's distributed application feature makes use of the [GXF UCX Extension](https://docs.nvidia.com/metropolis/deepstream/dev-guide/graphtools-docs/docs/text/ExtensionsManual/UcxExtension.html). Its documentation may provide useful additional context into how data is transmitted between fragments.
 `````
+
 :::{tip}
 Given a CMake project, a pre-built executable, or a Python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
 :::
@@ -268,6 +272,7 @@ This environment variable is only used when the distributed application is launc
 - **HOLOSCAN_UCX_SOURCE_ADDRESS** : This environment variable specifies the local IP address (source) for the UCX connection. This variable is especially beneficial when a node has multiple network interfaces, enabling the user to determine which one should be utilized for establishing a UCX client (UcxTransmitter). If it is not explicitly specified, the default address is set to `0.0.0.0`, representing any available interface.
 
 #### UCX-specific environment variables
+
 Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.readthedocs.io) library, a point-to-point communication framework designed to utilize the best available hardware resources (shared memory, TCP, GPUDirect RDMA, etc). UCX has many parameters that can be controlled via environment variables. A few that are particularly relevant to Holoscan SDK distributed applications are listed below:
 
 - The [`UCX_TLS`](https://openucx.readthedocs.io/en/master/faq.html#which-transports-does-ucx-use) environment variable can be used to control which transport layers are enabled. By default, `UCX_TLS=all` and UCX will attempt to choose the optimal transport layer automatically.
@@ -304,7 +309,6 @@ A table of the types that have codecs pre-registered so that they can be seriali
 | std::shared_ptr&lt;T&gt;                     | T is any of the scalar, vector, unordered_map or :string types above                      |
 | tensor types                                 | holoscan::Tensor, nvidia::gxf::Tensor, nvidia::gxf::VideoBuffer, nvidia::gxf::AudioBuffer |
 | GXF-specific types                           | nvidia::gxf::TimeStamp, nvidia::gxf::EndOfStream                                          |
-
 
 :::{warning}
 If an operator transmitting both CPU and GPU tensors is to be used in distributed applications, the same output port cannot mix both GPU and CPU tensors. CPU and GPU tensor outputs should be placed on separate output ports. This is a limitation of the underlying UCX library being used for zero-copy tensor serialization between operators.
@@ -417,8 +421,8 @@ class MyOperator:
 
 ````
 `````
-:::
 
+:::
 
 ### Python
 
@@ -451,7 +455,6 @@ op_output.emit([1.0, 2.0, 3.0], "output", emitter_name="std::vector<float>")
 
 For the complete list of supported C++ types and their corresponding `emitter_name` strings, see the {ref}`C++ and Python type interoperability table <cpp-python-data-type-interop>`.
 
-
 ### C++
 
 For any additional C++ classes that need to be serialized for transmission between fragments in a distributed application, the user must create their own codec and register it with the Holoscan SDK framework. As a concrete example, suppose that we had the following simple Coordinate class that we wish to send between fragments.
@@ -467,9 +470,9 @@ struct Coordinate {
 To create a codec capable of serializing and deserializing this type, one should define a {cpp:class}`holoscan::codec` class for it as shown below.
 
 ```cpp
-#include "holoscan/core/codec_registry.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/expected.hpp"
+#include <holoscan/core/codec_registry.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/expected.hpp>
 
 
 namespace holoscan {
@@ -652,6 +655,7 @@ True
 Please see other examples in the [Application unit tests (TestApplication class)](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/unit/test_core.py#:~:text=TestApplication) in the Holoscan SDK repository.
 ````
 `````
+
 :::
 
 (adding-user-defined-cli-arguments)=
@@ -661,7 +665,6 @@ Please see other examples in the [Application unit tests (TestApplication class)
 When adding user-defined command line arguments to an application, one should avoid the use of any of the default command line argument names as `--help`, `--version`, `--config`, `--driver`, `--worker`, `--address`, `--worker-address`, `--fragments` as covered in the section on {ref}`running a distributed application<building-and-running-a-distributed-application>`. It is recommended to parse user-defined arguments from the `argv` (({cpp:func}`C++ <holoscan::Application::argv>`/{py:func}`Python <holoscan.core.Application.argv>`)) method/property of the application as covered in the note above, instead of using C++ `char* argv[]` or Python `sys.argv` directly. This way, only the new, user-defined arguments will need to be parsed.
 
 A concrete example of this for both C++ and Python can be seen in the existing [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) example where an application-defined boolean argument (`--gpu`) is specified in addition to the default set of application arguments.
-
 
 `````{tab-set}
 ````{tab-item} C++

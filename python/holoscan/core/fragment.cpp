@@ -27,21 +27,21 @@
 #include <string>
 #include <utility>
 
+#include <holoscan/core/application.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph.hpp>
+#include <holoscan/core/fragment.hpp>
+#include <holoscan/core/network_context.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resource.hpp>
+#include <holoscan/core/resources/gxf/system_resources.hpp>
+#include <holoscan/core/scheduler.hpp>
+#include <holoscan/core/subgraph.hpp>
+#include <holoscan/logger/logger.hpp>
 #include "application.hpp"
 #include "application_pydoc.hpp"
 #include "fragment_pydoc.hpp"
-#include "holoscan/core/application.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/executor.hpp"
-#include "holoscan/core/fragment.hpp"
-#include "holoscan/core/flow_graphs/flow_graph.hpp"
-#include "holoscan/core/network_context.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resource.hpp"
-#include "holoscan/core/resources/gxf/system_resources.hpp"
-#include "holoscan/core/scheduler.hpp"
-#include "holoscan/core/subgraph.hpp"
-#include "holoscan/logger/logger.hpp"
 #include "kwarg_handling.hpp"
 #include "operator.hpp"
 

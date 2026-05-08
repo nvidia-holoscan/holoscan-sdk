@@ -34,7 +34,7 @@ namespace holoscan {
 
 // Forward declarations
 template <typename NodeT = OperatorNodeType,
-typename EdgeDataElementT = OperatorEdgeDataElementType>
+          typename EdgeDataElementT = OperatorEdgeDataElementType>
 class FlowGraphImpl;
 
 // Graph type aliases

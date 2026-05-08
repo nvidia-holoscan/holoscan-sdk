@@ -22,7 +22,7 @@
 
 #include <unordered_map>
 
-#include "holoscan/core/io_spec.hpp"
+#include <holoscan/core/io_spec.hpp>
 
 namespace py = pybind11;
 

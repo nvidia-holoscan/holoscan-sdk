@@ -14,8 +14,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "holoscan/core/fragment.hpp"
+#include <holoscan/core/fragment.hpp>
 
+#include <cuda_runtime.h>
 #include <yaml-cpp/yaml.h>
 
 #include <fmt/format.h>
@@ -39,23 +40,23 @@
 #include <variant>
 #include <vector>
 
-#include "holoscan/core/arg.hpp"
-#include "holoscan/core/config.hpp"
-#include "holoscan/core/dataflow_tracker.hpp"
-#include "holoscan/core/errors.hpp"
-#include "holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp"
-#include "holoscan/core/executors/gxf/gxf_executor.hpp"
-#include "holoscan/core/gpu_resident_operator.hpp"
-#include "holoscan/core/flow_graphs/flow_graph_impl.hpp"
-#include "holoscan/core/gxf/entity_group.hpp"
-#include "holoscan/core/gxf/gxf_network_context.hpp"
-#include "holoscan/core/gxf/gxf_scheduler.hpp"
-#include "holoscan/core/metadata.hpp"
-#include "holoscan/core/network_contexts/gxf/pubsub_context.hpp"
-#include "holoscan/core/operator.hpp"
-#include "holoscan/core/resources/gxf/system_resources.hpp"
-#include "holoscan/core/schedulers/gxf/greedy_scheduler.hpp"
-#include "holoscan/core/subgraph.hpp"
+#include <holoscan/core/arg.hpp>
+#include <holoscan/core/config.hpp>
+#include <holoscan/core/dataflow_tracker.hpp>
+#include <holoscan/core/errors.hpp>
+#include <holoscan/core/executors/gpu_resident/gpu_resident_executor.hpp>
+#include <holoscan/core/executors/gxf/gxf_executor.hpp>
+#include <holoscan/core/flow_graphs/flow_graph_impl.hpp>
+#include <holoscan/core/gpu_resident_operator.hpp>
+#include <holoscan/core/gxf/entity_group.hpp>
+#include <holoscan/core/gxf/gxf_network_context.hpp>
+#include <holoscan/core/gxf/gxf_scheduler.hpp>
+#include <holoscan/core/metadata.hpp>
+#include <holoscan/core/network_contexts/gxf/pubsub_context.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/resources/gxf/system_resources.hpp>
+#include <holoscan/core/schedulers/gxf/greedy_scheduler.hpp>
+#include <holoscan/core/subgraph.hpp>
 
 using std::string_literals::operator""s;
 
@@ -744,17 +745,6 @@ void Fragment::add_flow(const std::shared_ptr<Operator>& upstream_op,
     new_input_labels.clear();
     // Do not use 'new_input_labels' after this point
 
-    // check the outdegree of the upstream operator's output port
-    // and do not allow more than one connection if is_gpu_resident_ is true
-    if (is_gpu_resident_ && graph().get_outdegree(upstream_op, output_label) > 0) {
-      auto err_msg = fmt::format(
-          "GPU resident connection is not allowed from one operator to multiple operators. Please "
-          "check the upstream operator ({})'s output port ({}).",
-          upstream_op->name(),
-          output_label);
-      throw RuntimeError(ErrorCode::kInvalidArgument, err_msg);
-    }
-
     // Check if the output port already has a connector type of kAsyncBuffer
     if (op_outputs[output_label]->connector_type() == IOSpec::ConnectorType::kAsyncBuffer) {
       auto err_msg = fmt::format(
@@ -1255,7 +1245,7 @@ std::shared_ptr<CudaGreenContextPool> Fragment::add_default_green_context_pool(
   auto green_context_pool =
       make_resource<CudaGreenContextPool>("fragment_default_green_context_pool",
                                           dev_id,
-                                          0,
+                                          cudaStreamNonBlocking,
                                           sms_per_partition.size(),
                                           sms_per_partition,
                                           default_context_index,

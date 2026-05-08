@@ -51,6 +51,9 @@ install(FILES CMakeLists.min.txt
 )
 
 # Testing
+# Note: the PIPESTATUS check after each pipe preserves exit code 77 (skip) from
+# the Python script while keeping the validator's exit code for real failures.
+# Without it, bash returns the validator's exit code, losing the skip signal.
 if(HOLOSCAN_BUILD_TESTS)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
   add_test(NAME EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST
@@ -59,7 +62,8 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'rx received default CUDA stream from port in' \
         --pass-pattern 'rx received message 10' \
-        --fail-pattern 'rx received message 11'"
+        --fail-pattern 'rx received message 11'; \
+      pstat=(\${PIPESTATUS[@]}); if [ \${pstat[0]} -eq 77 ]; then exit 77; fi; exit \${pstat[1]}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_DEFAULT_STREAM_TEST PROPERTIES
@@ -73,7 +77,8 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'rx received non-default CUDA stream from port in' \
         --pass-pattern 'rx received message 10' \
-        --fail-pattern 'rx received message 11'"
+        --fail-pattern 'rx received message 11'; \
+      pstat=(\${PIPESTATUS[@]}); if [ \${pstat[0]} -eq 77 ]; then exit 77; fi; exit \${pstat[1]}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_GREEN_CONTEXT_NON_DEFAULT_STREAM_TEST PROPERTIES
@@ -87,7 +92,8 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'rx received non-default CUDA stream from port in' \
         --pass-pattern 'rx received message 10' \
-        --fail-pattern 'rx received message 11'"
+        --fail-pattern 'rx received message 11'; \
+      pstat=(\${PIPESTATUS[@]}); if [ \${pstat[0]} -eq 77 ]; then exit 77; fi; exit \${pstat[1]}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_TEST PROPERTIES
@@ -101,7 +107,8 @@ if(HOLOSCAN_BUILD_TESTS)
       ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
         --pass-pattern 'rx received default CUDA stream from port in' \
         --pass-pattern 'rx received message 10' \
-        --fail-pattern 'rx received message 11'"
+        --fail-pattern 'rx received message 11'; \
+      pstat=(\${PIPESTATUS[@]}); if [ \${pstat[0]} -eq 77 ]; then exit 77; fi; exit \${pstat[1]}"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_CUDA_DEFAULT_GREEN_CONTEXT_POOL_DEFAULT_STREAM_TEST PROPERTIES

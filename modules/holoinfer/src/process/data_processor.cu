@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -551,21 +551,24 @@ InferStatus DataProcessor::prepareCustomKernel() {
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, NVRTC compilation failed.");
   }
 
-  size_t ptxSize;
-  nvResult = nvrtcGetPTXSize(prog, &ptxSize);
+  // NVRTC must target a real SM (sm_<m><n>, set above) to emit CUBIN.  We
+  // load CUBIN via cuModuleLoadData below to bypass the driver's PTX->SASS
+  // JIT, which is rejected on R580.00 when the NVRTC toolchain is newer than
+  // the driver (CUDA_ERROR_UNSUPPORTED_PTX_VERSION).
+  size_t cubinSize;
+  nvResult = nvrtcGetCUBINSize(prog, &cubinSize);
   if (nvResult != NVRTC_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Error in NVRTC get ptx size {}", nvrtcGetErrorString(nvResult));
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, NVRTC get ptx size failed.");
+    HOLOSCAN_LOG_ERROR("Error in NVRTC get cubin size {}", nvrtcGetErrorString(nvResult));
+    return InferStatus(holoinfer_code::H_ERROR, "Data processor, NVRTC get cubin size failed.");
   }
 
-  HOLOSCAN_LOG_DEBUG("PTX size: {}", ptxSize);
-  std::vector<char> ptx(ptxSize);
-  nvResult = nvrtcGetPTX(prog, ptx.data());
+  HOLOSCAN_LOG_DEBUG("CUBIN size: {}", cubinSize);
+  std::vector<char> cubin(cubinSize);
+  nvResult = nvrtcGetCUBIN(prog, cubin.data());
   if (nvResult != NVRTC_SUCCESS) {
-    HOLOSCAN_LOG_ERROR("Error in NVRTC ptx data {}", nvrtcGetErrorString(nvResult));
-    return InferStatus(holoinfer_code::H_ERROR, "Data processor, NVRTC get ptx failed.");
+    HOLOSCAN_LOG_ERROR("Error in NVRTC cubin data {}", nvrtcGetErrorString(nvResult));
+    return InferStatus(holoinfer_code::H_ERROR, "Data processor, NVRTC get cubin failed.");
   }
-  HOLOSCAN_LOG_DEBUG("PTX file: {}", ptx.data());
   HOLOSCAN_LOG_INFO("NVRTC kernel compilation succeeded.");
 
   nvResult = nvrtcDestroyProgram(&prog);
@@ -600,7 +603,7 @@ InferStatus DataProcessor::prepareCustomKernel() {
     return InferStatus(holoinfer_code::H_ERROR, "Data processor, Cuda context push failed.");
   }
 
-  result = cuModuleLoadData(&module_, ptx.data());
+  result = cuModuleLoadData(&module_, cubin.data());
   if (result != CUDA_SUCCESS) {
     const char* error_string;
     cuGetErrorString(result, &error_string);

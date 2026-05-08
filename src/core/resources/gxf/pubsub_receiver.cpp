@@ -15,14 +15,14 @@
  * limitations under the License.
  */
 
-#include "holoscan/core/resources/gxf/pubsub_receiver.hpp"
+#include <holoscan/core/resources/gxf/pubsub_receiver.hpp>
 
 #include <string>
 #include <vector>
 
-#include "holoscan/core/component_spec.hpp"
-#include "holoscan/core/gxf/gxf_utils.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/component_spec.hpp>
+#include <holoscan/core/gxf/gxf_utils.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
 

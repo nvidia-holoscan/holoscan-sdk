@@ -26,9 +26,9 @@ add_executable(activation_map
 
 target_link_libraries(activation_map
   PRIVATE
+  CUDA::cuda_driver
   holoscan::core
   holoscan::ops::inference
-  CUDA::cuda_driver
 )
 
 # Testing

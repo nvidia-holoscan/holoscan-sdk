@@ -29,11 +29,11 @@
 #include <utility>
 #include <vector>
 
+#include <gxf/std/dlpack_utils.hpp>  // DLDeviceFromPointer, DLDataTypeFromTypeString
+#include <holoscan/core/app_driver.hpp>
+#include <holoscan/core/domain/tensor.hpp>
+#include <holoscan/utils/cuda_macros.hpp>
 #include "dl_converter.hpp"
-#include "gxf/std/dlpack_utils.hpp"  // DLDeviceFromPointer, DLDataTypeFromTypeString
-#include "holoscan/core/app_driver.hpp"
-#include "holoscan/core/domain/tensor.hpp"
-#include "holoscan/utils/cuda_macros.hpp"
 #include "kwarg_handling.hpp"
 #include "tensor.hpp"
 #include "tensor_pydoc.hpp"

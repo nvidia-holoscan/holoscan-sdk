@@ -15,17 +15,17 @@
  * limitations under the License.
  */
 
-#include "holoscan/operators/bayer_demosaic_gpu_resident/bayer_demosaic_gpu_resident.hpp"
+#include <holoscan/operators/bayer_demosaic_gpu_resident/bayer_demosaic_gpu_resident.hpp>
 
 #include <cuda_runtime.h>
 
 #include <stdexcept>
 #include <string>
 
-#include "holoscan/core/execution_context.hpp"
-#include "holoscan/core/io_context.hpp"
-#include "holoscan/core/operator_spec.hpp"
-#include "holoscan/logger/logger.hpp"
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/io_context.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/logger/logger.hpp>
 
 namespace holoscan::ops {
 

@@ -31,6 +31,7 @@
 #include <vector>
 
 #include <common/type_name.hpp>
+#include <holoscan/profiler/profiler.hpp>
 #include "./arg.hpp"
 #include "./cuda_object_handler.hpp"
 #include "./data_logger.hpp"
@@ -45,7 +46,6 @@
 #include "./operator.hpp"
 #include "./parameter.hpp"
 #include "./type_traits.hpp"
-#include "holoscan/profiler/profiler.hpp"
 
 namespace holoscan {
 // Forward declaration to break circular dependency with execution_context.hpp
@@ -335,12 +335,56 @@ class InputContext {
           return make_unexpected<holoscan::RuntimeError>(create_receive_error(
               input_name.c_str(), "Input parameter is not of type 'std::vector<IOSpec*>'"));
         }
-        if (!fill_input_vector_from_params(
-                param_wrapper, input_name.c_str(), input_vector, in_type, error_message)) {
-          return make_unexpected<holoscan::RuntimeError>(
-              create_receive_error(input_name.c_str(), error_message.c_str()));
+        const auto param_count = any_size_param_count(param_wrapper);
+        const auto input_it = inputs_.find(input_name);
+        const bool has_base_input = input_it != inputs_.end();
+        const bool base_is_any_size = has_base_input && input_it->second->queue_size() ==
+                                                            static_cast<int64_t>(IOSpec::kAnySize);
+        const bool base_has_connector =
+            has_base_input && input_it->second && (input_it->second->connector() != nullptr);
+        HOLOSCAN_LOG_TRACE(
+            "InputContext::receive vector path op='{}' port='{}': parameter-backed path "
+            "(param_count={}, base_input_present={}, base_is_any_size={}, "
+            "base_has_connector={})",
+            op_->name(),
+            input_name,
+            param_count.has_value() ? std::to_string(param_count.value()) : std::string("n/a"),
+            has_base_input,
+            base_is_any_size,
+            base_has_connector);
+        if (should_fallback_to_direct_any_size_input(param_wrapper, input_name)) {
+          HOLOSCAN_LOG_TRACE(
+              "InputContext::receive vector path op='{}' port='{}': falling back to direct "
+              "base-input path because parameter-backed kAnySize receiver list is empty",
+              op_->name(),
+              input_name);
+          if (!fill_input_vector_from_inputs(
+                  input_name.c_str(), input_vector, in_type, error_message)) {
+            return make_unexpected<holoscan::RuntimeError>(
+                create_receive_error(input_name.c_str(), error_message.c_str()));
+          }
+        } else {
+          if (!fill_input_vector_from_params(
+                  param_wrapper, input_name.c_str(), input_vector, in_type, error_message)) {
+            return make_unexpected<holoscan::RuntimeError>(
+                create_receive_error(input_name.c_str(), error_message.c_str()));
+          }
         }
       } else {
+        const auto input_it = inputs_.find(input_name);
+        const bool has_base_input = input_it != inputs_.end();
+        const bool base_is_any_size = has_base_input && input_it->second->queue_size() ==
+                                                            static_cast<int64_t>(IOSpec::kAnySize);
+        const bool base_has_connector =
+            has_base_input && input_it->second && (input_it->second->connector() != nullptr);
+        HOLOSCAN_LOG_TRACE(
+            "InputContext::receive vector path op='{}' port='{}': direct input path "
+            "(base_input_present={}, base_is_any_size={}, base_has_connector={})",
+            op_->name(),
+            input_name,
+            has_base_input,
+            base_is_any_size,
+            base_has_connector);
         if (!fill_input_vector_from_inputs(
                 input_name.c_str(), input_vector, in_type, error_message)) {
           return make_unexpected<holoscan::RuntimeError>(
@@ -454,7 +498,8 @@ class InputContext {
   virtual std::any receive_impl([[maybe_unused]] const char* name = nullptr,
                                 [[maybe_unused]] InputType in_type = InputType::kAny,
                                 [[maybe_unused]] bool no_error_message = false,
-                                [[maybe_unused]] bool omit_data_logging = false) {
+                                [[maybe_unused]] bool omit_data_logging = false,
+                                [[maybe_unused]] bool allow_any_size = false) {
     HOLOSCAN_LOG_ERROR("receive_impl not implemented in base InputContext");
     return nullptr;
   }
@@ -463,6 +508,32 @@ class InputContext {
   inline bool is_valid_param_type(const ArgType& arg_type) {
     return (arg_type.element_type() == ArgElementType::kIOSpec) &&
            (arg_type.container_type() == ArgContainerType::kVector);
+  }
+
+  inline std::optional<size_t> any_size_param_count(ParameterWrapper& param_wrapper) {
+    try {
+      auto& param = *std::any_cast<Parameter<std::vector<IOSpec*>>*>(param_wrapper.value());
+      return param.get().size();
+    } catch (const std::bad_any_cast&) {
+      return std::nullopt;
+    }
+  }
+
+  inline bool should_fallback_to_direct_any_size_input(ParameterWrapper& param_wrapper,
+                                                       const std::string& input_name) {
+    const auto param_count = any_size_param_count(param_wrapper);
+    if (!param_count.has_value() || param_count.value() != 0) {
+      return false;
+    }
+
+    const auto input_it = inputs_.find(input_name);
+    if (input_it == inputs_.end() || !input_it->second) {
+      return false;
+    }
+
+    const auto& input_spec = input_it->second;
+    return input_spec->queue_size() == static_cast<int64_t>(IOSpec::kAnySize) &&
+           input_spec->connector() != nullptr;
   }
 
   template <typename DataT>
@@ -475,7 +546,7 @@ class InputContext {
 
     for (int index = 0; index < num_inputs; ++index) {
       std::string port_name = fmt::format("{}:{}", name, index);
-      auto value = receive_impl(port_name.c_str(), in_type, true);
+      auto value = receive_impl(port_name.c_str(), in_type, true, false, true);
       const std::type_info& value_type = value.type();
 
       if (value_type == typeid(kNoReceivedMessage)) {
@@ -504,7 +575,7 @@ class InputContext {
 
     int index = 0;
     while (true) {
-      auto value = receive_impl(name, in_type);
+      auto value = receive_impl(name, in_type, false, false, true);
       const std::type_info& value_type = value.type();
 
       if (value_type == typeid(kNoReceivedMessage)) {
@@ -714,7 +785,7 @@ class InputContext {
     if constexpr (is_one_of_derived_v<DataT, holoscan::TensorMap>) {
       omit_data_logging = true;
     }
-    auto value = receive_impl(name, in_type, false, omit_data_logging);
+    auto value = receive_impl(name, in_type, false, omit_data_logging, false);
     const std::type_info& value_type = value.type();
 
     if (value_type == typeid(NoMessageType)) {

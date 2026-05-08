@@ -29,16 +29,16 @@
 #include <utility>
 #include <vector>
 
+#include <holoscan/core/resources/gxf/cuda_green_context_pool.hpp>
 #include <holoscan/holoscan.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
 #include "test_kernel.cu.hpp"
 
 constexpr int kMinCudaDriverVersion = 12040;
-constexpr const char* kHsdkFaqUrl =
-    "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
+constexpr const char* kHsdkFaqUrl = "https://docs.nvidia.com/holoscan/sdk-user-guide/hsdk_faq.html";
 
 static std::optional<std::vector<uint32_t>> green_context_partitions_for_current_arch() {
-  struct utsname os_info {};
+  struct utsname os_info{};
   if (uname(&os_info) != 0) {
     return std::nullopt;
   }
@@ -48,8 +48,8 @@ static std::optional<std::vector<uint32_t>> green_context_partitions_for_current
   }
   if (arch == "aarch64" || arch == "arm64") {
     // For reference, Jetson Orin AGX has 16 SMs,
-    //                Jetson Orin Nano has 8 SMs
-    //                Jetson Thor has 22 SMs
+    //                Jetson Orin Nano has 8 SMs,
+    //                Jetson AGX Thor has 20 SMs (Blackwell sm_110).
     return std::vector<uint32_t>{4, 4};
   }
   return std::nullopt;
@@ -86,6 +86,83 @@ static std::optional<int> detect_device_multiprocessor_count() {
     return std::nullopt;
   }
   return sm_count;
+}
+
+// Returns the compute capability major version for CUDA device 0 (same meaning as
+// cudaDeviceProp::major), or nullopt on failure.
+static std::optional<int> detect_device_compute_capability_major() {
+  int major = 0;
+  if (cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, 0) != cudaSuccess) {
+    return std::nullopt;
+  }
+  return major;
+}
+
+// Typical minimum SM block size for Green Context pools by architecture. The sample uses this
+// for Fragment::add_default_green_context_pool(..., min_sm_size) together with sms_per_partition
+// so the pool matches the driver's SM grouping.
+//
+// \param major Compute capability major: 7 Volta/Turing, 8 Ampere, 9 Hopper, 10+ Blackwell+.
+// \return Value suitable for Holoscan min_sm_size (GXF min_sm_count). Unknown majors default to 2.
+static uint32_t green_context_min_sm_size_for_device_major(int major) {
+  if (major == 7) {
+    return 2;
+  }
+  if (major == 8 || major == 9) {
+    return 4;
+  }
+  if (major >= 10) {
+    return 8;
+  }
+  return 2;
+}
+
+// Pick the largest min_sm_size for which the CUDA driver accepts ``partitions``.
+//
+// The architecture-default heuristic above is intentionally coarse and may not match every GPU's
+// actual SM-grouping granularity.  For example, on IGX Thor (compute capability 11.x,
+// sm_count=20) the Blackwell-class default of 8 is too large for the example's aarch64
+// partitioning of {4, 4} even though the driver itself accepts the smaller min_sm_size=4
+// grouping just fine.
+//
+// This helper probes candidate values starting at the architecture default and halving down to
+// 2, returning the largest value for which CudaGreenContextPool::is_partitioning_supported
+// succeeds.  An arithmetic gate skips candidates that would produce a degenerate per-partition
+// resource count of 0.  Returns std::nullopt when no candidate works.
+static std::optional<uint32_t> green_context_resolve_min_sm_size(
+    int32_t dev_id, std::optional<int> cc_major, const std::vector<uint32_t>& partitions) {
+  auto sm_count = detect_device_multiprocessor_count();
+  if (!sm_count.has_value()) {
+    return std::nullopt;
+  }
+  uint32_t total = 0;
+  for (auto p : partitions) {
+    total += p;
+  }
+  if (static_cast<int>(total) > sm_count.value()) {
+    return std::nullopt;
+  }
+
+  uint32_t starting =
+      cc_major.has_value() ? green_context_min_sm_size_for_device_major(cc_major.value()) : 2;
+  for (uint32_t candidate = starting; candidate >= 2; candidate /= 2) {
+    bool arithmetic_ok = true;
+    for (auto p : partitions) {
+      if (p < candidate || (p % candidate) != 0) {
+        arithmetic_ok = false;
+        break;
+      }
+    }
+    uint32_t remainder = static_cast<uint32_t>(sm_count.value()) - total;
+    if (arithmetic_ok && remainder != 0 && (remainder % candidate) != 0) {
+      arithmetic_ok = false;
+    }
+    if (arithmetic_ok &&
+        holoscan::CudaGreenContextPool::is_partitioning_supported(dev_id, candidate, partitions)) {
+      return candidate;
+    }
+  }
+  return std::nullopt;
 }
 
 namespace holoscan::ops {
@@ -187,6 +264,10 @@ class PingRxOp : public Operator {
 
 class SampleCudaStreamPoolApp : public holoscan::Application {
  public:
+  // Override of the resolved Green Context min_sm_size, set by main() via
+  // set_green_context_min_sm_size(). When unset, compose() probes for a value the driver accepts.
+  void set_green_context_min_sm_size(uint32_t min_sm_size) { min_sm_size_override_ = min_sm_size; }
+
   void compose() override {
     using namespace holoscan;
 
@@ -198,8 +279,21 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
 
     // Create a green context pool which will be used as the default green context pool for the
     // current fragment
+    uint32_t min_sm_size = 0;
+    if (min_sm_size_override_.has_value()) {
+      min_sm_size = min_sm_size_override_.value();
+    } else {
+      const auto cc_major = detect_device_compute_capability_major();
+      auto resolved = green_context_resolve_min_sm_size(0, cc_major, partitions.value());
+      if (!resolved.has_value()) {
+        throw std::runtime_error(
+            "Green Context partitioning is not supported on this GPU; the application launcher "
+            "should have skipped before reaching compose()");
+      }
+      min_sm_size = resolved.value();
+    }
     const auto cuda_green_context_pool =
-        add_default_green_context_pool(0, std::move(partitions.value()));
+        add_default_green_context_pool(0, std::move(partitions.value()), -1, min_sm_size);
 
     // Use green context 0 from the provided green context pool
     const auto cuda_green_context1 =
@@ -256,6 +350,9 @@ class SampleCudaStreamPoolApp : public holoscan::Application {
     pool4->add(rx4, true);
     add_flow(tx4, rx4);
   }
+
+ private:
+  std::optional<uint32_t> min_sm_size_override_{};
 };
 
 // CTest skip return code when Green Context is not available.
@@ -266,8 +363,8 @@ int main() {
     auto version = detect_cuda_driver_version();
     std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
               << kMinCudaDriverVersion << ", detected: "
-              << (version.has_value() ? std::to_string(version.value()) : "unknown")
-              << "). See " << kHsdkFaqUrl << std::endl;
+              << (version.has_value() ? std::to_string(version.value()) : "unknown") << "). See "
+              << kHsdkFaqUrl << std::endl;
     return kSkipReturnCode;
   }
 
@@ -283,12 +380,27 @@ int main() {
   if (!sm_count.has_value() || sm_count.value() < required_sm_count) {
     std::cerr << "Green Context requires at least " << required_sm_count
               << " SMs for this sample's partitioning (detected: "
-              << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown")
-              << "). See " << kHsdkFaqUrl << std::endl;
+              << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown") << "). See "
+              << kHsdkFaqUrl << std::endl;
+    return kSkipReturnCode;
+  }
+
+  auto cc_major = detect_device_compute_capability_major();
+  auto resolved_min_sm = green_context_resolve_min_sm_size(0, cc_major, partitions.value());
+  if (!resolved_min_sm.has_value()) {
+    std::cerr << "Green Context partitioning is not supported on this GPU (sm_count="
+              << sm_count.value() << ", partitions=[";
+    for (size_t i = 0; i < partitions.value().size(); ++i) {
+      if (i > 0)
+        std::cerr << ", ";
+      std::cerr << partitions.value()[i];
+    }
+    std::cerr << "]). See " << kHsdkFaqUrl << std::endl;
     return kSkipReturnCode;
   }
 
   auto app = holoscan::make_application<SampleCudaStreamPoolApp>();
+  app->set_green_context_min_sm_size(resolved_min_sm.value());
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
       "event-based", holoscan::Arg("worker_thread_number", static_cast<int64_t>(4))));
