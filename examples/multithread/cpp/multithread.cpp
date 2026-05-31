@@ -85,9 +85,6 @@ class DelayOp : public Operator {
       HOLOSCAN_LOG_INFO("{}: sending new value ({})", name(), new_value);
     }
 
-    // Debug logging for data logger issue
-    HOLOSCAN_LOG_INFO("{}: About to emit int {} and string '{}'", name(), new_value, nm);
-
     op_output.emit(new_value, "out_val");
     op_output.emit(std::move(nm), "out_name");
   };

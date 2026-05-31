@@ -19,9 +19,27 @@
 #include <gtest/gtest.h>
 #include <matx.h>
 
+#include <iostream>
 #include <vector>
 
 #include <holoscan/core/domain/tensor.hpp>
+
+namespace {
+
+const char* dl_device_type_name(int device_type) {
+  switch (device_type) {
+    case kDLCUDA:
+      return "kDLCUDA";
+    case kDLCUDAHost:
+      return "kDLCUDAHost";
+    case kDLCUDAManaged:
+      return "kDLCUDAManaged";
+    default:
+      return "unknown";
+  }
+}
+
+}  // namespace
 
 TEST(MatXInterop, MatxTensorToHoloscanTensorViaDlpack) {
   // Create a MatX tensor on the GPU and populate it.
@@ -36,8 +54,26 @@ TEST(MatXInterop, MatxTensorToHoloscanTensorViaDlpack) {
   ASSERT_EQ(shape.size(), 1UL);
   EXPECT_EQ(shape[0], 10);
 
-  // Validate DLPack metadata is consistent with the MatX tensor.
-  EXPECT_EQ(tensor.device().device_type, kDLCUDA);
+  // Validate DLPack metadata is consistent with CUDA-accessible MatX tensor memory.
+  const auto device = tensor.device();
+  const auto device_type = device.device_type;
+  cudaDeviceProp device_prop;
+  auto result = cudaGetDeviceProperties(&device_prop, device.device_id);
+  ASSERT_EQ(result, cudaSuccess);
+  const bool is_integrated_gpu = device_prop.integrated != 0;
+  std::cout << "Detected DLPack device type: " << dl_device_type_name(device_type) << " ("
+            << static_cast<int>(device_type) << "), CUDA device " << device.device_id
+            << ", integrated=" << is_integrated_gpu << std::endl;
+
+  if (is_integrated_gpu) {
+    EXPECT_TRUE(device_type == kDLCUDAHost || device_type == kDLCUDAManaged)
+        << "Expected CUDA host or managed DLPack memory on integrated GPU, got "
+        << dl_device_type_name(device_type) << " (" << static_cast<int>(device_type) << ")";
+  } else {
+    EXPECT_EQ(device_type, kDLCUDA)
+        << "Expected CUDA device DLPack memory on discrete GPU, got "
+        << dl_device_type_name(device_type) << " (" << static_cast<int>(device_type) << ")";
+  }
   EXPECT_EQ(tensor.dtype().code, kDLFloat);
   EXPECT_EQ(tensor.dtype().bits, 32);
   EXPECT_EQ(tensor.itemsize(), 4);
@@ -46,8 +82,22 @@ TEST(MatXInterop, MatxTensorToHoloscanTensorViaDlpack) {
 
   // Validate data can be accessed (and values are as expected).
   std::vector<float> host(10);
-  auto result =
-      cudaMemcpy(host.data(), tensor.data(), host.size() * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaMemcpyKind copy_kind;
+  switch (device_type) {
+    case kDLCUDAHost:
+      copy_kind = cudaMemcpyHostToHost;
+      break;
+    case kDLCUDAManaged:
+      copy_kind = cudaMemcpyDefault;
+      break;
+    case kDLCUDA:
+      copy_kind = cudaMemcpyDeviceToHost;
+      break;
+    default:
+      FAIL() << "Unexpected DLPack device type for memory copy: " << static_cast<int>(device_type);
+      return;
+  }
+  result = cudaMemcpy(host.data(), tensor.data(), host.size() * sizeof(float), copy_kind);
   ASSERT_EQ(result, cudaSuccess);
 
   for (int i = 0; i < 10; ++i) {

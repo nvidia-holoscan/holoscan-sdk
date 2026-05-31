@@ -29,12 +29,13 @@ We provide utilities to work around the second conflict:
 
 The example below shows the ping distributed application between the iGPU and dGPU using Holoscan containers:
 
+<!-- holoscan-version-sync:begin -->
 ```bash
 COMMON_DOCKER_FLAGS="--rm -i --init --net=host
 --runtime=nvidia -e NVIDIA_DRIVER_CAPABILITIES=all
 --cap-add CAP_SYS_PTRACE --ipc=host --ulimit memlock=-1 --ulimit stack=67108864
 "
-HOLOSCAN_VERSION=4.2.0
+HOLOSCAN_VERSION=4.3.0
 HOLOSCAN_IMG="nvcr.io/nvidia/clara-holoscan/holoscan:v$HOLOSCAN_VERSION"
 HOLOSCAN_DGPU_IMG="$HOLOSCAN_IMG-dgpu"
 HOLOSCAN_IGPU_IMG="$HOLOSCAN_IMG-igpu"
@@ -58,6 +59,7 @@ docker run \
   $HOLOSCAN_IGPU_IMG \
   bash -c "./examples/ping_distributed/cpp/ping_distributed --gpu --worker"
 ```
+<!-- holoscan-version-sync:end -->
 
 ````
 ````{tab-item} HoloPack 1.2+

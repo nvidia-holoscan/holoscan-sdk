@@ -844,7 +844,7 @@ class PoseTree {
    * @param callback Callback function to register.
    * @return Unique ID for the callback on success, error on failure.
    */
-  expected_t<uid_t> add_create_frame_callback(CreateFrameCallback callback);
+  expected_t<uid_t> add_create_frame_callback(const CreateFrameCallback& callback);
 
   /**
    * @brief Deregister a callback function for frame creation.
@@ -860,7 +860,7 @@ class PoseTree {
    * @param callback Callback function to register.
    * @return Unique ID for the callback on success, error on failure.
    */
-  expected_t<uid_t> add_set_edge_callback(SetEdgeCallback callback);
+  expected_t<uid_t> add_set_edge_callback(const SetEdgeCallback& callback);
 
   /**
    * @brief Deregister a callback function for edge setting.

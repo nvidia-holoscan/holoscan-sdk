@@ -28,12 +28,18 @@ gxf_result_t HoloscanAsyncBufferReceiver::receive_abi(gxf_uid_t* uid) {
 
   if (tracking_) {
     if (code == GXF_SUCCESS) {
+      if (uid == nullptr) {
+        HOLOSCAN_LOG_ERROR("Received message with null UID pointer");
+        deannotate_message(nullptr, context(), op(), name());
+        return GXF_FAILURE;
+      }
+
       // Receive succeeded - deannotate the message
       // last argument tells message is old or not
+      const bool is_old_message = (*uid == last_received_uid_);
       HOLOSCAN_LOG_DEBUG("Receiving message with UID: {}", *uid);
-      deannotate_message(
-          uid, context(), op(), name(), (uid ? (*uid == last_received_uid_) : false));
-      last_received_uid_ = uid ? *uid : last_received_uid_;
+      deannotate_message(uid, context(), op(), name(), is_old_message);
+      last_received_uid_ = *uid;
     } else {
       // Receive failed. Clear any stale input_message_label.
       deannotate_message(nullptr, context(), op(), name());

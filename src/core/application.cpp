@@ -350,15 +350,15 @@ std::shared_ptr<Resource> clone_scheduler_clock_for_fragment(
     return nullptr;
   }
 
-  const std::string cloned_name = fmt::format("{}__{}", scheduler_name, clock_resource->name());
+  std::string cloned_name = fmt::format("{}__{}", scheduler_name, clock_resource->name());
   std::shared_ptr<Resource> cloned_clock;
 
   if (std::dynamic_pointer_cast<RealtimeClock>(clock_resource)) {
-    cloned_clock = fragment->make_resource<RealtimeClock>(cloned_name);
+    cloned_clock = fragment->make_resource<RealtimeClock>(std::move(cloned_name));
   } else if (std::dynamic_pointer_cast<ManualClock>(clock_resource)) {
-    cloned_clock = fragment->make_resource<ManualClock>(cloned_name);
+    cloned_clock = fragment->make_resource<ManualClock>(std::move(cloned_name));
   } else if (std::dynamic_pointer_cast<SyntheticClock>(clock_resource)) {
-    cloned_clock = fragment->make_resource<SyntheticClock>(cloned_name);
+    cloned_clock = fragment->make_resource<SyntheticClock>(std::move(cloned_name));
   } else {
     HOLOSCAN_LOG_WARN(
         "Fragment '{}': Unsupported clock type '{}' for scheduler '{}'; using default clock",

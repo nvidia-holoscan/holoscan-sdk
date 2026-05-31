@@ -759,7 +759,7 @@ class Fragment : public FragmentServiceProvider {
    * @return The shared pointer to the green context pool resource.
    */
   std::shared_ptr<CudaGreenContextPool> add_default_green_context_pool(
-      int32_t dev_id, std::vector<uint32_t> sms_per_partition = {},
+      int32_t dev_id, const std::vector<uint32_t>& sms_per_partition = std::vector<uint32_t>{},
       int32_t default_context_index = -1, uint32_t min_sm_size = 2);
 
   /**
@@ -858,16 +858,6 @@ class Fragment : public FragmentServiceProvider {
         throw std::runtime_error(err_msg);
       }
       id = resource->name();
-
-      if (fragment_resource_services_by_name_.find(std::string(id)) !=
-          fragment_resource_services_by_name_.end()) {
-        auto err_msg = fmt::format(
-            "Resource service '{}' already exists in the fragment. Please specify a unique "
-            "name when creating a Resource instance.",
-            id);
-        HOLOSCAN_LOG_ERROR(err_msg);
-        throw std::runtime_error(err_msg);
-      }
     }
 
     // If the service is a resource, we need to create a new DefaultFragmentService object with the
@@ -888,6 +878,16 @@ class Fragment : public FragmentServiceProvider {
     ServiceKey key{service_type, std::string(id)};
 
     if (resource) {
+      if (fragment_resource_services_by_name_.find(std::string(id)) !=
+          fragment_resource_services_by_name_.end()) {
+        auto err_msg = fmt::format(
+            "Resource service '{}' already exists in the fragment. Please specify a unique "
+            "name when creating a Resource instance.",
+            id);
+        HOLOSCAN_LOG_ERROR(err_msg);
+        throw std::runtime_error(err_msg);
+      }
+
       fragment_resource_services_by_name_[std::string(id)] = resource;
       // We use 'insert_or_assign' here since ServiceKey contains a std::type_index member which
       // cannot be default-constructed
@@ -1845,7 +1845,8 @@ std::shared_ptr<ResourceT> Subgraph::make_resource(StringT name, ArgsT&&... args
 
   // Use qualified name to avoid conflicts between Subgraph instances
   auto qualified_name = get_qualified_name(std::string(name), "resource");
-  return fragment_->make_resource<ResourceT>(qualified_name, std::forward<ArgsT>(args)...);
+  return fragment_->make_resource<ResourceT>(std::move(qualified_name),
+                                             std::forward<ArgsT>(args)...);
 }
 
 template <typename ResourceT, typename... ArgsT>

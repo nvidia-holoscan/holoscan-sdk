@@ -896,7 +896,15 @@ TorchInferImpl::TorchInferImpl(const std::string& model_file_path, bool cuda_fla
       }
       if (!is_torch_cuda_sm_compatible(device_id_)) {
         cudaDeviceProp prop;
-        cudaGetDeviceProperties(&prop, device_id_);
+        auto status = cudaGetDeviceProperties(&prop, device_id_);
+        if (status != cudaSuccess) {
+          std::string error_msg =
+              fmt::format("Torch core: Failed to get CUDA device properties for device {}: {}",
+                          device_id_,
+                          cudaGetErrorString(status));
+          HOLOSCAN_LOG_ERROR("{}", error_msg);
+          throw std::runtime_error(error_msg);
+        }
         std::string error_msg = fmt::format(
             "Torch core: GPU sm_{}{} ({}) is not compatible with this PyTorch build. "
             "The PyTorch library was not compiled with CUDA kernels for this GPU architecture. "

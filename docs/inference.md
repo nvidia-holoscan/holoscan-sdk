@@ -26,7 +26,7 @@ Required parameters and related features available with the Holoscan Inference M
     - If value is `false`, it means the data transmission from the inference extension will be on __Host__.
     - Default value: `true`
 - Inference Parameters
-  - `backend` parameter is set to either `trt` for TensorRT, `onnxrt` for ONNX runtime, or `torch` for libtorch. If there are multiple models in the inference application, all models will use the same backend. If it is desired to use different backends for different models, specify the `backend_map` parameter instead.
+  - `backend` parameter is set to either `trt` for TensorRT, `onnxrt` for ONNX Runtime, or `torch` for libtorch. If there are multiple models in the inference application, all models will use the same backend. If it is desired to use different backends for different models, specify the `backend_map` parameter instead.
     - TensorRT:
       - CUDA-based inference supported both on x86_64 and aarch64.
       - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
@@ -34,6 +34,7 @@ Required parameters and related features available with the Holoscan Inference M
       - TensorRT backend expects input models to be in `tensorrt engine file` format or `onnx` format.
         - if models are in `tensorrt engine file` format, parameter `is_engine_path` must be set to `true`.
         - if models are in `onnx` format, it will be automatically converted into `tensorrt engine file` by the Holoscan inference module.
+      - TensorRT is the recommended backend for ONNX models when GPU inference is desired.
     - Torch:
       - CUDA and CPU based inference supported both on x86_64 and aarch64.
       - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
@@ -46,7 +47,8 @@ Required parameters and related features available with the Holoscan Inference M
       - The configuration file defines the input and output tensor formats, dimensions, and data types, enabling support for complex tensor structures beyond simple tensors.
       - The system automatically validates that the YAML configuration matches the actual model schema extracted from the torchscript model.
       - See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed configuration examples and supported formats.
-    - ONNX runtime:
+    - ONNX Runtime:
+      - ONNX Runtime runtime libraries are not included in the Holoscan NGC container, Debian packages, or Python wheels. Install ONNX Runtime separately before using `backend: "onnxrt"`.
       - CUDA and CPU based inference supported both on x86_64 and aarch64.
       - End-to-end CUDA-based data buffer parameters supported. `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` will all be true for end-to-end CUDA-based data movement.
       - `input_on_cuda`, `output_on_cuda` and `transmit_on_cuda` can be either `true` or `false`.
@@ -771,7 +773,7 @@ __Important:__ Ensure that the combination of backends supports all other parame
 
 ### CPU-Based Inference
 
-You can perform inference on the CPU using either the ONNX Runtime or PyTorch backend:
+You can perform inference on the CPU using the PyTorch backend, or the ONNX Runtime backend if ONNX Runtime is installed separately:
 
 ```yaml
 inference:
@@ -785,7 +787,7 @@ inference:
     infer_on_cpu: true
 ```
 
-__Note:__ The TensorRT backend (`trt`) does not support CPU-based inference. You must use `onnxrt` or `torch` backends for CPU inference.
+__Note:__ The TensorRT backend (`trt`) does not support CPU-based inference. You must use `torch` or the `onnxrt` backend for CPU inference.
 
 ### Recipe: Running a PyTorch Model
 

@@ -71,7 +71,7 @@ class SimpleTextSerializer : public Resource {
   /**
    * @brief Serialize data to a simple text string
    */
-  std::string serialize_to_string(std::any data);
+  std::string serialize_to_string(const std::any& data);
 
   /**
    * @brief Serialize tensor data to a simple text string

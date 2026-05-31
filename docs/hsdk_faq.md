@@ -28,23 +28,25 @@ A3: The Holoscan SDK is a domain and sensor agnostic SDK optimized for the easy 
 A1: There are multiple ways to  install the Holoscan SDK:
 
 * Using NGC containers :
+  <!-- holoscan-version-sync:begin -->
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda12-igpu
   ```
+  <!-- holoscan-version-sync:end -->
 
 For more information, please refer to details and usage instructions on [**NGC**](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan).
 
@@ -111,7 +113,7 @@ For more details and troubleshooting , please refer to  [PyPI](https://pypi.org/
 
 If you are unsure of which installation option to use, please refer to the considerations below:
 
-* The **Holoscan container image on NGC** is the safest way to ensure all the dependencies are present with the expected versions (including Torch and ONNX Runtime), and should work on most Linux distributions. It is the simplest way to run the embedded examples, while still allowing you to create your own C++ and Python Holoscan applications on top of it. These benefits come at a cost:
+* The **Holoscan container image on NGC** is the safest way to ensure core dependencies are present with the expected versions (including Torch, but excluding ONNX Runtime backend runtime libraries), and should work on most Linux distributions. It is the simplest way to run the embedded examples, while still allowing you to create your own C++ and Python Holoscan applications on top of it. These benefits come at a cost:
   * Large image size due to the numerous (some of them optional) dependencies. If you need a lean runtime image, see the **section below**.
   * Standard inconveniences that exist when using Docker, such as more complex run instructions for proper configuration.
 * If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are using Ubuntu 22.04.
@@ -129,7 +131,7 @@ A2: The prerequisites include:
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 | [NVIDIA Clara AGX](https://www.nvidia.com/en-gb/clara/intelligent-medical-instruments) | [Link](https://github.com/nvidia-holoscan/holoscan-docs/blob/main/devkits/clara-agx/clara_agx_user_guide.md) to User Guide | [Holopack](https://developer.nvidia.com/drive/sdk-manager) 1.2 | iGPU **or**\* dGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.2 has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.3<!-- holoscan-version-sync --> has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -1154,10 +1156,14 @@ This indicates that the requested memory sizes on host and/or device exceed the 
 
 **Q21: How do I fix X11 display issues when running Holoscan applications in Docker?**
 
-A21: If you encounter "X11: Failed to open display :0 [...] Failed to initialize GLFW" errors, enable permissions to your X server from Docker by either:
+A21: `./run launch` automatically forwards X11 and Wayland displays when `DISPLAY` or
+`WAYLAND_DISPLAY` is set on the host. If you encounter "X11: Failed to open display :0
+[...] Failed to initialize GLFW" errors with a custom `docker run` command, prefer
+cookie-based Xauthority forwarding and run the container as your host user:
 
-* Passing `-u $(id -u):$(id -g)` to `docker run`, or
-* Running `xhost +local:docker` on your host
+* Pass `-u $(id -u):$(id -g)` to `docker run`
+* Pass `-e DISPLAY -e XAUTHORITY=<cookie-file> -v <cookie-file>:<cookie-file>:ro`
+* For local X11 displays, also mount `-v /tmp/.X11-unix:/tmp/.X11-unix:ro`
 
 **Q22: How do I resolve GLX context creation errors on virtual machines or headless systems?**
 
@@ -1292,11 +1298,11 @@ This solution ensures the mocked class instance remains available throughout the
 
 * The NVIDIA developer page.For more information, please refer to [this](https://developer.nvidia.com/join-nvidia-developer-program?ncid=pa-srch-goog-433786&\_bt=699127533347&\_bk=nvidia%20inception&\_bm=b&\_bn=g&\_bg=161777607269\&gad\_source=1\&gclid=EAIaIQobChMI9Yrtk6PIhwMV0c\_CBB3VHgd4EAAYASAAEgJoSPD\_BwE) link.
 * Holoscan SDK GitHub repository.Please refer to [this](https://github.com/nvidia-holoscan/holoscan-sdk) link.
-* NVIDIA Developer Forums for community support and discussions. For the Holoscan SDK forum, please refer to [this](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all) link.
+* NVIDIA Developer Forums for community support and discussions. For the Holoscan SDK forum, please refer to [this](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757) link.
 
 **Q2: How can I contribute to the Holoscan SDK?**
 
 A2: The Holoscan SDK is open-source. You can contribute by:
 
 * Submitting pull requests for bug fixes or new features. For more detailed information on how to contribute, please refer to [this](https://www.google.com/url?q=https://github.com/nvidia-holoscan/holohub/blob/main/CONTRIBUTING.md\&sa=D\&source=docs\&ust=1722121019335970\&usg=AOvVaw1XzBLsoVDnaqHi74NpGCLq) link.
-* Participating in community discussions on the [Holoscan SDK forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all)
+* Participating in community discussions on the [Holoscan SDK forum](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757)

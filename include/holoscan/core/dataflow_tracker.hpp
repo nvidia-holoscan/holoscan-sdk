@@ -304,9 +304,9 @@ class DataFlowTracker {
 
   /// The following are internal functions to be used by the GXFExecutor
   /// to add root/leaf/probe operators to the tracker after the operators are initialized by GXF.
-  void add_root_op(Operator* op);
-  void add_leaf_op(Operator* op);
-  void add_probe_op(Operator* op);
+  void add_root_op(const std::shared_ptr<Operator>& op);
+  void add_leaf_op(const std::shared_ptr<Operator>& op);
+  void add_probe_op(const std::shared_ptr<Operator>& op);
 
   void finalize_probe();
 

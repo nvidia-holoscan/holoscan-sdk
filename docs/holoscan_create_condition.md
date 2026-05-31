@@ -316,7 +316,7 @@ For the C++ API, we can construct a shared pointer to an instance of the conditi
 
 To better understand when a condition's `check`, `update_state` and `on_execute` methods would be called by the underlying GXF entity executor, please see the following diagram.
 
-![Fragment graph with a cycle and an implicit root operator](native_condition_sequence_diagram.png)
+![Fragment graph with a cycle and an implicit root operator](images/native_condition_sequence_diagram.png)
 
 It can be seen that when checking if an operator is ready to execute the `Condition::update_state` method will be called immediately before `Condition::check`. If the check was successful (across the combination of all conditions on the operator), then the compute method would be called for that operator. The `Condition::on_execute` method is only called once compute completes.
 

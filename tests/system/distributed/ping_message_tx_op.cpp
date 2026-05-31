@@ -19,6 +19,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/executors/gxf/gxf_executor.hpp>
@@ -134,12 +135,12 @@ void PingMessageTxOp::compute([[maybe_unused]] InputContext& op_input, OutputCon
       HolovizOp::InputSpec::View v2{0.1, 0.1, 0.7, 0.8};
       v2.matrix_ = std::array<float, 16>{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
       std::vector<HolovizOp::InputSpec::View> views{v2};
-      spec2.views_ = views;
+      spec2.views_ = std::move(views);
 
-      specs.push_back(spec1);
-      specs.push_back(spec2);
+      specs.push_back(std::move(spec1));
+      specs.push_back(std::move(spec2));
 
-      op_output.emit(specs, "out");
+      op_output.emit(std::move(specs), "out");
       break;
     }
     case MessageType::VEC_DOUBLE_LARGE: {

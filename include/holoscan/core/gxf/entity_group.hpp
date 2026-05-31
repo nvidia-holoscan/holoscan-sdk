@@ -101,7 +101,7 @@ class EntityGroup {
    * @param entity_prefix A string prefix that can be used to indicate the entity the operator
    *                      belongs to.
    */
-  void add(std::shared_ptr<Operator> op, const std::string& entity_prefix = "");
+  void add(const std::shared_ptr<Operator>& op, const std::string& entity_prefix = "");
 
   // TODO:
   //   There is also the following related runtime GXF method

@@ -300,7 +300,6 @@ grpc::Status AppDriverServiceImpl::InitiateShutdown(
     grpc::ServerContext* context, const holoscan::distributed::InitiateShutdownRequest* request,
     holoscan::distributed::InitiateShutdownResponse* response) {
   (void)context;
-  std::string client_address = context->peer();
   auto& fragment_name = request->fragment_name();
 
   // Look up the worker ID from the schedule

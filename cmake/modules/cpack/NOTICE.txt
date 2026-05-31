@@ -8,19 +8,24 @@ Holoscan uses the following open source software:
 ASIO (https://github.com/chriskohlhoff/asio)
 Licensed under BSL-1.0 (https://github.com/chriskohlhoff/asio/blob/asio-1-18-1/asio/LICENSE_1_0.txt)
 
+cccl (https://github.com/NVIDIA/cccl)
+Copyright (c) NVIDIA CORPORATION; CUB: Copyright (c) 2010-2011 Duane Merrill, 2011-2023 NVIDIA CORPORATION; libc++ portions: Copyright (c) 2009-2019 by contributors listed in libcudacxx/test/CREDITS.TXT (in the source archive)
+Licensed under Apache-2.0 WITH LLVM-exception AND BSD-3-Clause AND BSL-1.0 AND NCSA AND MIT AND BSD-2-Clause-FreeBSD (https://github.com/NVIDIA/cccl/blob/v3.2.0/LICENSE)
+The source code for CCCL is available at <https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/cccl/cccl-3.2.0.tar.gz>.
+
 CLI11 (https://github.com/CLIUtils/CLI11)
 Copyright (c) 2017-2023 University of Cincinnati, developed by Henry Schreiner under NSF AWARD 1414736. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/CLIUtils/CLI11/blob/v2.5.0/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/CLIUtils/CLI11/blob/v2.5.0/LICENSE)
 
 cloudpickle (https://github.com/cloudpipe/cloudpickle)
 Copyright (c) 2015, Cloudpickle contributors.
 Copyright (c) 2012, Regents of the University of California.
 Copyright (c) 2009 PiCloud, Inc. Copyright
-Licensed under BSD-3-clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/cloudpipe/cloudpickle/blob/master/LICENSE)
 
 moodycamel::ConcurrentQueue (https://github.com/cameron314/concurrentqueue)
 Copyright (c) 2013 - 2016 Cameron Desrochers
-Licensed under BSD-2-clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
+Licensed under BSD-2-Clause (https://github.com/cameron314/concurrentqueue/blob/v1.0.4/LICENSE.md)
 
 dear_imgui (https://github.com/ocornut/imgui)
 Copyright (c) 2014-2023 Omar Cornut
@@ -31,7 +36,7 @@ Licensed under Apache-2.0 (https://github.com/dmlc/dlpack/blob/v0.7/LICENSE)
 
 eigen (https://gitlab.com/libeigen/eigen)
 Copyright (c) 2006-2025, Eigen authors
-Licensed under Mozilla Public License Version 2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.MPL2)
+Licensed under MPL-2.0 (https://gitlab.com/libeigen/eigen/-/blob/3.4.0/COPYING.MPL2)
 The source code for Eigen is available at <https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/eigen/eigen-3.4.0.tar.gz>. In compliance with the MPL 2.0 license, you may also obtain a copy of the Source Code Form by reasonable means in a timely manner, at a charge no more than the cost of distribution to the recipient.
 
 expected (https://github.com/TartanLlama/expected)
@@ -88,7 +93,7 @@ Copyright © 2012      Blue Brain Project, EPFL. All rights reserved.
 Copyright © 2013-2014 University of Wisconsin-La Crosse. All rights reserved.
 Copyright © 2015      Research Organization for Information Science and Technology (RIST). All rights reserved.
 Copyright © 2015-2016 Intel, Inc.  All rights reserved.
-Licensed under BSD-3-clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
+Licensed under BSD-3-Clause (https://github.com/open-mpi/hwloc/blob/hwloc-2.9.0/COPYING)
 
 jq (https://github.com/jqlang/jq)
 Copyright (C) 2012 Stephen Dolan authors.
@@ -127,7 +132,7 @@ Copyright: 2015-2016, Red Hat
 Copyright: 2015, Samsung Electronics Co., Ltd
 Copyright: 2018, Simon Ser
 Copyright: 2017 wsnipex <wsnipex@a1.net> 2019 Balint Reczey <rbalint@ubuntu.com>
-Licensed under MIT, BSD-2 (https://changelogs.ubuntu.com/changelogs/pool/universe/w/waylandpp/waylandpp_0.2.8-2/copyright)
+Licensed under MIT AND BSD-2-Clause (https://changelogs.ubuntu.com/changelogs/pool/universe/w/waylandpp/waylandpp_0.2.8-2/copyright)
 
 libwayland-egl1 (https://packages.ubuntu.com/jammy/libwayland-egl1)
 Copyright 2011 Cyril Brulebois <kibi@debian.org>
@@ -155,11 +160,11 @@ Licensed under MIT (https://github.com/Neargye/magic_enum/blob/v0.9.3/LICENSE)
 
 MatX (https://github.com/NVIDIA/MatX)
 Copyright (c) 2021, NVIDIA Corporation
-Licensed under BSD-3-clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/NVIDIA/MatX/blob/v0.9.4/LICENSE)
 
 nvpro_core (https://github.com/nvpro-samples/nvpro_core)
 Copyright (c) 2014-2023, NVIDIA CORPORATION.  All rights reserved.
-Licensed under Apache 2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
+Licensed under Apache-2.0 (https://github.com/nvpro-samples/nvpro_core/blob/master/LICENSE)
 
 NVTX
 Copyright 2009-2022, NVIDIA CORPORATION
@@ -175,11 +180,11 @@ Licensed under MIT (https://github.com/gabrieldemarmiesse/python-on-whales/raw/m
 
 rdma-core/ibverbs (https://github.com/linux-rdma/rdma-core)
 Refer to individual files for information on the copyright holders.
-Licensed under BSD (MIT variant) (https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT)
+Licensed under Linux-OpenIB (https://github.com/linux-rdma/rdma-core/blob/master/COPYING.BSD_MIT)
 
 RMM (https://github.com/rapidsai/rmm)
 Copyright (c) 2018-2024, NVIDIA CORPORATION.
-Licensed under Apache 2.0 (https://github.com/rapidsai/rmm/blob/branch-24.04/LICENSE)
+Licensed under Apache-2.0 (https://github.com/rapidsai/rmm/blob/branch-24.04/LICENSE)
 
 Google Fonts Roboto (https://github.com/googlefonts/roboto/releases/download/v2.138/roboto-android.zip)
 Licensed under Apache-2.0 (https://github.com/googlefonts/roboto/blob/v2.138/LICENSE)
@@ -200,11 +205,11 @@ Copyright (C) 2016-2020      Advanced Micro Devices, Inc.  All rights reserved.
 Copyright (C) 2019           UChicago Argonne, LLC.  All rights reserved.
 Copyright (C) 2020           Huawei Technologies Co., Ltd. All rights reserved.
 Copyright (C) 2016-2020      Stony Brook University. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/openucx/ucx/blob/v1.19.0/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/openucx/ucx/blob/v1.19.0/LICENSE)
 
 UCXX (https://github.com/rapidsai/ucxx)
 Copyright (c) 2022-2024, NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-Licensed under BSD-3-clause (https://github.com/rapidsai/ucxx/blob/v0.46.00/LICENSE)
+Licensed under BSD-3-Clause (https://github.com/rapidsai/ucxx/blob/v0.46.00/LICENSE)
 
 yaml-cpp (https://github.com/jbeder/yaml-cpp)
 Copyright (c) 2008-2015 Jesse Beder.

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <holoscan/holoscan.hpp>
@@ -59,10 +60,10 @@ class PingTxOp : public Operator {
   void compute([[maybe_unused]] InputContext& op_input, OutputContext& op_output,
                [[maybe_unused]] ExecutionContext& context) override {
     auto value1 = std::make_shared<ValueData>(index_++);
-    op_output.emit(value1, "out1");
+    op_output.emit(std::move(value1), "out1");
 
     auto value2 = std::make_shared<ValueData>(index_++);
-    op_output.emit(value2, "out2");
+    op_output.emit(std::move(value2), "out2");
   };
   int index_ = 1;
 };
@@ -95,8 +96,8 @@ class PingMxOp : public Operator {
     value1->data(value1->data() * multiplier_);
     value2->data(value2->data() * multiplier_);
 
-    op_output.emit(value1, "out1");
-    op_output.emit(value2, "out2");
+    op_output.emit(std::move(value1), "out1");
+    op_output.emit(std::move(value2), "out2");
   };
 
  private:

@@ -28,7 +28,7 @@
 
 namespace {
 constexpr int kElementCount = 512;
-}
+}  // namespace
 
 namespace holoscan::ops {
 

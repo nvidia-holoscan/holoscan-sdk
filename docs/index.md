@@ -20,6 +20,13 @@ third_party_hw_setup
 
 ```{toctree}
 :maxdepth: 1
+:caption: AI Coding Assistants
+
+ai_skills
+```
+
+```{toctree}
+:maxdepth: 1
 :caption: Using the SDK
 :name: holoscan-user-overview
 
@@ -28,7 +35,6 @@ gpu_resident
 holoscan_by_example
 holoscan_create_app
 holoscan_create_distributed_app
-holoscan_packager
 holoscan_create_operator
 holoscan_create_operator_via_decorator
 holoscan_create_condition
@@ -70,15 +76,6 @@ api/holoscan_python_api
 
 ```{toctree}
 :maxdepth: 1
-:caption: App Packaging
-
-cli/hap
-cli/cli
-cli/run_config
-```
-
-```{toctree}
-:maxdepth: 1
 :caption: Performance
 
 performance_considerations
@@ -104,9 +101,8 @@ hsdk_faq
 ```{toctree}
 :caption: Links
 Developer page <https://developer.nvidia.com/holoscan-sdk>
-Support Forum <https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all>
+Support Forum <https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757>
 NGC Containers <https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan>
 Github Repository <https://github.com/nvidia-holoscan>
-User Guide PDF <https://developer.nvidia.com/downloads/holoscan-sdk-user-guide>
 Previous releases <https://docs.nvidia.com/holoscan-sdk/index.html>
 ```

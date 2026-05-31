@@ -142,7 +142,7 @@ expected<Message, RuntimeError> decode_message_payload(const std::string& codec_
 
   const std::vector<uint8_t>* view = &payload;
   VectorEndpoint ep(view);
-  auto deserialize_func = registry.get_deserializer(codec_name);
+  const auto& deserialize_func = registry.get_deserializer(codec_name);
   auto maybe_msg = deserialize_func(&ep);
   if (!maybe_msg) {
     return make_unexpected<RuntimeError>(

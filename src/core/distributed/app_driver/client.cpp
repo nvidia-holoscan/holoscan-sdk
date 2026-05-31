@@ -31,7 +31,7 @@
 namespace holoscan::distributed {
 
 AppDriverClient::AppDriverClient(const std::string& driver_address,
-                                 std::shared_ptr<grpc::Channel> channel)
+                                 const std::shared_ptr<grpc::Channel>& channel)
     : driver_address_(driver_address),
       stub_(holoscan::distributed::AppDriverService::NewStub(channel)) {}
 

@@ -63,7 +63,8 @@ fragment : holoscan.core.Fragment or holoscan.core.Subgraph (constructor only)
     The fragment that the operator belongs to.
 backend : {"trt", "onnxrt", "torch"}
     Backend to use for inference. Set ``"trt"`` for TensorRT, ``"torch"`` for LibTorch and
-    ``"onnxrt"`` for the ONNX runtime.
+    ``"onnxrt"`` for the ONNX Runtime backend. The ONNX Runtime backend
+    requires ONNX Runtime libraries to be installed separately.
 allocator : holoscan.resources.Allocator
     Memory allocator to use for the output.
 inference_map : dict[str, List[str]]
@@ -81,7 +82,8 @@ temporal_map : dict[str, int], optional
 activation_map : dict[str, int], optional
     Mapping of model to activation state for inference.
 backend_map : dict[str, str], optional
-    Mapping of model to backend type for inference. Backend options: ``"trt"`` or ``"torch"``
+    Mapping of model to backend type for inference. Backend options: ``"trt"``, ``"torch"``,
+    or ``"onnxrt"``
 in_tensor_names : sequence of str, optional
     Input tensors.
 out_tensor_names : sequence of str, optional

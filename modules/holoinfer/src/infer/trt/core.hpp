@@ -41,7 +41,8 @@ class TrtInfer : public InferBase {
            const std::vector<std::string>& trt_opt_profile, int device_id, int device_id_dt,
            bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core, bool dla_gpu_fallback,
            bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
-           std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream);
+           std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream,
+           CUcontext build_cuda_context = nullptr, int32_t build_sm_count = 0);
 
   /**
    * @brief Destructor

@@ -31,7 +31,7 @@
 namespace holoscan::distributed {
 
 AppWorkerClient::AppWorkerClient(const std::string& worker_address,
-                                 std::shared_ptr<grpc::Channel> channel)
+                                 const std::shared_ptr<grpc::Channel>& channel)
     : worker_address_(worker_address),
       stub_(holoscan::distributed::AppWorkerService::NewStub(channel)) {
   // Call parse_address to handle the parsing of the worker address.

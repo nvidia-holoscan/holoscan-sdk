@@ -28,7 +28,7 @@ set(HOLOSCAN_GXF_COMPONENTS
     sample # needed for testing SYSTEM_TEST
 )
 
-find_package(GXF 5.6 CONFIG REQUIRED
+find_package(GXF 5.7 CONFIG REQUIRED
     COMPONENTS ${HOLOSCAN_GXF_COMPONENTS}
 )
 message(STATUS "Found GXF: ${GXF_DIR}")

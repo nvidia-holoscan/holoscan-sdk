@@ -64,6 +64,7 @@
 #include <memory>
 #include <numeric>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "fmt/format.h"
@@ -149,14 +150,14 @@ class BusySourceOp : public holoscan::Operator {
   }
 
   void set_running_flag(std::shared_ptr<std::atomic<bool>> flag, int64_t target_count) {
-    running_flag_ = flag;
+    running_flag_ = std::move(flag);
     target_count_ = target_count;
   }
 
   void monitor_peer(std::shared_ptr<std::atomic<bool>> peer_running,
                     std::shared_ptr<holoscan::BooleanCondition> self_condition) {
-    peer_running_ = peer_running;
-    self_condition_ = self_condition;
+    peer_running_ = std::move(peer_running);
+    self_condition_ = std::move(self_condition);
   }
 
   int64_t count() const { return count_; }
@@ -275,7 +276,7 @@ class DispatcherPriorityApp : public holoscan::Application {
           auto bg_op = make_operator<BusySourceOp>(fmt::format("bg_{}_{}", c, l),
                                                    bool_cond,
                                                    Arg("work_duration_us", options_.lo_work_us));
-          bg_op->monitor_peer(hi_running, bool_cond);
+          bg_op->monitor_peer(hi_running, std::move(bool_cond));
           add_operator(bg_op);
           pool->add_realtime(bg_op,
                              SchedulingPolicy::kDeadline,
@@ -310,7 +311,7 @@ class DispatcherPriorityApp : public holoscan::Application {
           auto lo_op = make_operator<BusySourceOp>(fmt::format("lo_{}_{}", c, l),
                                                    bool_cond,
                                                    Arg("work_duration_us", options_.lo_work_us));
-          lo_op->monitor_peer(hi_running, bool_cond);
+          lo_op->monitor_peer(hi_running, std::move(bool_cond));
           add_operator(lo_op);
           pool->add(lo_op, true, pin);
           lo_ops_.push_back(lo_op);
@@ -476,38 +477,51 @@ void print_comparison_table(const std::vector<std::string>& col_names,
   std::cout << "\n";
   sep();
 
-  row_f("Wall time (s)", [&](const RunStats& s) { return fmt::format("{:.3f}", s.wall_s); });
-  row_f("Hi ticks", [&](const RunStats& s) { return fint(s.hi_ticks); });
-  row_f("Bg ticks", [&](const RunStats& s) { return s.has_bg ? fint(s.bg_ticks) : dash(); });
-  row_f("Throughput (ops/s)", [&](const RunStats& s) { return fval(s.throughput_hz); });
+  row_f("Wall time (s)",
+        [&](const RunStats& s) -> std::string { return fmt::format("{:.3f}", s.wall_s); });
+  row_f("Hi ticks", [&](const RunStats& s) -> std::string { return fint(s.hi_ticks); });
+  row_f("Bg ticks",
+        [&](const RunStats& s) -> std::string { return s.has_bg ? fint(s.bg_ticks) : dash(); });
+  row_f("Throughput (ops/s)",
+        [&](const RunStats& s) -> std::string { return fval(s.throughput_hz); });
   sep();
-  row_f("Dispatch gap mean (us)", [&](const RunStats& s) { return fval(s.dispatch_gap.mean_us); });
-  row_f("Dispatch gap p99 (us)", [&](const RunStats& s) { return fval(s.dispatch_gap.p99_us); });
+  row_f("Dispatch gap mean (us)",
+        [&](const RunStats& s) -> std::string { return fval(s.dispatch_gap.mean_us); });
+  row_f("Dispatch gap p99 (us)",
+        [&](const RunStats& s) -> std::string { return fval(s.dispatch_gap.p99_us); });
   sep();
   row_f("Invocation gap mean (us)",
-        [&](const RunStats& s) { return fval(s.invocation_gap.mean_us); });
+        [&](const RunStats& s) -> std::string { return fval(s.invocation_gap.mean_us); });
   row_f("Invocation gap p99 (us)",
-        [&](const RunStats& s) { return fval(s.invocation_gap.p99_us); });
+        [&](const RunStats& s) -> std::string { return fval(s.invocation_gap.p99_us); });
   sep();
-  row_f("Overhead mean (us)", [&](const RunStats& s) { return fsgn(s.overhead_mean); });
-  row_f("Overhead p99 (us)", [&](const RunStats& s) { return fsgn(s.overhead_p99); });
-  row_f("Overhead max (us)", [&](const RunStats& s) { return fsgn(s.overhead_max); });
+  row_f("Overhead mean (us)",
+        [&](const RunStats& s) -> std::string { return fsgn(s.overhead_mean); });
+  row_f("Overhead p99 (us)",
+        [&](const RunStats& s) -> std::string { return fsgn(s.overhead_p99); });
+  row_f("Overhead max (us)",
+        [&](const RunStats& s) -> std::string { return fsgn(s.overhead_max); });
   sep();
-  row_f("Overrun (>period+100us) rate", [&](const RunStats& s) { return fpct(s.overrun_pct); });
-  row_f("Missed (>1.5x period) rate", [&](const RunStats& s) { return fpct(s.missed_pct); });
+  row_f("Overrun (>period+100us) rate",
+        [&](const RunStats& s) -> std::string { return fpct(s.overrun_pct); });
+  row_f("Missed (>1.5x period) rate",
+        [&](const RunStats& s) -> std::string { return fpct(s.missed_pct); });
   sep();
-  row_f("Drift late count", [&](const RunStats& s) {
+  row_f("Drift late count", [&](const RunStats& s) -> std::string {
     return s.has_drift ? fmt::format("{}", s.drift_late_count) : dash();
   });
-  row_f("Drift total samples", [&](const RunStats& s) {
+  row_f("Drift total samples", [&](const RunStats& s) -> std::string {
     return s.has_drift ? fmt::format("{}", s.drift_total_samples) : dash();
   });
-  row_f("Drift mean (us)",
-        [&](const RunStats& s) { return s.has_drift ? fsgn(s.drift.mean_us) : dash(); });
-  row_f("Drift p99 (us)",
-        [&](const RunStats& s) { return s.has_drift ? fsgn(s.drift.p99_us) : dash(); });
-  row_f("Drift max (us)",
-        [&](const RunStats& s) { return s.has_drift ? fsgn(s.drift.max_us) : dash(); });
+  row_f("Drift mean (us)", [&](const RunStats& s) -> std::string {
+    return s.has_drift ? fsgn(s.drift.mean_us) : dash();
+  });
+  row_f("Drift p99 (us)", [&](const RunStats& s) -> std::string {
+    return s.has_drift ? fsgn(s.drift.p99_us) : dash();
+  });
+  row_f("Drift max (us)", [&](const RunStats& s) -> std::string {
+    return s.has_drift ? fsgn(s.drift.max_us) : dash();
+  });
   sep();
 }
 

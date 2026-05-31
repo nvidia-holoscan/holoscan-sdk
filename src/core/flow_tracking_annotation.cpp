@@ -97,7 +97,7 @@ gxf_result_t annotate_message(gxf_uid_t uid, const gxf_context_t& context, Opera
     MessageLabel m;
     m = std::move(op->get_consolidated_input_label());
 
-    std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
+    auto op_shared_ptr = op->self_shared();
 
     bool is_current_op_root = op->is_root() || op->is_user_defined_root() ||
                               holoscan::Operator::is_all_operator_predecessor_virtual(
@@ -238,7 +238,7 @@ gxf_result_t deannotate_message(gxf_uid_t* uid, const gxf_context_t& context, Op
     // Find whether current operator is already in the paths of message label m
     auto cyclic_path_indices = m.has_operator(op->qualified_name());
     if (cyclic_path_indices.empty()) {  // No cyclic paths
-      std::shared_ptr<holoscan::Operator> op_shared_ptr(op, [](Operator*) {});
+      auto op_shared_ptr = op->self_shared();
       bool is_current_op_leaf =
           op->is_leaf() || holoscan::Operator::is_all_operator_successor_virtual(
                                std::move(op_shared_ptr), op->fragment()->graph());

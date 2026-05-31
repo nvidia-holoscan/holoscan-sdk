@@ -39,7 +39,7 @@ void EntityGroup::add(const GXFComponent& component) {
   HOLOSCAN_GXF_CALL_FATAL(GxfUpdateEntityGroup(gxf_context_, gxf_gid_, component.gxf_eid()));
 }
 
-void EntityGroup::add(std::shared_ptr<Operator> op, const std::string& entity_prefix) {
+void EntityGroup::add(const std::shared_ptr<Operator>& op, const std::string& entity_prefix) {
   gxf_uid_t op_eid = kNullUid;
   if (op->operator_type() == Operator::OperatorType::kGXF) {
     op_eid = std::dynamic_pointer_cast<holoscan::ops::GXFOperator>(op)->gxf_eid();

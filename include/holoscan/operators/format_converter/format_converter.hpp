@@ -30,43 +30,9 @@
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/resources/gxf/allocator.hpp>
 #include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+#include "holoscan/operators/format_converter/format_converter_common.hpp"
 
 namespace holoscan::ops {
-
-enum class FormatDType {
-  kUnknown,
-  kRGB888,
-  kRGBA8888,
-  kUnsigned8,
-  kFloat32,
-  kYUV420,
-  kNV12BT709HDTV,
-  kNV12BT709CSC,
-  kNV12BT601Full,
-  kYUYV,
-  kRGB161616,
-  kRGBA16161616,
-  kUnsigned16
-};
-
-enum class FormatConversionType {
-  kUnknown,
-  kNone,
-  kUnsigned8ToFloat32,
-  kFloat32ToUnsigned8,
-  kRGB888ToRGBA8888,
-  kRGBA8888ToRGB888,
-  kRGBA8888ToFloat32,
-  kRGB888ToYUV420,
-  kYUV420ToRGBA8888,
-  kYUV420ToRGB888,
-  kNV12BT709HDTVToRGB888,
-  kNV12BT709CSCToRGB888,
-  kNV12BT601FullToRGB888,
-  kYUYVToRGB888,
-  kRGB161616ToRGB888,
-  kRGBA16161616ToRGB888,
-};
 
 /**
  * @brief Operator class to convert the data format of the input data.

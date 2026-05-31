@@ -30,6 +30,8 @@ from holoscan.operators import PingTensorRxOp
 from holoscan.resources import ManualClock, RealtimeClock
 from holoscan.schedulers import GreedyScheduler
 
+from ..utils import is_torch_cuda_compatible
+
 
 class ValueData:
     def __init__(self, value):
@@ -649,9 +651,11 @@ def test_my_ping_python_cpp_emit_python_receive(on_device: bool, backend: Backen
     - TORCH: torch.Tensor (CPU or CUDA)
     """
     if backend == Backend.TORCH:
-        torch = pytest.importorskip("torch")
-        if on_device and not torch.cuda.is_available():
-            pytest.skip("Requires CUDA device.")
+        # Keep an explicit import check for the CPU torch parameterization; the CUDA guard
+        # below also imports torch implicitly via is_torch_cuda_compatible().
+        pytest.importorskip("torch")
+        if on_device and not is_torch_cuda_compatible():
+            pytest.skip("Torch CUDA unavailable or SM incompatible.")
 
     count = 10
     app = MyPingPythonCppEmitPythonReceive()

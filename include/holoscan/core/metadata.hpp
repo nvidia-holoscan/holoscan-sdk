@@ -249,7 +249,7 @@ class MetadataDictionary {
   std::size_t size() const;
 
   /// swap the contents of this dictionary and other
-  void swap(MetadataDictionary& other);
+  void swap(MetadataDictionary& other) noexcept;
 
   /**
    * @brief Create a deep copy of this dictionary

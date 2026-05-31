@@ -6,6 +6,7 @@ The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/h
 
 - [Getting Started](#getting-started)
 - [Obtaining the Holoscan SDK](#obtaining-the-holoscan-sdk)
+- [AI Coding Assistants](#ai-coding-assistants)
 - [Troubleshooting and Feedback](#troubleshooting-and-feedback)
 - [Additional Notes](#additional-notes)
 
@@ -38,6 +39,23 @@ If the options above do not support your use case, you may prefer to [build the 
 Please review [Holoscan SDK prerequisites](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#prerequisites)
 before getting started.
 
+## AI Coding Assistants
+
+The Holoscan team publishes agent-readable skills that help you install, run, and explore
+the SDK from inside AI coding assistants such as Claude Code, Cursor, and GitHub Copilot CLI.
+The skills live in the public [NVIDIA/skills](https://github.com/NVIDIA/skills) repository
+and are installed with the bundled `skills` CLI, which runs through `npx` and prompts you
+to choose a skill and an install destination — no manual cloning required:
+
+```bash
+npx skills add nvidia/skills
+```
+
+See [`skills/`](./skills/README.md) for the list of available skills and a feedback link,
+or the [AI Coding-Assistant Skills](https://docs.nvidia.com/holoscan/sdk-user-guide/ai_skills.html)
+page in the user guide. Advanced install options are documented in the
+[skills CLI advanced install guide](https://docs.nvidia.com/skills/advanced-install).
+
 ## Troubleshooting and Feedback
 
 We appreciate community discussion and feedback in support of Holoscan platform users and developers. We ask that users:
@@ -52,13 +70,7 @@ Holoscan SDK is developed internally and released as open source software. We we
 and may include them in Holoscan SDK releases at our discretion. Please refer to the Holoscan SDK
 [Contributing Guide](/CONTRIBUTING.md) for more information.
 
-## Additional Notes
-
-### Relation to NVIDIA Clara
-
-In previous releases, the prefix [`Clara`](https://developer.nvidia.com/industries/healthcare) was used to define Holoscan as a platform designed initially for [medical devices](https://www.nvidia.com/en-us/clara/developer-kits/). Starting with version 0.4.0, the Holoscan SDK is built to be domain-agnostic and can be used to build sensor AI applications in multiple domains. Domain specific content will be hosted on the [HoloHub](https://github.com/nvidia-holoscan/holohub) repository.
-
-### Repository structure
+## Repository structure
 
 The repository is organized as such:
 

@@ -202,6 +202,15 @@ bool CudaGreenContextPool::is_partitioning_supported(
     return false;
   }
 
+  int device_count = 0;
+  if (HOLOSCAN_CUDA_CALL_DEBUG(cudaGetDeviceCount(&device_count)) != cudaSuccess) {
+    return false;
+  }
+  if (dev_id < 0 || dev_id >= device_count) {
+    HOLOSCAN_LOG_DEBUG(
+        "is_partitioning_supported: dev_id {} out of range [0, {})", dev_id, device_count);
+    return false;
+  }
   CUdevice device;
   if (fn_DeviceGet(&device, dev_id) != CUDA_SUCCESS) {
     HOLOSCAN_LOG_DEBUG("is_partitioning_supported: cuDeviceGet failed for dev_id {}", dev_id);

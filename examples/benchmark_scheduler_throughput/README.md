@@ -11,6 +11,20 @@ From the build directory:
 ./examples/benchmark_scheduler_throughput/cpp/benchmark_scheduler_throughput
 ```
 
+Optional scheduler flags:
+
+```bash
+./examples/benchmark_scheduler_throughput/cpp/benchmark_scheduler_throughput \
+  --enable_queue_stealing \
+  --enable_postcheck_fastpath
+```
+
+- `--enable_queue_stealing`: Enables the `enable_queue_stealing` argument on the
+  `EventBasedScheduler`.
+- `--enable_postcheck_fastpath`: Enables the
+  `enable_worker_postcheck_fastpath` argument on the `EventBasedScheduler`.
+- If either flag is omitted, the corresponding scheduler argument remains `false`.
+
 ## Metrics
 
 For each trial, the benchmark results will display:

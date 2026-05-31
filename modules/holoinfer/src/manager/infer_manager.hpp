@@ -181,6 +181,9 @@ class ManagerInfer {
   /// Map storing Inference context per model
   std::map<std::string, std::unique_ptr<InferBase>> holo_infer_context_;
 
+  /// Plugin handles backing dlopened inference contexts. Closed after contexts are destroyed.
+  std::vector<void*> backend_plugin_handles_;
+
   /// Map storing input dimension per model
   DimType models_input_dims_;
 

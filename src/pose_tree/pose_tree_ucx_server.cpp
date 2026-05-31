@@ -270,6 +270,13 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
           frame_id = result.value();
           client_to_server_frame_ids_[client_frame_id] = frame_id;
           frame_created = true;
+        } else {
+          HOLOSCAN_LOG_WARN(
+              "PoseTreeUCXServer: failed to create frame {} (id {}) for client {}: {}",
+              frame_name_str,
+              frame_id,
+              client_id_,
+              PoseTree::error_to_str(result.error()));
         }
       }
       break;

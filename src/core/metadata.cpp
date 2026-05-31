@@ -29,7 +29,7 @@
 
 namespace holoscan {
 
-inline void swap(MetadataDictionary& a, MetadataDictionary& b) {
+inline void swap(MetadataDictionary& a, MetadataDictionary& b) noexcept {
   a.swap(b);
 }
 
@@ -133,7 +133,7 @@ void MetadataDictionary::clear() {
   this->dictionary_ = std::make_shared<MapType>();
 }
 
-void MetadataDictionary::swap(MetadataDictionary& other) {
+void MetadataDictionary::swap(MetadataDictionary& other) noexcept {
   using std::swap;
   swap(dictionary_, other.dictionary_);
 }

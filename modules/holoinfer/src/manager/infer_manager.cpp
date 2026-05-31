@@ -39,6 +39,38 @@ namespace {
 
 std::mutex g_managers_mutex;
 
+std::string dlerror_to_string() {
+  const char* dlerror_message = dlerror();
+  return dlerror_message ? dlerror_message : "unknown linker error";
+}
+
+std::string backend_plugin_load_failure_message(const std::string& backend_name,
+                                                const std::string& plugin_library,
+                                                const std::string& dependency_hint,
+                                                const std::string& linker_error) {
+  return backend_name + " context setup failure. Failed to load backend '" + plugin_library +
+         "' or one of its runtime dependencies. " + dependency_hint +
+         " Dynamic linker error: " + linker_error;
+}
+
+std::string backend_plugin_symbol_failure_message(const std::string& backend_name,
+                                                  const std::string& plugin_library,
+                                                  const std::string& symbol_name,
+                                                  const std::string& linker_error) {
+  return backend_name + " context setup failure. Failed to resolve factory symbol '" + symbol_name +
+         "' from backend plugin '" + plugin_library + "'. Dynamic linker error: " + linker_error;
+}
+
+struct DlHandleCloser {
+  void operator()(void* handle) const noexcept {
+    if (handle) {
+      dlclose(handle);
+    }
+  }
+};
+
+using ScopedDlHandle = std::unique_ptr<void, DlHandleCloser>;
+
 }  // namespace
 
 ManagerInfer::ManagerInfer() {}
@@ -284,7 +316,9 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                           inference_specs->is_engine_path_,
                                           cuda_buffer_in_,
                                           cuda_buffer_out_,
-                                          inference_specs->allocate_cuda_stream_)});
+                                          inference_specs->allocate_cuda_stream_,
+                                          inference_specs->build_cuda_context_,
+                                          inference_specs->build_sm_count_)});
 
           if (inference_specs->gpu_resident_inference_) {
             try {
@@ -313,15 +347,23 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
           }
 
 #if defined(HOLOINFER_ORT_ENABLED)
-          HOLOSCAN_LOG_INFO("Searching for ONNX Runtime libraries");
-          void* handle = dlopen(
-              "libholoscan_infer_onnx_runtime.so." TOSTRING(PROJECT_VERSION_MAJOR), RTLD_NOW);
+          HOLOSCAN_LOG_INFO("Loading ONNX Runtime backend");
+          const std::string onnxrt_backend_plugin =
+              "libholoscan_infer_onnx_runtime.so." TOSTRING(PROJECT_VERSION_MAJOR);
+          ScopedDlHandle handle(dlopen(onnxrt_backend_plugin.c_str(), RTLD_NOW));
           if (handle == nullptr) {
-            HOLOSCAN_LOG_ERROR(dlerror());
-            status.set_message("ONNX Runtime context setup failure.");
+            std::string linker_error = dlerror_to_string();
+            HOLOSCAN_LOG_ERROR("{}", linker_error);
+            status.set_message(backend_plugin_load_failure_message(
+                "ONNX Runtime",
+                onnxrt_backend_plugin,
+                "Install ONNX Runtime backend dependencies as described in the Holoscan SDK "
+                "documentation installation page, and make the libraries visible to the dynamic "
+                "linker; alternatively, use the TensorRT backend (trt) for ONNX models.",
+                linker_error));
             return status;
           }
-          HOLOSCAN_LOG_INFO("Found ONNX Runtime libraries");
+          HOLOSCAN_LOG_INFO("Loaded ONNX Runtime backend");
           using NewOnnxInfer = OnnxInfer* (*)(const std::string&,
                                               bool,
                                               int32_t,
@@ -330,29 +372,33 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
                                               bool,
                                               bool,
                                               std::function<cudaStream_t(int32_t device_id)>);
-          auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle, "NewOnnxInfer"));
+          (void)dlerror();
+          auto new_ort_infer = reinterpret_cast<NewOnnxInfer>(dlsym(handle.get(), "NewOnnxInfer"));
           if (!new_ort_infer) {
-            HOLOSCAN_LOG_ERROR(dlerror());
-            status.set_message("ONNX Runtime context setup failure.");
-            dlclose(handle);
+            std::string linker_error = dlerror_to_string();
+            HOLOSCAN_LOG_ERROR("{}", linker_error);
+            status.set_message(backend_plugin_symbol_failure_message(
+                "ONNX Runtime", onnxrt_backend_plugin, "NewOnnxInfer", linker_error));
             return status;
           }
-          dlclose(handle);
           // The ONNX backend is not supporting CUDA Graphs in multi-treaded scenarios and also
           // requires that addresses of inputs are not changing. Since we need both features we
           // dont support CUDA Graphs for the ONNX backend.
           // See
           // https://onnxruntime.ai/docs/execution-providers/CUDA-ExecutionProvider.html#using-cuda-graphs-preview
           // for more information.
-          auto context = new_ort_infer(model_path,
-                                       inference_specs->use_fp16_,
-                                       dla_core,
-                                       inference_specs->dla_gpu_fallback_,
-                                       inference_specs->oncuda_,
-                                       cuda_buffer_in_,
-                                       cuda_buffer_out_,
-                                       inference_specs->allocate_cuda_stream_);
-          holo_infer_context_[model_name] = std::unique_ptr<OnnxInfer>(context);
+          backend_plugin_handles_.push_back(handle.get());
+          (void)handle.release();
+          auto context =
+              std::unique_ptr<OnnxInfer>(new_ort_infer(model_path,
+                                                       inference_specs->use_fp16_,
+                                                       dla_core,
+                                                       inference_specs->dla_gpu_fallback_,
+                                                       inference_specs->oncuda_,
+                                                       cuda_buffer_in_,
+                                                       cuda_buffer_out_,
+                                                       inference_specs->allocate_cuda_stream_));
+          holo_infer_context_[model_name] = std::move(context);
 #else
           HOLOSCAN_LOG_ERROR("Onnxruntime backend not supported or incorrectly installed.");
           status.set_message("Onnxruntime context setup failure.");
@@ -373,36 +419,49 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
             return status;
           }
 #if defined(HOLOINFER_TORCH_ENABLED)
-          HOLOSCAN_LOG_INFO("Searching for libtorch libraries");
-          void* handle =
-              dlopen("libholoscan_infer_torch.so." TOSTRING(PROJECT_VERSION_MAJOR), RTLD_NOW);
+          HOLOSCAN_LOG_INFO("Loading Torch backend");
+          const std::string torch_backend_plugin =
+              "libholoscan_infer_torch.so." TOSTRING(PROJECT_VERSION_MAJOR);
+          ScopedDlHandle handle(dlopen(torch_backend_plugin.c_str(), RTLD_NOW));
           if (handle == nullptr) {
-            HOLOSCAN_LOG_ERROR(dlerror());
-            status.set_message("Torch context setup failure.");
+            std::string linker_error = dlerror_to_string();
+            HOLOSCAN_LOG_ERROR("{}", linker_error);
+            status.set_message(backend_plugin_load_failure_message(
+                "Torch",
+                torch_backend_plugin,
+                "Install Torch backend dependencies as described in the Holoscan SDK "
+                "documentation installation page, and make the libraries visible to the dynamic "
+                "linker.",
+                linker_error));
             return status;
           }
-          HOLOSCAN_LOG_INFO("Found libtorch libraries");
+          HOLOSCAN_LOG_INFO("Loaded Torch backend");
           using NewTorchInfer = TorchInfer* (*)(const std::string&,
                                                 bool,
                                                 bool,
                                                 bool,
                                                 int,
                                                 std::function<cudaStream_t(int32_t device_id)>);
-          auto new_torch_infer = reinterpret_cast<NewTorchInfer>(dlsym(handle, "NewTorchInfer"));
+          (void)dlerror();
+          auto new_torch_infer =
+              reinterpret_cast<NewTorchInfer>(dlsym(handle.get(), "NewTorchInfer"));
           if (!new_torch_infer) {
-            HOLOSCAN_LOG_ERROR(dlerror());
-            status.set_message("Torch context setup failure.");
-            dlclose(handle);
+            std::string linker_error = dlerror_to_string();
+            HOLOSCAN_LOG_ERROR("{}", linker_error);
+            status.set_message(backend_plugin_symbol_failure_message(
+                "Torch", torch_backend_plugin, "NewTorchInfer", linker_error));
             return status;
           }
-          dlclose(handle);
-          auto context = new_torch_infer(model_path,
-                                         inference_specs->oncuda_,
-                                         cuda_buffer_in_,
-                                         cuda_buffer_out_,
-                                         device_id,
-                                         inference_specs->allocate_cuda_stream_);
-          holo_infer_context_[model_name] = std::unique_ptr<TorchInfer>(context);
+          backend_plugin_handles_.push_back(handle.get());
+          (void)handle.release();
+          auto context =
+              std::unique_ptr<TorchInfer>(new_torch_infer(model_path,
+                                                          inference_specs->oncuda_,
+                                                          cuda_buffer_in_,
+                                                          cuda_buffer_out_,
+                                                          device_id,
+                                                          inference_specs->allocate_cuda_stream_));
+          holo_infer_context_[model_name] = std::move(context);
 #else
           HOLOSCAN_LOG_ERROR("Torch backend not supported.");
           status.set_message("Torch context setup failure.");
@@ -597,16 +656,21 @@ InferStatus ManagerInfer::set_inference_params(std::shared_ptr<InferenceSpecs>& 
 
 void ManagerInfer::cleanup() {
   for (auto& [_, context] : holo_infer_context_) {
-    context->cleanup();
-    context.reset();
+    if (context) {
+      context->cleanup();
+    }
   }
+  holo_infer_context_.clear();
+  infer_param_.clear();
 
-  for (auto& [_, infer_p] : infer_param_) {
-    infer_p.reset();
+  for (auto* handle : backend_plugin_handles_) {
+    dlclose(handle);
   }
+  backend_plugin_handles_.clear();
 
   if (cuda_event_) {
     cudaEventDestroy(cuda_event_);
+    cuda_event_ = nullptr;
   }
 }
 
@@ -755,7 +819,7 @@ InferStatus ManagerInfer::run_core_inference(const std::string& model_name,
       }
       auto preprocessed_data =
           found_in_input ? input_preprocess_data.at(in_tensor) : output_inferred_data.at(in_tensor);
-      indata.push_back(preprocessed_data);
+      indata.push_back(std::move(preprocessed_data));
     }
   }
 
@@ -1112,7 +1176,7 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
     }
 
     auto node = g_managers.extract("current_manager");
-    node.key() = unique_id_name;
+    node.key() = std::move(unique_id_name);
     g_managers.insert(std::move(node));
 
     g_manager = g_managers.at(unique_id_);

@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +20,7 @@
 #include <chrono>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "holoscan/holoscan.hpp"
 
@@ -39,7 +40,7 @@ class TimestampTxOp : public Operator {
     // emitting a timestamp is necessary for this port to be connected to an input port that is
     // using a ExpiringMessageAvailableCondition
     int64_t custom_timestamp = 555666777 + index_;
-    op_output.emit(value, "out", custom_timestamp);
+    op_output.emit(std::move(value), "out", custom_timestamp);
     ++index_;
   };
 

@@ -34,7 +34,17 @@ std::unordered_map<std::string, std::vector<VideoCaptureCapabilityEnumerator>> g
 std::unordered_map<std::string, std::vector<VideoTransmitCapabilityEnumerator>> g_transmission;
 
 template <typename CapT, typename EnumeratorT>
-std::vector<CapT> run_enumerators(
+std::vector<CapT> run_enumerators(std::vector<EnumeratorT> to_run) {
+  std::vector<CapT> out;
+  for (const auto& fn : to_run) {
+    auto chunk = fn();
+    out.insert(out.end(), chunk.begin(), chunk.end());
+  }
+  return out;
+}
+
+template <typename EnumeratorT>
+std::vector<EnumeratorT> collect_enumerators_locked(
     const std::unordered_map<std::string, std::vector<EnumeratorT>>& table,
     const std::string& backend_id) {
   std::vector<EnumeratorT> to_run;
@@ -59,12 +69,7 @@ std::vector<CapT> run_enumerators(
       }
     }
   }
-  std::vector<CapT> out;
-  for (const auto& fn : to_run) {
-    auto chunk = fn();
-    out.insert(out.end(), chunk.begin(), chunk.end());
-  }
-  return out;
+  return to_run;
 }
 
 }  // namespace
@@ -93,14 +98,14 @@ void register_video_transmission_enumerator(const std::string& backend_id,
 
 std::vector<VideoCaptureCapabilities> enumerate_video_acquisition_devices(
     const std::string& backend_id) {
-  return run_enumerators<VideoCaptureCapabilities, VideoCaptureCapabilityEnumerator>(g_acquisition,
-                                                                                     backend_id);
+  return run_enumerators<VideoCaptureCapabilities>(
+      collect_enumerators_locked(g_acquisition, backend_id));
 }
 
 std::vector<VideoTransmitCapabilities> enumerate_video_transmission_devices(
     const std::string& backend_id) {
-  return run_enumerators<VideoTransmitCapabilities, VideoTransmitCapabilityEnumerator>(
-      g_transmission, backend_id);
+  return run_enumerators<VideoTransmitCapabilities>(
+      collect_enumerators_locked(g_transmission, backend_id));
 }
 
 }  // namespace holoscan::ops::video_io

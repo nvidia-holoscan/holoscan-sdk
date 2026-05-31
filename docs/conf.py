@@ -60,6 +60,7 @@ extensions = [
     "exhale",
     "myst_parser",
     "numpydoc",
+    "sphinxcontrib.mermaid",
     "sphinx.ext.graphviz",
     "sphinx.ext.autosectionlabel",  # https://docs.readthedocs.io/en/stable/guides/cross-referencing-with-sphinx.html#automatically-label-sections # noqa: E501
     "sphinx.ext.autodoc",  # needed for Python API docs (provides automodule)

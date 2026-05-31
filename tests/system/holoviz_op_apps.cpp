@@ -33,6 +33,15 @@ using namespace holoscan;
 
 static HoloscanTestConfig test_config;
 
+class HolovizApps : public ::testing::Test {
+ protected:
+  void SetUp() override {
+#if defined(__SANITIZE_ADDRESS__)
+    GTEST_SKIP() << "HolovizApps tests are not compatible with ASAN";
+#endif
+  }
+};
+
 using StringOrArg = std::variant<std::string, Arg>;
 
 class HolovizToHolovizApp : public holoscan::Application {
@@ -142,33 +151,33 @@ TEST_P(HolovizStorageParameterizedTestFixture, TestHolovizStorageTypes) {
 }
 
 // run this case with various tensor memory storage types
-TEST(HolovizApps, TestEnableRenderBufferOutputYAML) {
+TEST_F(HolovizApps, TestEnableRenderBufferOutputYAML) {
   run_app("holoviz_enable_ports");
 }
 
-TEST(HolovizApps, TestDisableRenderBufferOutputYAML) {
+TEST_F(HolovizApps, TestDisableRenderBufferOutputYAML) {
   run_app("holoviz_disable_ports");
 }
 
-TEST(HolovizApps, TestInvalidRenderBufferOutputYAML) {
+TEST_F(HolovizApps, TestInvalidRenderBufferOutputYAML) {
   run_app("holoviz_invalid_ports", "Could not parse YAML parameter");
 }
 
-TEST(HolovizApps, TestEnableRenderBufferOutputArg) {
+TEST_F(HolovizApps, TestEnableRenderBufferOutputArg) {
   run_app(Arg("enable_render_buffer_output", true));
 }
 
-TEST(HolovizApps, TestDisableRenderBufferOutputArg) {
+TEST_F(HolovizApps, TestDisableRenderBufferOutputArg) {
   run_app(Arg("enable_render_buffer_output", false));
 }
 
-TEST(HolovizApps, TestInvalidRenderBufferOutputArg) {
+TEST_F(HolovizApps, TestInvalidRenderBufferOutputArg) {
   run_app(Arg("enable_render_buffer_output", 2), "Could not cast parameter");
 }
 
 // Test the layer callback. The other callbacks are tested in Python, but the layer callback
 // is available in C++ only.
-TEST(HolovizApps, TestLayerCallback) {
+TEST_F(HolovizApps, TestLayerCallback) {
   std::vector<std::size_t> input_sizes;
   run_app(Arg("layer_callback",
               ops::HolovizOp::LayerCallbackFunction(
@@ -221,7 +230,7 @@ class HolovizCloseCallbackApp : public holoscan::Application {
   ArgList source_args_{};
 };
 
-TEST(HolovizApps, TestWindowCloseCallbackSmokeCpp) {
+TEST_F(HolovizApps, TestWindowCloseCallbackSmokeCpp) {
   auto cb_calls = std::make_shared<std::atomic<int>>(0);
   auto app = make_application<HolovizCloseCallbackApp>(cb_calls);
 
@@ -305,7 +314,7 @@ class HolovizCloseCallbackInvokeApp : public holoscan::Application {
   ArgList source_args_{};
 };
 
-TEST(HolovizApps, TestWindowCloseCallbackInvokedCpp) {
+TEST_F(HolovizApps, TestWindowCloseCallbackInvokedCpp) {
   auto cb_calls = std::make_shared<std::atomic<int>>(0);
   auto app = make_application<HolovizCloseCallbackInvokeApp>(cb_calls);
 
@@ -358,7 +367,7 @@ class SourceFormatOp : public Operator {
         video_buffer_info.width, video_buffer_info.height, false);
 
     auto video_buffer = entity.value().add<nvidia::gxf::VideoBuffer>("video_buffer");
-    video_buffer.value()->wrapMemory(video_buffer_info,
+    video_buffer.value()->wrapMemory(std::move(video_buffer_info),
                                      data_.size(),
                                      nvidia::gxf::MemoryStorageType::kSystem,
                                      data_.data(),
@@ -564,9 +573,9 @@ class RenderBufferSourceOp : public Operator {
     cube_spec.tensor_name_ = "cube";
     cube_spec.type_ = ops::HolovizOp::InputType::LINES_3D;
     cube_spec.color_ = {1.0f, 0.0f, 0.0f, 1.0f};  // Red color
-    specs.push_back(cube_spec);
+    specs.push_back(std::move(cube_spec));
 
-    op_output.emit(specs, "output_specs");
+    op_output.emit(std::move(specs), "output_specs");
 
     // Create a render buffer
     auto render_entity = nvidia::gxf::Entity::New(context.context());
@@ -683,7 +692,7 @@ class RenderBufferInputApp : public holoscan::Application {
   InputType input_type_;
 };
 
-TEST(HolovizApps, TestRenderBufferInput) {
+TEST_F(HolovizApps, TestRenderBufferInput) {
   auto app = make_application<RenderBufferInputApp>();
 
   // capture output to check that the expected messages were logged

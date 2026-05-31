@@ -38,15 +38,19 @@ void SidecarDispatchQueue::start() {
 }
 
 void SidecarDispatchQueue::stop() {
+  std::thread thread_to_join;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!running_ && !thread_.joinable())
       return;
     running_ = false;
+    if (thread_.joinable()) {
+      thread_to_join = std::move(thread_);
+    }
   }
   cv_.notify_all();
-  if (thread_.joinable()) {
-    thread_.join();
+  if (thread_to_join.joinable()) {
+    thread_to_join.join();
   }
   std::lock_guard<std::mutex> lock(mutex_);
   queue_.clear();

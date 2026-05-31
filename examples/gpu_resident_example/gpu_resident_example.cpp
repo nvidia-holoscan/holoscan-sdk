@@ -20,6 +20,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <memory>
+#include <random>
 #include <thread>
 
 #include <holoscan/core/gpu_resident_operator.hpp>
@@ -346,7 +347,8 @@ int main() {
   }
 
   // Run 10 iterations to test the GPU resident graph execution
-  unsigned int seed = static_cast<unsigned int>(time(nullptr));
+  std::random_device rd;
+  unsigned int seed = rd();
   for (int iteration = 0; iteration < 10; ++iteration) {
     if (!run_iteration(source_op, sink_op, gr_fragment, seed, iteration)) {
       break;

@@ -36,7 +36,7 @@ std::unordered_set<std::string> nested_yaml_map_keys(YAML::Node yaml_node) {
     const auto key = it->first.as<std::string>();
     // Copy to extend lifetime; iterator returns a temporary YAML::Node.
     // Using a reference here can trigger dangling-pointer warnings on arm64.
-    const auto value = it->second;
+    const YAML::Node value = it->second;
     keys.emplace(key);
     if (value.IsMap()) {
       std::unordered_set<std::string> inner_keys = nested_yaml_map_keys(value);

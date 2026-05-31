@@ -49,7 +49,7 @@ namespace holoscan {
 
 namespace {
 std::once_flag datetime_init_flag;
-}
+}  // namespace
 
 int64_t get_duration_ns(const py::object& duration) {
   if (py::isinstance<py::int_>(duration)) {

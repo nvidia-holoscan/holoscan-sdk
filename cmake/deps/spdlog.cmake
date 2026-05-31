@@ -19,7 +19,7 @@ include(${rapids-cmake-dir}/cpm/find.cmake)
 # Here we are using rapids_cpm_find() function instead of rapids_cpm_spdlog() function
 # (https://docs.rapids.ai/api/rapids-cmake/stable/packages/rapids_cpm_spdlog.html), to
 # override the default options.
-set(version 1.14.1)
+set(version 1.17.0)
 
 include(FetchContent)
 

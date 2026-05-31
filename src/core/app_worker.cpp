@@ -285,57 +285,65 @@ void AppWorker::submit_message(WorkerMessage&& message) {
 }
 
 void AppWorker::process_message_queue() {
-  std::unique_lock<std::mutex> lock(message_mutex_);
-  while (!message_queue_.empty()) {
-    auto message = std::move(message_queue_.front());
-    message_queue_.pop();
+  bool terminate_worker = false;
+  {
+    std::unique_lock<std::mutex> lock(message_mutex_);
+    while (!message_queue_.empty()) {
+      auto message = std::move(message_queue_.front());
+      message_queue_.pop();
 
-    // Process message based on message code
-    auto message_code = message.code;
-    switch (message_code) {
-      case WorkerMessageCode::kExecuteFragments: {
-        try {
-          auto connection_map = std::any_cast<
-              std::unordered_map<std::string,
-                                 std::vector<std::shared_ptr<holoscan::ConnectionItem>>>>(
-              message.data);
-          execute_fragments(connection_map);
-        } catch (const std::bad_any_cast& e) {
-          HOLOSCAN_LOG_ERROR("Failed to cast message data to connection map: {}", e.what());
-        }
-      } break;
-      case WorkerMessageCode::kNotifyWorkerExecutionFinished: {
-        HOLOSCAN_LOG_INFO("Worker execution finished");
-        if (worker_server_) {
-          worker_server_->notify_worker_execution_finished(termination_code_);
-          worker_server_->stop();
-          // Do not call 'worker_server_->wait()' as current thread is the worker server thread
-        }
-      } break;
-      case WorkerMessageCode::kTerminateWorker: {
-        try {
-          termination_code_ = std::any_cast<AppWorkerTerminationCode>(message.data);
-          HOLOSCAN_LOG_INFO(
-              "Terminating worker because other worker/driver is terminated (code: {})",
-              static_cast<int>(termination_code_));
-        } catch (const std::bad_any_cast& e) {
-          HOLOSCAN_LOG_ERROR("Failed to cast message data to termination code: {}", e.what());
-        }
-        // Set the flag to false because the app driver already knows the worker has been
-        // terminated. Use atomic store to synchronize with the async executor task.
-        need_notify_execution_finished_.store(false);
-        // Release lock before calling terminate_scheduled_fragments() which may block/sleep
-        lock.unlock();
-        terminate_scheduled_fragments();
-        if (worker_server_) {
-          worker_server_->stop();
-          // Do not call 'worker_server_->wait()' as current thread is the worker server thread
-        }
-        return;  // Lock released, exit function
-      } break;
-      default:
-        HOLOSCAN_LOG_WARN("Unknown message code: {}", static_cast<int>(message_code));
+      // Process message based on message code
+      auto message_code = message.code;
+      switch (message_code) {
+        case WorkerMessageCode::kExecuteFragments: {
+          try {
+            auto connection_map = std::any_cast<
+                std::unordered_map<std::string,
+                                   std::vector<std::shared_ptr<holoscan::ConnectionItem>>>>(
+                message.data);
+            execute_fragments(connection_map);
+          } catch (const std::bad_any_cast& e) {
+            HOLOSCAN_LOG_ERROR("Failed to cast message data to connection map: {}", e.what());
+          }
+        } break;
+        case WorkerMessageCode::kNotifyWorkerExecutionFinished: {
+          HOLOSCAN_LOG_INFO("Worker execution finished");
+          if (worker_server_) {
+            worker_server_->notify_worker_execution_finished(termination_code_);
+            worker_server_->stop();
+            // Do not call 'worker_server_->wait()' as current thread is the worker server thread
+          }
+        } break;
+        case WorkerMessageCode::kTerminateWorker: {
+          try {
+            termination_code_ = std::any_cast<AppWorkerTerminationCode>(message.data);
+            HOLOSCAN_LOG_INFO(
+                "Terminating worker because other worker/driver is terminated (code: {})",
+                static_cast<int>(termination_code_));
+          } catch (const std::bad_any_cast& e) {
+            HOLOSCAN_LOG_ERROR("Failed to cast message data to termination code: {}", e.what());
+          }
+          // Set the flag to false because the app driver already knows the worker has been
+          // terminated. Use atomic store to synchronize with the async executor task.
+          need_notify_execution_finished_.store(false);
+          terminate_worker = true;
+        } break;
+        default:
+          HOLOSCAN_LOG_WARN("Unknown message code: {}", static_cast<int>(message_code));
+          break;
+      }
+
+      if (terminate_worker) {
         break;
+      }
+    }
+  }
+
+  if (terminate_worker) {
+    terminate_scheduled_fragments();
+    if (worker_server_) {
+      worker_server_->stop();
+      // Do not call 'worker_server_->wait()' as current thread is the worker server thread
     }
   }
 }

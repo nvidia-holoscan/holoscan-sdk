@@ -39,7 +39,7 @@ using pybind11::literals::operator""_a;   // NOLINT(misc-unused-using-decls)
 
 namespace {
 std::once_flag datetime_init_flag;
-}
+}  // namespace
 
 namespace py = pybind11;
 

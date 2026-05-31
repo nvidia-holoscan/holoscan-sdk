@@ -56,14 +56,23 @@ namespace viz = holoscan::viz;
 class PresentWaitFallback : public TestHeadless {};
 
 /**
- * On extension-capable hardware: WaitForPresent blocks until timeout and
- * returns false (present_id 0 was never submitted). No exception expected.
+ * Asserts the per-platform contract of `viz::WaitForPresent` when no present
+ * has been submitted:
  *
- * On extension-less hardware (NVBug 5928213 scenario): WaitForPresent must
- * throw std::runtime_error mentioning VK_KHR_present_wait, giving the
- * application a clear signal to use FirstPixelOutCondition instead.
+ *   - extension AVAILABLE   : the call blocks until the timeout and returns
+ *                             false. No exception is raised.
+ *   - extension UNAVAILABLE : the call throws `std::runtime_error` whose
+ *                             message identifies the missing extension so the
+ *                             application author can take corrective action
+ *                             (e.g. fall back to `FirstPixelOutCondition`).
+ *
+ * The test is permissive on the extension-available branch (it only checks
+ * that no exception is thrown). Tightening that branch with explicit
+ * timeout/return-value assertions is intentionally deferred so that the
+ * stricter contract can be reviewed alongside the corresponding fix in
+ * `PresentDoneCondition::Impl::thread_func`.
  */
-TEST_F(PresentWaitFallback, ThrowsOrTimesOutWhenPresentNotSubmitted) {
+TEST_F(PresentWaitFallback, ContractMatchesExtensionAvailability) {
   try {
     // present_id 0 was never submitted; on extension-capable hardware this
     // times out after timeout_ns and returns false.

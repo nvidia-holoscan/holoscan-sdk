@@ -321,7 +321,7 @@ class GXFExecutor : public holoscan::Executor {
   bool connection_items(std::vector<std::shared_ptr<holoscan::ConnectionItem>>& connection_items);
 
   void add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
-                                    std::shared_ptr<Operator> op);
+                                    const std::shared_ptr<Operator>& op);
 
   void register_extensions();
   gxf_uid_t op_eid_ = 0;  ///< The GXF entity ID of the operator. Create new entity for

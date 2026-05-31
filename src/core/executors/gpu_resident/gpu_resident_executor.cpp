@@ -100,7 +100,7 @@ bool GPUResidentExecutor::initialize_operator(Operator* op) {
   return true;
 }
 
-void GPUResidentExecutor::set_unique_ids(std::shared_ptr<Operator> op) {
+void GPUResidentExecutor::set_unique_ids(const std::shared_ptr<Operator>& op) {
   if (op && op->spec()) {
     for (auto& [port_name, input_spec] : op->spec()->inputs()) {
       // check if the unique_id is already set
@@ -118,10 +118,13 @@ void GPUResidentExecutor::set_unique_ids(std::shared_ptr<Operator> op) {
 }
 
 void GPUResidentExecutor::prepare_data_flow(
-    std::shared_ptr<OperatorFlowGraph> graph,
+    const std::shared_ptr<OperatorFlowGraph>& graph,
     const std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
   for (const auto& op : topo_ordered_operators) {
     op->initialize();
+    // Ensure framework-level initialization ran even if the operator's initialize()
+    // override did not call Operator::initialize(). initialize_base() is idempotent.
+    op->initialize_base();
     set_unique_ids(op);
   }
 
@@ -147,8 +150,8 @@ void GPUResidentExecutor::prepare_data_flow(
   }
 }
 
-void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
-                                        std::shared_ptr<Operator> dest_op,
+void GPUResidentExecutor::connect_ports(const std::shared_ptr<Operator>& source_op,
+                                        const std::shared_ptr<Operator>& dest_op,
                                         const std::string& source_port,
                                         const std::string& destination_port) {
   auto output_memory_block_size = source_op->spec()->outputs()[source_port]->memory_block_size();
@@ -228,7 +231,8 @@ void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
         dest_op->name(),
         destination_port,
         no_mem_op_name);
-    allocate_io_device_buffer(source_op, dest_op, source_port, destination_port, mem_size);
+    allocate_io_device_buffer(
+        std::move(source_op), std::move(dest_op), source_port, destination_port, mem_size);
   } else {
     // Neither side has a memory block size or a device pointer
     throw std::runtime_error(
@@ -241,8 +245,8 @@ void GPUResidentExecutor::connect_ports(std::shared_ptr<Operator> source_op,
   }
 }
 
-void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> source_op,
-                                                    std::shared_ptr<Operator> dest_op,
+void GPUResidentExecutor::allocate_io_device_buffer(const std::shared_ptr<Operator>& source_op,
+                                                    const std::shared_ptr<Operator>& dest_op,
                                                     const std::string& source_port,
                                                     const std::string& target_port,
                                                     size_t memory_block_size) {
@@ -304,8 +308,8 @@ void GPUResidentExecutor::allocate_io_device_buffer(std::shared_ptr<Operator> so
   io_device_buffers_[target_port_unique_id] = std::move(device_buffer);
 }
 
-void GPUResidentExecutor::connect_io_device_ptr(std::shared_ptr<Operator> source_op,
-                                                std::shared_ptr<Operator> dest_op,
+void GPUResidentExecutor::connect_io_device_ptr(const std::shared_ptr<Operator>& source_op,
+                                                const std::shared_ptr<Operator>& dest_op,
                                                 const std::string& source_port,
                                                 const std::string& target_port, void* device_ptr) {
   if (device_ptr == nullptr) {
@@ -373,7 +377,7 @@ void GPUResidentExecutor::connect_io_device_ptr(std::shared_ptr<Operator> source
   io_device_ptrs_[target_port_unique_id] = device_ptr;
 }
 
-void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
+void* GPUResidentExecutor::device_memory(const std::shared_ptr<Operator>& op,
                                          const std::string& port_name) {
   if (!op->spec()) {
     throw std::runtime_error(fmt::format("Operator ({}) spec is not available", op->name()));
@@ -402,7 +406,7 @@ void* GPUResidentExecutor::device_memory(std::shared_ptr<Operator> op,
 }
 
 bool GPUResidentExecutor::verify_graph_topology(
-    std::shared_ptr<OperatorFlowGraph> graph,
+    const std::shared_ptr<OperatorFlowGraph>& graph,
     std::vector<std::shared_ptr<Operator>>& topo_ordered_operators) {
   topo_ordered_operators.clear();
 

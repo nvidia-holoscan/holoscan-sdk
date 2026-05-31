@@ -1169,7 +1169,7 @@ PoseTree::expected_t<Pose3d> PoseTree::get_impl(const frame_t lhs, const frame_t
 }
 
 PoseTree::expected_t<PoseTree::uid_t> PoseTree::add_create_frame_callback(
-    CreateFrameCallback callback) {
+    const CreateFrameCallback& callback) {
   std::unique_lock<std::shared_timed_mutex> lock(create_frame_callbacks_mutex_);
   const auto cid = create_frame_callbacks_.insert(callback);
   if (!cid) {
@@ -1204,7 +1204,8 @@ PoseTree::expected_t<void> PoseTree::remove_create_frame_callback(uid_t cid) {
   return unexpected_t(Error::kInvalidArgument);
 }
 
-PoseTree::expected_t<PoseTree::uid_t> PoseTree::add_set_edge_callback(SetEdgeCallback callback) {
+PoseTree::expected_t<PoseTree::uid_t> PoseTree::add_set_edge_callback(
+    const SetEdgeCallback& callback) {
   std::unique_lock<std::shared_timed_mutex> lock(set_edge_callbacks_mutex_);
   const auto cid = set_edge_callbacks_.insert(callback);
   if (!cid) {

@@ -54,7 +54,7 @@ void ThreadPool::setup(ComponentSpec& spec) {
 }
 
 void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator,
-                     std::vector<uint32_t> pin_cores) {
+                     const std::vector<uint32_t>& pin_cores) {
   // add a CPUThread argument if one did not already exist
   const auto& resource_map = op->resources();
   auto thread_arg_it = std::find_if(resource_map.begin(), resource_map.end(), [](const auto& r) {
@@ -79,15 +79,15 @@ void ThreadPool::add(const std::shared_ptr<Operator>& op, bool pin_operator,
   operators_.push_back(op);
 }
 
-void ThreadPool::add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator,
-                     std::vector<uint32_t> pin_cores) {
+void ThreadPool::add(const std::vector<std::shared_ptr<Operator>>& ops, bool pin_operator,
+                     const std::vector<uint32_t>& pin_cores) {
   for (const auto& op : ops) {
     add(op, pin_operator, pin_cores);
   }
 }
 
 void ThreadPool::add_realtime(const std::shared_ptr<Operator>& op, SchedulingPolicy sched_policy,
-                              bool pin_operator, std::vector<uint32_t> pin_cores,
+                              bool pin_operator, const std::vector<uint32_t>& pin_cores,
                               uint32_t sched_priority, uint64_t sched_runtime,
                               uint64_t sched_deadline, uint64_t sched_period) {
   // add a CPUThread argument if one did not already exist

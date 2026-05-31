@@ -27,6 +27,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -35,6 +36,7 @@
 #include <holoscan/core/gpu_resident_operator.hpp>
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/bayer_demosaic_gpu_resident/bayer_demosaic_gpu_resident.hpp>
+#include <holoscan/utils/cuda/buffer.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
 
 namespace holoscan {
@@ -278,8 +280,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
 
   auto* source_op = dynamic_cast<GPUResidentOperator*>(source_node.get());
   auto* sink_op = dynamic_cast<GPUResidentOperator*>(sink_node.get());
-  ASSERT_NE(source_op, nullptr);
-  ASSERT_NE(sink_op, nullptr);
+  if (source_op == nullptr || sink_op == nullptr) {
+    FAIL() << "Failed to cast source/sink nodes to GPUResidentOperator";
+    return;
+  }
 
   // Generate random input data
   size_t input_size = width * height;
@@ -288,18 +292,15 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
   std::vector<uint8_t> host_output_gpu_resident(output_size);
   std::vector<uint8_t> host_output_reference(output_size);
 
-  unsigned int seed = static_cast<unsigned int>(time(nullptr));
+  std::random_device rd;
+  unsigned int seed = rd();
   for (size_t i = 0; i < input_size; ++i) {
     host_input[i] = static_cast<uint8_t>(rand_r(&seed) % 256);
   }
 
   // Allocate reference buffers on device
-  uint8_t* ref_input_device = nullptr;
-  uint8_t* ref_output_device = nullptr;
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_input_device, input_size * sizeof(uint8_t)),
-                                 "Failed to allocate reference input buffer");
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_output_device, output_size * sizeof(uint8_t)),
-                                 "Failed to allocate reference output buffer");
+  utils::cuda::DeviceBuffer ref_input_device(input_size * sizeof(uint8_t));
+  utils::cuda::DeviceBuffer ref_output_device(output_size * sizeof(uint8_t));
 
   // Run two iterations to verify GPU-resident graph execution
   for (int iter = 0; iter < 2; ++iter) {
@@ -310,7 +311,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
 
     // Copy input to GPU-resident source
     void* source_out_addr = source_op->device_memory("out");
-    ASSERT_NE(source_out_addr, nullptr) << "Source output device memory is null";
+    if (source_out_addr == nullptr) {
+      FAIL() << "Source output device memory is null";
+      return;
+    }
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(source_out_addr,
                                               host_input.data(),
@@ -319,7 +323,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
                                    "Failed to copy input to GPU-resident source");
 
     // Compute reference output
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device,
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device.data(),
                                               host_input.data(),
                                               input_size * sizeof(uint8_t),
                                               cudaMemcpyHostToDevice),
@@ -327,8 +331,8 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
 
     cudaStream_t ref_stream;
     cudaStreamCreate(&ref_stream);
-    run_reference_demosaic<uint8_t>(ref_input_device,
-                                    ref_output_device,
+    run_reference_demosaic<uint8_t>(static_cast<uint8_t*>(ref_input_device.data()),
+                                    static_cast<uint8_t*>(ref_output_device.data()),
                                     width,
                                     height,
                                     generate_alpha,
@@ -338,7 +342,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
     cudaStreamDestroy(ref_stream);
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_reference.data(),
-                                              ref_output_device,
+                                              ref_output_device.data(),
                                               output_size * sizeof(uint8_t),
                                               cudaMemcpyDeviceToHost),
                                    "Failed to copy reference output to host");
@@ -352,7 +356,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
 
     // Read GPU-resident output
     void* sink_in_addr = sink_op->device_memory("in");
-    ASSERT_NE(sink_in_addr, nullptr) << "Sink input device memory is null";
+    if (sink_in_addr == nullptr) {
+      FAIL() << "Sink input device memory is null";
+      return;
+    }
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_gpu_resident.data(),
                                               sink_in_addr,
@@ -369,20 +376,16 @@ TEST_F(BayerDemosaicGpuResidentTest, Test8BitWithAlpha) {
     HOLOSCAN_LOG_INFO("Iteration {} - 8-bit with alpha test passed", iter);
   }
 
-  // Cleanup
-  cudaFree(ref_input_device);
-  cudaFree(ref_output_device);
-
   // Tear down GPU-resident fragment
   fragment.gpu_resident().tear_down();
   future.get();
 }
 
 // ================================================================================================
-// Test Case 2: 16-bit without alpha generation
+// Test Case 2: 16-bit with alpha generation
 // ================================================================================================
 
-TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
+TEST_F(BayerDemosaicGpuResidentTest, Test16BitWithAlpha) {
   const int32_t width = kTestWidth;
   const int32_t height = kTestHeight;
   const bool generate_alpha = true;
@@ -439,8 +442,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
 
   auto* source_op = dynamic_cast<GPUResidentOperator*>(source_node.get());
   auto* sink_op = dynamic_cast<GPUResidentOperator*>(sink_node.get());
-  ASSERT_NE(source_op, nullptr);
-  ASSERT_NE(sink_op, nullptr);
+  if (source_op == nullptr || sink_op == nullptr) {
+    FAIL() << "Failed to cast source/sink nodes to GPUResidentOperator";
+    return;
+  }
 
   // Generate random input data
   size_t input_size = width * height;
@@ -449,18 +454,15 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
   std::vector<uint16_t> host_output_gpu_resident(output_size);
   std::vector<uint16_t> host_output_reference(output_size);
 
-  unsigned int seed = static_cast<unsigned int>(time(nullptr));
+  std::random_device rd;
+  unsigned int seed = rd();
   for (size_t i = 0; i < input_size; ++i) {
     host_input[i] = static_cast<uint16_t>(rand_r(&seed) % 65536);
   }
 
   // Allocate reference buffers on device
-  uint16_t* ref_input_device = nullptr;
-  uint16_t* ref_output_device = nullptr;
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_input_device, input_size * sizeof(uint16_t)),
-                                 "Failed to allocate reference input buffer");
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_output_device, output_size * sizeof(uint16_t)),
-                                 "Failed to allocate reference output buffer");
+  utils::cuda::DeviceBuffer ref_input_device(input_size * sizeof(uint16_t));
+  utils::cuda::DeviceBuffer ref_output_device(output_size * sizeof(uint16_t));
 
   // Run two iterations to verify GPU-resident graph execution
   for (int iter = 0; iter < 2; ++iter) {
@@ -471,7 +473,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
 
     // Copy input to GPU-resident source
     void* source_out_addr = source_op->device_memory("out");
-    ASSERT_NE(source_out_addr, nullptr) << "Source output device memory is null";
+    if (source_out_addr == nullptr) {
+      FAIL() << "Source output device memory is null";
+      return;
+    }
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(source_out_addr,
                                               host_input.data(),
@@ -480,7 +485,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
                                    "Failed to copy input to GPU-resident source");
 
     // Compute reference output
-    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device,
+    HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device.data(),
                                               host_input.data(),
                                               input_size * sizeof(uint16_t),
                                               cudaMemcpyHostToDevice),
@@ -488,8 +493,8 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
 
     cudaStream_t ref_stream;
     cudaStreamCreate(&ref_stream);
-    run_reference_demosaic<uint16_t>(ref_input_device,
-                                     ref_output_device,
+    run_reference_demosaic<uint16_t>(static_cast<uint16_t*>(ref_input_device.data()),
+                                     static_cast<uint16_t*>(ref_output_device.data()),
                                      width,
                                      height,
                                      generate_alpha,
@@ -499,7 +504,7 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
     cudaStreamDestroy(ref_stream);
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_reference.data(),
-                                              ref_output_device,
+                                              ref_output_device.data(),
                                               output_size * sizeof(uint16_t),
                                               cudaMemcpyDeviceToHost),
                                    "Failed to copy reference output to host");
@@ -513,7 +518,10 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
 
     // Read GPU-resident output
     void* sink_in_addr = sink_op->device_memory("in");
-    ASSERT_NE(sink_in_addr, nullptr) << "Sink input device memory is null";
+    if (sink_in_addr == nullptr) {
+      FAIL() << "Sink input device memory is null";
+      return;
+    }
 
     HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_gpu_resident.data(),
                                               sink_in_addr,
@@ -529,10 +537,6 @@ TEST_F(BayerDemosaicGpuResidentTest, Test16BitNoAlpha) {
 
     HOLOSCAN_LOG_INFO("Iteration {} - 16-bit with alpha test passed", iter);
   }
-
-  // Cleanup
-  cudaFree(ref_input_device);
-  cudaFree(ref_output_device);
 
   // Tear down GPU-resident fragment
   fragment.gpu_resident().tear_down();
@@ -671,8 +675,10 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
 
   auto* source_op = dynamic_cast<GPUResidentOperator*>(source_node.get());
   auto* sink_op = dynamic_cast<GPUResidentOperator*>(sink_node.get());
-  ASSERT_NE(source_op, nullptr);
-  ASSERT_NE(sink_op, nullptr);
+  if (source_op == nullptr || sink_op == nullptr) {
+    FAIL() << "Failed to cast source/sink nodes to GPUResidentOperator";
+    return;
+  }
 
   // Generate synthetic Bayer pattern image
   size_t input_size = static_cast<size_t>(width) * static_cast<size_t>(height);
@@ -691,16 +697,15 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
   HOLOSCAN_LOG_INFO("Saved input Bayer data to {}", bayer_filename);
 
   // Allocate reference buffers on device
-  uint8_t* ref_input_device = nullptr;
-  uint8_t* ref_output_device = nullptr;
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_input_device, input_size * sizeof(uint8_t)),
-                                 "Failed to allocate reference input buffer");
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMalloc(&ref_output_device, output_size * sizeof(uint8_t)),
-                                 "Failed to allocate reference output buffer");
+  utils::cuda::DeviceBuffer ref_input_device(input_size * sizeof(uint8_t));
+  utils::cuda::DeviceBuffer ref_output_device(output_size * sizeof(uint8_t));
 
   // Copy input to GPU-resident source
   void* source_out_addr = source_op->device_memory("out");
-  ASSERT_NE(source_out_addr, nullptr) << "Source output device memory is null";
+  if (source_out_addr == nullptr) {
+    FAIL() << "Source output device memory is null";
+    return;
+  }
 
   HOLOSCAN_CUDA_CALL_THROW_ERROR(
       cudaMemcpy(
@@ -708,7 +713,7 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
       "Failed to copy input to GPU-resident source");
 
   // Compute reference output using original NPP calls
-  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device,
+  HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(ref_input_device.data(),
                                             host_input.data(),
                                             input_size * sizeof(uint8_t),
                                             cudaMemcpyHostToDevice),
@@ -716,8 +721,8 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
 
   cudaStream_t ref_stream;
   cudaStreamCreate(&ref_stream);
-  run_reference_demosaic<uint8_t>(ref_input_device,
-                                  ref_output_device,
+  run_reference_demosaic<uint8_t>(static_cast<uint8_t*>(ref_input_device.data()),
+                                  static_cast<uint8_t*>(ref_output_device.data()),
                                   width,
                                   height,
                                   generate_alpha,
@@ -727,7 +732,7 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
   cudaStreamDestroy(ref_stream);
 
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_reference.data(),
-                                            ref_output_device,
+                                            ref_output_device.data(),
                                             output_size * sizeof(uint8_t),
                                             cudaMemcpyDeviceToHost),
                                  "Failed to copy reference output to host");
@@ -746,7 +751,10 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
 
   // Read GPU-resident output
   void* sink_in_addr = sink_op->device_memory("in");
-  ASSERT_NE(sink_in_addr, nullptr) << "Sink input device memory is null";
+  if (sink_in_addr == nullptr) {
+    FAIL() << "Sink input device memory is null";
+    return;
+  }
 
   HOLOSCAN_CUDA_CALL_THROW_ERROR(cudaMemcpy(host_output_gpu_resident.data(),
                                             sink_in_addr,
@@ -808,10 +816,6 @@ TEST_F(BayerDemosaicGpuResidentTest, TestRealImageWithFileOutput) {
 
   HOLOSCAN_LOG_INFO("TestRealImageWithFileOutput passed - GPU-resident output matches reference");
   HOLOSCAN_LOG_INFO("Output images saved to {} directory", output_dir);
-
-  // Cleanup
-  cudaFree(ref_input_device);
-  cudaFree(ref_output_device);
 
   // Tear down GPU-resident fragment
   fragment.gpu_resident().tear_down();

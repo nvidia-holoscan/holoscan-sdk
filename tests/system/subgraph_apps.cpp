@@ -1215,6 +1215,7 @@ TEST(SubgraphTests, TestNestedSubgraphsAccessor) {
 
   const auto& nested = outer->nested_subgraphs();
   ASSERT_EQ(nested.size(), 1);
+  ASSERT_NE(nested[0], nullptr);
   EXPECT_EQ(nested[0]->name(), "outer_inner_tx");
 
   // "rx1" has no nested subgraphs

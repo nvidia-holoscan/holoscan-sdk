@@ -188,10 +188,56 @@ include(cmake/setup_dependencies.cmake)
 
 # If enabling clang-tidy
 if(HOLOSCAN_ENABLE_CLANG_TIDY)
-  # Common clang-tidy checks configuration
-  set(CLANG_TIDY_CHECKS
-      "*,-llvmlibc-restrict-system-libc-headers,-abseil-*,-fuchsia-*,-llvmlibc-implementation-in-namespace,-llvmlibc-inline-function-decl,-readability-magic-numbers,-readability-identifier-length,-cppcoreguidelines-avoid-magic-numbers,-altera-*,-llvmlibc-callee-namespace,-google-build-using-namespace,-llvm-include-order,-llvm-header-guard,-bugprone-exception-escape,-cppcoreguidelines-pro-bounds-pointer-arithmetic,-modernize-use-trailing-return-type,-modernize-concat-nested-namespaces,-bugprone-easily-swappable-parameters,-clang-diagnostic-ignored-optimization-argument,-portability-simd-intrinsics,-misc-include-cleaner,-performance-enum-size"
-  )
+  # Common clang-tidy checks: enable all ("*"), then disable noisy or low-signal groups for this
+  # codebase. Joined into the comma-separated form required by clang-tidy --checks=...
+  # Wildcards (e.g. -cppcoreguidelines-*, -readability-*) subsume same-prefix checks; do not list
+  # those checks again. Disable list is sorted alphabetically (after "*").
+  set(_HOLOSCAN_CLANG_TIDY_CHECK_LIST
+      "*"
+      "-abseil-*"
+      "-altera-*"
+      "-android-*"
+      "-bugprone-assignment-in-if-condition"
+      "-bugprone-branch-clone"
+      "-bugprone-easily-swappable-parameters"
+      "-bugprone-empty-catch"
+      "-bugprone-exception-escape"
+      "-bugprone-implicit-widening-of-multiplication-result"
+      "-bugprone-incorrect-roundings"
+      "-bugprone-macro-parentheses"
+      "-bugprone-multi-level-implicit-pointer-conversion"
+      "-bugprone-narrowing-conversions"
+      "-bugprone-switch-missing-default-case"
+      "-bugprone-inc-dec-in-conditions"
+      "-bugprone-casting-through-void"
+      "-cert-*"
+      "-clang-diagnostic-ignored-optimization-argument"
+      "-clang-diagnostic-potentially-evaluated-expression"
+      "-concurrency-mt-unsafe"
+      "-cppcoreguidelines-*"
+      "-fuchsia-*"
+      "-google-*"
+      "-hicpp-*"
+      "-llvm-else-after-return"
+      "-llvm-header-guard"
+      "-llvm-include-order"
+      "-llvm-qualified-auto"
+      "-llvmlibc-callee-namespace"
+      "-llvmlibc-implementation-in-namespace"
+      "-llvmlibc-inline-function-decl"
+      "-llvmlibc-restrict-system-libc-headers"
+      "-misc-*"
+      "-modernize-*"
+      "-performance-enum-size"
+      "-performance-inefficient-string-concatenation"
+      "-performance-move-const-arg"
+      "-performance-no-automatic-move"
+      "-performance-no-int-to-ptr"
+      "-performance-unnecessary-value-param"
+      "-portability-simd-intrinsics"
+      "-readability-*")
+  string(JOIN "," CLANG_TIDY_CHECKS ${_HOLOSCAN_CLANG_TIDY_CHECK_LIST})
+  unset(_HOLOSCAN_CLANG_TIDY_CHECK_LIST)
 
   if(HOLOSCAN_CLANG_TIDY_CHECK_HEADERS)
     # Header filter to check project headers while excluding third-party code.
@@ -337,6 +383,7 @@ list(APPEND HOLOSCAN_INSTALL_TARGETS
     op_bayer_demosaic
     op_bayer_demosaic_gpu_resident
     op_format_converter
+    op_format_converter_gpu_resident
     op_gxf_codelet
     op_holoviz
     op_raw_image_processor
@@ -389,6 +436,12 @@ install(DIRECTORY include/holoscan/
 # Copy version file
 install(FILES ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR}/include/holoscan/version_config.hpp
     DESTINATION include/holoscan
+    COMPONENT holoscan-core
+)
+
+# Apache 2.0 license at install prefix root
+install(FILES "${CMAKE_SOURCE_DIR}/LICENSE.txt"
+    DESTINATION .
     COMPONENT holoscan-core
 )
 

@@ -9,7 +9,8 @@ index d02af07..2b8de1a 100644
 -option(MAGIC_ENUM_OPT_INSTALL "Generate and install magic_enum target" ${IS_TOPLEVEL_PROJECT})
 +option(MAGIC_ENUM_OPT_INSTALL "Generate and install magic_enum target" ON)
  option(MAGIC_ENUM_OPT_INSTALL_PACKAGE_XML "Include package.xml when installing"
-        ${MAGIC_ENUM_OPT_INSTALL}
+-       ${MAGIC_ENUM_OPT_INSTALL}
++       OFF
  )
 @@ -68,7 +68,7 @@ if(MAGIC_ENUM_OPT_INSTALL)
      TARGETS "${PROJECT_NAME}"

@@ -32,13 +32,13 @@ class CountOp : public holoscan::Operator {
 
   CountOp() = default;
 
-  void start() {
+  void start() override {
     // Use wall clock instead of Holoscan's internal clock in order to
     // separately measurement from implementation.
     start_time_ = std::chrono::steady_clock::now();
   }
 
-  void stop() { end_time_ = std::chrono::steady_clock::now(); }
+  void stop() override { end_time_ = std::chrono::steady_clock::now(); }
 
   void compute(holoscan::InputContext&, holoscan::OutputContext&,
                holoscan::ExecutionContext&) override {
@@ -67,6 +67,12 @@ class BenchmarkSchedulerThroughputApp : public holoscan::Application {
 
     // Operations to execute per operator.
     int num_operations = 100000;
+
+    // Whether EventBasedScheduler workers may steal ready jobs from other worker queues.
+    bool enable_queue_stealing = false;
+
+    // Whether EventBasedScheduler workers use the postcheck fastpath after executeEntity().
+    bool enable_postcheck_fastpath = false;
   };
 
   struct Results {
@@ -86,7 +92,9 @@ class BenchmarkSchedulerThroughputApp : public holoscan::Application {
 
     scheduler(make_scheduler<holoscan::EventBasedScheduler>(
         "scheduler",
-        holoscan::Arg("worker_thread_number", static_cast<int64_t>(options_.num_threads))));
+        holoscan::Arg("worker_thread_number", static_cast<int64_t>(options_.num_threads)),
+        holoscan::Arg("enable_queue_stealing", options_.enable_queue_stealing),
+        holoscan::Arg("enable_worker_postcheck_fastpath", options_.enable_postcheck_fastpath)));
   }
 
   Results results() {
@@ -116,15 +124,49 @@ class BenchmarkSchedulerThroughputApp : public holoscan::Application {
   std::vector<std::shared_ptr<CountOp>> count_ops_;
 };
 
-int main() {
+namespace {
+
+void print_usage(const char* program_name) {
+  std::cout << "Usage: " << program_name
+            << " [--enable_queue_stealing] [--enable_postcheck_fastpath]" << '\n';
+}
+
+}  // namespace
+
+int main(int argc, char** argv) {
+  BenchmarkSchedulerThroughputApp::Options scheduler_options;
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--enable_queue_stealing") {
+      scheduler_options.enable_queue_stealing = true;
+    } else if (arg == "--enable_postcheck_fastpath") {
+      scheduler_options.enable_postcheck_fastpath = true;
+    } else if (arg == "--help" || arg == "-h") {
+      print_usage(argv[0]);
+      return 0;
+    } else {
+      std::cerr << "Unknown argument: " << arg << '\n';
+      print_usage(argv[0]);
+      return 1;
+    }
+  }
+
+  auto make_trial_options = [&](int num_threads,
+                                int num_operators) -> BenchmarkSchedulerThroughputApp::Options {
+    BenchmarkSchedulerThroughputApp::Options options = scheduler_options;
+    options.num_threads = num_threads;
+    options.num_operators = num_operators;
+    return options;
+  };
+
   // Construct trial options to benchmark: {num_threads, num_operators}.
   std::vector<BenchmarkSchedulerThroughputApp::Options> trial_options = {
-      BenchmarkSchedulerThroughputApp::Options{1, 1},
-      BenchmarkSchedulerThroughputApp::Options{2, 2},
-      BenchmarkSchedulerThroughputApp::Options{4, 4},
-      BenchmarkSchedulerThroughputApp::Options{8, 8},
-      BenchmarkSchedulerThroughputApp::Options{16, 16},
-      BenchmarkSchedulerThroughputApp::Options{2, 8},
+      make_trial_options(1, 1),
+      make_trial_options(2, 2),
+      make_trial_options(4, 4),
+      make_trial_options(8, 8),
+      make_trial_options(16, 16),
+      make_trial_options(2, 8),
   };
   std::vector<BenchmarkSchedulerThroughputApp::Results> trial_results;
 
@@ -136,6 +178,10 @@ int main() {
   }
 
   std::cout << "\nScheduler Throughput Benchmark Results:" << '\n';
+  std::cout << fmt::format("Scheduler options: queue_stealing={}, postcheck_fastpath={}",
+                           scheduler_options.enable_queue_stealing ? "on" : "off",
+                           scheduler_options.enable_postcheck_fastpath ? "on" : "off")
+            << '\n';
   std::cout << fmt::format("\n| {:>5} | {:>7} | {:>9} | {:>10} | {:>12} |",
                            "Trial",
                            "Threads",

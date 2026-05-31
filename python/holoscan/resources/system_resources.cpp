@@ -73,15 +73,16 @@ void init_system_resources(py::module_& m) {
            "name"_a = std::string(resource_default_name_v<ThreadPool>),
            doc::ThreadPool::doc_ThreadPool_kwargs)
       .def("add",
-           py::overload_cast<const std::shared_ptr<Operator>&, bool, std::vector<uint32_t>>(
+           py::overload_cast<const std::shared_ptr<Operator>&, bool, const std::vector<uint32_t>&>(
                &ThreadPool::add),
            "op"_a,
            "pin_operator"_a = false,
            "pin_cores"_a = std::vector<uint32_t>())
       .def_property_readonly("operators", &ThreadPool::operators, doc::ThreadPool::doc_operators)
       .def("add",
-           py::overload_cast<std::vector<std::shared_ptr<Operator>>, bool, std::vector<uint32_t>>(
-               &ThreadPool::add),
+           py::overload_cast<const std::vector<std::shared_ptr<Operator>>&,
+                             bool,
+                             const std::vector<uint32_t>&>(&ThreadPool::add),
            "ops"_a,
            "pin_operator"_a = false,
            "pin_cores"_a = std::vector<uint32_t>(),
@@ -143,7 +144,7 @@ void init_system_resources(py::module_& m) {
             self.add_realtime(op,
                               policy,
                               pin_operator,
-                              std::move(pin_cores),
+                              pin_cores,
                               sched_priority,
                               sched_runtime,
                               sched_deadline,

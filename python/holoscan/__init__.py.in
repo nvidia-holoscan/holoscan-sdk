@@ -19,6 +19,26 @@ limitations under the License.
 import importlib.util
 import warnings
 
+# Allow external Python modules to extend this package's namespace.
+#
+# `holoscan` is a regular package (not a PEP 420 namespace package) because it
+# ships with this `__init__.py`, eagerly-loaded compiled subpackages (`core`,
+# `gxf`), top-level helpers, and a CUDA-variant guard. By default that pins
+# `holoscan.__path__` to the SDK's own install directory, which prevents
+# external subpackages installed elsewhere on `sys.path` from merging into
+# the namespace.
+#
+# `pkgutil.extend_path` widens `__path__` to also include any directory on
+# `sys.path` that contains a `holoscan/` subdirectory. Any external Python
+# module that defines a "holoscan.<module>" namespace and that is in `PYTHONPATH`
+# will be importable.
+#
+# This must run before any `from . import …` so the eager submodule imports
+# below can resolve in the SDK's own directory (always the first entry in
+# the extended path).
+from pkgutil import extend_path
+__path__ = extend_path(__path__, __name__)
+
 # We import core and gxf to make sure they're available before other modules that rely on them
 # We also alias the eagerly-loaded modules so that Python's import system knows that
 # `holoscan.core` and `holoscan_cuda12.core` (for example) are the same module.

@@ -32,7 +32,7 @@ the lens can be bought from any [online](https://www.bhphotovideo.com/c/search?N
 
 ## Installing EVT Software
 
-The Emergent SDK needs to be installed in order to compile and run the Clara
+The Emergent SDK needs to be installed in order to compile and run the
 Holoscan applications with EVT camera. The latest tested version of the Emergent SDK is `eSDK 2.37.05 Linux Ubuntu 20.04.04 Kernel 5.10.65 JP 5.0 HP`
 and can be downloaded from [here](https://emergentvisiontec.com/resources/?tab=ss).
 The Emergent SDK comes with headers, libraries and examples. To install the SDK
@@ -64,33 +64,35 @@ under the eCapture section of EVT [Camera User's Manual](https://emergentvisiont
 
 1. **Problem:** The application fails to find the EVT camera.
 
->**Solution:**
->
->- Make sure that the MLNX ConnectX SmartNIC is configured with the correct IP address. Follow
-> section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic)
+   >**Solution:**
+   >
+   >- Make sure that the MLNX ConnectX SmartNIC is configured with the correct IP address. Follow
+   > section [Configure the ConnectX SmartNIC](./set_up_gpudirect_rdma.md#enabling-rdma-on-the-connectx-smartnic)
 
-1. **Problem:** The application fails to open the EVT camera.
+2. **Problem:** The application fails to open the EVT camera.
 
->**Solutions:**
->
->- Make sure that the application was run with `sudo` privileges.
->- Make sure a valid Rivermax license file is located at `/opt/mellanox/rivermax/rivermax.lic`.
+   >**Solutions:**
+   >
+   >- Make sure that the application was run with `sudo` privileges.
+   >- Make sure a valid Rivermax license file is located at `/opt/mellanox/rivermax/rivermax.lic`.
 
-1. **Problem:** Fail to find `eCapture` application in the home window.
+3. **Problem:** Fail to find `eCapture` application in the home window.
 
->**Solution:**
->
->- Open the terminal and find it under `/opt/EVT/eCapture`. The applications needs to
->be run with `sudo` privileges.
+   >**Solution:**
+   >
+   >- Open the terminal and find it under `/opt/EVT/eCapture`. The applications needs to
+   >be run with `sudo` privileges.
 
-1. **Problem:** The `eCapture` application fails to connect to the EVT camera with
-error message "GVCP ack error".
+4. **Problem:** The `eCapture` application fails to connect to the EVT camera with
+   error message "GVCP ack error".
 
->**Solutions:**
-> It could be an issue with the HR12 power connection to the camera. Disconnect the
-> HR12 power connector from the camera and try reconnecting it.
+   >**Solutions:**
+   >
+   > It could be an issue with the HR12 power connection to the camera. Disconnect the
+   > HR12 power connector from the camera and try reconnecting it.
 
-1. **Problem:** The IP address of the Emergent camera is reset even after setting up with the above steps.
+5. **Problem:** The IP address of the Emergent camera is reset even after setting up with the above steps.
 
->**Solutions:**
-> Check whether the NIC settings in Ubuntu is set to "Connect automatically". Go to `Settings`->`Network`->`NIC for the Camera` and then unselect "Connect automatically" and in the IPv6 tab, select `Disable`.
+   >**Solutions:**
+   >
+   > Check whether the NIC settings in Ubuntu is set to "Connect automatically". Go to `Settings`->`Network`->`NIC for the Camera` and then unselect "Connect automatically" and in the IPv6 tab, select `Disable`.

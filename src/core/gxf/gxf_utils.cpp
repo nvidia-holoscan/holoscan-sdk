@@ -136,7 +136,7 @@ bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid, const ch
   }
 }
 
-gxf_uid_t add_entity_group(void* context, std::string name) {
+gxf_uid_t add_entity_group(void* context, const std::string& name) {
   gxf_uid_t entity_group_gid = kNullUid;
   HOLOSCAN_GXF_CALL_FATAL(GxfCreateEntityGroup(context, name.c_str(), &entity_group_gid));
   return entity_group_gid;

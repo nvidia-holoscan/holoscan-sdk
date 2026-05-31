@@ -19,6 +19,7 @@
 #include <gxf/core/gxf.h>
 #include <yaml-cpp/yaml.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <memory>
 #include <stdexcept>
@@ -684,6 +685,54 @@ TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpLegacy) {
   std::string log_output = testing::internal::GetCapturedStderr();
   EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
                                                              << log_output << "\n===========\n";
+}
+
+// Regression for NVBUG 6200702 / CLARAHOLOS-2858: the legacy `device` parameter
+// must forward to `uri` so the V4L2 op opens the user-specified node. Prior to
+// the fix, the shim inspected Parameter values before they were bound and
+// silently fell back to /dev/video0.
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpLegacyDeviceForwardsToUri) {
+  const std::string name{"video_capture"};
+  const std::string user_device{"/dev/video4"};
+
+  ArgList kwargs{Arg{"device", user_device},
+                 Arg{"pixel_format", std::string("RG10")},
+                 Arg{"width", static_cast<uint32_t>(3840)},
+                 Arg{"height", static_cast<uint32_t>(2160)},
+                 Arg{"pass_through", true}};
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+
+  auto uri_arg = std::find_if(
+      op->args().begin(), op->args().end(), [](const auto& a) { return a.name() == "uri"; });
+  ASSERT_NE(uri_arg, op->args().end())
+      << "legacy `device` was not forwarded to `uri` (op->description():\n"
+      << op->description() << ")";
+  ASSERT_TRUE(uri_arg->has_value());
+  EXPECT_EQ(std::any_cast<std::string>(uri_arg->value()), user_device);
+}
+
+// User-supplied `uri` must take precedence and must not be overwritten by the
+// legacy-device shim.
+TEST_F(OperatorClassesWithGXFContext, TestV4L2VideoCaptureOpUriPreserved) {
+  const std::string name{"video_capture"};
+  const std::string user_uri{"/dev/video3"};
+
+  ArgList kwargs{Arg{"uri", user_uri}, Arg{"pass_through", true}};
+
+  auto op = F.make_operator<ops::V4L2VideoCaptureOp>(name, kwargs);
+
+  // Exactly one `uri` Arg, with the user's value.
+  size_t uri_count = 0;
+  std::string last_uri_value;
+  for (const auto& a : op->args()) {
+    if (a.name() == "uri" && a.has_value()) {
+      ++uri_count;
+      last_uri_value = std::any_cast<std::string>(a.value());
+    }
+  }
+  EXPECT_EQ(uri_count, 1u);
+  EXPECT_EQ(last_uri_value, user_uri);
 }
 
 TEST_F(OperatorClassesWithGXFContext, TestInvalidOperatorName) {

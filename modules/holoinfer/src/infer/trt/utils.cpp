@@ -45,13 +45,21 @@ bool generate_engine_path(const NetworkOptions& options, const std::string& onnx
   std::string gpu_name{device_prop.name};
   gpu_name.erase(remove(gpu_name.begin(), gpu_name.end(), ' '), gpu_name.end());
 
-  engine_path.reserve(1024);
-  engine_path =
-      std::filesystem::path(onnx_model_path).replace_extension("").string() + "." + gpu_name + "." +
-      std::to_string(device_prop.major) + "." + std::to_string(device_prop.minor) + "." +
-      std::to_string(device_prop.multiProcessorCount) + ".trt." +
-      std::to_string(NV_TENSORRT_MAJOR) + "." + std::to_string(NV_TENSORRT_MINOR) + "." +
-      std::to_string(NV_TENSORRT_PATCH) + "." + std::to_string(NV_TENSORRT_BUILD) + ".engine";
+  // When building within a green context SM partition, embed the partition's SM count so
+  // engines built with different SM budgets get distinct filenames and do not collide.
+  const int sm_count =
+      (options.build_sm_count > 0) ? options.build_sm_count : device_prop.multiProcessorCount;
+
+  engine_path = fmt::format("{}.{}.{}.{}.{}.trt.{}.{}.{}.{}.engine",
+                            std::filesystem::path(onnx_model_path).replace_extension("").string(),
+                            gpu_name,
+                            device_prop.major,
+                            device_prop.minor,
+                            sm_count,
+                            NV_TENSORRT_MAJOR,
+                            NV_TENSORRT_MINOR,
+                            NV_TENSORRT_PATCH,
+                            NV_TENSORRT_BUILD);
 
   if (options.use_fp16) {
     engine_path += ".fp16";
@@ -221,13 +229,53 @@ bool build_engine(const std::string& onnx_model_path, const std::string& engine_
     }
   }
 
-  auto profileStream = makeCudaStream();
-  if (!profileStream) {
-    return false;
+  // If a CUDA green context is provided, push it so TRT's tactic search and
+  // kernel timing run against the partition's SM subset rather than the full GPU.
+  CUcontext prev_context = nullptr;
+  const bool using_green_ctx = (network_options.build_cuda_context != nullptr);
+  bool push_succeeded = false;
+  if (using_green_ctx) {
+    CUresult cu_status = cuCtxPushCurrent(network_options.build_cuda_context);
+    if (cu_status == CUDA_SUCCESS) {
+      push_succeeded = true;
+    } else {
+      HOLOSCAN_LOG_WARN(
+          "TRT engine build: failed to push green context (CUresult={}); "
+          "falling back to default context — engine will use all GPU SMs.",
+          static_cast<int>(cu_status));
+    }
   }
-  config->setProfileStream(*profileStream);
 
-  std::unique_ptr<nvinfer1::IHostMemory> plan{builder->buildSerializedNetwork(*network, *config)};
+  // RAII guard: ensures cuCtxPopCurrent runs on scope exit (including if
+  // buildSerializedNetwork throws), but only when the push actually succeeded.
+  struct CtxPopGuard {
+    CUcontext* prev;
+    bool active;
+    ~CtxPopGuard() {
+      if (active) {
+        cuCtxPopCurrent(prev);
+      }
+    }
+  };
+
+  std::unique_ptr<nvinfer1::IHostMemory> plan;
+  {
+    CtxPopGuard pop_guard{&prev_context, push_succeeded};
+
+    auto profileStream = makeCudaStream();
+    if (!profileStream) {
+      return false;
+    }
+    config->setProfileStream(*profileStream);
+
+    if (push_succeeded) {
+      HOLOSCAN_LOG_INFO("TRT engine build: running within green context ({} SMs)",
+                        network_options.build_sm_count);
+    }
+
+    plan.reset(builder->buildSerializedNetwork(*network, *config));
+  }
+
   if (!plan) {
     return false;
   }

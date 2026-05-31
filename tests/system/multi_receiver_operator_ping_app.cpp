@@ -237,8 +237,8 @@ class PingMxOp : public holoscan::Operator {
     value1->data(value1->data() * multiplier_);
     value2->data(value2->data() * multiplier_);
 
-    op_output.emit(value1, "out1");
-    op_output.emit(value2, "out2");
+    op_output.emit(std::move(value1), "out1");
+    op_output.emit(std::move(value2), "out2");
   };
 
  private:

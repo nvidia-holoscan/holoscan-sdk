@@ -364,14 +364,14 @@ int main() {
     std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
               << kMinCudaDriverVersion << ", detected: "
               << (version.has_value() ? std::to_string(version.value()) : "unknown") << "). See "
-              << kHsdkFaqUrl << std::endl;
+              << kHsdkFaqUrl << '\n';
     return kSkipReturnCode;
   }
 
   auto partitions = green_context_partitions_for_current_arch();
   if (!partitions.has_value()) {
     std::cerr << "Green Context sample is not configured for this architecture."
-              << " See " << kHsdkFaqUrl << std::endl;
+              << " See " << kHsdkFaqUrl << '\n';
     return kSkipReturnCode;
   }
 
@@ -381,7 +381,7 @@ int main() {
     std::cerr << "Green Context requires at least " << required_sm_count
               << " SMs for this sample's partitioning (detected: "
               << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown") << "). See "
-              << kHsdkFaqUrl << std::endl;
+              << kHsdkFaqUrl << '\n';
     return kSkipReturnCode;
   }
 
@@ -395,7 +395,7 @@ int main() {
         std::cerr << ", ";
       std::cerr << partitions.value()[i];
     }
-    std::cerr << "]). See " << kHsdkFaqUrl << std::endl;
+    std::cerr << "]). See " << kHsdkFaqUrl << '\n';
     return kSkipReturnCode;
   }
 

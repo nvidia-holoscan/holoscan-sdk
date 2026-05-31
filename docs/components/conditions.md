@@ -75,177 +75,106 @@ Note that when OR combining conditions if any of the conditions has state NEVER 
 
 A concrete diagram illustrating the logic bulleted above is shown in the diagram below:
 
-```{digraph} condition_combination_example
-:align: center
-:caption: condition-combination-example
+```mermaid
+flowchart TD
+    subgraph OC["Operator Conditions"]
+        subgraph OC1["OrCombiner1"]
+            ST1["Condition 1: READY at t=100"]
+            ST2["Condition 2: WAIT_TIME at t=150"]
+            ST3["Condition 3: WAIT at t=0"]
+        end
+        subgraph OC2["OrCombiner2"]
+            ST4["Condition 4: READY at t=120"]
+            ST5["Condition 5: NEVER at t=0"]
+        end
+        ST6["Condition 6: READY at t=80"]
+    end
+    subgraph CP["Combination Process"]
+        C1["OR Combine in OrCombiner1"]
+        C2["OR Combine in OrCombiner2"]
+        C3["AND Combine all results"]
+    end
+    Result["Final Result: NEVER at t=0"]
 
-    // Graph settings
-    rankdir=TD;
-    compound=true;
-    node [shape=box, style=filled, fillcolor=white];
+    ST1 --> C1
+    ST2 --> C1
+    ST3 --> C1
+    ST4 --> C2
+    ST5 --> C2
+    C1 -->|"READY at t=100"| C3
+    C2 -->|"NEVER at t=0"| C3
+    ST6 -->|"READY at t=80"| C3
+    C3 --> Result
 
-    // Entity Scheduling Conditions subgraph
-    subgraph cluster_entity {
-        label="Operator Conditions";
-
-        // OrCombiner1 subgraph
-        subgraph cluster_combiner1 {
-            label="OrCombiner1";
-            style=filled;
-            fillcolor="#ffccff";
-            color="#333333";
-
-            ST1 [label="Condition 1: READY at t=100"];
-            ST2 [label="Condition 2: WAIT_TIME at t=150"];
-            ST3 [label="Condition 3: WAIT at t=0"];
-        }
-
-        // OrCombiner2 subgraph
-        subgraph cluster_combiner2 {
-            label="OrCombiner2";
-            style=filled;
-            fillcolor="#ffccff";
-            color="#333333";
-
-            ST4 [label="Condition 4: READY at t=120"];
-            ST5 [label="Condition 5: NEVER at t=0"];
-        }
-
-        ST6 [label="Condition 6: READY at t=80"];
-    }
-
-    // Combination Process subgraph
-    subgraph cluster_process {
-        label="Combination Process";
-
-        C1 [label="OR Combine in OrCombiner1"];
-        C2 [label="OR Combine in OrCombiner2"];
-        C3 [label="AND Combine all results"];
-    }
-
-    // Result node
-    Result [label="Final Result: NEVER at t=0", style=filled, fillcolor="#aaffaa", color="#333333", penwidth=2];
-
-    // Connections
-    ST1 -> C1;
-    ST2 -> C1;
-    ST3 -> C1;
-
-    ST4 -> C2;
-    ST5 -> C2;
-
-    C1 -> C3 [label="READY at t=100"];
-    C2 -> C3 [label="NEVER at t=0"];
-    ST6 -> C3 [label="READY at t=80"];
-
-    C3 -> Result;
+    style OC1 fill:#ffccff,stroke:#333
+    style OC2 fill:#ffccff,stroke:#333
+    style Result fill:#afa,stroke:#333,stroke-width:2px
 ```
 
 ### Detailed Condition Status Combination Logic Used by AND combination
 
-```{digraph} and_combination_diagram
-:align: center
-:caption: AND combination logic
+```mermaid
+flowchart TD
+    subgraph cluster_and_logic["AND Combination Logic"]
+        A["Condition A"]
+        B["Condition B"]
+        D{"Any NEVER?"}
+        E{"Any WAIT_EVENT?"}
+        F{"Any WAIT?"}
+        G{"Any WAIT_TIME?"}
+        NEVER["NEVER"]
+        WAIT_EVENT["WAIT_EVENT"]
+        WAIT["WAIT"]
+        WAIT_TIME["WAIT_TIME with max timestamp"]
+        READY["READY with max timestamp"]
 
-    // Graph settings
-    rankdir=TD;
-    compound=true;
-    node [shape=box, style=filled, fillcolor=white];
-
-    // Decision nodes with diamond shape
-    D [label="Any NEVER?", shape=diamond];
-    E [label="Any WAIT_EVENT?", shape=diamond];
-    F [label="Any WAIT?", shape=diamond];
-    G [label="Any WAIT_TIME?", shape=diamond];
-
-    // Input and result nodes
-    A [label="Condition A"];
-    B [label="Condition B"];
-    NEVER [label="NEVER"];
-    WAIT_EVENT [label="WAIT_EVENT"];
-    WAIT [label="WAIT"];
-    WAIT_TIME [label="WAIT_TIME with max timestamp"];
-    READY [label="READY with max timestamp"];
-
-    // Wrap everything in a subgraph
-    subgraph cluster_and_logic {
-        label="AND Combination Logic";
-        style=filled;
-        fillcolor=lightgrey;
-        color=black;
-
-        // Connections
-        A -> D;
-        B -> D;
-
-        D -> NEVER [label="Yes"];
-        D -> E [label="No"];
-
-        E -> WAIT_EVENT [label="Yes"];
-        E -> F [label="No"];
-
-        F -> WAIT [label="Yes"];
-        F -> G [label="No"];
-
-        G -> WAIT_TIME [label="Yes"];
-        G -> READY [label="No"];
-    }
+        A --> D
+        B --> D
+        D -->|Yes| NEVER
+        D -->|No| E
+        E -->|Yes| WAIT_EVENT
+        E -->|No| F
+        F -->|Yes| WAIT
+        F -->|No| G
+        G -->|Yes| WAIT_TIME
+        G -->|No| READY
+    end
+    style cluster_and_logic fill:#d3d3d3,stroke:#000
 ```
 
 ### Detailed Condition Status Combination Logic Used by OR combination
 
-```{digraph} or_combination_diagram
-:align: center
-:caption: OR Combination Logic
+```mermaid
+flowchart TD
+    subgraph cluster_or_logic["OR Combination Logic"]
+        A["Condition A"]
+        B["Condition B"]
+        D{"Any NEVER?"}
+        E{"Any READY?"}
+        F{"Any WAIT_EVENT?"}
+        G{"Both WAIT_TIME?"}
+        H{"Any WAIT_TIME?"}
+        NEVER["NEVER"]
+        READY["READY with max timestamp"]
+        WAIT_EVENT["WAIT_EVENT"]
+        WAIT_TIME_MAX["WAIT_TIME with max timestamp"]
+        WAIT_TIME["WAIT_TIME"]
+        WAIT["WAIT"]
 
-    // Graph settings
-    rankdir=TD;
-    compound=true;
-    node [shape=box, style=filled, fillcolor=white];
-
-    // Decision nodes with diamond shape
-    D [label="Any NEVER?", shape=diamond];
-    E [label="Any READY?", shape=diamond];
-    F [label="Any WAIT_EVENT?", shape=diamond];
-    G [label="Both WAIT_TIME?", shape=diamond];
-    H [label="Any WAIT_TIME?", shape=diamond];
-
-    // Input and result nodes
-    A [label="Condition A"];
-    B [label="Condition B"];
-    NEVER [label="NEVER"];
-    READY [label="READY with max timestamp"];
-    WAIT_EVENT [label="WAIT_EVENT"];
-    WAIT_TIME_MAX [label="WAIT_TIME with max timestamp"];
-    WAIT_TIME [label="WAIT_TIME"];
-    WAIT [label="WAIT"];
-
-    // Wrap everything in a subgraph
-    subgraph cluster_or_logic {
-        label="OR Combination Logic";
-        style=filled;
-        fillcolor=lightgrey;
-        color=black;
-
-        // Connections
-        A -> D;
-        B -> D;
-
-        D -> NEVER [label="Yes"];
-        D -> E [label="No"];
-
-        E -> READY [label="Yes"];
-        E -> F [label="No"];
-
-        F -> WAIT_EVENT [label="Yes"];
-        F -> G [label="No"];
-
-        G -> WAIT_TIME_MAX [label="Yes"];
-        G -> H [label="No"];
-
-        H -> WAIT_TIME [label="Yes"];
-        H -> WAIT [label="No"];
-    }
+        A --> D
+        B --> D
+        D -->|Yes| NEVER
+        D -->|No| E
+        E -->|Yes| READY
+        E -->|No| F
+        F -->|Yes| WAIT_EVENT
+        F -->|No| G
+        G -->|Yes| WAIT_TIME_MAX
+        G -->|No| H
+        H -->|Yes| WAIT_TIME
+        H -->|No| WAIT
+    end
+    style cluster_or_logic fill:#d3d3d3,stroke:#000
 ```
 
 ## Condition Types

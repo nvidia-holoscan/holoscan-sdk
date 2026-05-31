@@ -19,6 +19,7 @@
 #define GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
+#include <imgui.h>
 #include <stdlib.h>
 
 #include <future>
@@ -168,5 +169,30 @@ TEST(Init, MultiThreaded) {
   }
   for (auto&& future : futures) {
     future.wait();
+  }
+}
+
+TEST(Init, RepeatedShutdownWithImGuiLayer) {
+  if (glfwInit() == GLFW_FALSE) {
+    const char* description;
+    int code = glfwGetError(&description);
+    ASSERT_EQ(code, GLFW_PLATFORM_UNAVAILABLE)
+        << "Expected `GLFW_PLATFORM_UNAVAILABLE` but got `" << code << "`: `" << description << "`";
+    GTEST_SKIP() << "No display server available, skipping test." << description;
+  }
+
+  constexpr int kIterations = 25;
+  for (int i = 0; i < kIterations; ++i) {
+    ASSERT_NO_THROW(viz::Init(640, 480, "Holoviz shutdown stress test"));
+
+    ASSERT_NO_THROW(viz::Begin());
+    ASSERT_NO_THROW(viz::BeginImGuiLayer());
+    ImGui::Begin("ShutdownStress");
+    ImGui::Text("iteration=%d", i);
+    ImGui::End();
+    ASSERT_NO_THROW(viz::EndLayer());
+    ASSERT_NO_THROW(viz::End());
+
+    ASSERT_NO_THROW(viz::Shutdown());
   }
 }

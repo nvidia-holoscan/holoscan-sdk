@@ -83,7 +83,7 @@ class GPUResidentExecutor : public Executor {
    * @param graph The operator graph.
    * @param topo_ordered_operators Operators flattened in deterministic topological order.
    */
-  void prepare_data_flow(std::shared_ptr<OperatorFlowGraph> graph,
+  void prepare_data_flow(const std::shared_ptr<OperatorFlowGraph>& graph,
                          const std::vector<std::shared_ptr<Operator>>& topo_ordered_operators);
 
   /**
@@ -101,7 +101,7 @@ class GPUResidentExecutor : public Executor {
    * @param port_name The name of the input or output port
    * @return The device memory address of the input or output port
    */
-  void* device_memory(std::shared_ptr<Operator> op, const std::string& port_name);
+  void* device_memory(const std::shared_ptr<Operator>& op, const std::string& port_name);
 
   /**
    * @brief Verify the graph topology and flatten it in topological order.
@@ -114,7 +114,7 @@ class GPUResidentExecutor : public Executor {
    * @return True if the graph topology is supported by GPU-resident execution, false otherwise.
    */
   virtual bool verify_graph_topology(
-      std::shared_ptr<OperatorFlowGraph> graph,
+      const std::shared_ptr<OperatorFlowGraph>& graph,
       std::vector<std::shared_ptr<Operator>>& topo_ordered_operators);
 
   void timeout_ms(unsigned long long timeout_ms);
@@ -243,14 +243,17 @@ class GPUResidentExecutor : public Executor {
    * @param source_port Name of the output port on source_op.
    * @param destination_port Name of the input port on dest_op.
    */
-  void connect_ports(std::shared_ptr<Operator> source_op, std::shared_ptr<Operator> dest_op,
-                     const std::string& source_port, const std::string& destination_port);
+  void connect_ports(const std::shared_ptr<Operator>& source_op,
+                     const std::shared_ptr<Operator>& dest_op, const std::string& source_port,
+                     const std::string& destination_port);
 
-  void allocate_io_device_buffer(std::shared_ptr<Operator> source_op,
-                                 std::shared_ptr<Operator> dest_op, const std::string& source_port,
-                                 const std::string& target_port, size_t memory_block_size);
+  void allocate_io_device_buffer(const std::shared_ptr<Operator>& source_op,
+                                 const std::shared_ptr<Operator>& dest_op,
+                                 const std::string& source_port, const std::string& target_port,
+                                 size_t memory_block_size);
 
-  void connect_io_device_ptr(std::shared_ptr<Operator> source_op, std::shared_ptr<Operator> dest_op,
+  void connect_io_device_ptr(const std::shared_ptr<Operator>& source_op,
+                             const std::shared_ptr<Operator>& dest_op,
                              const std::string& source_port, const std::string& target_port,
                              void* device_ptr);
   /**
@@ -274,7 +277,7 @@ class GPUResidentExecutor : public Executor {
    */
   bool verify_distinct_operator_names();
 
-  void set_unique_ids(std::shared_ptr<Operator> op);
+  void set_unique_ids(const std::shared_ptr<Operator>& op);
 
   bool fragment_initialized_ = false;
 

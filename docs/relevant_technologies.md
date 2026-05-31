@@ -20,8 +20,7 @@ The Holoscan SDK relies on multiple core technologies to achieve low latency and
 The NVIDIA Developer Kits equipped with a [ConnectX network adapter](https://www.nvidia.com/en-us/networking/ethernet-adapters/) can be used along with the [NVIDIA Rivermax SDK](https://developer.nvidia.com/networking/rivermax) to provide an extremely efficient network connection that is further optimized for GPU workloads by using [GPUDirect](https://developer.nvidia.com/gpudirect) for RDMA. This technology avoids unnecessary memory copies and CPU overhead by copying data directly to or from pinned GPU memory, and supports both the integrated GPU or the discrete GPU.
 
 :::{note}
-NVIDIA is committed to supporting hardware vendors enabling RDMA within their own drivers, an example of which is provided by the {ref}`aja_video_systems`, as part of a partnership with
-NVIDIA for the Holoscan SDK. The [AJASource operator](https://github.com/nvidia-holoscan/holohub/tree/holoscan-sdk-3.3.0/operators/aja_source) is an example of how the SDK can leverage RDMA.
+NVIDIA is committed to supporting hardware vendors enabling RDMA within their own drivers.
 :::
 
 For more information about GPUDirect RDMA, see the following:

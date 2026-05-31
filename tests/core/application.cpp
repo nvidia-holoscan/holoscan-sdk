@@ -151,6 +151,9 @@ TEST(Application, TestAppPrintOptions) {
 }
 
 TEST(Application, TestAppHelpOption) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Death tests are not compatible with ASAN";
+#endif
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStdout();
 
@@ -164,6 +167,9 @@ TEST(Application, TestAppHelpOption) {
 }
 
 TEST(Application, TestAppVersionOption) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Death tests are not compatible with ASAN";
+#endif
   // capture output so that we can check that the expected value is present
   testing::internal::CaptureStdout();
 

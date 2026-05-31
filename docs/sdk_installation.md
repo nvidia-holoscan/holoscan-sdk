@@ -92,18 +92,20 @@ We provide multiple ways to install and run the Holoscan SDK:
 
 `````{tab-set}
 ````{tab-item} NGC Container
+<!-- holoscan-version-sync:begin -->
 - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda13
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda13
    ```
 - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-dgpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda12-dgpu
    ```
 - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
    ```bash
-   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.2.0-cuda12-igpu
+   docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.3.0-cuda12-igpu
    ```
+<!-- holoscan-version-sync:end -->
 See details and usage instructions on [NGC][container].
 ````
 ````{tab-item} Debian package
@@ -133,7 +135,7 @@ sudo apt update
       ```
 
 :::{attention}
-**Torch and ONNXRuntime backends require manual installation.** Add `--install-suggests` flag to install transitive dependencies, then see the support matrix below for installation links.
+**Torch and ONNX Runtime backends require manual installation.** Add `--install-suggests` flag to install transitive dependencies, then see the support matrix below for installation links.
 :::
 
 #### Troubleshooting
@@ -235,12 +237,8 @@ See [PyPI][pypi] for details and troubleshooting.
 Install via `conda`:
 
 ```bash
-conda install holoscan libholoscan-dev rmm ucxx cuda-version=12.6 -c rapidsai -c conda-forge
+conda install holoscan libholoscan-dev rmm ucxx cuda-version=13 -c rapidsai -c conda-forge
 ```
-
-:::{note}
-**CUDA 12.x only** - CUDA 13 support not yet available.
-:::
 
 See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-libholoscan-dev] (C++) on [conda-forge][conda-forge] for details and troubleshooting.
 ````
@@ -252,12 +250,12 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 
 ### Not sure what to choose?
 
-- The [**Holoscan container image on NGC**][container] it the safest way to ensure all the dependencies are present with the expected versions (including Torch and ONNX Runtime), and should work on most Linux distributions. It is the simplest way to run the embedded examples, while still allowing you to create your own C++ and Python Holoscan application on top of it. These benefits come at a cost:
+- The [**Holoscan container image on NGC**][container] is the safest way to ensure core dependencies are present with the expected versions (including Torch, but excluding ONNX Runtime backend runtime libraries), and should work on most Linux distributions. It is the simplest way to run the embedded examples, while still allowing you to create your own C++ and Python Holoscan application on top of it. These benefits come at a cost:
   - large image size from the numerous (some of them optional) dependencies. If you need a lean runtime image, see {ref}`section below<runtime-container>`.
   - standard inconvenience that exist when using Docker, such as more complex run instructions for proper configuration.
 - If you are confident in your ability to manage dependencies on your own in your host environment, the **Holoscan Debian package** should provide all the capabilities needed to use the Holoscan SDK, assuming you are on Ubuntu 22.04 or Ubuntu 24.04.
 - If you are not interested in the C++ API but just need to work in Python, you can use the [**Holoscan python wheels**][pypi] on PyPI. While they are the easiest solution to install the SDK, it might require the most work to setup your environment with extra dependencies based on your needs. Finally, they are only formally supported on Ubuntu 22.04 and Ubuntu 24.04, though should support other linux distributions with glibc 2.35 or above.
-- If you are developing with C++ and/or Python languages and targeting CUDA 12, the **Holoscan Conda packages** should provide capabilities needed to use the Holoscan SDK.
+- If you are developing with C++ and/or Python languages and targeting CUDA 13, the **Holoscan Conda packages** should provide capabilities needed to use the Holoscan SDK.
 
 |  | NGC dev Container | Debian Package | Python Wheels |
 |---|:---:|:---:|:---:|
@@ -272,10 +270,9 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 | [Vulkan][vulkan] support [^5] | **Included** | automatically [^2]<br>installed | require manual<br>installation |
 | [V4L2][v4l2] support [^6] | **Included** | automatically [^2]<br>installed | require manual<br>installation |
 | [Torchscript][torch] support [^7] | **Included** | require manual [^8]<br>installation | require manual [^8]<br>installation |
-| [ONNX Runtime][ort] support [^9] | **Included** | require manual [^10]<br>installation | require manual [^10]<br>installation |
+| [ONNX Runtime][ort] support [^9] | require manual [^10]<br>installation | require manual [^10]<br>installation | require manual [^10]<br>installation |
 | [ConnectX][connectx] support [^11] | **User space included** <br>Install kernel drivers on the host | require manual <br>installation | require manual <br>installation |
 | [Holoscan Sensor Bridge][hololink] support [^12] | **User space included** <br>Install kernel drivers on the host | not included | not included |
-| [CLI] support | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) | [require manual installation](./holoscan_packager.md#cli-installation) |
 
 [examples]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme
 [data]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan
@@ -286,7 +283,6 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 [torch]: https://pytorch.org/
 [ort]: https://onnxruntime.ai/
 [connectx]: https://www.nvidia.com/en-us/networking/ethernet-adapters/
-[cli]: ./holoscan_packager.md
 [hololink]: https://www.nvidia.com/en-us/technologies/holoscan-sensor-bridge/
 [^1]: [CUDA 12](https://docs.nvidia.com/cuda/archive/12.6.3/cuda-installation-guide-linux/index.html) is required. Already installed on NVIDIA developer kits with IGX Software and JetPack.
 [^2]: Debian installation on x86_64 requires the [latest cuda-keyring package](https://docs.nvidia.com/cuda/cuda-installation-guide-linux/#network-repo-installation-for-ubuntu) to automatically install all dependencies.
@@ -296,8 +292,8 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 [^6]: V4L2 1.22+ needed for the V4L2 operator. Already installed on NVIDIA developer kits with IGX Software and JetPack.  V4L2 also requires libjpeg.
 [^7]: Torchscript support tested with LibTorch 2.11.0.
 [^8]: To install LibTorch on baremetal, either build it from source, or point to a PyTorch wheel installation. See instructions in the [Inference](./inference.md#libtorch-installation) section.
-[^9]: Tested with ONNXRuntime 1.22.0. Note that ONNX models are also supported through the TensorRT backend of the Inference Operator.
-[^10]: To install ONNXRuntime on baremetal, either build it from source, download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support, or extract it from the holoscan container (in `/opt/onnxruntime/`).
+[^9]: Tested with ONNX Runtime 1.24.2. Note that ONNX models are generally recommended through the TensorRT backend of the Inference Operator for GPU inference.
+[^10]: To install ONNX Runtime, either build it from source or download our [pre-built package](https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/) with CUDA 12 and TensorRT execution provider support.
 [^11]: Tested with DOCA 3.3.0.
 [^12]: Tested with Holoscan Sensor Bridge [`2.5.0-PB6`](https://github.com/nvidia-holoscan/holoscan-sensor-bridge/tree/2.5.0-PB6) tag
 
@@ -306,5 +302,5 @@ See [holoscan][conda-forge-holoscan] (Python) and [libholoscan-dev][conda-forge-
 The [Holoscan SDK source repository](https://github.com/nvidia-holoscan/holoscan-sdk) is **open-source** and provides reference implementations, as well as infrastructure, for building the SDK yourself.
 
 :::{attention}
-We only recommend building the SDK from source if you need to build it with debug symbols or other options not used as part of the published packages. If you want to write your own operator or application, you can use the SDK as a dependency (and contribute to [HoloHub](https://github.com/nvidia-holoscan/holohub)). If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
+We only recommend building the SDK from source if you need to build it with debug symbols or other options not used as part of the published packages. If you want to write your own operator or application, you can use the SDK as a dependency (and contribute to [HoloHub](https://github.com/nvidia-holoscan/holohub)). If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757).
 :::

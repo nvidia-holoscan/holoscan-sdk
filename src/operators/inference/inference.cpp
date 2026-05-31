@@ -30,6 +30,7 @@
 #include <holoscan/core/io_context.hpp>
 #include <holoscan/core/operator_spec.hpp>
 #include <holoscan/core/resources/gxf/allocator.hpp>
+#include <holoscan/core/resources/gxf/cuda_green_context.hpp>
 #include <holoscan/operators/inference/codecs.hpp>
 #include <holoscan/utils/holoinfer_utils.hpp>
 
@@ -276,7 +277,8 @@ void InferenceOp::start() {
     auto exec_ctx = execution_context();
     if (exec_ctx) {
       auto counter = std::make_shared<int>(0);
-      allocate_cuda_stream = [exec_ctx, counter](int32_t device_id) -> cudaStream_t {
+      allocate_cuda_stream = [exec_ctx = std::move(exec_ctx),
+                              counter = std::move(counter)](int32_t device_id) -> cudaStream_t {
         auto stream_name = "inference_" + std::to_string((*counter)++);
         auto maybe_stream = exec_ctx->allocate_cuda_stream(stream_name);
         if (!maybe_stream) {
@@ -328,6 +330,59 @@ void InferenceOp::start() {
                                                     false,
                                                     allocate_cuda_stream);
     HOLOSCAN_LOG_INFO("Inference Specifications created");
+
+    // If a CudaGreenContext resource is present, thread its CUcontext and SM count through
+    // to HoloInfer so TRT engine building is constrained to the partition's SMs.
+    std::shared_ptr<holoscan::CudaGreenContext> selected_gc;
+    for (auto& [_, resource] : resources()) {
+      auto gc_resource = std::dynamic_pointer_cast<holoscan::CudaGreenContext>(resource);
+      if (!gc_resource || !gc_resource->get()) {
+        continue;
+      }
+      if (selected_gc) {
+        HOLOSCAN_LOG_WARN(
+            "InferenceOp: multiple CudaGreenContext resources attached; "
+            "using '{}', ignoring '{}'",
+            selected_gc->name(),
+            gc_resource->name());
+        continue;
+      }
+      selected_gc = gc_resource;
+    }
+    if (selected_gc) {
+      auto* gxf_gc = selected_gc->get();  // nvidia::gxf::CudaGreenContext*
+      auto maybe_ctx = gxf_gc->cudaContext();
+      if (maybe_ctx) {
+        inference_specs_->build_cuda_context_ = maybe_ctx.value();
+      } else {
+        HOLOSCAN_LOG_WARN(
+            "InferenceOp: could not obtain CUcontext from CudaGreenContext '{}'; "
+            "TRT engine will be built with all GPU SMs.",
+            selected_gc->name());
+      }
+      auto* pool = gxf_gc->cudaGreenContextPool();
+      if (pool) {
+        auto maybe_sms = pool->getPartitionSms(gxf_gc->index());
+        if (maybe_sms) {
+          inference_specs_->build_sm_count_ = static_cast<int32_t>(maybe_sms.value());
+          HOLOSCAN_LOG_INFO(
+              "InferenceOp: TRT engine will be built within green context partition {} ({} SMs)",
+              gxf_gc->index(),
+              inference_specs_->build_sm_count_);
+        } else {
+          HOLOSCAN_LOG_WARN(
+              "InferenceOp: could not obtain SM count from CudaGreenContext '{}'; "
+              "TRT engine will be built with all GPU SMs.",
+              selected_gc->name());
+        }
+      } else {
+        HOLOSCAN_LOG_WARN(
+            "InferenceOp: could not obtain CudaGreenContextPool from CudaGreenContext '{}'; "
+            "TRT engine will be built with all GPU SMs.",
+            selected_gc->name());
+      }
+    }
+
     // Create holoscan inference context
     holoscan_infer_context_ = std::make_unique<HoloInfer::InferContext>();
 

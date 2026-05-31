@@ -41,6 +41,7 @@ target_sources(${PROJECT_NAME}
     PRIVATE
         callback_test.cpp
         camera_pose_test.cpp
+        display_event_fallback_test.cpp
         geometry_layer_test.cpp
         test_fixture.cpp
         im_gui_layer_test.cpp

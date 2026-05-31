@@ -519,7 +519,7 @@ class Subgraph {
    */
   void add_interface_port(const std::string& external_name,
                           const std::shared_ptr<Operator>& internal_op,
-                          std::optional<std::string> internal_port = std::nullopt,
+                          const std::optional<std::string>& internal_port = std::nullopt,
                           std::optional<bool> is_input = std::nullopt);
 
   /**
@@ -533,7 +533,7 @@ class Subgraph {
    */
   void add_input_interface_port(const std::string& external_name,
                                 const std::shared_ptr<Operator>& internal_op,
-                                std::optional<std::string> internal_port = std::nullopt);
+                                const std::optional<std::string>& internal_port = std::nullopt);
 
   /**
    * @brief Add an output interface port (convenience method)
@@ -546,7 +546,7 @@ class Subgraph {
    */
   void add_output_interface_port(const std::string& external_name,
                                  const std::shared_ptr<Operator>& internal_op,
-                                 std::optional<std::string> internal_port = std::nullopt);
+                                 const std::optional<std::string>& internal_port = std::nullopt);
 
   /**
    * @brief Add an interface port that exposes a nested subgraph's interface port
@@ -568,7 +568,7 @@ class Subgraph {
    */
   void add_interface_port(const std::string& external_name,
                           const std::shared_ptr<Subgraph>& internal_subgraph,
-                          std::optional<std::string> internal_interface_port = std::nullopt,
+                          const std::optional<std::string>& internal_interface_port = std::nullopt,
                           std::optional<bool> is_input = std::nullopt);
 
   /**
@@ -579,9 +579,9 @@ class Subgraph {
    * @param internal_interface_port The interface port name on the nested subgraph (defaults to
    *                                external_name if not specified)
    */
-  void add_input_interface_port(const std::string& external_name,
-                                const std::shared_ptr<Subgraph>& internal_subgraph,
-                                std::optional<std::string> internal_interface_port = std::nullopt);
+  void add_input_interface_port(
+      const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+      const std::optional<std::string>& internal_interface_port = std::nullopt);
 
   /**
    * @brief Add an output interface port from a nested subgraph (convenience method)
@@ -591,9 +591,9 @@ class Subgraph {
    * @param internal_interface_port The interface port name on the nested subgraph (defaults to
    *                                external_name if not specified)
    */
-  void add_output_interface_port(const std::string& external_name,
-                                 const std::shared_ptr<Subgraph>& internal_subgraph,
-                                 std::optional<std::string> internal_interface_port = std::nullopt);
+  void add_output_interface_port(
+      const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+      const std::optional<std::string>& internal_interface_port = std::nullopt);
 
   // ========== Execution Interface Port Methods ==========
 
@@ -634,7 +634,7 @@ class Subgraph {
    */
   void add_input_exec_interface_port(
       const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
-      std::optional<std::string> internal_interface_port = std::nullopt);
+      const std::optional<std::string>& internal_interface_port = std::nullopt);
 
   /**
    * @brief Add an output execution interface port from a nested subgraph
@@ -649,7 +649,7 @@ class Subgraph {
    */
   void add_output_exec_interface_port(
       const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
-      std::optional<std::string> internal_interface_port = std::nullopt);
+      const std::optional<std::string>& internal_interface_port = std::nullopt);
 
   /**
    * @brief Get data interface ports

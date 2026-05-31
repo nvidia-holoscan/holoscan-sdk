@@ -19,9 +19,11 @@
 
 #include <atomic>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 
+#include <holoscan/core/fragment.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 
 namespace holoscan {
@@ -36,8 +38,38 @@ struct FirstPixelOutCondition::Impl {
 
   void thread_func(gxf_context_t gxf_context, gxf_uid_t gxf_eid) {
     while (!stop_requested_) {
-      // choose the timeout to be longer than the display period (assume 10Hz)
-      const bool is_ready = holoviz_op_->wait_for_first_pixel_out(100'000'000);
+      bool is_ready = false;
+      try {
+        // choose the timeout to be longer than the display period (assume 10Hz)
+        is_ready = holoviz_op_->wait_for_first_pixel_out(100'000'000);
+      } catch (const std::runtime_error& e) {
+        // wait_for_first_pixel_out throws when the underlying VK_EXT_display_control
+        // extension is unavailable or broken at runtime (e.g. AGX Thor Jedha, where
+        // the extension is advertised but registerDisplayEventEXT returns
+        // VK_ERROR_UNKNOWN). Without this catch the exception would escape this
+        // std::thread callable and trigger std::terminate(), crashing the
+        // application. Instead, transition the condition to kNever so the owning
+        // operator stops ticking, then ask the fragment to wind down all operators
+        // gracefully. The application exits cleanly with a clear ERROR log
+        // identifying the missing extension and the PresentDoneCondition alternative.
+        HOLOSCAN_LOG_ERROR(
+            "FirstPixelOutCondition: {}. Stopping fragment execution. Use PresentDoneCondition "
+            "instead, or run on a platform where the `VK_EXT_display_control` Vulkan device "
+            "extension is fully functional.",
+            e.what());
+        current_state_.store(SchedulingStatusType::kNever);
+        const gxf_result_t notify_result = GxfEntityEventNotify(gxf_context, gxf_eid);
+        if (notify_result != GXF_SUCCESS) {
+          HOLOSCAN_LOG_ERROR("GxfEntityEventNotify failed during shutdown: {}",
+                             GxfResultStr(notify_result));
+        }
+        // The owning HolovizOp lives in the same Fragment as this condition; reuse its
+        // back-pointer.
+        if (auto* fragment = holoviz_op_->fragment()) {
+          fragment->stop_execution();
+        }
+        return;
+      }
 
       if (is_ready) {
         SchedulingStatusType expected = SchedulingStatusType::kWaitEvent;

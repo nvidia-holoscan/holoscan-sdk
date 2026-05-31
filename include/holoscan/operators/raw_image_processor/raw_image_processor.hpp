@@ -53,7 +53,7 @@ class RawImageProcessorOp : public holoscan::Operator {
   holoscan::UniqueCUdeviceptr histogram_memory_;
   holoscan::UniqueCUdeviceptr white_balance_gains_memory_;
 
-  uint32_t histogram_threadblock_size_;
+  uint32_t histogram_threadblock_size_ = 0;
   int64_t expected_frame_number_ = 0;
 };
 

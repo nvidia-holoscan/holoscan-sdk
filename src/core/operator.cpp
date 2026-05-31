@@ -72,7 +72,7 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
       // Regular port with connector - use it directly
       auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(connector);
       if (receiver) {
-        receivers.push_back(receiver);
+        receivers.push_back(std::move(receiver));
         HOLOSCAN_LOG_DEBUG(
             "Operator '{}': found regular receiver port '{}'", operator_name, port_name);
       }
@@ -92,7 +92,7 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
           if (indexed_connector) {
             auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(indexed_connector);
             if (receiver) {
-              indexed_receivers.push_back(receiver);
+              indexed_receivers.push_back(std::move(receiver));
               HOLOSCAN_LOG_DEBUG("Operator '{}': found multi-receiver port '{}' for base name '{}'",
                                  operator_name,
                                  input_port_name,
@@ -112,7 +112,7 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
       }
 
       if (direct_receiver) {
-        receivers.push_back(direct_receiver);
+        receivers.push_back(std::move(direct_receiver));
         HOLOSCAN_LOG_DEBUG("Operator '{}': found direct receiver for kAnySize port '{}'",
                            operator_name,
                            port_name);
@@ -143,7 +143,7 @@ std::vector<std::shared_ptr<holoscan::Receiver>> collect_receivers_for_port_name
       if (connector) {
         auto receiver = std::dynamic_pointer_cast<holoscan::Receiver>(connector);
         if (receiver) {
-          receivers.push_back(receiver);
+          receivers.push_back(std::move(receiver));
           HOLOSCAN_LOG_DEBUG("Operator '{}': found multi-receiver port '{}' for base name '{}'",
                              operator_name,
                              input_port_name,
@@ -216,7 +216,12 @@ std::optional<nvidia::gxf::QoSProfile> effective_iospec_qos(
 
 namespace holoscan {
 
-void Operator::initialize() {
+void Operator::initialize_base() {
+  if (framework_initialized_) {
+    return;  // idempotency guard
+  }
+  framework_initialized_ = true;
+
   // Initialize the operator through the executor
   auto fragment_ptr = fragment();
   if (fragment_ptr) {
@@ -245,8 +250,12 @@ void Operator::initialize() {
     // Now we can set the contexts for the operator
     ensure_contexts();
   } else {
-    HOLOSCAN_LOG_WARN("Operator::initialize() - Fragment is not set");
+    HOLOSCAN_LOG_WARN("Operator::initialize_base() - Fragment is not set");
   }
+}
+
+void Operator::initialize() {
+  initialize_base();
 }
 
 bool Operator::is_metadata_enabled() const {

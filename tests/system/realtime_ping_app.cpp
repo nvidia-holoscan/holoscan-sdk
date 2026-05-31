@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -75,6 +75,9 @@ class RealtimePingDeadlineApp : public holoscan::Application {
 };
 
 TEST(RealtimePingFirstInFirstOutApp, TestRealtimePingFirstInFirstOutApp) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Realtime scheduler tests are not compatible with ASAN";
+#endif
   auto app = make_application<RealtimePingFirstInFirstOutApp>();
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
@@ -96,6 +99,9 @@ TEST(RealtimePingFirstInFirstOutApp, TestRealtimePingFirstInFirstOutApp) {
 }
 
 TEST(RealtimePingRoundRobinApp, TestRealtimePingRoundRobinApp) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Realtime scheduler tests are not compatible with ASAN";
+#endif
   auto app = make_application<RealtimePingRoundRobinApp>();
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(
@@ -117,6 +123,9 @@ TEST(RealtimePingRoundRobinApp, TestRealtimePingRoundRobinApp) {
 }
 
 TEST(RealtimePingDeadlineApp, TestRealtimePingDeadlineApp) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Realtime scheduler tests are not compatible with ASAN";
+#endif
   auto app = make_application<RealtimePingDeadlineApp>();
 
   app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>(

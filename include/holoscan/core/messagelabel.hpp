@@ -24,6 +24,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include <holoscan/logger/logger.hpp>
@@ -140,15 +141,17 @@ class MessageLabel {
       for (auto& op : path) {
         new_path_operators.insert(op.operator_name);
       }
-      message_path_operators.push_back(new_path_operators);
+      message_path_operators.push_back(std::move(new_path_operators));
     }
   }
 
   MessageLabel& operator=(const MessageLabel& m) {
     if (this != &m) {
+      auto frame_numbers = m.get_frame_numbers();
       this->message_paths = m.message_paths;
       this->message_path_operators = m.message_path_operators;
-      this->frame_numbers_ = m.get_frame_numbers();
+      std::scoped_lock lock(frame_numbers_mutex_);
+      this->frame_numbers_ = std::move(frame_numbers);
     }
     return *this;
   }

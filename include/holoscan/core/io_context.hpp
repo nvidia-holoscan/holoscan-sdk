@@ -679,8 +679,8 @@ class InputContext {
     // (this case should be handled by the caller)
     if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
-      HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
       error_message = static_cast<std::string>(std::move(casted_value));
+      HOLOSCAN_LOG_ERROR(error_message);
       return false;
     }
 
@@ -793,8 +793,8 @@ class InputContext {
           create_receive_error(name, "No message received from the input port"));
     } else if (value_type == typeid(NoAccessibleMessageType)) {
       auto casted_value = std::any_cast<NoAccessibleMessageType>(value);
-      HOLOSCAN_LOG_ERROR(static_cast<std::string>(casted_value));
       auto error_message = static_cast<std::string>(std::move(casted_value));
+      HOLOSCAN_LOG_ERROR(error_message);
       return make_unexpected<holoscan::RuntimeError>(
           create_receive_error(name, error_message.c_str()));
     }

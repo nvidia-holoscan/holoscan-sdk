@@ -27,7 +27,7 @@
 #include <utility>
 #include <vector>
 
-#include <holoscan/core/operator.hpp>
+#include <holoscan/operators/video_io/video_acquisition_operator.hpp>
 
 namespace holoscan::ops {
 
@@ -113,9 +113,9 @@ class GxfFormat;
  * }
  * ```
  */
-class V4L2VideoCaptureOp : public Operator {
+class V4L2VideoCaptureOp : public VideoAcquisitionOperator {
  public:
-  HOLOSCAN_OPERATOR_FORWARD_ARGS(V4L2VideoCaptureOp)
+  HOLOSCAN_OPERATOR_FORWARD_ARGS_SUPER(V4L2VideoCaptureOp, VideoAcquisitionOperator)
 
   V4L2VideoCaptureOp() = default;
 
@@ -132,12 +132,8 @@ class V4L2VideoCaptureOp : public Operator {
 
  private:
   Parameter<std::shared_ptr<Allocator>> allocator_;
-  Parameter<std::string> device_;
-  Parameter<uint32_t> width_;
-  Parameter<uint32_t> height_;
-  Parameter<float> frame_rate_;
+  Parameter<std::string> device_;  ///< @deprecated Use ``uri`` instead; kept for YAML compat.
   Parameter<uint32_t> num_buffers_;
-  Parameter<std::string> pixel_format_;
   Parameter<bool> pass_through_;
   Parameter<uint32_t> exposure_time_;
   Parameter<uint32_t> gain_;

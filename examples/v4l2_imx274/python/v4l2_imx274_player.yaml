@@ -15,6 +15,7 @@
 # limitations under the License.
 ---
 receiver:  # V4L2VideoCaptureOp
+  device: "/dev/video0"
   pixel_format: "RG10"
 
   # If omitted, V4L2 auto-selects the device default.

@@ -20,6 +20,15 @@
 default_language_version:
   python: python3
 
+# Skip all hooks for skills/ — files in this directory are verbatim upstream
+# copies intended to match the source byte-for-byte. Modifying them in transit
+# (line endings, trailing whitespace, codespell auto-fixes, copyright year
+# bumps, etc.) breaks that byte-for-byte property and invalidates the detached
+# signature (`skill.oms.sig`) that ships alongside each skill — once the
+# signature is attached, any in-place modification fails verification against
+# the trust anchor.
+exclude: ^(public/)?skills/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

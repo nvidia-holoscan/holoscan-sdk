@@ -384,7 +384,7 @@ TEST_F(HoloInferTests, TRT_MultiDynamicInput_CorrectTrtOptProfile) {
 
 #if defined(HOLOINFER_ORT_ENABLED)
 
-TEST_F(HoloInferTests, ONNX_BasicParallelEndToEndCudaInference) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicParallelEndToEndCudaInference) {
   backend = "onnxrt";
   input_on_cuda = true;
   output_on_cuda = true;
@@ -394,7 +394,7 @@ TEST_F(HoloInferTests, ONNX_BasicParallelEndToEndCudaInference) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_InputOnHostCudaInference) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_InputOnHostCudaInference) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = true;
@@ -404,7 +404,7 @@ TEST_F(HoloInferTests, ONNX_InputOnHostCudaInference) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_OutputOnHostCudaInference) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_OutputOnHostCudaInference) {
   backend = "onnxrt";
   input_on_cuda = true;
   output_on_cuda = false;
@@ -414,7 +414,7 @@ TEST_F(HoloInferTests, ONNX_OutputOnHostCudaInference) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_BasicParallelInferenceOnCPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicParallelInferenceOnCPU) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -424,7 +424,7 @@ TEST_F(HoloInferTests, ONNX_BasicParallelInferenceOnCPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_InputOutputOnDeviceCPUInference) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_InputOutputOnDeviceCPUInference) {
   backend = "onnxrt";
   input_on_cuda = true;
   output_on_cuda = true;
@@ -434,7 +434,7 @@ TEST_F(HoloInferTests, ONNX_InputOutputOnDeviceCPUInference) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceOnCPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicSequentialInferenceOnCPU) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -445,7 +445,7 @@ TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceOnCPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceOnGPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicSequentialInferenceOnGPU) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -456,7 +456,7 @@ TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceOnGPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_BasicParallelInferenceOnGPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicParallelInferenceOnGPU) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -467,7 +467,7 @@ TEST_F(HoloInferTests, ONNX_BasicParallelInferenceOnGPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_EmptyHostInput) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_EmptyHostInput) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -478,7 +478,7 @@ TEST_F(HoloInferTests, ONNX_EmptyHostInput) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_ERROR);
 }
 
-TEST_F(HoloInferTests, ONNX_EmptyHostOutput) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_EmptyHostOutput) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;
@@ -490,7 +490,7 @@ TEST_F(HoloInferTests, ONNX_EmptyHostOutput) {
 }
 
 // ONNX multi-GPU: run if second GPU available, otherwise test single-GPU error
-TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceMultiGPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicSequentialInferenceMultiGPU) {
   cudaDeviceProp device_prop;
   if (cudaGetDeviceProperties(&device_prop, 1) != cudaSuccess) {
     cudaGetLastError();
@@ -504,7 +504,7 @@ TEST_F(HoloInferTests, ONNX_BasicSequentialInferenceMultiGPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_BasicParallelInferenceMultiGPU) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_BasicParallelInferenceMultiGPU) {
   cudaDeviceProp device_prop;
   if (cudaGetDeviceProperties(&device_prop, 1) != cudaSuccess) {
     cudaGetLastError();
@@ -518,7 +518,7 @@ TEST_F(HoloInferTests, ONNX_BasicParallelInferenceMultiGPU) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, ONNX_InferenceSingleGPUWithMultiGPUSettings) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_InferenceSingleGPUWithMultiGPUSettings) {
   cudaDeviceProp device_prop;
   if (cudaGetDeviceProperties(&device_prop, 1) == cudaSuccess) {
     GTEST_SKIP() << "This test only runs on single-GPU systems";
@@ -531,7 +531,7 @@ TEST_F(HoloInferTests, ONNX_InferenceSingleGPUWithMultiGPUSettings) {
 }
 
 // ONNX dynamic input tests
-TEST_F(HoloInferTests, ONNX_DynamicInput_WithIncorrectFlag) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_DynamicInput_WithIncorrectFlag) {
   backend = "onnxrt";
   model_path_map["model_1"] = model_folder + "identity_model_dynamic.onnx";
   model_path_map["model_2"] = model_folder + "identity_model_dynamic.onnx";
@@ -546,7 +546,7 @@ TEST_F(HoloInferTests, ONNX_DynamicInput_WithIncorrectFlag) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_ERROR);
 }
 
-TEST_F(HoloInferTests, ONNX_DynamicInput_WithCorrectFlag) {
+TEST_F(HoloInferOnnxRuntimeTests, ONNX_DynamicInput_WithCorrectFlag) {
   backend = "onnxrt";
   model_path_map["model_1"] = model_folder + "identity_model_dynamic.onnx";
   model_path_map["model_2"] = model_folder + "identity_model_dynamic.onnx";

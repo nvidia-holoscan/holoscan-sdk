@@ -680,7 +680,7 @@ The {cpp:class}`C++ <holoscan::PresentDoneCondition>` allows an operator to sync
 The condition tracks presentation IDs, which increment with each frame presented. It blocks until a specific presentation ID is reached or a timeout occurs, ensuring that the application doesn't generate frames faster than the display can present them.
 
 :::{note}
-This condition requires the `VK_KHR_present_wait` Vulkan device extension. On hardware where it is not available (e.g. Orin iGPU, IGX Thor + Blackwell dGPU configurations), the application will throw a `std::runtime_error` at runtime. Use `FirstPixelOutCondition` as an alternative, or verify extension support with `vulkaninfo | grep VK_KHR_present_wait` before using this condition.
+This condition requires the `VK_KHR_present_wait` Vulkan device extension. On hardware where it is not available (e.g. Orin iGPU, IGX Thor + Blackwell dGPU configurations), the underlying `Vulkan::Impl::wait_for_present` throws a `std::runtime_error`. `PresentDoneCondition` catches the exception, logs an ERROR identifying the missing extension, and calls `Fragment::stop_execution()` so the application shuts down gracefully (cleanly, with a non-zero-frame log trail) instead of `std::terminate()`-ing from its background thread. Use `FirstPixelOutCondition` as an alternative, or verify extension support with `vulkaninfo | grep VK_KHR_present_wait` before using this condition.
 :::
 
 :::{note}

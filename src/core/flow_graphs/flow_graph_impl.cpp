@@ -447,7 +447,7 @@ FlowGraphImpl<NodeT, EdgeDataElementT>::get_port_connectivity_maps() const {
           input_to_output_map[input_port_unique_id].push_back(output_port_unique_id);
 
           // For output-to-input map: output port connects to this input port
-          output_to_input_map[output_port_unique_id].push_back(input_port_unique_id);
+          output_to_input_map[output_port_unique_id].push_back(std::move(input_port_unique_id));
         }
       }
     }

@@ -315,7 +315,7 @@ std::string SimpleTextSerializer::format_metadata_dict(const MetadataDictionary&
 }
 
 // Serialize the data as a UTF-8 string
-std::string SimpleTextSerializer::serialize_to_string(std::any data) {
+std::string SimpleTextSerializer::serialize_to_string(const std::any& data) {
   return to_string(data);
 }
 

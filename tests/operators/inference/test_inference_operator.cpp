@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoinfer_utils.hpp>
@@ -27,6 +28,8 @@
 #include <holoscan/holoscan.hpp>
 #include <holoscan/operators/inference/inference.hpp>
 #include <holoscan/utils/cuda_macros.hpp>
+
+#include "../../utils/holoinfer_backend_test_utils.hpp"
 
 // Test tensor dimensions BATCH_SIZE x TENSOR_SIZE x TENSOR_SIZE
 constexpr int TENSOR_SIZE = 256;
@@ -225,7 +228,7 @@ class InferenceOpTestApp : public holoscan::Application {
         make_operator<ops::InferenceOp>("infer1",
                                         from_config("inference"),
                                         Arg("backend") = backend_,
-                                        Arg("model_path_map") = model_path_map1,
+                                        Arg("model_path_map") = std::move(model_path_map1),
                                         Arg("allocator") = allocator,
                                         Arg("in_tensor_dimensions") = in_tensor_dimensions,
                                         cuda_stream_pool1);
@@ -241,7 +244,7 @@ class InferenceOpTestApp : public holoscan::Application {
       infer_op2 = make_operator<ops::InferenceOp>(
           "infer2",
           Arg("backend") = backend_,
-          Arg("model_path_map") = model_path_map2,
+          Arg("model_path_map") = std::move(model_path_map2),
           Arg("allocator") = allocator,
           Arg("in_tensor_names") = std::vector<std::string>{"tensor"},
           Arg("out_tensor_names") = std::vector<std::string>{"tensor"},
@@ -253,8 +256,8 @@ class InferenceOpTestApp : public holoscan::Application {
           Arg("output_on_cuda") = true,
           Arg("transmit_on_cuda") = true,
           Arg("in_tensor_dimensions") = in_tensor_dimensions,
-          Arg("pre_processor_map") = pre_processor_map2,
-          Arg("inference_map") = inference_map2,
+          Arg("pre_processor_map") = std::move(pre_processor_map2),
+          Arg("inference_map") = std::move(inference_map2),
           cuda_stream_pool2);
     }
 
@@ -288,6 +291,10 @@ TEST_P(InferenceOpTestFixture, InferenceOpTestApp) {
   using namespace holoscan;
 
   auto& [backend, model, enable_green_context, test_two] = GetParam();
+
+  if (backend == "onnxrt") {
+    HOLOSCAN_TEST_SKIP_IF_ONNX_RUNTIME_BACKEND_DISABLED();
+  }
 
   // Skip torch tests if torch CUDA is unavailable or SM-incompatible
   if (backend == "torch") {

@@ -30,6 +30,7 @@
 #include <vulkan/spv/imgui_shader.glsl.frag.h>
 #include <vulkan/spv/imgui_shader.glsl.vert.h>
 
+#include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
 #include <imgui_internal.h>
 
@@ -364,6 +365,7 @@ class Vulkan::Impl {
   bool has_present_wait_extension_ = false;
   bool has_line_rasterization_extension_ = false;
   bool has_present_id_extension_ = false;
+  bool has_display_control_extension_ = false;
   /// Drawing/Surface
   std::unique_ptr<FramebufferSequence> fb_sequence_;
   /// All framebuffers, correspond to the Swapchain
@@ -448,8 +450,17 @@ Vulkan::Impl::~Impl() {
       if (sampler_imgui_) {
         nvvk_.alloc_.releaseSampler(sampler_imgui_);
       }
+    }
 
-      ImGui_ImplVulkan_Shutdown();
+    // Shutdown ImGui backends while the window context is still valid.
+    if (ImGui::GetCurrentContext()) {
+      ImGuiIO& io = ImGui::GetIO();
+      if (io.BackendRendererUserData != nullptr) {
+        ImGui_ImplVulkan_Shutdown();
+      }
+      if (io.BackendPlatformUserData != nullptr) {
+        ImGui_ImplGlfw_Shutdown();
+      }
     }
   } catch (const std::exception& e) {
     try {
@@ -560,6 +571,8 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   has_line_rasterization_extension_ =
       nvvk_.vk_ctx_.hasDeviceExtension(VK_EXT_LINE_RASTERIZATION_EXTENSION_NAME);
   has_present_id_extension_ = nvvk_.vk_ctx_.hasDeviceExtension(VK_KHR_PRESENT_ID_EXTENSION_NAME);
+  has_display_control_extension_ =
+      nvvk_.vk_ctx_.hasDeviceExtension(VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME);
 
   // Get the list of supported formats for this physical device
   image_formats_ = get_supported_formats(physical_device_);
@@ -1791,7 +1804,6 @@ void Vulkan::Impl::upload_to_texture(Texture* texture, const std::array<const vo
     }
     image_subresource_layers.layerCount = 1;
 
-    const uint32_t src_pitch = width * channels * component_size;
     const uint32_t dst_pitch = width * hw_channels * component_size;
     const vk::DeviceSize data_size = static_cast<uint64_t>(dst_pitch) * height;
 
@@ -2589,6 +2601,18 @@ bool Vulkan::Impl::wait_for_present(uint64_t present_id, uint64_t timeout_ns) {
 
 bool Vulkan::Impl::wait_for_display_event(DisplayEventType display_event_type,
                                           uint64_t timeout_ns) {
+  // Defense-in-depth: hardware that does not advertise the extension at all.
+  // The reported failure mode on AGX Thor Jedha (6194895) is different — the
+  // extension IS advertised but registerDisplayEventEXT returns ErrorUnknown
+  // at runtime; that path is handled by the try/catch below.
+  if (!has_display_control_extension_) {
+    throw std::runtime_error(
+        "Waiting for display events is not supported since the required Vulkan device extension "
+        "`VK_EXT_display_control` is not available. Use an alternative display-sync mechanism "
+        "(e.g. `PresentDoneCondition` with `VK_KHR_present_wait`) or run on a platform where this "
+        "extension is supported.");
+  }
+
   vk::DisplayEventInfoEXT display_event_info;
   switch (display_event_type) {
     case DisplayEventType::FIRST_PIXEL_OUT:
@@ -2601,14 +2625,36 @@ bool Vulkan::Impl::wait_for_display_event(DisplayEventType display_event_type,
   if (!display_) {
     throw std::runtime_error("There is no display (using a headless window?)");
   }
-  auto display_event_fence = device_.registerDisplayEventEXTUnique(display_, display_event_info);
 
-  vk::Result result = device_.waitForFences(display_event_fence.get(), true, timeout_ns);
-  if (result == vk::Result::eTimeout) {
-    return false;
+  // 6194895: on AGX Thor Jedha, registerDisplayEventEXT advertises support but
+  // returns VK_ERROR_UNKNOWN at runtime, raising vk::UnknownError. vk-hpp errors
+  // would otherwise propagate out of FirstPixelOutCondition's worker thread and
+  // trigger std::terminate. Translate to std::runtime_error so the caller can
+  // catch and degrade gracefully (e.g. fall back to a time-based wait).
+  try {
+    auto display_event_fence = device_.registerDisplayEventEXTUnique(display_, display_event_info);
+
+    vk::Result result = device_.waitForFences(display_event_fence.get(), true, timeout_ns);
+    if (result == vk::Result::eTimeout) {
+      return false;
+    }
+    vk::resultCheck(result, "Failed to wait for display event");
+    return true;
+  } catch (const vk::Error& e) {
+    // Catch is intentionally broad (any vk-hpp error, not just vk::UnknownError):
+    // narrowing here would not actually surface catastrophic errors to the caller,
+    // because vk::SystemError already derives from std::system_error / std::runtime_error
+    // and would be caught by FirstPixelOutCondition's worker-thread try/catch anyway.
+    // Accepting graceful degradation on the catastrophic paths (e.g. DeviceLost) is a
+    // deliberate trade-off — failing to 10Hz time-based wait is no worse than aborting,
+    // and the original vk error message is preserved in the rethrown text.
+    throw std::runtime_error(fmt::format(
+        "`VK_EXT_display_control` reported as available but failed at runtime ({}). "
+        "Use an alternative display-sync mechanism where supported (e.g. "
+        "`PresentDoneCondition` on platforms that ship `VK_KHR_present_wait`) or run on "
+        "a platform where `VK_EXT_display_control` is fully functional.",
+        e.what()));
   }
-  vk::resultCheck(result, "Failed to wait for display event");
-  return true;
 }
 
 uint64_t Vulkan::Impl::get_vblank_counter() {

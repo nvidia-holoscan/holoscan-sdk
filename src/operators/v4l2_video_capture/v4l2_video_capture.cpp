@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <any>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -329,36 +330,30 @@ static const std::map<uint32_t, V4L2VideoCaptureOp::ConverterFunc> v4l2_to_conve
     {V4L2_PIX_FMT_RGBA32, nullptr}};
 
 void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
-  spec.output<std::shared_ptr<holoscan::gxf::Entity>>("signal");
+  // Base class registers: output port "signal", and common parameters
+  // (backend_id, channel_index, uri, width, height, frame_rate, pixel_format,
+  //  color_space, transport, vendor_extensions).
+  VideoAcquisitionOperator::setup(spec);
 
   static constexpr char kDefaultDevice[] = "/dev/video0";
-  static constexpr char kDefaultPixelFormat[] = "auto";
   static constexpr bool kDefaultPassThrough = false;
-  static constexpr uint32_t kDefaultWidth = 0;
-  static constexpr uint32_t kDefaultHeight = 0;
-  static constexpr float kDefaultFrameRate = 0.f;
   static constexpr uint32_t kDefaultNumBuffers = 4;
 
+  // V4L2-specific parameters only
   spec.param(allocator_,
              "allocator",
              "Allocator",
              "Deprecated. Memory allocator to use for the output if `pass_through` is `false`.");
-
-  spec.param(
-      device_, "device", "VideoDevice", "Path to the V4L2 device", std::string(kDefaultDevice));
-  spec.param(width_, "width", "Width", "Width of the V4L2 image", kDefaultWidth);
-  spec.param(height_, "height", "Height", "Height of the V4L2 image", kDefaultHeight);
-  spec.param(frame_rate_, "frame_rate", "Frame rate", "Capture frame rate", kDefaultFrameRate);
+  spec.param(device_,
+             "device",
+             "VideoDevice",
+             "Deprecated, use ``uri``. Path to the V4L2 device.",
+             std::string(kDefaultDevice));
   spec.param(num_buffers_,
              "numBuffers",
              "NumBuffers",
              "Number of V4L2 buffers to use",
              kDefaultNumBuffers);
-  spec.param(pixel_format_,
-             "pixel_format",
-             "Pixel Format",
-             "Pixel format of capture stream (little endian four character code (fourcc))",
-             std::string(kDefaultPixelFormat));
   spec.param(
       pass_through_,
       "pass_through",
@@ -378,10 +373,50 @@ void V4L2VideoCaptureOp::setup(OperatorSpec& spec) {
              "Gain",
              "Gain of the camera sensor. See V4L2_CID_GAIN.",
              ParameterFlag::kOptional);
+
+  // Backward-compat: forward the legacy `device` Arg to `uri` so the base
+  // class sees a meaningful URI for capability reporting. Inspect raw args()
+  // here rather than the Parameter values: Parameter binding happens later in
+  // Operator::initialize() (via set_parameters()), so device_/uri_ are not yet
+  // populated at setup() time -- which is what the prior implementation did,
+  // producing a silent fallback to /dev/video0 (NVBUG 6200702).
+  std::string user_device;
+  std::string user_uri;
+  for (const auto& a : args()) {
+    if (!a.has_value()) {
+      continue;
+    }
+    try {
+      if (a.name() == "device") {
+        user_device = std::any_cast<std::string>(a.value());
+      } else if (a.name() == "uri") {
+        user_uri = std::any_cast<std::string>(a.value());
+      }
+    } catch (const std::bad_any_cast&) {
+      // Non-string value: let parameter binding surface a typed error later.
+    }
+  }
+  const bool user_set_device = !user_device.empty() && user_device != kDefaultDevice;
+  const bool user_set_uri = !user_uri.empty();
+  if (user_set_device && user_set_uri) {
+    HOLOSCAN_LOG_WARN(
+        "V4L2VideoCaptureOp: both 'device' ({}) and 'uri' ({}) are set. "
+        "'device' is deprecated; 'uri' will be used. Remove 'device' from your configuration.",
+        user_device,
+        user_uri);
+  } else if (user_set_device) {
+    add_arg(Arg("uri", user_device));
+    HOLOSCAN_LOG_DEBUG("V4L2VideoCaptureOp: mapping legacy 'device' ({}) to 'uri'", user_device);
+  }
 }
 
 void V4L2VideoCaptureOp::initialize() {
-  Operator::initialize();
+  VideoAcquisitionOperator::initialize();
+
+  if (num_streams() != 1) {
+    throw std::runtime_error(
+        "V4L2VideoCaptureOp: num_streams must be 1 (V4L2 is single-stream per device node).");
+  }
 }
 
 void V4L2VideoCaptureOp::start() {
@@ -518,7 +553,8 @@ void V4L2VideoCaptureOp::compute([[maybe_unused]] InputContext& op_input, Output
   }
 
   auto result = gxf::Entity(std::move(out_message.value()));
-  op_output.emit(result, "signal");
+  emit_capture_stream(op_output, 0, result);
+  note_acquired_frame();
 }
 
 void V4L2VideoCaptureOp::stop() {
@@ -554,8 +590,11 @@ void V4L2VideoCaptureOp::stop() {
 }
 
 void V4L2VideoCaptureOp::v4l2_initialize() {
-  // Initialise V4L2 device
-  fd_ = POSIX_CALL(open(device_.get().c_str(), O_RDWR | O_NONBLOCK));
+  // Resolve the device path: prefer `uri` (new name); fall back to `device`
+  // (legacy) so users who set neither still hit the V4L2 default of /dev/video0
+  // via the `device` parameter's default.
+  const std::string device_path = !uri_.get().empty() ? uri_.get() : device_.get();
+  fd_ = POSIX_CALL(open(device_path.c_str(), O_RDWR | O_NONBLOCK));
   if (fd_ < 0) {
     throw std::runtime_error(
         "Failed to open device! Possible permission issue with accessing the device.");

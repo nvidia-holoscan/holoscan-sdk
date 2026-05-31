@@ -444,8 +444,25 @@ class Operator : public ComponentBase {
    *
    * This function is called when the fragment is initialized by
    * Executor::initialize_fragment().
+   *
+   * Derived classes may override this method to perform operator-specific setup before
+   * the framework is initialized. It is no longer necessary to call
+   * `Operator::initialize()` from an override — the framework guarantees that
+   * framework-level initialization runs automatically after the virtual hook returns
+   * via `initialize_base()`. Calling `Operator::initialize()` from an override is still
+   * supported and safe (it is idempotent).
    */
   void initialize() override;
+
+  /**
+   * @brief Ensures framework-level initialization has run.
+   *
+   * Called automatically by the executor after the virtual initialize() hook returns.
+   * Idempotent: safe to call multiple times. Operators that call Operator::initialize()
+   * from their override will trigger this through the existing call chain; operators that
+   * forget the base call will have it called on their behalf by the executor.
+   */
+  void initialize_base();
 
   /**
    * @brief Implement the startup logic of the operator.
@@ -1106,6 +1123,10 @@ class Operator : public ComponentBase {
 
   ///  Set the operator codelet or any other backend codebase.
   void set_op_backend();
+
+  /// Whether framework-level initialization (initialize_base()) has run. Used as an idempotency
+  /// guard so that calling initialize_base() multiple times is safe.
+  bool framework_initialized_ = false;
 
   /// The MessageLabel objects corresponding to the input ports indexed by the input port.
   std::unordered_map<std::string, MessageLabel> input_message_labels;

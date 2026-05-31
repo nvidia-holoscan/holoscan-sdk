@@ -38,7 +38,8 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
                    const std::vector<std::string>& trt_opt_profile, int device_id, int device_id_dt,
                    bool enable_fp16, bool enable_cuda_graphs, int32_t dla_core,
                    bool dla_gpu_fallback, bool is_engine_path, bool cuda_buf_in, bool cuda_buf_out,
-                   std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream)
+                   std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream,
+                   CUcontext build_cuda_context, int32_t build_sm_count)
     : model_path_(model_path),
       model_name_(model_name),
       trt_opt_profile_(trt_opt_profile),
@@ -93,6 +94,8 @@ TrtInfer::TrtInfer(const std::string& model_path, const std::string& model_name,
   network_options_.use_fp16 = enable_fp16_;
   network_options_.dla_core = dla_core_;
   network_options_.dla_gpu_fallback = dla_gpu_fallback_;
+  network_options_.build_cuda_context = build_cuda_context;
+  network_options_.build_sm_count = build_sm_count;
   initLibNvInferPlugins(nullptr, "");
 
   if (!is_engine_path_) {

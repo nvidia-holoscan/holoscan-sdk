@@ -628,7 +628,7 @@ void AsyncDataLoggerResource::stop_worker_threads() {
       const size_t data_size = get_data_queue_size();
       const size_t large_data_size = get_large_data_queue_size();
       if (data_size == 0 && large_data_size == 0) {
-        if (wait_period_ms > 0) {
+        if (drain_timeout_budget) {
           HOLOSCAN_LOG_INFO(
               "AsyncDataLoggerResource '{}': log queues empty after {} ms; joining worker threads",
               name(),
@@ -643,7 +643,7 @@ void AsyncDataLoggerResource::stop_worker_threads() {
       }
 
       if (now - last_progress_log >= kShutdownDrainProgressLogInterval) {
-        if (wait_period_ms > 0) {
+        if (drain_timeout_budget) {
           const int64_t remaining_ms =
               std::max(static_cast<int64_t>(0),
                        std::chrono::duration_cast<std::chrono::milliseconds>(

@@ -380,7 +380,7 @@ void propagate_stream_to_entity_memory_buffers(nvidia::gxf::Entity& gxf_entity,
   void* stream_ptr = static_cast<void*>(cuda_stream);
 
   // Set stream on all Tensors
-  auto tensors = gxf_entity.findAll<nvidia::gxf::Tensor>();
+  auto tensors = gxf_entity.findAllHeap<nvidia::gxf::Tensor>();
   if (tensors) {
     // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
     for (auto tensor_handle : tensors.value()) {
@@ -390,7 +390,7 @@ void propagate_stream_to_entity_memory_buffers(nvidia::gxf::Entity& gxf_entity,
   }
 
   // Set stream on all VideoBuffers
-  auto video_buffers = gxf_entity.findAll<nvidia::gxf::VideoBuffer>();
+  auto video_buffers = gxf_entity.findAllHeap<nvidia::gxf::VideoBuffer>();
   if (video_buffers) {
     // Cannot use auto& because value() returns nvidia::gxf::Expected types by value
     for (auto vb_handle : video_buffers.value()) {
@@ -915,7 +915,14 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         {
           PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
           auto metadata = add_metadata(gxf_entity.value());
-          populate_output_metadata(metadata.value(), output_name);
+          if (metadata) {
+            populate_output_metadata(metadata.value(), output_name);
+          } else {
+            HOLOSCAN_LOG_ERROR("{}.{}: Failed to attach metadata to output entity: {}",
+                               op_->name(),
+                               output_name,
+                               GxfResultStr(metadata.error()));
+          }
         }
       }
 
@@ -990,8 +997,24 @@ void GXFOutputContext::emit_impl(std::any data, const char* name, OutputType out
         if (op_->is_metadata_enabled() && op_->metadata()->size() > 0) {
           {
             PROF_SCOPED_EVENT(op_->id(), event_emit_metadata);
-            auto metadata = add_metadata(gxf_entity);
-            populate_output_metadata(metadata.value(), output_name);
+            // The entity may be reused across ticks (e.g. the persistent cache.out_message
+            // in InferenceOp's transmit_data_per_model). In that case the "metadata_"
+            // component already exists from a prior tick, so add_metadata() would fail with
+            // a duplicate-name error. Look up first, fall back to add on first use, and
+            // clear any stale entries before re-populating so insert() starts from empty.
+            auto metadata = get_metadata(gxf_entity);
+            if (!metadata) {
+              metadata = add_metadata(gxf_entity);
+            }
+            if (metadata) {
+              metadata.value()->clear();
+              populate_output_metadata(metadata.value(), output_name);
+            } else {
+              HOLOSCAN_LOG_ERROR("{}.{}: Failed to attach metadata to output entity: {}",
+                                 op_->name(),
+                                 output_name,
+                                 GxfResultStr(metadata.error()));
+            }
           }
         }
 

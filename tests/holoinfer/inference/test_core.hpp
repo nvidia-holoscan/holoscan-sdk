@@ -17,6 +17,8 @@
 #ifndef HOLOINFER_INFERENCE_TESTS_HPP
 #define HOLOINFER_INFERENCE_TESTS_HPP
 
+#include "../../utils/holoinfer_backend_test_utils.hpp"
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -108,5 +110,12 @@ class HoloInferTests : public ::testing::Test {
   /// Pointer to inference specifications
   std::shared_ptr<HoloInfer::InferenceSpecs> inference_specs_;
 };
+
+#if defined(HOLOINFER_ORT_ENABLED)
+class HoloInferOnnxRuntimeTests : public HoloInferTests {
+ protected:
+  void SetUp() override { HOLOSCAN_TEST_SKIP_IF_ONNX_RUNTIME_BACKEND_DISABLED(); }
+};
+#endif
 
 #endif /* HOLOINFER_INFERENCE_TESTS_HPP */

@@ -19,7 +19,7 @@ Key feature available with Holoscan Inference module:
   - Torch:
     - Libtorch based inference
     - Libtorch version: 1.12.0
-  - Onnx runtime:
+  - ONNX Runtime:
     - Data flow via host
     - CUDA based inference (supported on x86_64)
     - CPU based inference (supported on x86_64 and aarch64)

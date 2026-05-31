@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2022-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 #ifndef HOLOINFER_TRT_UTILS_H
 #define HOLOINFER_TRT_UTILS_H
 
+#include <cuda.h>
 #include <cuda_runtime_api.h>
 
 #include <algorithm>
@@ -92,6 +93,17 @@ struct NetworkOptions {
   /// @brief If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is
   /// disabled, engine creation will fail if a layer cannot executed on DLA.
   bool dla_gpu_fallback = true;
+
+  /// @brief CUDA context scoped to a green context SM partition for engine building.
+  /// When non-null, TRT engine building runs with this context active so that tactic
+  /// selection and kernel timing are constrained to the assigned SM partition.
+  /// nullptr means use the default primary context (all SMs).
+  CUcontext build_cuda_context = nullptr;
+
+  /// @brief SM count of the green context partition used during engine building.
+  /// When non-zero, embedded in the engine filename so a full-GPU engine is not
+  /// reused for a partitioned build (or vice versa). 0 means full GPU.
+  int32_t build_sm_count = 0;
 };
 
 /**

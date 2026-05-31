@@ -238,16 +238,16 @@ void DataFlowTracker::write_to_logfile(const std::string& text) {
   }
 }
 
-void DataFlowTracker::add_root_op(Operator* op) {
-  root_ops_[op->id()] = op;
+void DataFlowTracker::add_root_op(const std::shared_ptr<Operator>& op) {
+  root_ops_[op->id()] = op.get();
 }
 
-void DataFlowTracker::add_leaf_op(Operator* op) {
-  leaf_ops_[op->id()] = op;
+void DataFlowTracker::add_leaf_op(const std::shared_ptr<Operator>& op) {
+  leaf_ops_[op->id()] = op.get();
 }
 
-void DataFlowTracker::add_probe_op(Operator* op) {
-  probe_ops_[op->id()] = op;
+void DataFlowTracker::add_probe_op(const std::shared_ptr<Operator>& op) {
+  probe_ops_[op->id()] = op.get();
 }
 
 void DataFlowTracker::add_probe_operator(const std::string& operator_name) {

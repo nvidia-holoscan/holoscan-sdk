@@ -164,14 +164,14 @@ TEST_F(HoloInferTests, Setup_TRT_DisableCudaGraphs) {
 }
 
 #if defined(HOLOINFER_ORT_ENABLED)
-TEST_F(HoloInferTests, Setup_ONNX_InputOutputCudaBuffer) {
+TEST_F(HoloInferOnnxRuntimeTests, Setup_ONNX_InputOutputCudaBuffer) {
   backend = "onnxrt";
   auto status = create_specifications();
   clear_specs();
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_SUCCESS);
 }
 
-TEST_F(HoloInferTests, Setup_ONNX_IncorrectModelFileFormat) {
+TEST_F(HoloInferOnnxRuntimeTests, Setup_ONNX_IncorrectModelFileFormat) {
   backend = "onnxrt";
   auto pc_path = model_path_map.at("model_1");
   model_path_map.at("model_1") = "model.engine";
@@ -182,7 +182,7 @@ TEST_F(HoloInferTests, Setup_ONNX_IncorrectModelFileFormat) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_ERROR);
 }
 
-TEST_F(HoloInferTests, Setup_ONNX_EnginePathTrue) {
+TEST_F(HoloInferOnnxRuntimeTests, Setup_ONNX_EnginePathTrue) {
   backend = "onnxrt";
   is_engine_path = true;
   auto status = create_specifications();
@@ -190,7 +190,7 @@ TEST_F(HoloInferTests, Setup_ONNX_EnginePathTrue) {
   HOLOINFER_EXPECT_STATUS(status, HoloInfer::holoinfer_code::H_ERROR);
 }
 
-TEST_F(HoloInferTests, Setup_ONNX_Default) {
+TEST_F(HoloInferOnnxRuntimeTests, Setup_ONNX_Default) {
   backend = "onnxrt";
   input_on_cuda = false;
   output_on_cuda = false;

@@ -237,7 +237,7 @@ void Subgraph::add_subgraph(const std::shared_ptr<Subgraph>& subgraph) {
     }
 
     nested_subgraphs_.push_back(subgraph);
-    nested_subgraph_names_.insert(child_name);
+    nested_subgraph_names_.insert(std::move(child_name));
   } else {
     // Not yet composed -- qualify the name and compose.
     // This is the C++ factory pattern path.
@@ -436,7 +436,7 @@ void Subgraph::add_data_logger(const std::shared_ptr<DataLogger>& logger) {
 
 void Subgraph::add_interface_port(const std::string& external_name,
                                   const std::shared_ptr<Operator>& internal_op,
-                                  std::optional<std::string> internal_port,
+                                  const std::optional<std::string>& internal_port,
                                   std::optional<bool> is_input) {
   if (!internal_op) {
     auto err_msg =
@@ -572,19 +572,19 @@ void Subgraph::add_interface_port(const std::string& external_name,
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
                                         const std::shared_ptr<Operator>& internal_op,
-                                        std::optional<std::string> internal_port) {
-  add_interface_port(external_name, internal_op, std::move(internal_port), true);
+                                        const std::optional<std::string>& internal_port) {
+  add_interface_port(external_name, internal_op, internal_port, true);
 }
 
 void Subgraph::add_output_interface_port(const std::string& external_name,
                                          const std::shared_ptr<Operator>& internal_op,
-                                         std::optional<std::string> internal_port) {
-  add_interface_port(external_name, internal_op, std::move(internal_port), false);
+                                         const std::optional<std::string>& internal_port) {
+  add_interface_port(external_name, internal_op, internal_port, false);
 }
 
 void Subgraph::add_interface_port(const std::string& external_name,
                                   const std::shared_ptr<Subgraph>& internal_subgraph,
-                                  std::optional<std::string> internal_interface_port,
+                                  const std::optional<std::string>& internal_interface_port,
                                   std::optional<bool> is_input) {
   if (!internal_subgraph) {
     auto err_msg =
@@ -725,14 +725,14 @@ void Subgraph::add_interface_port(const std::string& external_name,
 
 void Subgraph::add_input_interface_port(const std::string& external_name,
                                         const std::shared_ptr<Subgraph>& internal_subgraph,
-                                        std::optional<std::string> internal_interface_port) {
-  add_interface_port(external_name, internal_subgraph, std::move(internal_interface_port), true);
+                                        const std::optional<std::string>& internal_interface_port) {
+  add_interface_port(external_name, internal_subgraph, internal_interface_port, true);
 }
 
-void Subgraph::add_output_interface_port(const std::string& external_name,
-                                         const std::shared_ptr<Subgraph>& internal_subgraph,
-                                         std::optional<std::string> internal_interface_port) {
-  add_interface_port(external_name, internal_subgraph, std::move(internal_interface_port), false);
+void Subgraph::add_output_interface_port(
+    const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+    const std::optional<std::string>& internal_interface_port) {
+  add_interface_port(external_name, internal_subgraph, internal_interface_port, false);
 }
 
 std::pair<std::shared_ptr<Operator>, std::string> Subgraph::get_interface_operator_port(
@@ -1043,9 +1043,9 @@ void Subgraph::add_output_exec_interface_port(const std::string& external_name,
   register_exec_interface_port(external_name, internal_op, Operator::kOutputExecPortName, false);
 }
 
-void Subgraph::add_input_exec_interface_port(const std::string& external_name,
-                                             const std::shared_ptr<Subgraph>& internal_subgraph,
-                                             std::optional<std::string> internal_interface_port) {
+void Subgraph::add_input_exec_interface_port(
+    const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+    const std::optional<std::string>& internal_interface_port) {
   if (!internal_subgraph) {
     HOLOSCAN_LOG_ERROR("Internal subgraph pointer is null");
     throw std::runtime_error("Internal subgraph pointer is null");
@@ -1068,9 +1068,9 @@ void Subgraph::add_input_exec_interface_port(const std::string& external_name,
   register_exec_interface_port(external_name, resolved_op, resolved_port, true);
 }
 
-void Subgraph::add_output_exec_interface_port(const std::string& external_name,
-                                              const std::shared_ptr<Subgraph>& internal_subgraph,
-                                              std::optional<std::string> internal_interface_port) {
+void Subgraph::add_output_exec_interface_port(
+    const std::string& external_name, const std::shared_ptr<Subgraph>& internal_subgraph,
+    const std::optional<std::string>& internal_interface_port) {
   if (!internal_subgraph) {
     HOLOSCAN_LOG_ERROR("Internal subgraph pointer is null");
     throw std::runtime_error("Internal subgraph pointer is null");

@@ -65,4 +65,16 @@ if(HOLOSCAN_BUILD_TESTS)
                        PASS_REGULAR_EXPRESSION "\\| Trial \\|"
                        TIMEOUT 120
                       )
+
+  add_test(NAME EXAMPLE_CPP_BENCHMARK_MESSAGE_PASSING_COMPONENTS_TEST
+           COMMAND benchmark_message_passing
+                   --add-timestamp
+                   --add-cuda-stream
+                   --add-metadata
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_BENCHMARK_MESSAGE_PASSING_COMPONENTS_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "\\| Trial \\|"
+                       TIMEOUT 120
+                      )
 endif()

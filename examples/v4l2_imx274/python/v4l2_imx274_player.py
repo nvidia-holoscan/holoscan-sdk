@@ -78,6 +78,7 @@ class HoloscanApplication(holoscan.core.Application):
         pixel_format=None,
         bayer_grid=None,
         raw_depth=None,
+        device=None,
     ):
         logging.info("__init__")
         super().__init__()
@@ -88,6 +89,7 @@ class HoloscanApplication(holoscan.core.Application):
         self._pixel_format = pixel_format
         self._bayer_grid = bayer_grid
         self._raw_depth = raw_depth
+        self._device = device
 
     def compose(self):
         logging.info("compose")
@@ -125,6 +127,8 @@ class HoloscanApplication(holoscan.core.Application):
 
         # Pass the resolved pixel_format into receiver_kwargs so V4L2 uses the right format.
         receiver_kwargs["pixel_format"] = pixel_format
+        if self._device is not None:
+            receiver_kwargs["device"] = self._device
 
         receiver_operator = holoscan.operators.V4L2VideoCaptureOp(
             self,
@@ -198,6 +202,11 @@ def main(config_file):
         help="Exit after receiving this many frames",
     )
     parser.add_argument(
+        "--device",
+        default=None,
+        help="V4L2 device node (e.g. /dev/video0). Overrides YAML receiver.device.",
+    )
+    parser.add_argument(
         "--pixel-format",
         default=None,
         help="V4L2 FourCC pixel format (e.g. RG10, BG10). Overrides YAML receiver.pixel_format.",
@@ -233,6 +242,7 @@ def main(config_file):
         pixel_format=args.pixel_format,
         bayer_grid=args.bayer_grid,
         raw_depth=args.raw_depth,
+        device=args.device,
     )
     # if the --config command line argument was provided, it will override this config_file
     application.config(str(config_file))

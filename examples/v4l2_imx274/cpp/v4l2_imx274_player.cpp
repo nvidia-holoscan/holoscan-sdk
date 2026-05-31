@@ -123,14 +123,15 @@ class App : public holoscan::Application {
  public:
   explicit App(int64_t frame_limit = 0, std::string pixel_format = "RG10", int bayer_grid = -1,
                int raw_depth = -1, bool headless = false, bool fullscreen = false,
-               bool use_exclusive_display = false)
+               bool use_exclusive_display = false, std::string device = "")
       : frame_limit_(frame_limit),
         pixel_format_(std::move(pixel_format)),
         bayer_grid_(bayer_grid),
         raw_depth_(raw_depth),
         headless_(headless),
         fullscreen_(fullscreen),
-        use_exclusive_display_(use_exclusive_display) {}
+        use_exclusive_display_(use_exclusive_display),
+        device_(std::move(device)) {}
 
   void compose() override {
     using namespace holoscan;
@@ -159,20 +160,33 @@ class App : public holoscan::Application {
     if (raw_depth < 0)
       raw_depth = 1;
 
+    // Resolve device: CLI > YAML > default (/dev/video0)
+    std::string device = device_;
+    if (device.empty()) {
+      for (const auto& yaml_node : config().yaml_nodes()) {
+        device = yaml_node["receiver"]["device"].as<std::string>("");
+        if (!device.empty())
+          break;
+      }
+      if (device.empty())
+        device = "/dev/video0";
+    }
+
     // V4L2 capture with pass-through so raw Bayer data is forwarded as-is.
-    // pixel_format_ is passed last so a CLI --pixel-format overrides the YAML default.
-    auto receiver =
-        (frame_limit_ > 0)
-            ? make_operator<ops::V4L2VideoCaptureOp>(
-                  "receiver",
-                  make_condition<CountCondition>("frame-limit", frame_limit_),
-                  Arg("pass_through", true),
-                  from_config("receiver"),
-                  Arg("pixel_format", pixel_format_))
-            : make_operator<ops::V4L2VideoCaptureOp>("receiver",
-                                                     Arg("pass_through", true),
-                                                     from_config("receiver"),
-                                                     Arg("pixel_format", pixel_format_));
+    // pixel_format and device are passed last so CLI args override the YAML defaults.
+    auto receiver = (frame_limit_ > 0)
+                        ? make_operator<ops::V4L2VideoCaptureOp>(
+                              "receiver",
+                              make_condition<CountCondition>("frame-limit", frame_limit_),
+                              Arg("pass_through", true),
+                              from_config("receiver"),
+                              Arg("pixel_format", pixel_format_),
+                              Arg("device", device))
+                        : make_operator<ops::V4L2VideoCaptureOp>("receiver",
+                                                                 Arg("pass_through", true),
+                                                                 from_config("receiver"),
+                                                                 Arg("pixel_format", pixel_format_),
+                                                                 Arg("device", device));
 
     // Reinterpret the raw uint8 blob as a (height, width, 1) uint16 Bayer tensor.
     auto raw_frame_converter = make_operator<ops::RawFrameConverterOp>(
@@ -226,10 +240,11 @@ class App : public holoscan::Application {
   bool headless_ = false;
   bool fullscreen_ = false;
   bool use_exclusive_display_ = false;
+  std::string device_;
 };
 
 int main(int argc, char** argv) {
-  // Parse arguments: [config_path] [--frame-limit N] [--pixel-format FMT]
+  // Parse arguments: [config_path] [--device DEV] [--frame-limit N] [--pixel-format FMT]
   //                  [--bayer-grid N] [--raw-depth N]
   //                  [--headless] [--fullscreen] [--use-exclusive-display]
   std::string config_path_str;
@@ -240,10 +255,13 @@ int main(int argc, char** argv) {
   bool headless = false;
   bool fullscreen = false;
   bool use_exclusive_display = false;
+  std::string device;  // empty = not set; resolved from YAML or operator default
 
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--frame-limit" && i + 1 < argc) {
+    if (arg == "--device" && i + 1 < argc) {
+      device = argv[++i];
+    } else if (arg == "--frame-limit" && i + 1 < argc) {
       frame_limit = std::stoll(argv[++i]);
     } else if (arg == "--pixel-format" && i + 1 < argc) {
       pixel_format = argv[++i];
@@ -268,7 +286,8 @@ int main(int argc, char** argv) {
           raw_depth,
           headless,
           fullscreen,
-          use_exclusive_display);
+          use_exclusive_display,
+          device);
 
   auto config_path = std::filesystem::canonical(argv[0]).parent_path();
   config_path /= "v4l2_imx274_player.yaml";

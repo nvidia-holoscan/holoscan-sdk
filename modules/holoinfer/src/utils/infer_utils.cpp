@@ -350,7 +350,7 @@ InferStatus validate_dependency_map(const MultiMappings& pre_processor_map,
 
     size_t visited = 0;
     while (!ready.empty()) {
-      auto current = ready.front();
+      std::string current = std::move(ready.front());
       ready.pop();
       visited++;
       for (const auto& neighbor : adj[current]) {
@@ -702,7 +702,7 @@ InferStatus load_yaml(const std::string& yaml_file,
   for (auto it = model_map.begin(); it != model_map.end(); ++it) {
     std::string key = it->first;
     std::string value = it->second;
-    model_path_map[key] = value;
+    model_path_map[key] = std::move(value);
     batch_sizes[key] = {"1,1,1"};
   }
 
@@ -906,10 +906,9 @@ InferStatus build_execution_plan(const MultiMappings& pre_map, const MultiMappin
     level.reserve(level_size);
 
     for (size_t idx = 0; idx < level_size; ++idx) {
-      auto current_model = ready.front();
+      std::string current_model = std::move(ready.front());
       ready.pop();
       visited++;
-      level.push_back(current_model);
 
       for (const auto& dependent : adjacency[current_model]) {
         indegree[dependent]--;
@@ -917,6 +916,7 @@ InferStatus build_execution_plan(const MultiMappings& pre_map, const MultiMappin
           ready.push(dependent);
         }
       }
+      level.push_back(std::move(current_model));
     }
     execution_plan.push_back(std::move(level));
   }

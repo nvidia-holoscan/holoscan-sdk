@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/resources/gxf/cuda_green_context.hpp>
@@ -259,7 +260,7 @@ TEST_F(CudaGreenContextTest, MultipleContextsFromSamePool) {
   for (int i = 0; i < partitions.size(); ++i) {
     auto context = app_->make_resource<CudaGreenContext>("context_" + std::to_string(i), pool, i);
     context->initialize();
-    contexts.push_back(context);
+    contexts.push_back(std::move(context));
   }
 
   // All contexts should be valid

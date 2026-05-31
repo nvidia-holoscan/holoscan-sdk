@@ -367,7 +367,7 @@ void Context::set_surface_format(SurfaceFormat surface_format) {
   impl_->surface_format_ = surface_format;
   // update Vulkan surface format if Vulkan has already been initialized
   if (impl_->vulkan_) {
-    impl_->vulkan_->set_surface_format(impl_->surface_format_.value());
+    impl_->vulkan_->set_surface_format(surface_format);
   }
 }
 

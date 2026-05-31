@@ -77,8 +77,96 @@ HOLOSCAN_LOG_LEVEL=ERROR python3 scripts/scheduler_overhead_benchmark.py
 
 Use `--help` for options such as iteration count and worker thread settings.
 
+(host-cpu-isolation)=
+
+## Host CPU Isolation for Real-Time Schedulers
+
+Pinning Holoscan worker threads to specific cores via `pin_cores` (or the dispatcher via `GXF_EBS_DISPATCHER_CPU_CORE`) only controls *where* those threads run. The kernel is still free to schedule unrelated user and kernel work onto the same cores, which reintroduces jitter that real-time configuration is meant to eliminate. Removing the chosen cores from the kernel's general scheduling pool at boot closes that gap.
+
+:::{seealso}
+For an end-to-end worked example of CPU core isolation on a real platform, see the Holohub high-performance networking tutorial, section 3.5 ["Isolate CPU Cores"](https://nvidia-holoscan.github.io/holohub/tutorials/high_performance_networking/#35-isolate-cpu-cores).
+:::
+
+The following kernel command-line parameters work together:
+
+- **`isolcpus=<list>`**
+  - *What it does:* Removes the listed cores from the kernel scheduler's general load-balancing domain so threads land on them only when explicitly pinned (via `pin_cores`, `taskset`, or `sched_setaffinity`).
+  - *Cost / tradeoff:* Those cores no longer participate in general workload balancing — your housekeeping cores absorb everything that is not explicitly pinned, so size the unisolated pool for the rest of the system's load.
+  - *How to tune:* Apply to exactly the cores your Holoscan dispatcher and pinned workers use. Skip it if your pipeline already runs comfortably on a shared core pool; isolation only helps when measurable jitter from co-scheduled work is the bottleneck.
+- **`nohz_full=<list>`**
+  - *What it does:* Disables the periodic scheduler tick on the listed cores while only one task is runnable on the core, typically reducing timer-interrupt jitter for long-running RT workers.
+  - *Cost / tradeoff:* Tick offload work shifts to the timekeeping (housekeeping) core, and on most kernels the tick is only suppressed when a single task is runnable on the core — additional pinned threads on the same core re-enable it.
+  - *How to tune:* Use the same list as `isolcpus`, but ensure each `nohz_full` core hosts only one runnable RT task. Skip it if you have not observed tick-driven jitter in profiling traces; the benefit is small for workloads already dominated by GPU or I/O latency.
+- **`rcu_nocbs=<list>`**
+  - *What it does:* Offloads RCU (read-copy-update) callback processing from the listed cores onto dedicated kernel threads that run elsewhere.
+  - *Cost / tradeoff:* The offloaded RCU callbacks consume cycles on your housekeeping cores instead, so a heavily loaded RCU subsystem can add load there.
+  - *How to tune:* Match the list to `isolcpus` / `nohz_full`. This is generally cheap to enable and worth doing whenever you isolate cores.
+
+These three parameters are typically used with the same core list.
+
+### CPU Frequency Governor
+
+- *What it does:* The `performance` governor pins each selected core to its maximum operating frequency, eliminating frequency-scaling and wake-from-idle latency that the default `ondemand` / `schedutil` governors introduce.
+- *Cost / tradeoff:* Idle power draw and thermal output rise on the affected cores; on battery- or thermally-constrained systems this is a real cost.
+- *How to tune:* Apply only to the cores hosting your RT dispatcher and pinned workers. Skip it if you have not seen frequency-scaling-induced jitter in your traces — on many server-class systems the default governor is fast enough that pinning to `performance` is unnecessary.
+
+```bash
+sudo cpupower frequency-set -g performance
+```
+
+To target only specific cores:
+
+```bash
+sudo cpupower -c 1-6 frequency-set -g performance
+```
+
+### Worked Example
+
+The {ref}`scheduler-recipe-multi-branch-low-latency` recipe pins the dispatcher to core `1`, the priority branch worker to core `2`, the other branch workers to cores `3` and `4`, and the default pool to cores `5` and `6`. Isolate the full set of cores the recipe uses by adding the following to the kernel command line:
+
+```text
+isolcpus=1-6 nohz_full=1-6 rcu_nocbs=1-6
+```
+
+On x86 hosts, this is set in `/etc/default/grub` (the `GRUB_CMDLINE_LINUX` line) followed by `update-grub`. On IGX and Jetson, it is set in `/boot/extlinux/extlinux.conf` under the `APPEND` line of the active boot entry. Refer to your platform's documentation for the exact procedure and reboot requirements.
+
+After rebooting, set the governor and launch the application with the dispatcher pinned to core `1`:
+
+```bash
+sudo cpupower -c 1-6 frequency-set -g performance
+export GXF_EBS_DISPATCHER_CPU_CORE=1
+export GXF_EBS_DISPATCHER_SCHED_POLICY=SCHED_FIFO
+export GXF_EBS_DISPATCHER_SCHED_PRIORITY=99
+./my_holoscan_app
+```
+
+### Verification
+
+Confirm the kernel sees the isolated set:
+
+```bash
+cat /sys/devices/system/cpu/isolated
+# Expected: 1-6
+```
+
+Confirm a running thread is pinned where you expect (replace `<pid>` with a worker thread ID from `ps -eLo pid,tid,comm | grep my_app`):
+
+```bash
+taskset -c -p <pid>
+# Expected: pid <pid>'s current affinity list: 2
+```
+
+:::{warning}
+**Leave at least one core unisolated.** The kernel, userspace shell, container runtime, and unpinned Holoscan threads all need somewhere to run. Isolating every core (e.g. `isolcpus=0-N` on an N+1-core system) starves the kernel of a general-purpose CPU and can hang the system. Reserve core `0` (and ideally one more) for the OS.
+:::
+
+:::{tip}
+`nohz_full` requires `CONFIG_NO_HZ_FULL=y` in the kernel, which is set on most stock distributions but not all. If isolation is configured but jitter persists, check `cat /sys/devices/system/cpu/nohz_full` — an empty result means the option was ignored.
+:::
+
 ## See Also
 
 - {ref}`holoscan-flow-tracking`
 - {ref}`gxf-job-statistics`
 - {ref}`nsight-profiling`
+- {ref}`rt-scheduling-prerequisites`

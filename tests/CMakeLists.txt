@@ -31,12 +31,22 @@ endif()
 
 # ##################################################################################################
 # * compiler function -----------------------------------------------------------------------------
+include(GoogleTest)
 
 # This function takes in a test name and test source and handles setting all of the associated
-# properties and linking to build the test
+# properties and linking to build the test.
+#
+# Optional: EXTRA_ENVIRONMENT — semicolon-separated VAR=value pairs merged into gtest_discover_tests
+# ENVIRONMENT (set_tests_properties on the target name does not apply to discovered tests).
 function(ConfigureTest CMAKE_TEST_NAME)
+  # PARSE_ARGV reads from ARGV (not ARGN); start at ARGV1 so the target name stays in ARGV0.
+  cmake_parse_arguments(PARSE_ARGV 1 CT "" "EXTRA_ENVIRONMENT;TEST_PREFIX" "")
+  set(_configure_test_sources ${CT_UNPARSED_ARGUMENTS})
+  if(NOT _configure_test_sources)
+    message(FATAL_ERROR "ConfigureTest(${CMAKE_TEST_NAME}): no source files listed")
+  endif()
 
-  add_executable(${CMAKE_TEST_NAME} ${ARGN})
+  add_executable(${CMAKE_TEST_NAME} ${_configure_test_sources})
 
   set(BIN_DIR ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR})
 
@@ -63,10 +73,23 @@ function(ConfigureTest CMAKE_TEST_NAME)
     GTest::gtest_main
   )
 
-  # Run the test from the main bin directory to access data as needed
-  add_test(NAME ${CMAKE_TEST_NAME} COMMAND ${CMAKE_TEST_NAME} WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
-  set_property(TEST ${CMAKE_TEST_NAME} PROPERTY ENVIRONMENT
-    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH};HOLOSCAN_LIB_PATH=${BIN_DIR}/gxf_extensions:${BIN_DIR}/lib:$ENV{HOLOSCAN_LIB_PATH}")
+  # Discover and run the test from the main bin directory to access data as needed.
+  set(_gtest_test_environment
+    "LD_LIBRARY_PATH=${BIN_DIR}/lib:${BIN_DIR}/gxf_extensions:${BIN_DIR}/gxf_extensions/format_converter:${BIN_DIR}/gxf_extensions/holoviz:${BIN_DIR}/gxf_extensions/stream_playback:$ENV{LD_LIBRARY_PATH};HOLOSCAN_LIB_PATH=${BIN_DIR}/gxf_extensions:${BIN_DIR}/lib:$ENV{HOLOSCAN_LIB_PATH}"
+  )
+  if(CT_EXTRA_ENVIRONMENT)
+    string(APPEND _gtest_test_environment ";${CT_EXTRA_ENVIRONMENT}")
+  endif()
+  set(_test_prefix_arg "")
+  if(CT_TEST_PREFIX)
+    set(_test_prefix_arg TEST_PREFIX "${CT_TEST_PREFIX}")
+  endif()
+  gtest_discover_tests(${CMAKE_TEST_NAME}
+    WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+    DISCOVERY_MODE PRE_TEST
+    PROPERTIES ENVIRONMENT "${_gtest_test_environment}"
+    ${_test_prefix_arg}
+  )
 
   install(
     TARGETS ${CMAKE_TEST_NAME}
@@ -285,13 +308,6 @@ if(CMAKE_CUDA_COMPILER)
   target_link_libraries(MATX_ALLOCATOR_TEST PRIVATE matx::matx)
 endif()
 
-if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
-  # Set test properties for CORE_TEST
-  # (death tests have to be excluded because it causes an issue with ASAN)
-  # https://github.com/google/googletest/blob/main/docs/advanced.md#death-tests-and-threads
-  set_tests_properties(CORE_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-Application.TestAppHelpOption:Application.TestAppVersionOption")
-endif()
-
 # ##################################################################################################
 # * gpu_resident tests ----------------------------------------------------------------------------------
 ConfigureTest(GPU_RESIDENT_TEST
@@ -364,6 +380,9 @@ target_link_libraries(INFERENCE_OPERATOR_TEST
   holoscan::holoinfer_utils
   $<TARGET_NAME_IF_EXISTS:holoscan::infer::torch>
 )
+if(HOLOSCAN_BUILD_ORT)
+  add_dependencies(INFERENCE_OPERATOR_TEST holoinfer_ort)
+endif()
 
 # ##################################################################################################
 # * ping_rx tests ----------------------------------------------------------------------------------
@@ -467,11 +486,6 @@ target_link_libraries(SYSTEM_TEST
 )
 add_dependencies(SYSTEM_TEST gxf_ucx_holoscan)
 
-if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
-  # Exclude tests that are known to fail with ASAN
-  set_tests_properties(SYSTEM_TEST PROPERTIES ENVIRONMENT "GTEST_FILTER=-HolovizApps.*:RealtimePingFirstInFirstOutApp.*:RealtimePingRoundRobinApp.*:RealtimePingDeadlineApp.*")
-endif()
-
 # ##################################################################################################
 # * utils tests ------------------------------------------------------------------------------------
 ConfigureTest(
@@ -491,8 +505,30 @@ ConfigureTest(
 # *
 # * For time efficiency, a more minimal set of tests (distributed_app.cpp) is used to test
 # * various distributed applications with the Multi-Thread scheduler.
+if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
+  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+"\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
+HOLOSCAN_MAX_DURATION_MS=6000;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+"
+  )
+else()
+  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+"\
+HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
+HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
+HOLOSCAN_MAX_DURATION_MS=3000;\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+"
+  )
+endif()
+
 ConfigureTest(
   SYSTEM_DISTRIBUTED_EBS_TEST
+  TEST_PREFIX "EBS_"
+  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}"
   system/distributed/async_data_logger_distributed_shutdown_test.cpp
   system/distributed/distributed_app.cpp
   system/distributed/distributed_app_scheduler_test.cpp
@@ -520,33 +556,34 @@ target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   ucxx::ucxx
 )
 
+# Repeat distributed tests, but setting environment variables to use the multi-thread scheduler
+# for a key subset of the distributed tests.
+# Environment variables used by distributed applications in the tests:
+# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT / HOLOSCAN_MAX_DURATION_MS : limits for distributed app
 if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
 "\
 HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=6000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
   )
 else()
-  set(CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS
+  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
 "\
 HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
 HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
 HOLOSCAN_MAX_DURATION_MS=3000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based\
+HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
 "
   )
 endif()
 
-set_tests_properties(
-  SYSTEM_DISTRIBUTED_EBS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}")
-
-# Repeat distributed tests, but setting environment variables to use the multi-thread scheduler
-# for a key subset of the distributed tests.
 ConfigureTest(
   SYSTEM_DISTRIBUTED_MTS_TEST
+  TEST_PREFIX "MTS_"
+  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS}"
   system/distributed/distributed_app.cpp
   system/env_wrapper.cpp
 )
@@ -554,40 +591,6 @@ target_link_libraries(SYSTEM_DISTRIBUTED_MTS_TEST
   PRIVATE
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx
-)
-
-# set environment variables used by distributed applications in the tests
-# - HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=3000    : Set deadlock timeout for distributed app
-# - HOLOSCAN_MAX_DURATION_MS=3000             : Set max duration for distributed app
-if(${CMAKE_SYSTEM_PROCESSOR} STREQUAL "aarch64")
-  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
-"\
-HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=6000;\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
-HOLOSCAN_MAX_DURATION_MS=6000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
-"
-  )
-else()
-  set(CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
-"\
-HOLOSCAN_UCX_NETWORK_CONNECTION_TIMEOUT=3000;\
-HOLOSCAN_STOP_ON_DEADLOCK_TIMEOUT=1000;\
-HOLOSCAN_MAX_DURATION_MS=3000;\
-HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread\
-"
-  )
-endif()
-
-if(HOLOSCAN_ENABLE_GOOGLE_SANITIZER)
-  # Append additional flags to exclude tests that are known to fail with ASAN
-  string(APPEND CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS
-    ";GTEST_FILTER=-DistributedApp.TestTwoMultiInputsOutputsFragmentsApp"
-  )
-endif()
-
-set_tests_properties(
-  SYSTEM_DISTRIBUTED_MTS_TEST PROPERTIES ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS}"
 )
 
 # ##################################################################################################
@@ -622,13 +625,25 @@ target_link_libraries(BAYER_DEMOSAIC_GPU_RESIDENT_TEST
 )
 
 # ##################################################################################################
-# * holoinfer tests — registered as individual CTest entries via gtest_discover_tests
-include(GoogleTest)
+# * format_converter_gpu_resident tests ------------------------------------------------------------
+ConfigureTest(FORMAT_CONVERTER_GPU_RESIDENT_TEST
+  operators/format_converter_gpu_resident/test_format_converter_gpu_resident.cpp
+)
+target_link_libraries(FORMAT_CONVERTER_GPU_RESIDENT_TEST
+  PRIVATE
+    holoscan::ops::format_converter_gpu_resident
+    CUDA::nppicc
+    CUDA::nppidei
+    CUDA::nppig
+)
 
+# ##################################################################################################
+# * holoinfer tests — registered as individual CTest entries via gtest_discover_tests
 add_executable(HOLOINFER_TEST
   holoinfer/inference/test_core.cpp
   holoinfer/inference/test_inference.cpp
   holoinfer/inference/test_parameters.cpp
+  holoinfer/inference/test_green_context_build.cpp
   holoinfer/inference/test_core.hpp
   holoinfer/inference/test_infer_settings.hpp
   holoinfer/processing/test_core.cpp
@@ -646,6 +661,7 @@ target_include_directories(HOLOINFER_TEST
   PRIVATE
     ${HOLOSCAN_TOP}/gxf_extensions
     ${CMAKE_SOURCE_DIR}/modules/holoinfer/src/include
+    ${CMAKE_SOURCE_DIR}/modules/holoinfer/src/infer/trt
 )
 
 target_link_libraries(HOLOINFER_TEST
@@ -656,6 +672,7 @@ target_link_libraries(HOLOINFER_TEST
     holoscan::holoinfer_utils
     $<TARGET_NAME_IF_EXISTS:holoscan::infer::torch>
     yaml-cpp::yaml-cpp
+    CUDA::cuda_driver
 )
 
 set(_HOLOINFER_TEST_BIN_DIR ${${HOLOSCAN_PACKAGE_NAME}_BINARY_DIR})

@@ -1794,6 +1794,14 @@ void HolovizOp::stop() {
     running_state_ = RunningState::STOPPED;
   }
   if (instance_) {
+    // Drain outstanding CUDA work before tearing down the windowing/Vulkan stack.
+    // This reduces shutdown races where display resources are destroyed
+    // while GPU work is in flight.
+    const cudaError_t sync_result = cudaDeviceSynchronize();
+    if (sync_result != cudaSuccess) {
+      HOLOSCAN_LOG_WARN("HolovizOp::stop(): cudaDeviceSynchronize() failed before shutdown: {}",
+                        cudaGetErrorString(sync_result));
+    }
     viz::Shutdown(instance_);
     instance_ = nullptr;
   }

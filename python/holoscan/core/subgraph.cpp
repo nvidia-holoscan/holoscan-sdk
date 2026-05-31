@@ -194,18 +194,20 @@ void init_subgraph(py::module_& m) {
            doc::Subgraph::doc_add_data_logger)
       // Note: add_flow methods are implemented in Python via delegation to self.fragment.add_flow
       // Interface port methods - Operator overloads
-      .def("add_input_interface_port",
-           py::overload_cast<const std::string&,
-                             const std::shared_ptr<Operator>&,
-                             std::optional<std::string>>(&Subgraph::add_input_interface_port),
-           "external_name"_a,
-           "internal_op"_a,
-           "internal_port"_a = py::none(),
-           doc::Subgraph::doc_add_input_interface_port)
+      .def(
+          "add_input_interface_port",
+          py::overload_cast<const std::string&,
+                            const std::shared_ptr<Operator>&,
+                            const std::optional<std::string>&>(&Subgraph::add_input_interface_port),
+          "external_name"_a,
+          "internal_op"_a,
+          "internal_port"_a = py::none(),
+          doc::Subgraph::doc_add_input_interface_port)
       .def("add_output_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Operator>&,
-                             std::optional<std::string>>(&Subgraph::add_output_interface_port),
+                             const std::optional<std::string>&>(
+               &Subgraph::add_output_interface_port),
            "external_name"_a,
            "internal_op"_a,
            "internal_port"_a = py::none(),
@@ -213,7 +215,7 @@ void init_subgraph(py::module_& m) {
       .def("add_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Operator>&,
-                             std::optional<std::string>,
+                             const std::optional<std::string>&,
                              std::optional<bool>>(&Subgraph::add_interface_port),
            "external_name"_a,
            "internal_op"_a,
@@ -222,24 +224,26 @@ void init_subgraph(py::module_& m) {
            doc::Subgraph::doc_add_interface_port)
       // Interface port methods - Subgraph overloads (must omit docstring here and use
       // use a common one for both overloads).
-      .def("add_input_interface_port",
-           py::overload_cast<const std::string&,
-                             const std::shared_ptr<Subgraph>&,
-                             std::optional<std::string>>(&Subgraph::add_input_interface_port),
-           "external_name"_a,
-           "internal_subgraph"_a,
-           "internal_interface_port"_a = py::none())
+      .def(
+          "add_input_interface_port",
+          py::overload_cast<const std::string&,
+                            const std::shared_ptr<Subgraph>&,
+                            const std::optional<std::string>&>(&Subgraph::add_input_interface_port),
+          "external_name"_a,
+          "internal_subgraph"_a,
+          "internal_interface_port"_a = py::none())
       .def("add_output_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Subgraph>&,
-                             std::optional<std::string>>(&Subgraph::add_output_interface_port),
+                             const std::optional<std::string>&>(
+               &Subgraph::add_output_interface_port),
            "external_name"_a,
            "internal_subgraph"_a,
            "internal_interface_port"_a = py::none())
       .def("add_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Subgraph>&,
-                             std::optional<std::string>,
+                             const std::optional<std::string>&,
                              std::optional<bool>>(&Subgraph::add_interface_port),
            "external_name"_a,
            "internal_subgraph"_a,
@@ -262,14 +266,16 @@ void init_subgraph(py::module_& m) {
       .def("add_input_exec_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Subgraph>&,
-                             std::optional<std::string>>(&Subgraph::add_input_exec_interface_port),
+                             const std::optional<std::string>&>(
+               &Subgraph::add_input_exec_interface_port),
            "external_name"_a,
            "internal_subgraph"_a,
            "internal_interface_port"_a = py::none())
       .def("add_output_exec_interface_port",
            py::overload_cast<const std::string&,
                              const std::shared_ptr<Subgraph>&,
-                             std::optional<std::string>>(&Subgraph::add_output_exec_interface_port),
+                             const std::optional<std::string>&>(
+               &Subgraph::add_output_exec_interface_port),
            "external_name"_a,
            "internal_subgraph"_a,
            "internal_interface_port"_a = py::none())

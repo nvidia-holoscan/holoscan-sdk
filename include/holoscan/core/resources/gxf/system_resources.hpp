@@ -85,7 +85,7 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
    * @param pin_cores CPU core IDs to pin the worker threads to (empty means no core pinning).
    */
   void add(const std::shared_ptr<Operator>& op, bool pin_operator = true,
-           std::vector<uint32_t> pin_cores = std::vector<uint32_t>());
+           const std::vector<uint32_t>& pin_cores = std::vector<uint32_t>());
 
   /**
    * @brief Add multiple operators to the thread pool
@@ -94,8 +94,8 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
    * @param pin_operator Whether the operators should be pinned to a specific thread in the pool.
    * @param pin_cores CPU core IDs to pin the worker thread to (empty means no core pinning).
    */
-  void add(std::vector<std::shared_ptr<Operator>> ops, bool pin_operator = true,
-           std::vector<uint32_t> pin_cores = std::vector<uint32_t>());
+  void add(const std::vector<std::shared_ptr<Operator>>& ops, bool pin_operator = true,
+           const std::vector<uint32_t>& pin_cores = std::vector<uint32_t>());
 
   /**
    * @brief Add an operator to the thread pool with real-time scheduling capabilities
@@ -111,7 +111,7 @@ class ThreadPool : public gxf::GXFSystemResourceBase {
    */
   void add_realtime(const std::shared_ptr<Operator>& op, SchedulingPolicy sched_policy,
                     bool pin_operator = true,
-                    std::vector<uint32_t> pin_cores = std::vector<uint32_t>(),
+                    const std::vector<uint32_t>& pin_cores = std::vector<uint32_t>(),
                     uint32_t sched_priority = 0, uint64_t sched_runtime = 0,
                     uint64_t sched_deadline = 0, uint64_t sched_period = 0);
 

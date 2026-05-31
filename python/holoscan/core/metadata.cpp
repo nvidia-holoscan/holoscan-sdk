@@ -536,7 +536,7 @@ void init_metadata(py::module_& m) {
           "Support for Python's copy.copy(). Performs shallow copy like C++ copy constructor.")
       .def(
           "__deepcopy__",
-          [](MetadataDictionary& self, py::object memo) {
+          [](MetadataDictionary& self, const py::object& memo) {
             // First, create a deep copy of the dictionary structure and MetadataObjects
             MetadataDictionary result = self.deep_copy();
 
@@ -564,7 +564,7 @@ void init_metadata(py::module_& m) {
 
                 // Store the deep-copied Python object back
                 auto new_gil_obj = std::make_shared<GILGuardedPyObject>(deep_copied_py_obj);
-                result.set(key, new_gil_obj);
+                result.set(key, std::move(new_gil_obj));
               }
               // For C++ types (int, float, string, vectors, etc.), the deep_copy() already
               // created independent copies, so we don't need to do anything else

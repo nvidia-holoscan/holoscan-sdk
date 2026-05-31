@@ -88,7 +88,7 @@ void GPUResidentInferenceOp::start() {
 
     std::function<cudaStream_t(int32_t)> allocate_cuda_stream;
     // If a CUDA stream pool is provided, use it to allocate a CUDA stream
-    allocate_cuda_stream = [this](int32_t device_id) -> cudaStream_t {
+    allocate_cuda_stream = [](int32_t device_id) -> cudaStream_t {
       cudaStream_t stream;
       // Set the device context before creating the stream
       cudaSetDevice(device_id);

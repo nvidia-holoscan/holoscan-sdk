@@ -19,9 +19,11 @@
 
 #include <atomic>
 #include <memory>
+#include <stdexcept>
 #include <thread>
 #include <utility>
 
+#include <holoscan/core/fragment.hpp>
 #include <holoscan/operators/holoviz/holoviz.hpp>
 
 namespace holoscan {
@@ -38,8 +40,36 @@ struct PresentDoneCondition::Impl {
 
   void thread_func(gxf_context_t gxf_context, gxf_uid_t gxf_eid) {
     while (!stop_requested_) {
-      // choose the timeout to be longer than the display period (assume 10Hz)
-      const bool is_ready = holoviz_op_->wait_for_present(present_id_, 100'000'000);
+      bool is_ready = false;
+      try {
+        // choose the timeout to be longer than the display period (assume 10Hz)
+        is_ready = holoviz_op_->wait_for_present(present_id_, 100'000'000);
+      } catch (const std::runtime_error& e) {
+        // wait_for_present throws when the underlying VK_KHR_present_wait extension is not
+        // available (e.g. Jetson AGX Thor iGPU, Jetson Orin iGPU). Without this catch the
+        // exception would escape this std::thread callable and trigger std::terminate(),
+        // crashing the application. Instead, transition the condition to kNever so the
+        // owning operator stops ticking, then ask the fragment to wind down all operators
+        // gracefully. The application exits cleanly with a clear ERROR log identifying the
+        // missing extension and the FirstPixelOutCondition alternative.
+        HOLOSCAN_LOG_ERROR(
+            "PresentDoneCondition: {}. Stopping fragment execution. Use FirstPixelOutCondition "
+            "instead, or run on a platform where the `VK_KHR_present_wait` Vulkan device "
+            "extension is supported.",
+            e.what());
+        current_state_.store(SchedulingStatusType::kNever);
+        const gxf_result_t notify_result = GxfEntityEventNotify(gxf_context, gxf_eid);
+        if (notify_result != GXF_SUCCESS) {
+          HOLOSCAN_LOG_ERROR("GxfEntityEventNotify failed during shutdown: {}",
+                             GxfResultStr(notify_result));
+        }
+        // The owning HolovizOp lives in the same Fragment as this condition; reuse its
+        // back-pointer.
+        if (auto* fragment = holoviz_op_->fragment()) {
+          fragment->stop_execution();
+        }
+        return;
+      }
 
       if (is_ready) {
         present_id_++;

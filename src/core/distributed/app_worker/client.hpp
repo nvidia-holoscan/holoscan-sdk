@@ -36,7 +36,7 @@ namespace holoscan::distributed {
 
 class AppWorkerClient {
  public:
-  AppWorkerClient(const std::string& worker_address, std::shared_ptr<grpc::Channel> channel);
+  AppWorkerClient(const std::string& worker_address, const std::shared_ptr<grpc::Channel>& channel);
 
   const std::string& ip_address() const;
 

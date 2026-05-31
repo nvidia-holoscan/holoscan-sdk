@@ -190,8 +190,6 @@ For example, if the user wants to use the network interface `eth0`, you can set 
 export UCX_NET_DEVICES=eth0
 ```
 
-Or, if you are running a packaged distributed application with the {ref}`Holoscan CLI<holoscan-cli-run>`, use the `--nic eth0` option to manually specify the network interface to use.
-
 The available network interface names can be found by running the following command:
 
 ```bash
@@ -229,10 +227,6 @@ IGX devices come with two ethernet ports, noted as port #4 and #5 in the [NVIDIA
 
 Holoscan's distributed application feature makes use of the [GXF UCX Extension](https://docs.nvidia.com/metropolis/deepstream/dev-guide/graphtools-docs/docs/text/ExtensionsManual/UcxExtension.html). Its documentation may provide useful additional context into how data is transmitted between fragments.
 `````
-
-:::{tip}
-Given a CMake project, a pre-built executable, or a Python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
-:::
 
 (#creating-holoscan-distributed-application-env-vars)=
 

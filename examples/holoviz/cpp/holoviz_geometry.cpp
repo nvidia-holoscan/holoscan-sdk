@@ -346,10 +346,10 @@ int main(int argc, char** argv) {
     const std::string argument(optarg != nullptr ? optarg : "");
     switch (c) {
       case 'h':
-        std::cout << "Usage: " << argv[0] << " [options]" << std::endl
-                  << "Options:" << std::endl
-                  << "  -h, --help     display this information" << std::endl
-                  << "  -c, --count    Set the number of frames to display the video" << std::endl
+        std::cout << "Usage: " << argv[0] << " [options]\n"
+                  << "Options:\n"
+                  << "  -h, --help     display this information\n"
+                  << "  -c, --count    Set the number of frames to display the video\n"
                   << '\n';
         return EXIT_SUCCESS;
 

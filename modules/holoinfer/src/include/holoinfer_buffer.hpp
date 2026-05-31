@@ -17,6 +17,7 @@
 #ifndef MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
 #define MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_BUFFER_HPP
 
+#include <cuda.h>
 #include <cuda_runtime_api.h>
 #include <sys/stat.h>
 
@@ -427,10 +428,10 @@ struct InferenceSpecs {
   bool use_cuda_graphs_ = true;
 
   /// @brief Pointer to GPU resident input buffer.
-  void* gpu_resident_input_;
+  void* gpu_resident_input_ = nullptr;
 
   /// @brief Pointer to GPU resident output buffer.
-  void* gpu_resident_output_;
+  void* gpu_resident_output_ = nullptr;
 
   /// @brief The DLA core index to execute the engine on, starts at 0. Set to -1 (the default) to
   /// disable DLA.
@@ -451,6 +452,16 @@ struct InferenceSpecs {
 
   /// @brief Function to allocate a CUDA stream
   std::function<cudaStream_t(int32_t device_id)> allocate_cuda_stream_;
+
+  /// @brief CUDA context derived from a CudaGreenContext. When non-null, TRT engine
+  /// building runs within this context so that tactic selection is constrained to
+  /// the assigned SM partition. Set by InferenceOp when a CudaGreenContext resource
+  /// is present; nullptr means use the default primary context (all SMs).
+  CUcontext build_cuda_context_ = nullptr;
+
+  /// @brief SM count of the green context partition. When non-zero, embedded in the
+  /// engine filename so full-GPU and partitioned engine builds do not collide.
+  int32_t build_sm_count_ = 0;
 };
 
 /**

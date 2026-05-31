@@ -110,7 +110,16 @@ CudaService::~CudaService() {
 
     // avoid CudaCheck() here, the driver might already be uninitialized
     // when global variables are destroyed
-    cuDevicePrimaryCtxRelease(impl_->device_);
+    const CUresult result = cuDevicePrimaryCtxRelease(impl_->device_);
+    if (result != CUDA_SUCCESS) {
+      try {
+        HOLOSCAN_LOG_ERROR(
+            "CudaService: cuDevicePrimaryCtxRelease failed with CUDA driver error {}",
+            static_cast<int>(result));
+      } catch (...) {
+        // Discard exceptions from logging during teardown.
+      }
+    }
   }
 }
 

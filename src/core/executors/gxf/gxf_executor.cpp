@@ -434,7 +434,7 @@ void GXFExecutor::initialize_gxf_resources(
 }
 
 void GXFExecutor::add_operator_to_entity_group(gxf_context_t context, gxf_uid_t entity_group_gid,
-                                               std::shared_ptr<Operator> op) {
+                                               const std::shared_ptr<Operator>& op) {
   if (op == nullptr) {
     HOLOSCAN_LOG_ERROR("Operator is nullptr");
     return;
@@ -703,7 +703,8 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
         "Invalid queue size: {} (op: '{}', input port: '{}')", queue_size, op->name(), rx_name));
   }
 
-  bool queue_policy_set = io_spec->queue_policy().has_value();
+  const auto& queue_policy_opt = io_spec->queue_policy();
+  const bool queue_policy_set = queue_policy_opt.has_value();
   auto connector = std::dynamic_pointer_cast<Receiver>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
     if (queue_policy_set) {
@@ -739,8 +740,7 @@ void GXFExecutor::create_input_port(Fragment* fragment, IOSpec* io_spec, Operato
         // Set the capacity of the DoubleBufferReceiver with the queue_size
         rx_resource->add_arg(Arg("capacity", queue_size));
         if (queue_policy_set) {
-          rx_resource->add_arg(
-              Arg("policy", static_cast<uint64_t>(io_spec->queue_policy().value())));
+          rx_resource->add_arg(Arg("policy", static_cast<uint64_t>(queue_policy_opt.value())));
         }
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
@@ -961,7 +961,8 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
   const char* tx_name = io_spec->name().c_str();
   auto tx_type = io_spec->connector_type();
 
-  bool queue_policy_set = io_spec->queue_policy().has_value();
+  const auto& queue_policy_opt = io_spec->queue_policy();
+  const bool queue_policy_set = queue_policy_opt.has_value();
   auto connector = std::dynamic_pointer_cast<Transmitter>(io_spec->connector());
   if (connector && (connector->gxf_cptr() != nullptr)) {
     if (queue_policy_set) {
@@ -994,8 +995,7 @@ void GXFExecutor::create_output_port(Fragment* fragment, IOSpec* io_spec, Operat
         HOLOSCAN_LOG_DEBUG("creating output port using DoubleBufferTransmitter");
         tx_resource = std::make_shared<DoubleBufferTransmitter>();
         if (queue_policy_set) {
-          tx_resource->add_arg(
-              Arg("policy", static_cast<uint64_t>(io_spec->queue_policy().value())));
+          tx_resource->add_arg(Arg("policy", static_cast<uint64_t>(queue_policy_opt.value())));
         }
         break;
       case IOSpec::ConnectorType::kDoubleBuffer:
@@ -1786,6 +1786,13 @@ bool GXFExecutor::initialize_fragment() {
     // Initialize the operator while we are visiting a node in the graph
     try {
       op->initialize();
+      // Ensure framework-level initialization ran even if the operator's initialize()
+      // override did not call Operator::initialize(). initialize_base() is idempotent:
+      // it is a no-op if already called from within the operator's initialize() override.
+      // VirtualOperator intentionally skips GXF setup; do not call initialize_base() on it.
+      if (op->operator_type() != Operator::OperatorType::kVirtual) {
+        op->initialize_base();
+      }
     } catch (const std::exception& e) {
       HOLOSCAN_LOG_ERROR(
           "Exception occurred during initialization of operator: '{}' - {}", op->name(), e.what());
@@ -2514,12 +2521,12 @@ bool GXFExecutor::initialize_gxf_graph(OperatorFlowGraph& graph) {
                            is_current_op_leaf,
                            is_current_op_root);
         if (is_current_op_leaf) {
-          fragment_->data_flow_tracker()->add_leaf_op(op.get());
+          fragment_->data_flow_tracker()->add_leaf_op(op);
         }
         // root and leaf operators may also be the same if there is only one operator in a
         // fragment
         if (is_current_op_root) {
-          fragment_->data_flow_tracker()->add_root_op(op.get());
+          fragment_->data_flow_tracker()->add_root_op(op);
         }
 
         // check if the operator was added as a probe operator, then update the codelet id in
@@ -2534,7 +2541,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorFlowGraph& graph) {
                  : is_current_op_leaf                     ? "leaf"
                                                           : "root"));
           } else {
-            fragment_->data_flow_tracker()->add_probe_op(op.get());
+            fragment_->data_flow_tracker()->add_probe_op(op);
           }
           fragment_->data_flow_tracker()->remove_probe_op_name(op->name());
         }
@@ -2724,7 +2731,7 @@ bool GXFExecutor::initialize_gxf_graph(OperatorFlowGraph& graph) {
             generated_device_entity_count++;
           }
           // store in set to avoid adding multiple GPUDevice objects to the same entity group
-          groups_with_device.insert(entity_group_name);
+          groups_with_device.insert(std::move(entity_group_name));
         }
       }
 

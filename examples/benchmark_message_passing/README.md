@@ -11,6 +11,22 @@ From the build directory:
 ./examples/benchmark_message_passing/cpp/benchmark_message_passing
 ```
 
+Optional benchmark flags:
+
+```bash
+./examples/benchmark_message_passing/cpp/benchmark_message_passing \
+  --threads 0 \
+  --add-timestamp \
+  --add-cuda-stream \
+  --add-metadata
+```
+
+- `--threads N`: Uses `EventBasedScheduler` with `N` worker threads when `N > 0`.
+- `--threads 0`: Uses `GreedyScheduler`.
+- `--add-timestamp`: Attaches an additional GXF `Timestamp` component to each emitted entity.
+- `--add-cuda-stream`: Attaches an additional `CudaStreamId` component to each emitted entity.
+- `--add-metadata`: Attaches a `MetadataDictionary` component to each emitted entity.
+
 ## Metrics
 
 For each trial, the benchmark results will display:

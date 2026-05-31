@@ -37,7 +37,7 @@ namespace distributed {
 
 class AppDriverClient {
  public:
-  AppDriverClient(const std::string& driver_address, std::shared_ptr<grpc::Channel> channel);
+  AppDriverClient(const std::string& driver_address, const std::shared_ptr<grpc::Channel>& channel);
 
   bool fragment_allocation(const std::string& worker_ip, const std::string& worker_port,
                            const std::vector<FragmentNodeType>& target_fragments,

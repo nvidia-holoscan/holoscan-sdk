@@ -11,7 +11,7 @@ SDK-native multi-stream video capture and playout.
 ```
 ┌──────────────────────────────────────────────────────┐
 │                   Application                        │
-│  F.make_operator<ExampleVideoCapture>("cap", 4U,        │
+│  F.make_operator<ExampleVideoCapture>("cap", 4U,     │
 │                   Arg("uri", "sdi://0"), ...);       │
 └──────────────────────┬───────────────────────────────┘
                        │
@@ -24,7 +24,7 @@ SDK-native multi-stream video capture and playout.
         └──────────────┬──────────────────────┘
                        │ subclass
         ┌──────────────▼──────────────────────┐
-        │   ExampleVideoCapture (vendor)         │
+        │   ExampleVideoCapture (vendor)      │
         │   ─ start(): open device, alloc DMA │
         │   ─ compute(): dequeue + emit       │
         │   ─ stop(): release device          │

@@ -32,9 +32,9 @@ Take a glance at [HoloHub](https://github.com/nvidia-holoscan/holohub) to find c
 
 ## 5. Write and run your own application
 
-The steps above cover what is required to write your own application and run it. For facilitating packaging and distributing, the Holoscan SDK includes utilities to [package and run your Holoscan application](./holoscan_packager.md) in an OCI-compliant container image.
+The steps above cover what is required to write your own application and run it.
 
 ## 6. Master the details
 
 - Expand your understanding of the framework with details on the [logging utility](./holoscan_logging.md) or the [data flow tracking](./flow_tracking.md) benchmarking tool.
-- Learn more details on the configurable components that control the execution of your application, like [Schedulers], [Conditions], and [Resources]. (Advanced) These components are part of the GXF execution backend.
+- Learn more details on the configurable components that control the execution of your application, like [Schedulers](./components/schedulers.md), [Conditions](./components/conditions.md), and [Resources](./components/resources.md). (Advanced) These components are part of the GXF execution backend.

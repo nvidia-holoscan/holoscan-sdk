@@ -248,7 +248,7 @@ int main(int argc, char** argv) {
     std::cerr << "Green Context requires CUDA Driver API >= 12.4 (cudaDriverGetVersion >= "
               << kMinCudaDriverVersion << ", detected: "
               << (version.has_value() ? std::to_string(version.value()) : "unknown") << "). See "
-              << kHsdkFaqUrl << std::endl;
+              << kHsdkFaqUrl << '\n';
     return kSkipReturnCode;
   }
 
@@ -259,7 +259,7 @@ int main(int argc, char** argv) {
       std::cerr << "Green Context requires at least " << required_sm_count
                 << " SMs for this sample's partitioning (detected: "
                 << (sm_count.has_value() ? std::to_string(sm_count.value()) : "unknown")
-                << "). See " << kHsdkFaqUrl << std::endl;
+                << "). See " << kHsdkFaqUrl << '\n';
       return kSkipReturnCode;
     }
   }

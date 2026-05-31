@@ -307,13 +307,18 @@ bool Fragment::register_service_from(Fragment* fragment, std::string_view id) {
   const std::string id_str{id};
   bool found_any = false;
 
-  // Lock both registries (always lock lower-address first to avoid dead-lock)
-  auto* first = this < fragment ? this : fragment;
-  auto* second = this < fragment ? fragment : this;
+  // Lock the destination fragment exclusively and the source fragment in shared mode.
+  // Acquire in address order to avoid deadlock when two fragments register services concurrently.
+  std::unique_lock<std::shared_mutex> this_lock(fragment_service_registry_mutex_, std::defer_lock);
+  std::shared_lock<std::shared_mutex> fragment_lock(fragment->fragment_service_registry_mutex_,
+                                                    std::defer_lock);
 
-  std::unique_lock<std::shared_mutex> l1(first->fragment_service_registry_mutex_, std::defer_lock);
-  std::shared_lock<std::shared_mutex> l2(second->fragment_service_registry_mutex_, std::defer_lock);
-  std::lock(l1, l2);
+  // Use pointer address order to keep lock acquisition consistent across threads.
+  if (this < fragment) {
+    std::lock(this_lock, fragment_lock);
+  } else {
+    std::lock(fragment_lock, this_lock);
+  }
 
   for (const auto& [service_key, service] : fragment->fragment_services_by_key_) {
     if (service_key.id == id_str) {
@@ -1234,7 +1239,7 @@ void Fragment::setup_component_internals(ComponentBase* component) {
 }
 
 std::shared_ptr<CudaGreenContextPool> Fragment::add_default_green_context_pool(
-    int32_t dev_id, std::vector<uint32_t> sms_per_partition, int32_t default_context_index,
+    int32_t dev_id, const std::vector<uint32_t>& sms_per_partition, int32_t default_context_index,
     uint32_t min_sm_size) {
   if (green_context_pools_.size() > 0) {
     HOLOSCAN_LOG_WARN("Fragment '{}': a CudaGreenContextPool already exists. Skipping...");
@@ -1452,7 +1457,7 @@ void Fragment::GPUResidentAccessor::print_perf_metrics(unsigned int skip_first,
   unsigned int jitter = max_time - min_time;
 
   // Calculate 99.9th percentile
-  std::vector<unsigned int> sorted_times = times;
+  std::vector<unsigned int> sorted_times = std::move(times);
   std::sort(sorted_times.begin(), sorted_times.end());
   size_t percentile_idx = static_cast<size_t>(std::ceil(0.999 * effective_samples)) - 1;
   if (percentile_idx >= effective_samples) {

@@ -59,7 +59,7 @@ class PyCudaBufferAvailableCondition : public CudaBufferAvailableCondition {
   // Define a constructor that fully initializes the object.
   explicit PyCudaBufferAvailableCondition(
       const std::variant<Fragment*, Subgraph*>& fragment_or_subgraph,
-      std::optional<const std::string> receiver = std::nullopt,
+      const std::optional<std::string>& receiver = std::nullopt,
       const std::string& name = condition_default_name_v<CudaBufferAvailableCondition>) {
     init_component_base(this, fragment_or_subgraph, name, "condition");
   }
@@ -73,8 +73,8 @@ void init_cuda_buffer_available(py::module_& m) {
       m,
       "CudaBufferAvailableCondition",
       doc::CudaBufferAvailableCondition::doc_CudaBufferAvailableCondition)
-      .def(py::init<std::variant<Fragment*, Subgraph*>,
-                    std::optional<const std::string>,
+      .def(py::init<const std::variant<Fragment*, Subgraph*>&,
+                    const std::optional<std::string>&,
                     const std::string&>(),
            "fragment"_a,
            "receiver"_a = py::none(),

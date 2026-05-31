@@ -70,7 +70,13 @@ void* DeviceBuffer::host_data(cudaStream_t stream) {
 }
 
 DeviceBuffer::~DeviceBuffer() {
-  free_(buffer_);
+  if (buffer_) {
+    try {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFree(buffer_));
+    } catch (...) {
+      // Destructors must not throw, and logging may be unavailable during teardown.
+    }
+  }
   if (host_buffer_) {
     delete[] static_cast<uint8_t*>(host_buffer_);
   }
@@ -87,7 +93,13 @@ CudaHostMappedBuffer::CudaHostMappedBuffer(size_t size, int device_id)
 }
 
 CudaHostMappedBuffer::~CudaHostMappedBuffer() {
-  free_(buffer_);
+  if (buffer_) {
+    try {
+      HOLOSCAN_CUDA_CALL_WARN(cudaFreeHost(buffer_));
+    } catch (...) {
+      // Destructors must not throw, and logging may be unavailable during teardown.
+    }
+  }
 }
 
 void* CudaHostMappedBuffer::data() {

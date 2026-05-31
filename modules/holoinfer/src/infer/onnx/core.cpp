@@ -276,7 +276,6 @@ int OnnxInferImpl::set_holoscan_inf_onnx_session_options() {
     // create and initialize TensorRT provider options
     Ort::ThrowOnError(Ort::GetApi().CreateTensorRTProviderOptions(&tensor_rt_options_));
 
-    const std::filesystem::path path(model_path_);
     std::filesystem::path trt_engine_cache_path(model_path_);
     trt_engine_cache_path.replace_extension("");
     trt_engine_cache_path += "_onnx_cache_" + Ort::GetVersionString();

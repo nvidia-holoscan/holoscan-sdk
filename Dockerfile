@@ -26,8 +26,8 @@ ARG NCCL_VERSION=2.29  # match DLFW 26.03 development stack
 ARG LIBCUSPARSELT_CU12_VERSION=0.8  # strict compat to match PyTorch versions
 ARG LIBCUSPARSELT_CU13_VERSION=0.9      # match DLFW 26.03 development stack
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.6.0_20260429_73f41cf00_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.6.0_20260429_73f41cf00_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.7.0_20260515_6a50c8f1a_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.7.0_20260515_6a50c8f1a_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.3.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.16
@@ -218,9 +218,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
     && echo "deb [signed-by=$KW_KEYRING] https://apt.kitware.com/ubuntu/ $OS_CODENAME main" \
         > /etc/apt/sources.list.d/kitware.list \
     && apt-get update \
-    && rm "$KW_KEYRING" \
     && apt-get install --no-install-recommends -y \
-        kitware-archive-keyring \
         cmake="3.31.11*" \
         cmake-data="3.31.11*" \
         build-essential \
@@ -376,11 +374,18 @@ FROM cudnn-dev AS tensorrt-dev
 
 ARG TENSORRT_CU12_VERSION
 ARG TENSORRT_CU13_VERSION
+# libnvinfer-safe-headers-dev is a transitive dep of libnvinfer-dev at TRT 10.16+; the pin blocks
+# apt from selecting the newer TRT 11 candidate as the resolved dep. Not shipped for TRT 10.3
+# (holoscan's cu12 pin, see TENSORRT_CU12_VERSION) or in the Jetson L4T repo, so feature-detect.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
     apt-get update \
     && TRT_VERSION_VAR_NAME="TENSORRT_CU${CUDA_MAJOR}_VERSION" \
     && TRT_VERSION=$(apt-cache madison libnvinfer10 | grep "${!TRT_VERSION_VAR_NAME}" | grep "+cuda${CUDA_MAJOR}" | head -n 1 | awk '{print $3}') \
+    && EXTRA_TRT_PKGS="" \
+    && if apt-cache madison libnvinfer-safe-headers-dev 2>/dev/null | grep -Fq "| ${TRT_VERSION} |"; then \
+           EXTRA_TRT_PKGS="libnvinfer-safe-headers-dev=${TRT_VERSION}"; \
+       fi \
     && apt-get install -y --no-install-recommends \
         libnvonnxparsers-dev="${TRT_VERSION}" \
         libnvonnxparsers10="${TRT_VERSION}" \
@@ -390,6 +395,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         libnvinfer-dev="${TRT_VERSION}" \
         libnvinfer-headers-dev="${TRT_VERSION}" \
         libnvinfer10="${TRT_VERSION}" \
+        ${EXTRA_TRT_PKGS} \
     && echo "-- Deleting unused static libs:" \
     && packages=$(dpkg -l | grep -e nvinfer -e nvonnxparsers | awk '{print $2}') \
     && static_libs=$(dpkg -L $packages | grep '\.a$' || true) \

@@ -824,7 +824,7 @@ build() {
             cmake --install ${build_path} --prefix ${install_prefix} --component cli11
             cmake --install ${build_path} --prefix ${install_prefix} --component concurrentqueue
             cmake --install ${build_path} --prefix ${install_prefix} --component dlpack
-            cmake --install ${build_path} --prefix ${install_prefix} --component fmt
+            cmake --install ${build_path} --prefix ${install_prefix} --component fmt_core
             cmake --install ${build_path} --prefix ${install_prefix} --component matx
             cmake --install ${build_path} --prefix ${install_prefix} --component nvtx3
             cmake --install ${build_path} --prefix ${install_prefix} --component rapids_logger
@@ -1108,7 +1108,7 @@ Arguments:
     --mount-point - Specifies the mount point (default is the directory of this script)
     --run-cmd - Specifies a command to run in the container instead of running interactively.
                 This is the equivalent of what you would put after `bash -c` with `docker run`.
-    --ssh-x11 : Enable X11 forwarding of graphical HoloHub applications over SSH
+    --ssh-x11 : [DEPRECATED] X11/Wayland forwarding is now auto-detected from DISPLAY/WAYLAND_DISPLAY
 '
 }
 launch() {
@@ -1120,6 +1120,8 @@ launch() {
     local container_mount="/workspace/holoscan-sdk"
     local mount_point="${TOP}"
     local mount_device_opt=""
+    local display_server_opt=""
+    local display_xauth_file=""
     local extra_args=""
     local run_cmd="bash"
     local ssh_x11=0
@@ -1144,6 +1146,7 @@ launch() {
             shift
         ;;
         --ssh-x11)
+            c_echo_err Y "Warning: --ssh-x11 is deprecated and ignored; X11/Wayland forwarding now happens automatically when DISPLAY or WAYLAND_DISPLAY is set."
             ssh_x11=1
             shift
         ;;
@@ -1194,38 +1197,74 @@ launch() {
     # Add docker group to enable DooD
     groups+=" --group-add $(get_group_id docker)"
 
-    # display - use XDG_SESSION_TYPE to detect X11 or Wayland
-    # see https://www.freedesktop.org/software/systemd/man/latest/pam_systemd.html#%24XDG_SESSION_TYPE
-    if [ -n "${XDG_SESSION_TYPE-}" ]; then
-        display_server_opt="-e XDG_SESSION_TYPE"
-        if [ "${XDG_SESSION_TYPE}" == "wayland" ]; then
-            display_server_opt+=" -e WAYLAND_DISPLAY"
+    # Forward graphical applications when the host exposes a display.
+    if [ -z "${DISPLAY-}" ] && [ -z "${WAYLAND_DISPLAY-}" ]; then
+        info "No DISPLAY or WAYLAND_DISPLAY set; skipping display forwarding."
+    else
+        if [ -n "${XDG_SESSION_TYPE-}" ]; then
+            display_server_opt+=" -e XDG_SESSION_TYPE"
         fi
-    fi
-    if [ -n "${XDG_RUNTIME_DIR-}" ]; then
-        display_server_opt+=" -e XDG_RUNTIME_DIR"
-        if [ -d ${XDG_RUNTIME_DIR} ]; then
+
+        # Required by Vulkan, dconf, pipewire, etc. on both X11 and Wayland.
+        if [ -n "${XDG_RUNTIME_DIR-}" ] && [ -d "${XDG_RUNTIME_DIR}" ]; then
+            display_server_opt+=" -e XDG_RUNTIME_DIR"
             display_server_opt+=" -v ${XDG_RUNTIME_DIR}:${XDG_RUNTIME_DIR}"
         fi
-    fi
-    # if XDG_SESSION_TYPE is not set or set to tty or x11, use X11
-    if [ -z "${XDG_SESSION_TYPE-}" ] || [ "${XDG_SESSION_TYPE}" == "x11" ] || [ "${XDG_SESSION_TYPE}" == "tty" ]; then
-        # Allow the docker group to access X11.
-        # Note: not necessary for WSL2 (`SI:localuser:wslg` is added by default)
-        if [ -v DISPLAY ] && command -v xhost >/dev/null; then
-            run_command xhost +local:docker
-        fi
-        display_server_opt+=" -v /tmp/.X11-unix:/tmp/.X11-unix"
-        display_server_opt+=" -e DISPLAY"
-    fi
-    # Allow X11 forwarding over SSH
-    if [[ $ssh_x11 -gt 0 ]]; then
-        XAUTH=/tmp/.docker.xauth
-        xauth nlist $DISPLAY | sed -e 's/^..../ffff/' | xauth -f $XAUTH nmerge -
-        chmod 777 $XAUTH
 
-        display_server_opt+=" -v $XAUTH:$XAUTH"
-        display_server_opt+=" -e XAUTHORITY=$XAUTH"
+        if [ -n "${WAYLAND_DISPLAY-}" ]; then
+            display_server_opt+=" -e WAYLAND_DISPLAY"
+        fi
+
+        if [ -n "${DISPLAY-}" ]; then
+            case "${DISPLAY}" in
+                :*|unix:*|unix/:*)
+                    if [ -d /tmp/.X11-unix ]; then
+                        display_server_opt+=" -v /tmp/.X11-unix:/tmp/.X11-unix:ro"
+                    fi
+                    ;;
+                *)
+                    ;;
+            esac
+            display_server_opt+=" -e DISPLAY"
+
+            # If the X server already accepts no-cookie connections (typically
+            # SI:localuser peer-credential auth), skip the cookie setup. The
+            # container runs as $(id -u) via -u, so the same auth family will
+            # accept its socket connection.
+            local peer_creds_sufficient=0
+            if command -v xset >/dev/null \
+                && XAUTHORITY=/dev/null timeout 2 xset -display "${DISPLAY}" q >/dev/null 2>&1; then
+                peer_creds_sufficient=1
+            fi
+            if [ "${peer_creds_sufficient}" -eq 1 ]; then
+                : # peer-creds is sufficient; no xauth setup needed
+            elif ! command -v xauth >/dev/null; then
+                c_echo_err Y "Warning: xauth not found on host; install xauth (or x11-xauth) so X11 applications can authenticate inside the container."
+            else
+                local xauth_entries=""
+                if ! xauth_entries=$(xauth nlist "${DISPLAY}" 2>/dev/null) || [ -z "${xauth_entries}" ]; then
+                    c_echo_err Y "Warning: xauth nlist returned no entries for DISPLAY=${DISPLAY}; X11 may not authenticate inside the container."
+                else
+                    local xauth_file=""
+                    # umask 077 ensures the cookie file is created with mode 0600
+                    # atomically; mktemp on POSIX already does this, but we set
+                    # umask explicitly so the guarantee does not depend on the
+                    # mktemp implementation.
+                    xauth_file=$(umask 077 && mktemp "${TMPDIR:-/tmp}/.docker.xauth.XXXXXX")
+                    if printf "%s\n" "${xauth_entries}" | sed -e 's/^..../ffff/' | xauth -f "${xauth_file}" nmerge - 2>/dev/null; then
+                        display_xauth_file="${xauth_file}"
+                        # Register cleanup so the cookie is removed even on SIGINT/SIGTERM/SIGHUP.
+                        # shellcheck disable=SC2064
+                        trap "rm -f '${display_xauth_file}'" EXIT INT TERM HUP
+                        display_server_opt+=" -v ${display_xauth_file}:${display_xauth_file}:ro"
+                        display_server_opt+=" -e XAUTHORITY=${display_xauth_file}"
+                    else
+                        rm -f "${xauth_file}"
+                        c_echo_err Y "Warning: xauth nmerge failed for DISPLAY=${DISPLAY}; X11 may not authenticate inside the container."
+                    fi
+                fi
+            fi
+        fi
     fi
 
     # DOCKER PARAMETERS
@@ -1313,6 +1352,7 @@ launch() {
         ld_library_path="/usr/lib/aarch64-linux-gnu/nvidia:${ld_library_path}"
     fi
 
+    local launch_status=0
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
         --net=host \
@@ -1344,7 +1384,14 @@ launch() {
         ${extra_args[@]} \
         $img -c "
             export PATH=\$PATH:${container_top}/${working_dir}/bin;
-            $run_cmd"
+            $run_cmd" || launch_status=$?
+
+    if [ -n "${display_xauth_file}" ]; then
+        rm -f "${display_xauth_file}"
+        trap - EXIT INT TERM HUP
+    fi
+
+    return ${launch_status}
 }
 
 vscode_desc() { c_echo 'Launch VSCode in DevContainer
@@ -1443,9 +1490,6 @@ vscode() {
     # - HOLOSCAN_BUILD_IMAGE: name of the base image of the docker dev container
     export CMAKE_BUILD_PARALLEL_LEVEL=${build_njobs}
     export HOLOSCAN_BUILD_IMAGE="$(get_build_img_name):$(get_git_sha)"
-
-    # Allow connecting from docker. This is not needed for WSL2 (`SI:localuser:wslg` is added by default)
-    run_command xhost +local:docker
 
     # Install the VSCode Remote Development extension.
     # Checking if the extension is already installed is slow, so we always install it so that

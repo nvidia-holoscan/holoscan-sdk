@@ -20,7 +20,10 @@ install(FILES "${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt"
     COMPONENT holoscan-cpack
 )
 
-# Copy LICENSE file for installation
+# Copy Apache 2.0 license (public/LICENSE.txt) into the doc directory for the
+# Debian package: Debian convention uses "copyright", and an explicit LICENSE.txt
+# makes the Apache 2.0 redistribution text easy to find for SPDX and downstream
+# compliance tooling.
 include(GNUInstallDirs)
 if(HOLOSCAN_ALLOW_SYSTEM_INSTALL)
   set(LICENSE_DESTINATION "/usr/share/doc/holoscan/")
@@ -28,19 +31,17 @@ else()
   set(LICENSE_DESTINATION "${CMAKE_INSTALL_DOCDIR}")
 endif()
 
-# Copy LICENSE.txt from source to binary dir at configuration time,
-# or use a pre-populated LICENSE.txt file if it already exists
-if(NOT EXISTS "${CMAKE_BINARY_DIR}/LICENSE.txt")
-  configure_file(
-    "${CMAKE_SOURCE_DIR}/LICENSE.txt"
-    "${CMAKE_BINARY_DIR}/LICENSE.txt"
-    COPYONLY
-  )
-endif()
+set(_HOLOSCAN_APACHE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
 
-install(FILES "${CMAKE_BINARY_DIR}/LICENSE.txt"
+install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
     DESTINATION ${LICENSE_DESTINATION}
     RENAME copyright
+    COMPONENT holoscan-cpack
+)
+
+install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
+    DESTINATION ${LICENSE_DESTINATION}
+    RENAME LICENSE.txt
     COMPONENT holoscan-cpack
 )
 
@@ -84,7 +85,7 @@ set(CPACK_COMPONENTS_ALL
   cli11
   concurrentqueue
   dlpack
-  fmt
+  fmt_core
   matx
   nvtx3
   rapids_logger

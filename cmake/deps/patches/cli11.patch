@@ -30,3 +30,10 @@ index 03968f4..6542d14 100644
  
    # Use find_package on the installed package
    export(
+diff --git a/cmake/CLI11GeneratePkgConfig.cmake b/cmake/CLI11GeneratePkgConfig.cmake
+--- a/cmake/CLI11GeneratePkgConfig.cmake
++++ b/cmake/CLI11GeneratePkgConfig.cmake
+@@ -5,3 +5,2 @@ endif()
+ endif()
+ 
+-install(FILES "${PROJECT_BINARY_DIR}/CLI11.pc" DESTINATION "${CMAKE_INSTALL_DATADIR}/pkgconfig")

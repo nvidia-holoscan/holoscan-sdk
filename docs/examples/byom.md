@@ -34,9 +34,9 @@ overlays such as bounding boxes, segmentation masks, or text to add additional i
 
 This second branch has three operators we haven't yet encountered.
 
-- **Format Converter**: The input video stream goes through a preprocessing stage to convert the tensors to the appropriate shape/format before being fed into the AI model.  It is used here to convert the datatype of the image from `uint8` to `float32` and resized to match the model's expectations.<br><br>
+- **Format Converter**: The input video stream goes through a preprocessing stage to convert the tensors to the appropriate shape/format before being fed into the AI model.  It is used here to convert the datatype of the image from `uint8` to `float32` and resized to match the model's expectations.
 
-- **Inference**: This operator performs AI inferencing on the input video stream with the provided model. It supports inferencing of multiple input video streams and models.<br><br>
+- **Inference**: This operator performs AI inferencing on the input video stream with the provided model. It supports inferencing of multiple input video streams and models.
 
 - **Segmentation Postprocessor**: This postprocessing stage takes the output of inference, either with the final softmax layer (multiclass) or sigmoid (2-class), and emits a tensor with `uint8` values that contain the highest probability class index. The output of the segmentation postprocessor is then fed into the Holoviz visualizer to create the overlay.
 
@@ -365,7 +365,7 @@ The second entry we just added is a green color and has an alpha value of `0.7` 
 ````
 `````
 
-The above changes are enough to update the BYOM example to the ultrasound segmentation application.<br>
+The above changes are enough to update the BYOM example to the ultrasound segmentation application.
 
 In general, when deploying your own AI models, you will need to consider the operators in the second branch. This example uses a pretty typical AI workflow:
 

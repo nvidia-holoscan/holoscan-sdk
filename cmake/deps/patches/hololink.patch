@@ -1383,3 +1383,36 @@ index e69376e5..0a9c5aa8 100644
  
 -YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataGenerator);
 +YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataPtr);
+diff --git a/src/hololink/core/logging_internal.hpp b/src/hololink/core/logging_internal.hpp
+index a788729..0f909b1 100644
+--- a/src/hololink/core/logging_internal.hpp
++++ b/src/hololink/core/logging_internal.hpp
+@@ -28,13 +28,6 @@
+ #include <fmt/format.h>
+ #include <fmt/ranges.h>
+ 
+-#if FMT_VERSION >= 110000
+-namespace fmt {
+-template <typename Char>
+-using buffer_context = buffered_context<Char>;
+-}
+-#endif
+-
+ /**
+  * @brief Formatter for Metadata
+  *
+@@ -77,8 +70,12 @@ template <typename FormatT, typename... ArgsT>
+ static inline void hsb_log_fmt(char const* file, unsigned line, const char* function, HsbLogLevel level, const FormatT& format, ArgsT&&... args)
+ {
+     if (level >= hsb_log_level) {
+-        auto fmt_args = fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...);
+-        hsb_logger(file, line, function, level, fmt::vformat(format, fmt_args).c_str());
++#if FMT_VERSION >= 110000
++        auto fmt_args = fmt::make_format_args(args...);
++#else
++        auto fmt_args = fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...);
++#endif
++        hsb_logger(file, line, function, level, fmt::vformat(fmt::string_view(format), fmt_args).c_str());
+     }
+ }
+ 

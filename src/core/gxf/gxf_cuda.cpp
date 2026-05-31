@@ -442,10 +442,11 @@ expected<CudaStreamHandle, RuntimeError> CudaObjectHandler::get_cuda_stream_hand
   bool stream_found = false;
   for (size_t i = 0; i < vec_size; ++i) {
     // Find the first stream with a value
-    if (stream_handle_vec[i].has_value()) {
+    const auto& stream_handle = stream_handle_vec[i];
+    if (stream_handle.has_value()) {
       HOLOSCAN_LOG_TRACE("\t\tFound first stream at index {}", i);
       stream_found = true;
-      output_stream = stream_handle_vec[i].value();
+      output_stream = stream_handle.value();
       if (!output_stream->stream().has_value()) {
         HOLOSCAN_LOG_TRACE(
             "\t\tCudaStreamHandle found on input '{}', does not contain a stream value.",

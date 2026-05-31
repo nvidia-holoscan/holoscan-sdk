@@ -162,28 +162,30 @@ TEST_F(InMemoryPubSubSessionTest, ResetAllForTestingRejectsActiveParticipants) {
 TEST_F(InMemoryPubSubSessionTest, ResetAllForTestingDoesNotOrphanConcurrentGetOrCreate) {
   auto blocking_session = InMemoryPubSubSession::get_or_create("blocking_reset");
 
-  std::unique_lock<std::mutex> blocking_lock(blocking_session->mutex_);
   std::promise<void> reset_started;
   auto resetter = std::async(std::launch::async, [&] {
     reset_started.set_value();
     InMemoryPubSubSession::reset_all_for_testing();
   });
 
-  reset_started.get_future().wait();
-  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  std::future<std::shared_ptr<InMemoryPubSubSession>> creator;
+  std::future_status creator_status{};
+  {
+    std::unique_lock<std::mutex> blocking_lock(blocking_session->mutex_);
+    reset_started.get_future().wait();
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
 
-  auto creator = std::async(std::launch::async, [] {
-    return InMemoryPubSubSession::get_or_create("concurrent_get_or_create");
-  });
-  const auto creator_status = creator.wait_for(std::chrono::milliseconds(50));
+    creator = std::async(std::launch::async, [] {
+      return InMemoryPubSubSession::get_or_create("concurrent_get_or_create");
+    });
+    creator_status = creator.wait_for(std::chrono::milliseconds(50));
 
-  blocking_lock.unlock();
+    EXPECT_EQ(creator_status, std::future_status::timeout)
+        << "get_or_create() should remain blocked until reset_all_for_testing() completes";
+  }
 
   ASSERT_EQ(resetter.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   EXPECT_NO_THROW(resetter.get());
-
-  EXPECT_EQ(creator_status, std::future_status::timeout)
-      << "get_or_create() should remain blocked until reset_all_for_testing() completes";
 
   ASSERT_EQ(creator.wait_for(std::chrono::seconds(1)), std::future_status::ready);
   auto concurrent_session = creator.get();
@@ -460,16 +462,17 @@ TEST_F(InMemoryPubSubSessionWithGXFContextTest, DeserializeCopiesViaWriteAbiWith
                                            Arg("buffer_size", static_cast<size_t>(256)));
   serialize_buffer->initialize();
   deserialize_buffer->initialize();
+  auto* deserialize_gxf_buffer = deserialize_buffer->get();
 
   StdPubSubEntitySerializer pubsub_serializer(
-      serializer, serialize_buffer, deserialize_buffer, 256);
+      serializer, std::move(serialize_buffer), std::move(deserialize_buffer), 256);
 
   std::vector<uint8_t> payload = {1, 2, 3, 4, 5, 6, 7, 8};
   auto result = pubsub_serializer.deserialize(payload, serializer->gxf_context(), {});
 
   EXPECT_FALSE(result.has_value());
-  ASSERT_NE(deserialize_buffer->get(), nullptr);
-  EXPECT_EQ(deserialize_buffer->get()->size(), payload.size());
+  ASSERT_NE(deserialize_gxf_buffer, nullptr);
+  EXPECT_EQ(deserialize_gxf_buffer->size(), payload.size());
 }
 
 // =============================================================================

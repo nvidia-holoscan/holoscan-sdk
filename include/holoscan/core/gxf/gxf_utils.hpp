@@ -310,7 +310,7 @@ bool has_component(gxf_context_t context, gxf_uid_t eid, gxf_tid_t tid = GxfTidN
                    const char* name = nullptr, int32_t* offset = nullptr, gxf_uid_t* cid = nullptr);
 
 /// Create a GXF entity group with the specified name
-gxf_uid_t add_entity_group(void* context, std::string name);
+gxf_uid_t add_entity_group(void* context, const std::string& name);
 
 /**
  * @brief Get the default queue policy from environment variable HOLOSCAN_QUEUE_POLICY.

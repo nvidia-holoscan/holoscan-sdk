@@ -918,12 +918,14 @@ void test_memory_sharing(int chain_length) {
     }
   }
 
-  // Distinct port indices must have distinct addresses on the source
-  for (int i = 0; i < N; ++i) {
-    for (int j = i + 1; j < N; ++j) {
-      EXPECT_NE(g.source->device_memory("out" + std::to_string(i)),
-                g.source->device_memory("out" + std::to_string(j)))
-          << "source: out" << i << " and out" << j << " must not share memory";
+  if constexpr (N > 1) {
+    // Distinct port indices must have distinct addresses on the source
+    for (int i = 0; i < N; ++i) {
+      for (int j = i + 1; j < N; ++j) {
+        EXPECT_NE(g.source->device_memory("out" + std::to_string(i)),
+                  g.source->device_memory("out" + std::to_string(j)))
+            << "source: out" << i << " and out" << j << " must not share memory";
+      }
     }
   }
 
@@ -936,23 +938,27 @@ void test_memory_sharing(int chain_length) {
       EXPECT_NE(in_i, out_i) << "compute_" << c << ": in" << i << " and out" << i
                              << " must not share memory";
 
-      for (int j = i + 1; j < N; ++j) {
-        void* in_j = g.computes[c]->device_memory("in" + std::to_string(j));
-        void* out_j = g.computes[c]->device_memory("out" + std::to_string(j));
-        EXPECT_NE(in_i, in_j) << "compute_" << c << ": in" << i << " and in" << j
-                              << " must not share memory";
-        EXPECT_NE(out_i, out_j) << "compute_" << c << ": out" << i << " and out" << j
+      if constexpr (N > 1) {
+        for (int j = i + 1; j < N; ++j) {
+          void* in_j = g.computes[c]->device_memory("in" + std::to_string(j));
+          void* out_j = g.computes[c]->device_memory("out" + std::to_string(j));
+          EXPECT_NE(in_i, in_j) << "compute_" << c << ": in" << i << " and in" << j
                                 << " must not share memory";
+          EXPECT_NE(out_i, out_j) << "compute_" << c << ": out" << i << " and out" << j
+                                  << " must not share memory";
+        }
       }
     }
   }
 
-  // Distinct port indices on the sink must have distinct addresses
-  for (int i = 0; i < N; ++i) {
-    for (int j = i + 1; j < N; ++j) {
-      EXPECT_NE(g.sink->device_memory("in" + std::to_string(i)),
-                g.sink->device_memory("in" + std::to_string(j)))
-          << "sink: in" << i << " and in" << j << " must not share memory";
+  if constexpr (N > 1) {
+    // Distinct port indices on the sink must have distinct addresses
+    for (int i = 0; i < N; ++i) {
+      for (int j = i + 1; j < N; ++j) {
+        EXPECT_NE(g.sink->device_memory("in" + std::to_string(i)),
+                  g.sink->device_memory("in" + std::to_string(j)))
+            << "sink: in" << i << " and in" << j << " must not share memory";
+      }
     }
   }
 }

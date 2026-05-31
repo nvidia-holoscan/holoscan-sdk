@@ -84,6 +84,7 @@ Additional CLI arguments (both Python and C++):
 | `--headless` | false | Run without a display window |
 | `--fullscreen` | false | Open Holoviz in fullscreen mode |
 | `--use-exclusive-display` | false | Use exclusive display mode |
+| `--device DEV` | YAML / `/dev/video0` | V4L2 device node. Overrides `receiver.device` in YAML |
 | `--pixel-format FMT` | `RG10` | V4L2 FourCC pixel format. Overrides `receiver.pixel_format` in YAML |
 | `--bayer-grid N` | YAML / `1` | NppiBayerGridPosition: 0=BGGR, 1=RGGB, 2=GRBG, 3=GBRG. Overrides `raw_image_processor.bayer_grid` |
 | `--raw-depth N` | YAML / `1` | holoscan::csi::PixelFormat: 1=RAW_10, 2=RAW_12. Overrides `raw_image_processor.raw_depth` |

@@ -131,7 +131,6 @@ An application can be configured at different levels:
 2. configuring parameters for your application, including for:
    a. {ref}`the operators<configuring-app-operators>` in the workflow.
    b. {ref}`the scheduler<configuring-app-scheduler>` of your application.
-3. {ref}`configuring some runtime properties<configuring-app-runtime>` when deploying for production.
 
 The sections below will describe how to configure each of them, starting with a native support for YAML-based configuration for convenience.
 
@@ -665,6 +664,10 @@ The [scheduler](./components/schedulers.md) controls how the application schedul
 
 The default scheduler is a single-threaded [`GreedyScheduler`](./components/schedulers.md#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` ({cpp:class}`C++ <holoscan::Scheduler>`/{py:class}`Python <holoscan.core.Scheduler>`) or change the parameters from the default scheduler, using the `scheduler()` function ({cpp:func}`C++ <holoscan::Fragment::scheduler>`/{py:func}`Python <holoscan.core.Fragment.scheduler>`).
 
+:::{tip}
+This page documents the scheduler-related APIs (signatures, parameters, minimal snippets). For guidance on **which** scheduler to choose, end-to-end tuning recipes, and common pitfalls, see {ref}`choosing-a-scheduler`, {ref}`scheduler-recipe-multi-branch-low-latency`, and {ref}`scheduler-pitfalls`.
+:::
+
 For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](./components/schedulers.md#multithread-scheduler) or [`EventBasedScheduler`](./components/schedulers.md#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute. Additionally, the EventBasedScheduler also offers options for running time-critical operators under real-time scheduling policies supported by Linux kernel (see {ref}`Real-time scheduling with thread pools<configuring-app-thread-pools-realtime>`).
 
 The code snippet below shows how to set and configure a non-default scheduler:
@@ -775,6 +778,7 @@ GXF_EBS_DISPATCHER_SCHED_PRIORITY=99 \
 ./my_app
 ```
 
+For guidance on choosing dispatcher vs. worker priorities (e.g. `dispatcher=99`, `worker=80`) and a worked multi-branch example, see {ref}`scheduler-recipe-multi-branch-low-latency`.
 :::
 
 (configuring-app-thread-pools)=
@@ -936,6 +940,8 @@ Using real-time scheduling policies requires appropriate Linux kernel configurat
 
 - **SCHED_DEADLINE**: Requires root privileges and `--cap-add=CAP_SYS_NICE` when running in a container
 - **SCHED_FIFO/SCHED_RR**: May require `--ulimit rtprio=99` when running in a container (can replace 99 with the highest value actually used for the `sched_priority` argument to `add_realtime()`)
+
+See {ref}`rt-scheduling-prerequisites` for the full host-and-container setup checklist, including host CPU isolation.
 :::
 
 Here's an example of configuring operators to run with real-time policies:
@@ -1002,12 +1008,6 @@ Here's an example of configuring operators to run with real-time policies:
 ```
 ````
 `````
-
-(configuring-app-runtime)=
-
-### Configuring runtime properties
-
-As described [below](building-and-running-your-application), applications can run simply by executing the C++ or Python application manually on a given node, or by [packaging it](./holoscan_packager.md) in a [HAP container](./cli/hap.md). With the latter, runtime properties need to be configured: refer to the [App Runner Configuration](./cli/run_config.md) for details.
 
 (application-workflows)=
 
@@ -1253,7 +1253,7 @@ add_flow(op3, op1);
 
 If there is a cycle in the graph with an implicit root operator which has no input port, then the initialization and execution orders of the operators are still topologically sorted as far as possible until the cycle needs to be explicitly broken. An example is given below:
 
-![Fragment graph with a cycle and an implicit root operator](Cycle_Implicit_Root.png)
+![Fragment graph with a cycle and an implicit root operator](images/Cycle_Implicit_Root.png)
 
 (creating-and-using-subgraphs)=
 
@@ -2298,10 +2298,6 @@ You can then run your application by running `python3 my_app.py`.
 
 ````
 `````
-
-:::{note}
-Given a CMake project, a pre-built executable, or a Python application, you can also use the [Holoscan CLI](./cli/cli.md) to [package and run your Holoscan application](./holoscan_packager.md) in a OCI-compliant container image.
-:::
 
 ## Dynamic Application Metadata
 

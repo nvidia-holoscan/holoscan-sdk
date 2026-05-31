@@ -84,8 +84,9 @@ bool BasicConsoleLogger::log_data(const std::any& data, const std::string& uniqu
   }
 
   if (!serializer_.has_value()) {
-    HOLOSCAN_LOG_WARN("BasicConsoleLogger: No serializer set.");
-    std::string type_name = data.has_value() ? data.type().name() : "unknown";
+    HOLOSCAN_LOG_WARN("BasicConsoleLogger: No serializer set; cannot log message '{}' (type: {})",
+                      unique_id,
+                      data.type().name());
     return false;
   }
 

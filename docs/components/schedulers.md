@@ -8,7 +8,7 @@ The Holoscan SDK offers multiple schedulers that can cater to various use cases.
 2. [MultiThread Scheduler](#multithread-scheduler): The multithread scheduler is designed to handle complex execution patterns in large-scale applications. This scheduler consists of a dispatcher thread that monitors the status of each operator and dispatches it to a thread pool of worker threads responsible for executing them. Once execution is complete, worker threads enqueue the operator back on the dispatch queue. The multithread scheduler offers superior performance and scalability over the greedy scheduler.
 3. [Event-Based Scheduler](#event-based-scheduler): The event-based scheduler is also a multi-thread scheduler, but as the name indicates it is event-based rather than polling based. Instead of having a thread that constantly polls for the execution readiness of each operator, it instead waits for an event to be received which indicates that an operator is ready to execute. The event-based scheduler will have a lower latency than using the multi-thread scheduler with a long polling interval (`check_recession_period_ms`), but without the high CPU usage seen for a multi-thread scheduler with a very short polling interval. In general, this is an improvement over the older `MultiThreadScheduler` and provides additional features such as CPU thread pinning and options to enable Linux real-time scheduling.
 
-It is essential to select the appropriate scheduler for the use case at hand to ensure optimal performance and efficient resource utilization. Since most parameters of the schedulers overlap, it is easy to switch between them to test which may be most performant for a given application.
+It is essential to select the appropriate scheduler for the use case at hand to ensure optimal performance and efficient resource utilization. Since most parameters of the schedulers overlap, it is easy to switch between them to test which may be most performant for a given application. See {ref}`choosing-a-scheduler` for a decision summary, {ref}`scheduler-recipe-multi-branch-low-latency` for a worked configuration of a latency-sensitive multi-branch pipeline, and {ref}`scheduler-pitfalls` for common configuration mistakes.
 
 Holoscan provides a base `holoscan::Scheduler` class ({cpp:class}`C++ <holoscan::Scheduler>`/{py:class}`Python <holoscan.core.Scheduler>`)) that each of these inherits from. This base class has a `clock` method ({cpp:func}`C++ <holoscan::Scheduler::clock>`/{py:func}`Python <holoscan.core.Scheduler.clock>`)) that can be used to retrieve the clock being used by the scheduler. This clock class provides a mechanism to get the time, a timestamp, sleep for some duration, or sleep until a target time. The specific behavior may depend on the concrete clock class being used. For all schedulers, the default clock is the `holoscan::RealtimeClock` class ({cpp:class}`C++ <holoscan::RealtimeClock>`/{py:class}`Python <holoscan.resources.RealtimeClock>`)). Examples of using the scheduler's clock from within the `compute` method of an operator are given in [examples/resources/clock](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/resources/clock) and [examples/conditions/expiring_message](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/conditions/expiring_message).
 
@@ -121,6 +121,194 @@ Setting `internal_event_shard_count=1` and `wait_state_shard_count=1` disables s
 #### Diagnostics
 
 - **`log_perf_stats`** (`bool`, default `false`) — When enabled, the scheduler logs internal instrumentation counters at shutdown. The report includes dispatcher loop and notification statistics, per-worker wait and execution times (with averages), work-steal attempt and success counts, and post-check fast-path/fallback hit rates. This is useful for diagnosing scheduling bottlenecks without requiring an external profiler.
+
+(choosing-a-scheduler)=
+
+## Choosing a Scheduler
+
+The three schedulers differ in how they discover ready work and how much control they expose over CPU placement.
+
+| Use case | Scheduler |
+|---|---|
+| Single-threaded debugging or fully serial pipelines | `GreedyScheduler` |
+| Multi-threaded throughput workloads, no thread-affinity requirements | `MultiThreadScheduler` |
+| Multi-threaded workloads requiring CPU pinning, real-time policies, or low-latency dispatch | `EventBasedScheduler` |
+
+`EventBasedScheduler` is the recommended default for any pipeline that needs more than one thread. It avoids the polling-thread CPU cost of `MultiThreadScheduler`, supports per-branch CPU pinning, real-time scheduling policies (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`) via user-defined thread pools created with `Fragment::make_thread_pool` ({cpp:func}`C++ <holoscan::Fragment::make_thread_pool>`/{py:func}`Python <holoscan.core.Fragment.make_thread_pool>`), and exposes the dispatcher itself for pinning via environment variables.
+
+(scheduler-recipe-multi-branch-low-latency)=
+
+## Recipe: Low-Latency Multi-Branch Pipeline
+
+A common pattern is a single source feeding several parallel branches where one branch is latency-critical and the others must not steal cycles from it. The recipe below isolates each branch on its own pinned worker thread, gives the priority branch real-time scheduling, places the dispatcher on a dedicated RT core, and uses a separate CUDA stream pool per branch so GPU work follows the same priority story as CPU work.
+
+For the pipeline shape itself (one source, multiple parallel branches with `add_flow`), see the [multi_branch_pipeline](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/multi_branch_pipeline) example. The recipe below adds the scheduling configuration on top of that shape. For the underlying API signatures used here (`make_thread_pool`, `ThreadPool::add`, `ThreadPool::add_realtime`, scheduler `pin_cores`), see {ref}`configuring-app-thread-pools` and {ref}`configuring-app-thread-pools-realtime`.
+
+`````{tab-set}
+````{tab-item} C++
+```cpp
+// Pipeline shape (operators, add_flow): see public/examples/multi_branch_pipeline.
+// The block below is the scheduling configuration added inside compose() on top
+// of that shape. It assumes operators named `ae` (priority branch), `procA`,
+// `procB` already exist.
+
+// 1. Per-branch CUDA stream pools. Priority branch gets the highest
+//    (most negative) priority; others use the default (0).
+int low_pri = 0, high_pri = 0;
+cudaDeviceGetStreamPriorityRange(&low_pri, &high_pri);
+
+auto stream_priority  = make_resource<CudaStreamPool>(
+    "stream_priority",
+    Arg("stream_priority", high_pri),
+    Arg("reserved_size", static_cast<uint32_t>(1)),
+    Arg("max_size", static_cast<uint32_t>(4)));
+auto stream_default_a = make_resource<CudaStreamPool>(
+    "stream_default_a", Arg("stream_priority", 0));
+auto stream_default_b = make_resource<CudaStreamPool>(
+    "stream_default_b", Arg("stream_priority", 0));
+// Pass each pool to its operator via Arg("cuda_stream_pool", ...) at construction.
+
+// 2. One thread pool per branch, one thread each, pinned to distinct cores.
+//    The priority branch uses real-time SCHED_FIFO at priority 80.
+auto pool_priority = make_thread_pool("pool_priority", 1);
+pool_priority->add_realtime(ae,
+                            SchedulingPolicy::kFirstInFirstOut,
+                            /*pin_operator=*/true,
+                            /*pin_cores=*/{2},
+                            /*sched_priority=*/80);
+
+auto pool_a = make_thread_pool("pool_a", 1);
+pool_a->add(procA, /*pin_operator=*/true, /*pin_cores=*/{3});
+
+auto pool_b = make_thread_pool("pool_b", 1);
+pool_b->add(procB, /*pin_operator=*/true, /*pin_cores=*/{4});
+
+// 3. EventBasedScheduler with a small default pool as a safety net for any
+//    operator not explicitly assigned (e.g. the source), pinned off the RT cores.
+scheduler(make_scheduler<EventBasedScheduler>(
+    "ebs",
+    Arg("worker_thread_number", static_cast<int64_t>(2)),
+    Arg("pin_cores", std::vector<uint32_t>{5, 6}),
+    Arg("enable_queue_stealing", true),
+    Arg("log_perf_stats", true)));
+```
+````
+````{tab-item} Python
+```python
+# Pipeline shape (operators, add_flow): see public/examples/multi_branch_pipeline.
+# The block below is the scheduling configuration added inside compose() on top
+# of that shape. It assumes operators named `ae` (priority branch), `procA`,
+# `procB` already exist.
+
+# 1. Per-branch CUDA stream pools. Priority branch gets the highest
+#    (most negative) priority; others use the default (0).
+#    Query the device range with cudaDeviceGetStreamPriorityRange (via cuda /
+#    cupy / ctypes); for example, high_pri = -5.
+high_pri = -5
+stream_priority  = CudaStreamPool(self, name="stream_priority",
+                                  stream_priority=high_pri,
+                                  reserved_size=1, max_size=4)
+stream_default_a = CudaStreamPool(self, name="stream_default_a",
+                                  stream_priority=0)
+stream_default_b = CudaStreamPool(self, name="stream_default_b",
+                                  stream_priority=0)
+# Pass each pool to its operator via cuda_stream_pool=... at construction.
+
+# 2. One thread pool per branch, one thread each, pinned to distinct cores.
+#    The priority branch uses real-time SCHED_FIFO at priority 80.
+pool_priority = self.make_thread_pool("pool_priority", initial_size=1)
+pool_priority.add_realtime(ae, SchedulingPolicy.SCHED_FIFO,
+                           pin_operator=True, pin_cores=[2],
+                           sched_priority=80)
+
+pool_a = self.make_thread_pool("pool_a", initial_size=1)
+pool_a.add(procA, pin_operator=True, pin_cores=[3])
+
+pool_b = self.make_thread_pool("pool_b", initial_size=1)
+pool_b.add(procB, pin_operator=True, pin_cores=[4])
+
+# 3. EventBasedScheduler with a small default pool as a safety net for any
+#    operator not explicitly assigned (e.g. the source), pinned off the RT cores.
+self.scheduler(EventBasedScheduler(
+    self, name="ebs",
+    worker_thread_number=2,
+    pin_cores=[5, 6],
+    enable_queue_stealing=True,
+    log_perf_stats=True,
+))
+```
+````
+`````
+
+Pin the dispatcher itself on a dedicated RT core by exporting environment variables before launching the application:
+
+```bash
+export GXF_EBS_DISPATCHER_CPU_CORE=1
+export GXF_EBS_DISPATCHER_SCHED_POLICY=SCHED_FIFO
+export GXF_EBS_DISPATCHER_SCHED_PRIORITY=99
+```
+
+The result: cores `1` (dispatcher), `2` (priority branch), `3`/`4` (other branches), `5`/`6` (default pool / unassigned operators). The priority branch's CPU thread runs `SCHED_FIFO` at priority 80, the dispatcher runs `SCHED_FIFO` at priority 99, and the priority branch's GPU work executes on a high-priority CUDA stream.
+
+:::{note}
+`cudaDeviceGetStreamPriorityRange()` is a CUDA runtime call. Holoscan does not wrap it; query the range from your application code and pass the resulting integer to `CudaStreamPool`'s `stream_priority` argument. Lower (more negative) values are higher priority.
+:::
+
+(scheduler-pitfalls)=
+
+## Pitfalls
+
+:::{warning}
+**`strict_job_thread_pinning` does nothing on `EventBasedScheduler`.** It is a `MultiThreadScheduler` argument. `EventBasedScheduler` always pins strictly. Setting it on EBS is silently ignored — remove it from your `Arg` list to avoid confusion.
+:::
+
+:::{warning}
+**`worker_thread_number` alone does not isolate branches.** It only sizes the default thread pool. Without `make_thread_pool` and `add(..., pin_operator=true, pin_cores={...})`, any worker can pick up any operator, so a heavy operator on one branch can stall the latency-critical operator on another. Branch isolation requires one user-defined thread pool per branch with explicit core pinning.
+:::
+
+:::{warning}
+**`pin_cores` on the scheduler only affects the default pool.** It does not propagate to user-defined thread pools created with `make_thread_pool`. Set `pin_cores` per pool via the `add()` / `add_realtime()` arguments.
+:::
+
+:::{warning}
+**Async buffer connectors require the consumer rate to be at least the producer rate.** Setting an input port to `IOSpec::ConnectorType::kAsyncBuffer` (C++) / `IOSpec.ConnectorType.ASYNC_BUFFER` (Python) gives a "latest frame wins" semantic — the consumer always reads the most recent value the producer published. If the consumer is *slower* than the producer, frames are dropped silently; if *faster*, the same frame is read multiple times. Use it only when stale-frame loss is acceptable and the consumer is guaranteed to be at least as fast as the producer. See [ping_simple_async_buffer](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ping_simple_async_buffer) and [ping_periodic_async_buffer](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ping_periodic_async_buffer) for reference shapes.
+:::
+
+:::{warning}
+**Real-time policies need host and container privilege.** `add_realtime` and `GXF_EBS_DISPATCHER_SCHED_POLICY` set Linux RT scheduling policies (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`). Without sufficient privilege, the policy is rejected at thread start and the thread silently falls back to `SCHED_OTHER` — defeating the purpose of the configuration. See {ref}`rt-scheduling-prerequisites` below.
+:::
+
+:::{tip}
+**Recommended RT priorities: worker `80`, dispatcher `99`.** For the priority-branch worker thread set `sched_priority=80`; for the EBS dispatcher set `GXF_EBS_DISPATCHER_SCHED_PRIORITY=99`. **Why:** the dispatcher must always preempt workers so a newly-ready operator is never blocked behind a still-running compute, and leaving a 19-point gap keeps room above the worker for other system RT threads (e.g. kernel IRQ threads, `kthreadd` helpers) without inverting priority against the dispatcher. Adjust if your platform already uses RT priorities in the 80–99 band; the absolute numbers matter less than the ordering `dispatcher > worker > everything else`.
+:::
+
+:::{tip}
+For sub-millisecond, fixed-cadence pipelines where the entire graph runs on the GPU, the EBS-on-RT-cores pattern can still be too coarse. Consider a GPU-resident graph instead, which lets the scheduler step the graph from device code and removes per-tick CPU dispatch overhead. See the [gpu_resident_dag](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/gpu_resident_dag) and [gpu_resident_example](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/gpu_resident_example) examples.
+:::
+
+(rt-scheduling-prerequisites)=
+
+## Real-Time Scheduling Prerequisites
+
+Real-time policies are set on the host kernel; the SDK only forwards the request. The host and the container must permit RT priorities for the call to take effect.
+
+**Host kernel:** Linux throttles RT tasks by default. Disable the throttle (or raise it) to allow `SCHED_FIFO` / `SCHED_RR` threads to run without bound:
+
+```bash
+sudo sysctl -w kernel.sched_rt_runtime_us=-1
+```
+
+**Container:** Pass an RT priority limit when starting the container so the kernel will accept RT priority requests from inside it:
+
+```bash
+docker run --ulimit rtprio=99 ...
+```
+
+Without these, `add_realtime(...)` calls and `GXF_EBS_DISPATCHER_SCHED_POLICY=SCHED_FIFO` requests will be silently downgraded by the kernel.
+
+:::{seealso}
+RT priority alone does not prevent the kernel from scheduling unrelated work onto pinned cores. For full isolation — `isolcpus`, `nohz_full`, `rcu_nocbs`, and the `performance` CPU governor — see {ref}`host-cpu-isolation`.
+:::
 
 (operator-granularity-scheduling-overhead)=
 

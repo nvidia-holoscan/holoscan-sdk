@@ -16,6 +16,7 @@
  */
 
 #include <holoscan/operators/format_converter/format_converter.hpp>
+#include "holoscan/operators/format_converter/format_converter_common.hpp"
 
 #include <memory>
 #include <string>
@@ -57,149 +58,6 @@ namespace holoscan::ops {
 // only on three channel (RGB) or four channel (RGBA) inputs stored in a channel-packed format.
 // In other words, for a given pixel, the RGB values are adjacent in memory rather than being
 // stored as separate planes. There currently is no support for grayscale images.
-
-static FormatDType toFormatDType(const std::string& str) {
-  if (str == "rgb888") {
-    return FormatDType::kRGB888;
-  } else if (str == "uint8") {
-    return FormatDType::kUnsigned8;
-  } else if (str == "float32") {
-    return FormatDType::kFloat32;
-  } else if (str == "rgba8888") {
-    return FormatDType::kRGBA8888;
-  } else if (str == "yuv420") {
-    return FormatDType::kYUV420;
-  } else if (str == "nv12") {  // alias for "nv12_bt709_hdtv" to retain backwards compatibility
-    return FormatDType::kNV12BT709HDTV;
-  } else if (str == "nv12_bt709_hdtv") {
-    return FormatDType::kNV12BT709HDTV;
-  } else if (str == "nv12_bt709_csc") {
-    return FormatDType::kNV12BT709CSC;
-  } else if (str == "nv12_bt601_full") {
-    return FormatDType::kNV12BT601Full;
-  } else if (str == "yuyv") {
-    return FormatDType::kYUYV;
-  } else if (str == "rgb161616") {
-    return FormatDType::kRGB161616;
-  } else if (str == "rgba16161616") {
-    return FormatDType::kRGBA16161616;
-  } else {
-    return FormatDType::kUnknown;
-  }
-}
-
-static constexpr FormatConversionType getFormatConversionType(FormatDType from, FormatDType to) {
-  if (from != FormatDType::kUnknown && to != FormatDType::kUnknown && from == to) {
-    return FormatConversionType::kNone;
-  } else if (from == FormatDType::kUnsigned8 && to == FormatDType::kFloat32) {
-    return FormatConversionType::kUnsigned8ToFloat32;
-  } else if (from == FormatDType::kFloat32 && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kFloat32ToUnsigned8;
-  } else if (from == FormatDType::kUnsigned8 && to == FormatDType::kRGBA8888) {
-    return FormatConversionType::kRGB888ToRGBA8888;
-  } else if (from == FormatDType::kRGBA8888 && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kRGBA8888ToRGB888;
-  } else if (from == FormatDType::kRGBA8888 && to == FormatDType::kFloat32) {
-    return FormatConversionType::kRGBA8888ToFloat32;
-  } else if (from == FormatDType::kUnsigned8 && to == FormatDType::kYUV420) {
-    return FormatConversionType::kRGB888ToYUV420;
-  } else if (from == FormatDType::kYUV420 && to == FormatDType::kRGBA8888) {
-    return FormatConversionType::kYUV420ToRGBA8888;
-  } else if (from == FormatDType::kYUV420 && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kYUV420ToRGB888;
-  } else if (from == FormatDType::kNV12BT601Full && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kNV12BT601FullToRGB888;
-  } else if (from == FormatDType::kNV12BT709HDTV && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kNV12BT709HDTVToRGB888;
-  } else if (from == FormatDType::kNV12BT709CSC && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kNV12BT709CSCToRGB888;
-  } else if (from == FormatDType::kYUYV && to == FormatDType::kUnsigned8) {
-    return FormatConversionType::kYUYVToRGB888;
-  } else if (from == FormatDType::kRGBA16161616 &&
-             (to == FormatDType::kUnsigned8 || to == FormatDType::kRGB888)) {
-    return FormatConversionType::kRGBA16161616ToRGB888;
-  } else if (from == FormatDType::kRGB161616 &&
-             (to == FormatDType::kUnsigned8 || to == FormatDType::kRGB888)) {
-    return FormatConversionType::kRGB161616ToRGB888;
-  } else {
-    return FormatConversionType::kUnknown;
-  }
-}
-
-static constexpr FormatDType normalizeFormatDType(FormatDType dtype) {
-  switch (dtype) {
-    case FormatDType::kRGB888:
-      return FormatDType::kUnsigned8;
-    default:
-      return dtype;
-  }
-}
-
-static constexpr nvidia::gxf::PrimitiveType primitiveTypeFromFormatDType(FormatDType dtype) {
-  switch (dtype) {
-    case FormatDType::kRGB888:
-    case FormatDType::kRGBA8888:
-    case FormatDType::kUnsigned8:
-    case FormatDType::kYUV420:
-    case FormatDType::kNV12BT601Full:
-    case FormatDType::kNV12BT709HDTV:
-    case FormatDType::kNV12BT709CSC:
-    case FormatDType::kYUYV:
-      return nvidia::gxf::PrimitiveType::kUnsigned8;
-    case FormatDType::kRGB161616:
-    case FormatDType::kRGBA16161616:
-      return nvidia::gxf::PrimitiveType::kUnsigned16;
-    case FormatDType::kFloat32:
-      return nvidia::gxf::PrimitiveType::kFloat32;
-    default:
-      return nvidia::gxf::PrimitiveType::kCustom;
-  }
-}
-
-static constexpr FormatDType FormatDTypeFromPrimitiveType(nvidia::gxf::PrimitiveType type) {
-  switch (type) {
-    case nvidia::gxf::PrimitiveType::kUnsigned8:
-      return FormatDType::kUnsigned8;
-    case nvidia::gxf::PrimitiveType::kUnsigned16:
-      return FormatDType::kUnsigned16;
-    case nvidia::gxf::PrimitiveType::kFloat32:
-      return FormatDType::kFloat32;
-    default:
-      return FormatDType::kUnknown;
-  }
-}
-
-static gxf_result_t verifyFormatDTypeChannels(FormatDType dtype, int channel_count) {
-  switch (dtype) {
-    case FormatDType::kRGB161616:
-      if (channel_count != 3) {
-        HOLOSCAN_LOG_ERROR("Invalid channel count for RGB161616 {} != 3\n", channel_count);
-        return GXF_FAILURE;
-      }
-      break;
-    case FormatDType::kRGB888:
-      if (channel_count != 3) {
-        HOLOSCAN_LOG_ERROR("Invalid channel count for RGB888 {} != 3\n", channel_count);
-        return GXF_FAILURE;
-      }
-      break;
-    case FormatDType::kRGBA16161616:
-      if (channel_count != 4) {
-        HOLOSCAN_LOG_ERROR("Invalid channel count for RGBA16161616 {} != 4\n", channel_count);
-        return GXF_FAILURE;
-      }
-      break;
-    case FormatDType::kRGBA8888:
-      if (channel_count != 4) {
-        HOLOSCAN_LOG_ERROR("Invalid channel count for RGBA8888 {} != 4\n", channel_count);
-        return GXF_FAILURE;
-      }
-      break;
-    default:
-      break;
-  }
-  return GXF_SUCCESS;
-}
 
 void FormatConverterOp::initialize() {
 #if CUDART_VERSION >= 13000
@@ -574,7 +432,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
 
   // Adjust output shape if the conversion involves the change in the channel dimension
   switch (format_conversion_type_) {
-    case FormatConversionType::kRGB888ToRGBA8888: {
+    case FormatConversionType::kRGB888ToRGBA8888:
+    case FormatConversionType::kYUV420ToRGBA8888: {
       out_channels = 4;
       out_shape = nvidia::gxf::Shape{out_shape.dimension(0), out_shape.dimension(1), out_channels};
       break;

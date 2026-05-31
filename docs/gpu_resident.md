@@ -41,6 +41,28 @@ GPU-resident operators inherit from `holoscan::GPUResidentOperator` instead of t
 - Use device memory for input/output ports
 - Are captured into CUDA Graphs
 
+(built-in-gpu-resident-operators)=
+
+#### Built-in GPU-resident operators
+
+The SDK also supports concrete `holoscan::ops` classes that inherit from {cpp:class}`~holoscan::GPUResidentOperator`. They follow the same static buffer and capture rules as in the [API reference](#api-reference) section below. These are distinct from the CPU-driven operators listed under {ref}`holoscan-operators` (for example {cpp:class}`~holoscan::ops::FormatConverterOp`): GPU-resident variants fix sizes and formats at initialization and use device ports only.
+
+| Class | Typical use | API reference |
+| ----- | ----------- | ------------- |
+| **BayerDemosaicGpuResidentOp** | Demosaic a single-channel Bayer frame to RGB or RGBA on the GPU (NPP), with width, height, and dtypes fixed at init. | {cpp:class}`C++ <holoscan::ops::BayerDemosaicGpuResidentOp>` |
+| **FormatConverterGpuResidentOp** | Convert between supported tensor-packed and planar YUV layouts on the GPU (NPP), mirroring a subset of {cpp:class}`~holoscan::ops::FormatConverterOp` with fixed dimensions and optional plane stride/offset overrides. | {cpp:class}`C++ <holoscan::ops::FormatConverterGpuResidentOp>` |
+| **GPUResidentInferenceOp** | Run TensorRT inference inside a GPU-resident fragment (HoloInfer). See `public/examples/gpu_resident_inference_example/` in the [Examples](#examples) section. | {cpp:class}`C++ <holoscan::ops::GPUResidentInferenceOp>` |
+
+#### GPU-resident operators on HoloHub
+
+Additional GPU-resident operators are available in [HoloHub](https://github.com/nvidia-holoscan/holohub):
+
+- [CsiToBayerGpuResidentOp](https://github.com/nvidia-holoscan/holohub/tree/main/operators/csi_to_bayer_gpu_resident): converts packed CSI sensor data to Bayer format entirely on the GPU.
+- [ImageProcessorGpuResidentOp](https://github.com/nvidia-holoscan/holohub/tree/main/operators/image_processor_gpu_resident): performs Bayer-domain image processing such as optical black correction, histogram calculation, and white balance on the GPU.
+- [DisplayGpuResidentOp](https://github.com/nvidia-holoscan/holohub/tree/main/operators/display_gpu_resident): provides GPU-resident display output with cuDisp and optional G-SYNC continuous flip mode.
+- [DocaRoceReceiverOp](https://github.com/nvidia-holoscan/holohub/tree/main/operators/hsb_roce_receiver_doca_gpunetio): receives RoCE traffic directly into GPU memory using DOCA GPUNetIO for GPU-side CQ polling.
+- [RoceReceiverOpNmd](https://github.com/nvidia-holoscan/holohub/tree/main/operators/hsb_roce_receiver_nmd): receives RoCE frames directly into GPU memory and supports no-host-metadata operation for GPU-resident pipelines.
+
 ### GPU-Resident Fragments
 
 A GPU-resident Fragment is created by composing GPU-resident operators. The framework automatically detects that a `holoscan::Fragment` should use GPU-resident graphs when all operators in the fragment inherit from `holoscan::GPUResidentOperator`. GPU-resident execution supports acyclic operator graphs with a single source operator. During initialization, the framework flattens the graph in topological order before connecting device memory and capturing `compute()` calls into CUDA Graphs.
@@ -431,6 +453,7 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 **`public/examples/gpu_resident_example/gpu_resident_example.cpp`**
 **`public/examples/gpu_resident_input/gpu_resident_input.cpp`**
 **`public/examples/gpu_resident_multi_io/gpu_resident_multi_io.cpp`** — operators with multiple input/output ports
+**`public/examples/gpu_resident_inference_example/`** — `GPUResidentInferenceOp` with TensorRT
 
 ## Best Practices
 

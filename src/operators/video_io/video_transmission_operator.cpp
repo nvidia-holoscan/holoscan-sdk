@@ -187,7 +187,7 @@ VideoTransmissionOperator::build_transmit_capabilities_from_parameters() const {
   const std::string pf = pixel_format_.get();
   const std::string cs = color_space_.get();
 
-  const auto channels = channel_indices_.get();
+  const auto& channels = channel_indices_.get();
   if (!channels.empty()) {
     cap.max_concurrent_outputs = static_cast<uint32_t>(channels.size());
     for (uint32_t idx : channels) {

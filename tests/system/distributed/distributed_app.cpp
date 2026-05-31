@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -54,6 +54,9 @@ TEST_F(DistributedApp, TestTwoParallelFragmentsApp) {
 }
 
 TEST_F(DistributedApp, TestTwoMultiInputsOutputsFragmentsApp) {
+#if defined(__SANITIZE_ADDRESS__)
+  GTEST_SKIP() << "Not compatible with ASAN";
+#endif
   auto app = make_application<TwoMultiInputsOutputsFragmentsApp>();
 
   // capture output so that we can check that the expected value is present

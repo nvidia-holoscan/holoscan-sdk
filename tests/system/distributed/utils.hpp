@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,6 +16,7 @@
  */
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -29,7 +30,7 @@ std::string remove_ignored_errors(const std::string& captured_error) {
 
   while ((pos = error_string.find(delimiter)) != std::string::npos) {
     std::string line = error_string.substr(0, pos);
-    err_lines.push_back(line);
+    err_lines.push_back(std::move(line));
     error_string.erase(0, pos + delimiter.length());
   }
 

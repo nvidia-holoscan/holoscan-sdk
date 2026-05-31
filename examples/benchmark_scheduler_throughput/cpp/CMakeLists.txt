@@ -65,4 +65,15 @@ if(HOLOSCAN_BUILD_TESTS)
                        PASS_REGULAR_EXPRESSION "\\| Trial \\|"
                        TIMEOUT 120
                       )
+
+  add_test(NAME EXAMPLE_CPP_BENCHMARK_SCHEDULER_THROUGHPUT_FLAGS_TEST
+           COMMAND benchmark_scheduler_throughput
+                   --enable_queue_stealing
+                   --enable_postcheck_fastpath
+           WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+          )
+  set_tests_properties(EXAMPLE_CPP_BENCHMARK_SCHEDULER_THROUGHPUT_FLAGS_TEST PROPERTIES
+                       PASS_REGULAR_EXPRESSION "\\| Trial \\|"
+                       TIMEOUT 120
+                      )
 endif()

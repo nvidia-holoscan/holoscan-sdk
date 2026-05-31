@@ -263,7 +263,38 @@ avoid in-place operations on the tensor or race conditions between operators may
 
 If you need to configure arguments or perform other setup tasks before or after the operator is initialized, you can override the `initialize()` method. This method is called once before the `start()` method.
 
-Example:
+:::{note}
+As of Holoscan 4.3.0, calling `Operator::initialize()` from an override is no longer required. The framework automatically ensures that framework-level initialization (GXF codelet registration, port unique-ID assignment, execution-context creation) runs after your `initialize()` override returns. Calling `Operator::initialize()` from an override remains supported and safe — it is idempotent — so existing operators do not need to be changed.
+:::
+
+Example (Holoscan 4.3.0 and later — explicit base-class call is optional):
+
+```cpp
+  void initialize() override {
+    // Register custom type and codec for serialization
+    register_converter<std::array<float, 3>>();
+    gxf::GXFExecutor::register_codec<std::vector<InputSpec>>(
+        "std::vector<holoscan::ops::HolovizOp::InputSpec>", true);
+
+    // Set up prerequisite parameters
+    auto frag = fragment();
+
+    // Check if an argument for 'allocator' exists
+    auto has_allocator = std::find_if(
+        args().begin(), args().end(), [](const auto& arg) { return (arg.name() == "allocator"); });
+    // Create the allocator if no argument is provided
+    if (has_allocator == args().end()) {
+      allocator_ = frag->make_resource<UnboundedAllocator>("allocator");
+      add_arg(allocator_.get());
+    }
+
+    // No need to call Operator::initialize() — the framework will run framework-level
+    // initialization automatically after this method returns. Calling it explicitly is
+    // still supported and safe (it is idempotent), as shown in the legacy example below.
+  }
+```
+
+Legacy example (still valid in all Holoscan versions — explicit base-class call):
 
 ```cpp
   void initialize() override {

@@ -18,6 +18,7 @@ add_holoscan_operator(v4l2 v4l2_video_capture.cpp)
 target_link_libraries(op_v4l2
     PUBLIC
         holoscan::core
+        op_video_io
     PRIVATE
         GXF::multimedia
         jpeg
