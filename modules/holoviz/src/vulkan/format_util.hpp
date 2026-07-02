@@ -44,10 +44,20 @@ namespace holoscan::viz {
  * @param width_divisor width divisor for multi-planar formats
  * @param height_divisor height divisor for multi-planar formats
  * @param plane image plane for multi-planar formats
+ * @param bit_depth representative bit depth per color/luma channel
  */
 void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
                  uint32_t* component_size, uint32_t* width_divisor = nullptr,
-                 uint32_t* height_divisor = nullptr, uint32_t plane = 0);
+                 uint32_t* height_divisor = nullptr, uint32_t plane = 0,
+                 uint32_t* bit_depth = nullptr);
+
+/**
+ * Get the bit depth of a format
+ *
+ * @param format format to get the bit depth from
+ * @return bit depth of the format
+ */
+uint32_t format_bit_depth(ImageFormat format);
 
 /**
  * Convert a ImageFormat enum to a Vulkan format enum

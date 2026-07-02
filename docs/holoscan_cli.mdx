@@ -1,0 +1,196 @@
+<Anchor id="holoscan-cli" />
+
+The Holoscan CLI is the shared command engine behind metadata-driven Holoscan source-project repositories.
+It discovers projects from `metadata.json`, builds and runs them in development containers, runs tests, and provides diagnostics.
+
+Most users should not invoke the generic `holoscan` command directly.
+Use the repository wrapper instead.
+For HoloHub, that wrapper is `./holohub`.
+Other wrapper-based source-project repositories can provide their own entry point while reusing the same backend.
+
+<Note>
+
+The `holoscan-cli` PyPI package installs the `holoscan` console script, but source-project repositories normally expose a wrapper such as `./holohub`.
+The wrapper configures the source tree before delegating to the shared CLI backend.
+Repository wrappers can set the repository root, command name, default SDK container selection, CTest script, and package-install behavior for their checkout.
+The CLI then uses the active repository context to resolve project search paths, placeholders, workspace names, and container image names.
+
+</Note>
+
+<Warning>
+
+The Holoscan CLI manages source-project workflows and development containers.
+It does not install the Holoscan SDK runtime, and the CLI package version does not select a matching SDK container image for you.
+Use the wrapper defaults, or configure the SDK base image explicitly with `--base-img`, `HOLOSCAN_CLI_BASE_IMAGE`, or `HOLOSCAN_CLI_BASE_SDK_VERSION`.
+
+</Warning>
+
+## Prerequisites
+
+Use wrapper-based CLI workflows on a platform supported by the Holoscan SDK, such as an x86_64 Ubuntu workstation with an NVIDIA GPU or a supported NVIDIA ARM developer kit.
+See [SDK Installation](sdk_installation.mdx) for Holoscan SDK platform and runtime prerequisites.
+
+Container workflows also require Docker, the Docker buildx plugin, and the NVIDIA Container Toolkit.
+Host builds with `--local` additionally require the build tools and SDK installation expected by the source project you are building.
+For most source-project workflows, use the containerized default and avoid `--local`.
+
+## Use Repository Wrappers
+
+For HoloHub and other Holoscan ecosystem repositories, start with the repository's own documentation and invoke the CLI through its wrapper script.
+For HoloHub, see the [HoloHub documentation](https://nvidia-holoscan.github.io/holohub/) and use `./holohub` from that checkout.
+
+A wrapper script typically provides per-project configuration details before calling Holoscan CLI entrypoints.
+Most projects will not call the `holoscan` entrypoint directly.
+Some generic help text and dry-run output can still show `holoscan` because the wrapper delegates to the shared backend.
+Use the wrapper name, project names, and examples documented by the source-project repository; those details are maintained with that repository.
+
+## Common Workflows
+
+The shared CLI backend supports project discovery, project lifecycle actions, development containers, diagnostics, and workspace maintenance.
+Not every source-project repository exposes every command, project type, or mode.
+Run command-specific help through the repository wrapper, for example `<repository-wrapper> <command> --help`.
+
+## Execution Model
+
+The lifecycle commands `build`, `run`, `install`, and `test` are container-first by default.
+On the host, the CLI builds or reuses a Docker image, starts a container with the repository mounted at `/workspace/<name>`, and then re-runs the command inside that container with local execution enabled.
+
+This means the normal command:
+
+```bash
+<repository-wrapper> run <project_name>
+```
+
+builds a suitable container, builds the selected project inside that container, and runs the command declared by the project's `metadata.json`.
+Use `--local` only when you intentionally want to bypass Docker and run CMake, Python, or application commands directly on the host.
+
+<Warning>
+
+The inner command printed by `--dryrun` is an implementation detail.
+For example, a wrapper dry run can show `holoscan run <project> --local` inside the generated `docker run` command.
+Do not copy that inner command as the normal host workflow; run the command again through the source-project repository wrapper instead.
+
+</Warning>
+
+## Repository Wrappers
+
+Repository wrappers are the recommended interface for source-project repositories.
+They keep the user-facing command stable while configuring the generic CLI for the current source tree.
+
+A wrapper can configure:
+
+| Setting | Purpose |
+| --- | --- |
+| `HOLOSCAN_CLI_CMD_NAME` | Shows the wrapper command in project-command help and generated messages. |
+| `HOLOSCAN_CLI_ROOT` | Points project discovery and container mounts at the repository checkout. |
+| `HOLOSCAN_CLI_BASE_SDK_VERSION` | Provides a default SDK container version unless overridden. |
+| `HOLOSCAN_CLI_CTEST_SCRIPT` | Uses a repository-specific CTest driver for `test`. |
+| `HOLOSCAN_CLI_SOURCE` | Optionally points the wrapper at a local `holoscan-cli` checkout during CLI development. |
+| `HOLOSCAN_CLI_INSTALL_ARGS` | Controls the package install used when the CLI is not already available. |
+
+Repositories can use this pattern with their own wrapper name, search paths, workspace names, and container image naming rules.
+
+## Project Discovery
+
+The CLI discovers source projects by scanning configured search paths for `metadata.json` files.
+Project metadata describes the project type, language, build/run configuration, modes, dependencies, Dockerfile selection, and paths used by CLI commands.
+
+The most common discovery and wrapper configuration variables are:
+
+| Variable | Purpose |
+| --- | --- |
+| `HOLOSCAN_CLI_ROOT` | Source-project repository root. |
+| `HOLOSCAN_CLI_SEARCH_PATH` | Comma-separated subdirectories to scan for project `metadata.json` files. |
+| `HOLOSCAN_CLI_PATH_PREFIX` | Placeholder prefix used by metadata path templates. |
+| `HOLOSCAN_CLI_REPO_PREFIX` | Repository prefix used for default image, workspace, and container names. |
+| `HOLOSCAN_CLI_BUILD_PARENT_DIR` | Parent directory for per-project build directories. |
+| `HOLOSCAN_CLI_DATA_DIR` | Data directory used by run commands and placeholders. |
+
+Use `<repository-wrapper> env-info` to list the `HOLOSCAN_CLI_*` variables read in the current shell.
+
+## Container Image Selection
+
+A repository wrapper can provide a default SDK container version, and you can override it per command:
+
+{/*  holoscan-version-sync:begin  */}
+
+```bash
+<repository-wrapper> build-container --base-img nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda13 <project_name>
+```
+
+You can also configure the base repository and SDK version separately:
+
+```bash
+export HOLOSCAN_CLI_BASE_IMAGE=nvcr.io/nvidia/clara-holoscan/holoscan
+export HOLOSCAN_CLI_BASE_SDK_VERSION=4.4.0
+<repository-wrapper> build-container <project_name>
+```
+
+With the default CUDA selection, the second form derives a full base image tag such as `nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda13`.
+
+{/*  holoscan-version-sync:end  */}
+
+If no base image tag or SDK version is configured, the CLI asks you to provide one instead of inferring it from the `holoscan-cli` package version.
+
+## Standalone CLI
+
+The standalone `holoscan` command is mainly for `holoscan-cli` development, wrapper integration, and backend inspection.
+A wrapper script typically provides per-project configuration details before calling Holoscan CLI entrypoints.
+Most projects will not call the `holoscan` entrypoint directly.
+
+For example, after installing the package, these backend inspection commands work without a source-project wrapper:
+
+```bash
+python3 -m pip install holoscan-cli
+holoscan --help
+holoscan version
+```
+
+To use `holoscan create` outside a repository wrapper, install the optional project-creation dependencies:
+
+```bash
+python3 -m pip install 'holoscan-cli[create]'
+```
+
+Project lifecycle commands `holoscan build`, `holoscan run`, or `holoscan test` each depend on source-project configurations, normally supplied by a repository wrapper script.
+Run those workflows through the source-project repository wrapper, and use that repository's docs for supported project names, modes, and examples.
+
+## Command Groups
+
+Run these commands as `<repository-wrapper> <command>` in a wrapped source-project repository.
+Not every command applies to every project type; check the project's README and `metadata.json` for supported build, run, test, and package workflows.
+
+| Area | Commands |
+| --- | --- |
+| Project lifecycle | `build`, `run`, `test`, `install`, `package` |
+| Containers | `build-container`, `run-container` |
+| Discovery and diagnostics | `list`, `modes`, `status`, `env-info`, `env-check`, `autocompletion_list`, `version` |
+| Workspace | `create`, `lint`, `setup`, `clear-cache` |
+
+## Versioning and Legacy Commands
+
+{/*  holoscan-version-sync:begin  */}
+
+`holoscan-cli` release versions are aligned with Holoscan SDK GA release versions when the CLI is released with an SDK version.
+For example, a CLI release published with Holoscan SDK 4.4.0 is published as `holoscan-cli==4.4.0`.
+CLI-only fixes between SDK releases use the patch component for that release line.
+
+{/*  holoscan-version-sync:end  */}
+
+Version alignment does not mean the CLI selects, installs, or requires a matching Holoscan SDK runtime.
+Use the base-image configuration described above when a container workflow should use a specific SDK version.
+
+<Warning>
+
+Starting in version v4.3.0, Holoscan CLI focuses on metadata-driven Holoscan source projects.
+Legacy HAP/MAP application packaging commands, including `holoscan nics`, are not part of this command surface.
+If you still rely on that legacy interface, pin `holoscan-cli<=4.2.0` while migrating to supported Holoscan SDK packaging workflows.
+
+</Warning>
+
+## More Information
+
+- [HoloHub documentation](https://nvidia-holoscan.github.io/holohub/)
+- [HoloHub repository](https://github.com/nvidia-holoscan/holohub)
+- [Holoscan CLI repository](https://github.com/nvidia-holoscan/holoscan-cli)
+- [Holoscan CLI package on PyPI](https://pypi.org/project/holoscan-cli/)

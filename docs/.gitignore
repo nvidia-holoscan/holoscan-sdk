@@ -13,6 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Ignore Sphinx+Doxygen and Breathe+Exhale generated files.
-_build/
-api/cpp/
+# C++ API MDX from `fern docs md generate` (see docs.yml libraries)
+generated/
+
+# Fern CLI local state (caches, `fern docs diff` output, etc.)
+.fern/
+
+# SDK local preview output (`fern generate --preview`)
+.preview/
+
+# Docker pipeline HOME mount (see scripts/build_holoscan_docs.py)
+.fern-docker-home/
+
+# CI preview URL written by build_holoscan_docs.py --publish-preview
+.fern-preview-url
+
+# JS tooling / docs dev server artifacts
+node_modules/
+.next/
+out/
+
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*

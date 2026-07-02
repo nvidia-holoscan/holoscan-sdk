@@ -1,0 +1,122 @@
+<Anchor id="ping-simple-example" />
+
+Most applications will require more than one operator.  In this example, we will create two operators where one operator will produce and send data while the other operator will receive and print the data.  The code in this example makes use of the built-in **PingTxOp** and **PingRxOp** operators that are defined in the `holoscan::ops` namespace.
+
+In this example we'll cover:
+
+- How to use built-in operators.
+- How to use `add_flow()` to connect operators together.
+
+<Note>
+
+The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
+
+</Note>
+
+
+## Operators and Workflow
+
+Here is an example workflow involving two operators that are connected linearly.
+
+![A linear workflow](https://kroki.io/graphviz/svg/eNpVzDEKAjEQheF-TjGk0sIcQIknEJTFLgSJJuwOxtkwG2HBeHez2Gjxuu_9gXrxecBM3F8meuQU8QXi-R5IjDp0CoDHENFOg8_RSLyNEtwOoMxok7_GZNSpnc_zMVes47Os2ta4ReKiGpR_1y3OEjvir8GKC2u5zR5_cKtorYmVgzd8AOM_N5s)
+
+
+In this example, the source operator **PingTxOp** produces integers from 1 to 10 and passes it to the sink operator **PingRxOp** which prints the integers to standard output.
+
+## Connecting Operators
+
+We can connect two operators by calling `add_flow()` (C++ (`holoscan::Fragment::add_flow`)/Python (`holoscan.core.Fragment.add_flow`)) in the application's `compose()` method.
+
+The `add_flow()` method (C++ (`holoscan::Fragment::add_flow`)/Python (`holoscan.core.Fragment.add_flow`)) takes the source operator, the destination operator, and the optional port name pairs.
+The port name pair is used to connect the output port of the source operator to the input port of the destination operator.
+The first element of the pair is the output port name of the upstream operator and the second element is the input port name of the downstream operator.
+An empty port name ("") can be used for specifying a port name if the operator has only one input/output port.
+If there is only one output port in the upstream operator and only one input port in the downstream operator, the port pairs can be omitted.
+
+The following code shows how to define a linear workflow in the `compose()` method for our example.  Note that when an operator appears in an `add_flow()` statement, it doesn't need to be added into the workflow separately using `add_operator()`.
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    #include &lt;holoscan/holoscan.hpp&gt;
+    #include &lt;holoscan/operators/ping_tx/ping_tx.hpp&gt;
+    #include &lt;holoscan/operators/ping_rx/ping_rx.hpp&gt;
+
+    class MyPingApp : public holoscan::Application {
+     public:
+      void compose() override {
+        using namespace holoscan;
+        // Create the tx and rx operators
+        auto tx = make_operator&lt;ops::PingTxOp&gt;("tx", make_condition<CountCondition>(10));
+        auto rx = make_operator&lt;ops::PingRxOp&gt;("rx");
+
+        // Connect the operators into the workflow:  tx -> rx
+        add_flow(tx, rx);
+      }
+    };
+
+    int main(int argc, char** argv) {
+      auto app = holoscan::make_application<MyPingApp>();
+      app->run();
+
+      return 0;
+    }
+  ```
+  - The header files that define **PingTxOp** and **PingRxOp** are included on lines `2` and `3` respectively.
+  - We create an instance of the **PingTxOp** using the `make_operator()` function (line `10`) with the name "tx" and constrain its `compute()` method to execute 10 times.
+  - We create an instance of the **PingRxOp** using the `make_operator()` function (line `11`) with the name "rx."
+  - The tx and rx operators are connected using `add_flow()` (line `14`).
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.conditions import CountCondition
+    from holoscan.core import Application
+    from holoscan.operators import PingRxOp, PingTxOp
+
+    class MyPingApp(Application):
+        def compose(self):
+            # Create the tx and rx operators
+            tx = PingTxOp(self, CountCondition(self, 10), name="tx")
+            rx = PingRxOp(self, name="rx")
+
+            # Connect the operators into the workflow:  tx -> rx
+            self.add_flow(tx, rx)
+
+
+    def main():
+        app = MyPingApp()
+        app.run()
+
+
+    if __name__ == "__main__":
+        main()
+  ```
+  - The built-in holoscan operators, **PingRxOp** and **PingTxOp**, are imported on line `3`.
+  - We create an instance of the **PingTxOp** operator with the name "tx" and constrain its `compute()` method to execute 10 times (line `8`).
+  - We create an instance of the **PingRxOp** operator with the name "rx" (line `9`).
+  - The tx and rx operators are connected using `add_flow()` which defines this application's workflow (line `12`).
+
+</Tab>
+</Tabs>
+
+
+## Running the Application
+
+Running the application should give you the following output in your terminal:
+
+```
+Rx message value: 1
+Rx message value: 2
+Rx message value: 3
+Rx message value: 4
+Rx message value: 5
+Rx message value: 6
+Rx message value: 7
+Rx message value: 8
+Rx message value: 9
+Rx message value: 10
+```

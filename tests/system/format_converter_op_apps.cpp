@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -56,12 +56,18 @@ class FormatConverterApp : public holoscan::Application {
     auto out_dtype = Arg("out_dtype", out_dtype_);
     std::string in_tensor_name = "tensor";
     std::string out_tensor_name = "rgb";
-    auto converter = make_operator<ops::FormatConverterOp>("converter",
-                                                           in_dtype,
-                                                           out_dtype,
-                                                           pool,
-                                                           Arg("in_tensor_name", in_tensor_name),
-                                                           Arg("out_tensor_name", out_tensor_name));
+    ArgList converter_args{in_dtype,
+                           out_dtype,
+                           pool,
+                           Arg("in_tensor_name", in_tensor_name),
+                           Arg("out_tensor_name", out_tensor_name)};
+    if (resize_width_ > 0) {
+      converter_args.add(Arg("resize_width", resize_width_));
+    }
+    if (resize_height_ > 0) {
+      converter_args.add(Arg("resize_height", resize_height_));
+    }
+    auto converter = make_operator<ops::FormatConverterOp>("converter", converter_args);
     auto rx = make_operator<ops::PingTensorRxOp>("rx");
 
     add_flow(source, converter, {{"out", "source_video"}});
@@ -90,10 +96,16 @@ class FormatConverterApp : public holoscan::Application {
   void set_out_dtype(const std::string& out_dtype) { out_dtype_ = out_dtype; }
   void set_data_in(const std::vector<uint8_t>& data_in) { data_in_ = data_in; }
   void set_data_out(const std::vector<uint8_t>& data_out) { data_out_ = data_out; }
+  void set_resize(const int32_t width, const int32_t height) {
+    resize_width_ = width;
+    resize_height_ = height;
+  }
 
  private:
   int32_t width_ = 32;
   int32_t height_ = 64;
+  int32_t resize_width_ = 0;
+  int32_t resize_height_ = 0;
   std::string storage_type_ = "device";
   std::string in_dtype_ = "rgba8888";
   std::string out_dtype_ = "rgb888";
@@ -109,6 +121,8 @@ class FormatConverterApp : public holoscan::Application {
       return std::make_pair("uint8_t", 3);
     } else if (in_dtype == "rgba8888") {
       return std::make_pair("uint8_t", 4);
+    } else if (in_dtype == "yuyv" || in_dtype == "uyvy") {
+      return std::make_pair("uint8_t", 2);
     } else {
       EXPECT_TRUE(false) << "Unsupported input data type: " << in_dtype;
       return std::make_pair("invalid", -1);
@@ -200,4 +214,69 @@ TEST_P(FormatConverterFormatParameterizedTestFixture, TestFormatConverterFormatT
   app->set_width(1);
   app->set_height(1);
   run_app(app, "");
+}
+
+// Smoke test for packed 4:2:2 YUV input formats (UYVY and YUYV).
+// Verifies the NPP conversion path runs without error and produces a
+// correctly-shaped RGB888 output. Pixel-precise verification is deferred
+// because TensorCompareOp is byte-exact and NPP's exact rounding of
+// BT.601 coefficients is implementation-defined.
+class FormatConverterPackedYuv422Fixture : public ::testing::TestWithParam<std::string> {};
+
+INSTANTIATE_TEST_CASE_P(FormatConverterOpAppTests, FormatConverterPackedYuv422Fixture,
+                        ::testing::Values(std::string("uyvy"), std::string("yuyv")));
+
+TEST_P(FormatConverterPackedYuv422Fixture, TestFormatConverterPackedYuv422ToRGB888) {
+  std::string in_dtype = GetParam();
+  auto app = make_application<FormatConverterApp>();
+  app->set_in_dtype(in_dtype);
+  app->set_out_dtype("rgb888");
+  // 4:2:2 packed requires even width.
+  app->set_width(64);
+  app->set_height(32);
+  run_app(app, "");
+}
+
+// Helper for negative tests: run the app, expect it to surface an error string in the captured
+// stderr. The graph itself may either throw or finish with an error logged via gxf_wrapper.
+void expect_app_failure(const std::shared_ptr<FormatConverterApp>& app,
+                        const std::string& expected_substring) {
+  testing::internal::CaptureStderr();
+  std::string thrown_what;
+  try {
+    app->run();
+  } catch (const std::exception& ex) {
+    thrown_what = ex.what();
+  }
+  std::string log_output = testing::internal::GetCapturedStderr();
+  std::string combined = log_output + thrown_what;
+  EXPECT_TRUE(combined.find(expected_substring) != std::string::npos)
+      << "Expected substring not found: \"" << expected_substring << "\"\n=== LOG ===\n"
+      << combined << "\n===========\n";
+}
+
+// Packed 4:2:2 must reject resize (NPP's resize entry points used by FormatConverterOp expect
+// 3- or 4-channel packed RGB/RGBA, not 2-channel UYVY/YUYV).
+TEST_P(FormatConverterPackedYuv422Fixture, TestFormatConverterPackedYuv422RejectsResize) {
+  std::string in_dtype = GetParam();
+  auto app = make_application<FormatConverterApp>();
+  app->set_in_dtype(in_dtype);
+  app->set_out_dtype("rgb888");
+  app->set_width(64);
+  app->set_height(32);
+  app->set_resize(32, 16);
+  expect_app_failure(app, "resize is not supported");
+}
+
+// Packed 4:2:2 must reject odd-width input (chroma subsampling is shared between adjacent pixel
+// pairs along the width axis, so the width must be a multiple of 2).
+TEST_P(FormatConverterPackedYuv422Fixture, TestFormatConverterPackedYuv422RejectsOddWidth) {
+  std::string in_dtype = GetParam();
+  auto app = make_application<FormatConverterApp>();
+  app->set_in_dtype(in_dtype);
+  app->set_out_dtype("rgb888");
+  // Intentionally odd to trigger the guard.
+  app->set_width(63);
+  app->set_height(32);
+  expect_app_failure(app, "requires an even width");
 }

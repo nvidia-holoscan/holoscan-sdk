@@ -1,0 +1,670 @@
+<Anchor id="holoscan-flow-tracking" />
+
+The Holoscan SDK provides the Data Flow Tracking APIs as a mechanism to profile your application and analyze the fine-grained timing properties and data flow between operators in the graph of a fragment.
+
+Currently, data flow tracking is only supported between the root operators and leaf operators of a graph and in simple cycles in a graph (support for tracking data flow between any pair of operators in a graph is planned for the future).
+
+- A *root operator* is an operator without any predecessor nodes.
+- A *leaf operator* (also known as a *sink operator*) is an operator without any successor nodes.
+
+When data flow tracking is enabled, every message is tracked from the root operators to the leaf operators and in cycles. Then, the maximum (worst-case), average, and minimum end-to-end latencies of one or more paths can be retrieved using the Data Flow Tracking APIs.
+
+<Tip>
+
+- The end-to-end latency between a root operator and a leaf operator is the time taken between the start of a root operator and the end of a leaf operator. Data Flow Tracking enables the support to track the end-to-end latency of every message being passed between a root operator and a leaf operator.
+- The reported end-to-end latency for a cyclic path is the time taken between the start of the first operator of a cycle and the time when a message is again received by the first operator of the cycle.
+
+</Tip>
+
+
+The API also provides the ability to retrieve the number of messages sent from the root operators.
+
+<Tip>
+
+- The Data Flow Tracking feature is also illustrated in the [flow_tracker](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/flow_tracker)
+- Look at the C++ (`holoscan::DataFlowTracker`) and python (`holoscan.core.DataFlowTracker`) API documentation for exhaustive definitions
+
+</Tip>
+
+
+## Supported Configurations
+
+Data flow tracking is only supported for operator connections that use the **default Holoscan configuration**. Applications using custom connection configurations (user-defined queue size, queue policy, etc.) are not tested and may not be compatible with flow tracking.
+
+### Default Connection Configuration
+
+The default connection configuration in Holoscan includes:
+
+1. **Queue Size**: The default capacity for both input and output ports is set to 1.
+
+2. **Connector Types**: Default or explicitly supported receiver/transmitter types
+   - For local connections (within a fragment):
+     - DoubleBufferReceiver (`holoscan::DoubleBufferReceiver`)/DoubleBufferTransmitter (`holoscan::DoubleBufferTransmitter`) (Python (`holoscan.resources.DoubleBufferReceiver`)/Python (`holoscan.resources.DoubleBufferTransmitter`)) or `ConnectorType::kDefault` (Python (`holoscan.core.IOSpec.ConnectorType.DEFAULT`))
+     - AsyncBufferReceiver (`holoscan::AsyncBufferReceiver`)/AsyncBufferTransmitter (`holoscan::AsyncBufferTransmitter`) (Python (`holoscan.resources.AsyncBufferReceiver`)/Python (`holoscan.resources.AsyncBufferTransmitter`)) or `ConnectorType::kAsyncBuffer` (Python (`holoscan.core.IOSpec.ConnectorType.ASYNC_BUFFER`)) for asynchronous operations
+   - For distributed connections (across fragments): UcxReceiver (`holoscan::UcxReceiver`)/UcxTransmitter (`holoscan::UcxTransmitter`) (Python (`holoscan.resources.UcxReceiver`)/Python (`holoscan.resources.UcxTransmitter`)) - automatically used for cross-fragment connections
+
+3. **Queue Policy**: The default queue policy is to throw an error for a new message when the queue is full
+
+4. **Scheduling Conditions**: Default conditions for input and output ports
+   - Input ports: MessageAvailableCondition (`holoscan::MessageAvailableCondition`) (Python (`holoscan.conditions.MessageAvailableCondition`)) with `min_size=1`
+   - Output ports: DownstreamMessageAffordableCondition (`holoscan::DownstreamMessageAffordableCondition`) (Python (`holoscan.conditions.DownstreamMessageAffordableCondition`)) with `min_size=1`
+
+<Note>
+
+If an application uses custom configurations such as:
+
+- Queue sizes greater than 1
+- `kPop` or `kReject` queue policy
+- Custom scheduling conditions (e.g., `ConditionType::kNone`)
+
+Data flow tracking may not function as expected.
+
+</Note>
+
+
+## Enabling Data Flow Tracking
+
+Before an application (C++ (`holoscan::Application`)/python (`holoscan.core.Application`)) is run with the `run()` method, data flow tracking can be enabled. For single fragment applications, this can be done by calling the `track()` method in C++ (`holoscan::Fragment::track`) and using the `Tracker` class in python (`holoscan.core.Tracker`).
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto& tracker = app->track(); // Enable Data Flow Tracking
+    // Change tracker and application configurations
+    ...
+    app->run();
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    ...
+    app = MyPingApp()
+    with Tracker(app) as tracker:
+      # Change tracker and application configurations
+      ...
+      app.run()
+  ```
+
+</Tab>
+</Tabs>
+
+
+<Anchor id="holoscan-flow-tracking-example" />
+
+## Enabling Data Flow Tracking for Distributed Applications
+
+For distributed (multi-fragment) applications, a separate tracker object is used for each Fragment so the API is slightly different than in the single fragment case.
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+    // Change tracker and application configurations
+    ...
+    app->run();
+  ```
+  Note that instead of a returning a single `DataFlowTracker*` like `track`, the `track_distributed` method returns a `std::unordered_map<std::string, DataFlowTracker*>` where the keys are the names of the fragments.
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    with Tracker(app) as trackers:
+        app.run()
+  ```
+  The `Tracker` context manager detects whether the app is distributed and returns a `dict[str, DataFlowTracker]` as `trackers` in the distributed case. For a single fragment application, the returned value is just a single `DataFlowTracker` object.
+
+</Tab>
+</Tabs>
+
+
+## Retrieving Data Flow Tracking Results
+
+After an application has been run, data flow tracking results can be accessed by
+various methods on the DataFlowTracker (C++ (`holoscan::DataFlowTracker`)/python (`holoscan.core.DataFlowTracker`)) class.
+
+1. `print()` (C++ (`holoscan::DataFlowTracker::print`)/python (`holoscan.core.DataFlowTracker.print`))
+   - Prints all data flow tracking results including end-to-end latencies and the number of
+     source messages to the standard output.
+
+2. `get_num_paths()` (C++ (`holoscan::DataFlowTracker::get_num_paths`)/python (`holoscan.core.DataFlowTracker.get_num_paths`))
+   - Returns the number of paths between the root operators and the leaf operators.
+
+3. `get_path_strings()` (C++ (`holoscan::DataFlowTracker::get_path_strings`)/python (`holoscan.core.DataFlowTracker.get_path_strings`))
+   - Returns a vector of strings, where each string represents a path between the root operators
+     and the leaf operators. A path is a comma-separated list of operator names.
+
+4. `get_metric()` (C++ (`holoscan::DataFlowTracker::get_metric`)/python (`holoscan.core.DataFlowTracker.get_metric`))
+   - Returns the value of different metrics based on the arguments.
+   - `get_metric(std::string pathstring, holoscan::DataFlowMetric metric)` returns the value of a
+     metric `metric` for a path `pathstring`. The metric can be one of the following:
+        - `holoscan::DataFlowMetric::kMaxE2ELatency`
+        (python (`holoscan.core.DataFlowMetric.MAX_E2E_LATENCY`)): the maximum end-to-end latency in the path.
+        - `holoscan::DataFlowMetric::kAvgE2ELatency` (python (`holoscan.core.DataFlowMetric.AVG_E2E_LATENCY`)): the average end-to-end latency in the path.
+        - `holoscan::DataFlowMetric::kMinE2ELatency` (python (`holoscan.core.DataFlowMetric.MIN_E2E_LATENCY`)): the minimum end-to-end latency in the path.
+        - `holoscan::DataFlowMetric::kMaxMessageID` (python (`holoscan.core.DataFlowMetric.MAX_MESSAGE_ID`)): the message number or ID which resulted in the
+          maximum end-to-end latency.
+        - `holoscan::DataFlowMetric::kMinMessageID` (python (`holoscan.core.DataFlowMetric.MIN_MESSAGE_ID`)): the message number or ID which resulted in the
+          minimum end-to-end latency.
+   - `get_metric(holoscan::DataFlowMetric metric = DataFlowMetric::kNumSrcMessages)` returns a map of source operator and its edge, and the number of messages sent from the source operator to the edge.
+
+In the [above example](performance/flow-tracking#holoscan-data-flow-tracking-example), the data flow tracking results can be printed to standard output like the following:
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto& tracker = app->track(); // Enable Data Flow Tracking
+    // Change application configurations
+    ...
+    app->run();
+    tracker.print();
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    ...
+    app = MyPingApp()
+    with Tracker(app) as trackers:
+      # Change tracker and application configurations
+      ...
+      app.run()
+      tracker.print()
+  ```
+
+</Tab>
+</Tabs>
+
+
+If this was a distributed application, there would instead be a separate `DataFlowTracker` for each fragment. The overall flow tracking results for all fragments can be printed as in the following:
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+    // Change application configurations
+    ...
+    app->run();
+    // print the data flow tracking results
+    for (const auto& [name, tracker] : trackers) {
+      std::cout << "Fragment: " << name << std::endl;
+      tracker->print();
+    }
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    ...
+    app = MyPingApp()
+    with Tracker(app) as trackers:
+      # Change tracker and application configurations
+      ...
+      app.run()
+      # print the data flow tracking results
+      for fragment_name, tracker in trackers.items():
+          print(f"Fragment: {fragment_name}")
+          tracker.print()
+  ```
+
+</Tab>
+</Tabs>
+
+
+## Accessing Timestamped Message Labels in Operators
+
+In addition to retrieving application-level tracking results after execution, operators can access message label information during their `compute()` method using the `get_data_flow_tracking_label()` method (C++ (`holoscan::Operator::get_data_flow_tracking_label`)/python (`holoscan.core.Operator.get_data_flow_tracking_label`)).
+
+This operator-level API provides access to the MessageLabel (`holoscan::MessageLabel`)/MessageLabel (`holoscan.core.MessageLabel`) associated with data received on a specific input port, enabling programmatic analysis of timing information.
+
+This enables more programmatic observability within the operators. This is also useful for implementing adaptive operators that can adjust their behavior based on message flow characteristics, or for debugging and monitoring data flow patterns during execution.
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    void compute(InputContext& op_input, OutputContext& op_output, ExecutionContext& context) override {
+      auto value = op_input.receive<ValueData>("in").value();
+
+      if(fragment()->data_flow_tracker()) {
+        // Get the message label for the input port
+        auto message_label = get_data_flow_tracking_label("in");
+
+        // Access message label information
+        HOLOSCAN_LOG_INFO("Message has {} path(s)", message_label.num_paths());
+        auto path_names = message_label.get_all_path_names();
+        for (int i = 0; i < path_names.size(); i++) {
+          HOLOSCAN_LOG_INFO("  Path {}: {}", i, path_names[i]);
+        }
+      }
+
+      // Process data and emit
+      op_output.emit(processed_value, "out");
+    }
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    def compute(self, op_input, op_output, context):
+        value = op_input.receive("in")
+
+        if self.fragment.data_flow_tracker():
+          # Get the message label for the input port
+          message_label = self.get_data_flow_tracking_label("in")
+
+          # Access message label information
+          print(f"Message has {message_label.num_paths()} path(s)")
+          path_names = message_label.get_all_path_names()
+          for i, path_name in enumerate(path_names):
+              print(f"  Path {i}: {path_name}")
+
+        # Process data and emit
+        op_output.emit(processed_value, "out")
+  ```
+
+</Tab>
+</Tabs>
+
+
+<Note>
+
+- This method throws a `std::runtime_error` (C++)/ `RuntimeError` (Python) if:
+  - The operator backend is not GXF-compatible
+  - The fragment is not set
+  - The operator spec is not set
+  - Fragment flow tracking is not enabled
+- An empty `MessageLabel` is returned (with an error logged) if the input port name is invalid
+- An empty `MessageLabel` is returned if the port does not have tracking data yet
+- This method should ideally be called after receiving data on the input port
+
+</Note>
+
+
+See the MessageLabel (`holoscan::MessageLabel`)/MessageLabel (`holoscan.core.MessageLabel`) API documentation for the complete list of available methods to query path and timing information.
+
+## Customizing Data Flow Tracking
+
+Data flow tracking can be customized using a few optional configuration parameters. The `track()` method (C++ (`holoscan::Fragment::track`)//Python (`holoscan.core.Application.track`)) (or `track_distributed` method (C++ (`holoscan::Application::track_distributed`)/Python (`holoscan.core.Application.track_distributed`))` for distributed apps) can be configured to skip a few messages at the beginning of an application's execution as a *warm-up* period. It is also possible to discard a few messages at the end of an application's run as a *wrap-up* period. Additionally, outlier end-to-end latencies can be ignored by setting a latency threshold value (in ms) which is the minimum latency below which the observed latencies are ignored.
+Finally, it is possible to limit the timestamping of messages at all nodes except the root and leaf
+operators, so that the overhead of timestamping and sending timestamped messages are reduced. In
+this way, end-to-end latencies are still calculated, but pathwise fine-grained data are not stored
+for unique pairs of root and leaf operators.
+
+For Python, it is recommended to use the Tracker (`holoscan.core.Tracker`) context manager class instead of the `track` or `track_distributed` methods. This class will autodetect if the application is a single fragment or distributed app, using the appropriate method for each.
+
+<Tip>
+
+For effective benchmarking, it is common practice to include warm-up and cool-down periods by skipping the initial and final messages.
+
+</Tip>
+
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    Fragment::track(uint64_t num_start_messages_to_skip = kDefaultNumStartMessagesToSkip,
+                             uint64_t num_last_messages_to_discard = kDefaultNumLastMessagesToDiscard,
+                             int latency_threshold = kDefaultLatencyThreshold,
+                             bool is_limited_tracking = false);
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    Tracker(num_start_messages_to_skip=num_start_messages_to_skip,
+            num_last_messages_to_discard=num_last_messages_to_discard,
+            latency_threshold=latency_threshold,
+            is_limited_tracking=False)
+  ```
+
+</Tab>
+</Tabs>
+
+
+The default values of these parameters of `track()` are as follows:
+
+- `kDefaultNumStartMessagesToSkip`: 10
+- `kDefaultNumLastMessagesToDiscard`: 10
+- `kDefaultLatencyThreshold`: 0 (do not filter out any latency values)
+- `is_limited_tracking`: false
+
+These parameters can also be configured using the helper functions:
+set_skip_starting_messages (`holoscan::DataFlowTracker::set_skip_starting_messages`),
+set_discard_last_messages (`holoscan::DataFlowTracker::set_discard_last_messages`),
+set_skip_latencies (`holoscan::DataFlowTracker::set_skip_latencies`),
+and set_limited_tracking (`holoscan::DataFlowTracker::set_limited_tracking`),
+
+## Data Flow Tracking with Asynchronous Lock-free Buffers
+
+When using asynchronous lock-free buffers (`IOSpec::ConnectorType::kAsyncBuffer` in C++ (`holoscan::IOSpec`)/`IOSpec.ConnectorType.ASYNC_BUFFER` in python (`holoscan.core.IOSpec`)) in your application, the data flow tracking module handles old (buffered) messages with special node naming to distinguish them from newly received messages.
+
+### Reading Buffered Messages from an Upstream Operator
+
+When an operator with an asynchronous lock-free buffer receiver reads an old (previously buffered) message instead of the most recent one, the flow tracking system marks this in the path as `<operator_name>_old` where `<operator_name>` is the name of the upstream operator. For example, for a `tx->rx` asynchronous buffer connection, there could be two paths: `tx->rx` and `tx_old->rx`. This suffix is added to differentiate the source of the message, but it's important to understand that:
+
+- `<operator_name>_old` represents the *same operator* as `<operator_name>`
+- The `_old` suffix indicates that the same message was retrieved from the asynchronous buffer
+- This allows developers to track and analyze the flow of both newly received and buffered messages through the application
+
+This distinction helps understand the behavior of an application when asynchronous lock-free buffers are in use and allows analyzing the latency characteristics of both new and buffered message flows separately.
+
+<Note>
+
+The `_old` suffix is for tracking purposes. Both `<operator_name>` and `<operator_name>_old` refer to the same operator instance in your application graph.
+
+</Note>
+
+
+## Logging
+
+The Data Flow Tracking API provides the ability to log every message's graph-traversal information to a file. This enables you to analyze the data flow at a granular level. When logging is enabled, every message's received and sent timestamps at every operator between the root and the leaf operators are logged after a message has been processed at the leaf operator.
+
+The logging is enabled by calling the `enable_logging` method in C++ (`holoscan::DataFlowTracker::enable_logging`) and by providing the `filename` parameter to `Tracker` in python (`holoscan.core.Tracker`).
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto& tracker = app->track(); // Enable Data Flow Tracking
+    tracker.enable_logging("logging_file_name.log");
+    ...
+    app->run();
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    ...
+    app = MyPingApp()
+    with Tracker(app, filename="logger.log") as tracker:
+       ...
+       app.run()
+  ```
+
+</Tab>
+</Tabs>
+
+
+The logger file logs the paths of the messages after a leaf operator has finished its `compute` method. Every path in the logfile includes an array of tuples of the form:
+
+>"(root operator name, message receive timestamp, message publish timestamp) -> ... -> (leaf operator name, message receive timestamp, message publish timestamp)".
+
+This log file can further be analyzed to understand latency distributions, bottlenecks, data flow,
+and other characteristics of an application.
+
+## Probing Intermediate Operators
+
+The `add_probe_operator` method (C++ (`holoscan::DataFlowTracker::add_probe_operator`)/python (`holoscan.core.DataFlowTracker.add_probe_operator`)) allows tracking of intermediate operators (non-root, non-leaf operators) in the application graph. This enables measurement of latency from root operators to the probed operator and the number of messages published by that operator. Logging is not currently supported for probed operators.
+
+<Note>
+
+The `add_probe_operator` function is currently only tested with the `DoubleBufferTransmitter`, `DoubleBufferReceiver` and the default connection configurations. Support for other message passing configurations has not yet been validated.
+
+</Note>
+
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto& tracker = app->track();
+    tracker.add_probe_operator("middle_operator");
+    app->run();
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    # ...
+    app = MyPingApp()
+    with Tracker(app) as tracker:
+       tracker.add_probe_operator("middle_operator")
+       app.run()
+  ```
+
+</Tab>
+</Tabs>
+
+
+### Logging for Distributed Applications
+
+For distributed applications, the logging can be enabled by calling the `enable_logging` method in C++ (`holoscan::DataFlowTracker::enable_logging`) for individual fragments. There will be separate log files for each fragment.
+Logging for distributed applications follows a progressive pattern where every connected fragment contains timing information of its predecessor fragments. The final or leaf fragments (fragments with no successors) will log the timings of the messages across the full distributed application. The logfiles can be analyzed using [Holoscan Flow Benchmarking tools](https://nvidia-holoscan.github.io/holohub/benchmarks/holoscan_flow_benchmarking/). For application-wide analysis spanning multiple fragments, the logfiles of the leaf fragments can be used with the Holoscan Flow Benchmarking tools.
+
+<Tabs>
+
+  <Tab title="C++" language="cpp">
+
+  ```cpp
+    auto app = holoscan::make_application<MyPingApp>();
+    auto trackers = app->track_distributed(); // Enable data flow tracking for a distributed app
+    for (const auto& [fragment_name, tracker] : trackers) {
+      tracker->enable_logging(std::string(fragment_name) + "_logger.log");
+    }
+    // ...
+    app->run();
+  ```
+
+</Tab>
+<Tab title="Python" language="python">
+
+  ```python
+    from holoscan.core import Tracker
+    # ...
+    app = MyPingApp()
+    with Tracker(app) as trackers:
+      for fragment_name, tracker in trackers.items():
+        tracker.enable_logging(fragment_name + "_logger.log")
+      # ...
+      app.run()
+  ```
+
+</Tab>
+</Tabs>
+
+
+## Configuring Clock Synchronization in Multiple Machines for Distributed Application Flow Tracking
+
+For flow tracking in distributed applications that span multiple machines, system administrators
+must ensure that the clocks of all machines are synchronized. It is up to the administrator's
+preference on how to synchronize the clocks. [Linux PTP](https://linuxptp.sourceforge.net/) is a
+popular and commonly used mechanism for clock synchronization.
+
+Install the `linuxptp` package on all machines:
+
+```bash
+git clone http://git.code.sf.net/p/linuxptp/code linuxptp
+cd linuxptp/
+make
+sudo make install
+```
+
+<Tip>
+
+The Ubuntu `linuxptp` package can also be used. However, the above repository provides access to
+different PTP configurations.
+
+</Tip>
+
+
+### Check PTP Hardware Timestamping Support
+
+Check if your machine and network interface card supports PTP hardware timestamping:
+
+```bash
+sudo apt-get update && sudo apt-get install ethtool
+ethtool -T <interface_name>
+```
+
+If the output of the above command is like the one provided below, it means PTP hardware
+timestamping may be supported:
+
+```bash
+$ ethtool -T eno1
+Time stamping parameters for eno1:
+Capabilities:
+ hardware-transmit     (SOF_TIMESTAMPING_TX_HARDWARE)
+ software-transmit     (SOF_TIMESTAMPING_TX_SOFTWARE)
+ hardware-receive      (SOF_TIMESTAMPING_RX_HARDWARE)
+ software-receive      (SOF_TIMESTAMPING_RX_SOFTWARE)
+ software-system-clock (SOF_TIMESTAMPING_SOFTWARE)
+ hardware-raw-clock    (SOF_TIMESTAMPING_RAW_HARDWARE)
+PTP Hardware Clock: 0
+Hardware Transmit Timestamp Modes:
+ off                   (HWTSTAMP_TX_OFF)
+ on                    (HWTSTAMP_TX_ON)
+Hardware Receive Filter Modes:
+ none                  (HWTSTAMP_FILTER_NONE)
+ all                   (HWTSTAMP_FILTER_ALL)
+ ptpv1-l4-sync         (HWTSTAMP_FILTER_PTP_V1_L4_SYNC)
+ ptpv1-l4-delay-req    (HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ)
+ ptpv2-l4-sync         (HWTSTAMP_FILTER_PTP_V2_L4_SYNC)
+ ptpv2-l4-delay-req    (HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ)
+ ptpv2-l2-sync         (HWTSTAMP_FILTER_PTP_V2_L2_SYNC)
+ ptpv2-l2-delay-req    (HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ)
+ ptpv2-event           (HWTSTAMP_FILTER_PTP_V2_EVENT)
+ ptpv2-sync            (HWTSTAMP_FILTER_PTP_V2_SYNC)
+ ptpv2-delay-req       (HWTSTAMP_FILTER_PTP_V2_DELAY_REQ)
+```
+
+However, if the output is the one provided below, it means PTP hardware timestamping is not supported:
+
+```bash
+$ ethtool -T eno1
+$ ethtool -T eno1
+Time stamping parameters for eno1:
+Capabilities:
+ software-transmit
+ software-receive
+ software-system-clock
+PTP Hardware Clock: none
+Hardware Transmit Timestamp Modes: none
+Hardware Receive Filter Modes: none
+```
+
+### Without PTP Hardware Timestamping Support
+
+Even if PTP hardware timestamping is not supported, it is possible to synchronize the clocks of
+different machines using software-based clock synchronization. Here, we show an example of how to synchronize the clocks of two machines using
+the [automotive PTP profiles](https://linuxptp.nwtime.org/documentation/). Developers and administrators can use their own profiles.
+
+Select one machine as the clock server and the others as the clients. On the server, run the following command:
+
+```bash
+sudo ptp4l -i eno1 -f linuxptp/configs/automotive-master.cfg -m -S
+ptp4l[7526757.990]: port 1 (eno1): INITIALIZING to MASTER on INIT_COMPLETE
+ptp4l[7526757.991]: port 0 (/var/run/ptp4l): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7526757.991]: port 0 (/var/run/ptp4lro): INITIALIZING to LISTENING on INIT_COMPLETE
+```
+
+On the clients, run the following command:
+
+```bash
+$ sudo ptp4l -i eno1 -f linuxptp/configs/automotive-slave.cfg -m -S
+ptp4l[7370954.836]: port 1 (eno1): INITIALIZING to SLAVE on INIT_COMPLETE
+ptp4l[7370954.836]: port 0 (/var/run/ptp4l): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7370954.836]: port 0 (/var/run/ptp4lro): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7370956.785]: rms 5451145770 max 5451387307 freq -32919 +/-   0 delay 72882 +/-   0
+ptp4l[7370957.785]: rms 5451209853 max 5451525811 freq -32919 +/-   0 delay 71671 +/-   0
+...
+... wait until rms value drops in the range of orders of microseconds
+ptp4l[7371017.791]: rms 196201 max 324853 freq -13722 +/- 34129 delay 73814 +/-   0
+ptp4l[7371018.791]: rms 167568 max 249998 freq  +6509 +/- 30532 delay 73609 +/-   0
+ptp4l[7371019.791]: rms 158762 max 216309 freq  -8778 +/- 28459 delay 73060 +/-   0
+```
+
+`CLOCK_REALTIME` on both the Linux machines are synchronized to the range of microseconds. Now,
+different fragments of a distributed application can be run on these machines, with flow tracking,
+end-to-end latency of an application can be measured across these machines.
+
+Eventually, the `ptp4l` commands can be added as system-d services to start automatically on boot.
+
+### With PTP Hardware Timestamping Support
+
+If PTP hardware timestamping is supported, the physical clock of the network interface card can be
+synchronized to the system clock, `CLOCK_REALTIME`. This can be done by running the following
+commands
+
+```bash
+$ sudo ptp4l -i eno1 -f linuxptp/configs/gPTP.cfg --step_threshold=1 -m &
+ptp4l[7527677.746]: port 1 (eno1): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7527677.747]: port 0 (/var/run/ptp4l): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7527677.747]: port 0 (/var/run/ptp4lro): INITIALIZING to LISTENING on INIT_COMPLETE
+ptp4l[7527681.663]: port 1 (eno1): LISTENING to MASTER on ANNOUNCE_RECEIPT_TIMEOUT_EXPIRES
+ptp4l[7527681.663]: selected local clock f02f74.fffe.cb3590 as best master
+ptp4l[7527681.663]: port 1 (eno1): assuming the grand master role
+
+
+$ sudo pmc -u -b 0 -t 1 "SET GRANDMASTER_SETTINGS_NP clockClass 248 \
+        clockAccuracy 0xfe offsetScaledLogVariance 0xffff \
+        currentUtcOffset 37 leap61 0 leap59 0 currentUtcOffsetValid 1 \
+        ptpTimescale 1 timeTraceable 1 frequencyTraceable 0 \
+        timeSource 0xa0"
+sending: SET GRANDMASTER_SETTINGS_NP
+ptp4l[7527704.409]: port 1 (eno1): assuming the grand master role
+ f02f74.fffe.cb3590-0 seq 0 RESPONSE MANAGEMENT GRANDMASTER_SETTINGS_NP
+  clockClass              248
+  clockAccuracy           0xfe
+  offsetScaledLogVariance 0xffff
+  currentUtcOffset        37
+  leap61                  0
+  leap59                  0
+  currentUtcOffsetValid   1
+  ptpTimescale            1
+  timeTraceable           1
+  frequencyTraceable      0
+  timeSource              0xa0
+
+
+$ sudo phc2sys -s eno1 -c CLOCK_REALTIME --step_threshold=1 --transportSpecific=1 -w -m
+phc2sys[7527727.996]: ioctl PTP_SYS_OFFSET_PRECISE: Invalid argument
+phc2sys[7527728.997]: CLOCK_REALTIME phc offset   7422791 s0 freq    +628 delay   1394
+phc2sys[7527729.997]: CLOCK_REALTIME phc offset   7422778 s1 freq    +615 delay   1474
+phc2sys[7527730.997]: CLOCK_REALTIME phc offset       118 s2 freq    +733 delay   1375
+phc2sys[7527731.997]: CLOCK_REALTIME phc offset        57 s2 freq    +708 delay   1294
+phc2sys[7527732.998]: CLOCK_REALTIME phc offset       -42 s2 freq    +626 delay   1422
+phc2sys[7527733.998]: CLOCK_REALTIME phc offset        52 s2 freq    +707 delay   1392
+phc2sys[7527734.998]: CLOCK_REALTIME phc offset       -65 s2 freq    +606 delay   1421
+phc2sys[7527735.998]: CLOCK_REALTIME phc offset       -48 s2 freq    +603 delay   1453
+phc2sys[7527736.999]: CLOCK_REALTIME phc offset        -2 s2 freq    +635 delay   1392
+```
+
+From here on, clocks on other machines can also be synchronized to the above server clock.
+
+Further references:
+
+- [Synchronizing Time with Linux PTP](https://tsn.readthedocs.io/timesync.html)
+- [Linux PTP Documentation and Configurations](https://linuxptp.nwtime.org/documentation/)

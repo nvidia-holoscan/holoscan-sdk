@@ -17,6 +17,8 @@ MD041: false
 MD001: false
 # Emphasis as heading (e.g. **Pattern name**)
 MD036: false
+# Spaces inside emphasis markers (MDX comments like {/*  ...  */})
+MD037: false
 # Alt text (some images have captions below / figure directives)
 MD045: false
 # Link fragments (third-party READMEs, Sphinx refs)

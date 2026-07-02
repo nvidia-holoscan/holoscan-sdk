@@ -75,6 +75,7 @@ if(HOLOSCAN_BUILD_TESTS)
       WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
     set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_CPU_ONLY_TEST PROPERTIES
+      RESOURCE_LOCK "distributed_ucx"
       ENVIRONMENT "CUDA_VISIBLE_DEVICES="
     )
   endif()
@@ -86,6 +87,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_CPU_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
+    RESOURCE_LOCK "distributed_ucx"
   )
 
   # test with GPU tensors
@@ -96,6 +98,7 @@ if(HOLOSCAN_BUILD_TESTS)
   set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_GPU_TEST PROPERTIES
     PASS_REGULAR_EXPRESSION "rx received message 10: Tensor key: 'tensor', shape: \\(32, 64\\)"
     FAIL_REGULAR_EXPRESSION "initialized independent of a parent entity"
+    RESOURCE_LOCK "distributed_ucx"
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_FLOW_TRACKING_TEST
@@ -106,6 +109,9 @@ if(HOLOSCAN_BUILD_TESTS)
         --pass-pattern 'Fragment: fragment1' \
         --pass-pattern 'Fragment: fragment2'"
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  set_tests_properties(EXAMPLE_CPP_PING_DISTRIBUTED_FLOW_TRACKING_TEST PROPERTIES
+    RESOURCE_LOCK "distributed_ucx"
   )
 
   add_test(NAME EXAMPLE_CPP_PING_DISTRIBUTED_HELP_STRING_TEST

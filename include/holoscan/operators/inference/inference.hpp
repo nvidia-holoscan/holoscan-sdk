@@ -56,8 +56,8 @@ namespace holoscan::ops {
  *
  * For more details on `InferenceOp` parameters, see
  * [Customizing the Inference
- * Operator](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/byom.html#customizing-the-inference-operator)
- * or refer to [Inference](https://docs.nvidia.com/holoscan/sdk-user-guide/inference.html).
+ * Operator](https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/byom#customizing-the-inference-operator)
+ * or refer to [Inference](https://docs.nvidia.com/holoscan/sdk-user-guide/operators/inference).
  *
  * - **backend**: Backend to use for inference. Set `"trt"` for TensorRT, `"torch"` for LibTorch
  *   and `"onnxrt"` for the ONNX runtime.
@@ -111,7 +111,7 @@ namespace holoscan::ops {
  *   - Add a `CudaStreamCondition` to delay scheduling until upstream GPU work has completed.
  *
  * For more details on CUDA stream handling in Holoscan, see:
- * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
+ * https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling
  */
 class InferenceOp : public holoscan::Operator {
  public:

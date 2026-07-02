@@ -265,7 +265,7 @@ TEST(PoseTree, create_edges) {
   const PoseTree::frame_t c = pg.create_frame("c").value();
   const PoseTree::frame_t d = pg.create_frame("d").value();
   const PoseTree::frame_t e = pg.create_frame("e").value();
-  pg.delete_frame(e);
+  ASSERT_TRUE(pg.delete_frame(e));
   ASSERT_TRUE(pg.create_edges(a, b));
   ASSERT_EQ(pg.create_edges(a, b).error(), PoseTree::Error::kAlreadyExists);
   ASSERT_EQ(pg.create_edges(b, a).error(), PoseTree::Error::kAlreadyExists);
@@ -524,10 +524,10 @@ TEST(PoseTree, get_latest) {
   const Pose3d aTb1 = pose_normal_distribution(sigma, s_rng);
   const Pose3d bTc0 = pose_normal_distribution(sigma, s_rng);
   const Pose3d bTc1 = pose_normal_distribution(sigma, s_rng);
-  pg.set(a, b, 0.0, aTb0);
-  pg.set(a, b, 2.0, aTb1);
-  pg.set(b, c, 0.0, bTc0);
-  pg.set(b, c, 2.5, bTc1);
+  ASSERT_TRUE(pg.set(a, b, 0.0, aTb0));
+  ASSERT_TRUE(pg.set(a, b, 2.0, aTb1));
+  ASSERT_TRUE(pg.set(b, c, 0.0, bTc0));
+  ASSERT_TRUE(pg.set(b, c, 2.5, bTc1));
 
   EXPECT_NEAR(pg.get_latest(a, b)->second, 2.0, 1e-12);
   EXPECT_POSE_NEAR(pg.get_latest(a, b)->first, aTb1, 1e-12);
@@ -560,11 +560,11 @@ TEST(PoseTree, get_latest_edge) {
   const Pose3d aTb1 = pose_normal_distribution(sigma, s_rng);
   const Pose3d bTc0 = pose_normal_distribution(sigma, s_rng);
   const Pose3d bTc1 = pose_normal_distribution(sigma, s_rng);
-  pg.set(a, b, 0.0, aTb0);
-  pg.set(a, b, 2.5, aTb1);
-  pg.set(b, c, 0.0, bTc0);
+  ASSERT_TRUE(pg.set(a, b, 0.0, aTb0));
+  ASSERT_TRUE(pg.set(a, b, 2.5, aTb1));
+  ASSERT_TRUE(pg.set(b, c, 0.0, bTc0));
   auto version = pg.get_pose_tree_version();
-  pg.set(b, c, 2.0, bTc1);
+  ASSERT_TRUE(pg.set(b, c, 2.0, bTc1));
 
   EXPECT_POSE_NEAR(pg.get(a, b).value(), aTb1, 1e-12);
   EXPECT_POSE_NEAR(pg.get(b, a).value(), aTb1.inverse(), 1e-12);

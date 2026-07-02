@@ -37,7 +37,7 @@ Format conversion operator.
         a video buffer is not found, the input port message is searched for a tensor with the name
         specified by `in_tensor_name`. This must be a tensor in one of several supported formats
         (unsigned 8-bit int or float32 graycale, unsigned 8-bit int RGB or RGBA YUV420,
-        NV12BT601Full, NV12BT709CSC, NV12BT709HDTV, or YUYV). The tensor or video buffer may be in
+        NV12BT601Full, NV12BT709CSC, NV12BT709HDTV, YUYV, or UYVY). The tensor or video buffer may be in
         either host or device memory (a host->device copy is performed if needed).
 
 
@@ -93,6 +93,8 @@ in_dtype : str, optional
     - `"nv12_bt601_full"` (BT.601 full range as in NPP's NV12ToRGB functions and IPP's YUVToRGB)
     - `"nv12_bt709_hdtv"` (BT.709 recommendation for high-definition TV (HDTV))
     - `"nv12_bt709_csc"`  (BT.709 recommendation for computer systems consideration (CSC))
+    - `"yuyv"`            (YUV 4:2:2 packed, Y first; uses NPP's analog YUV → RGB conversion)
+    - `"uyvy"`            (YUV 4:2:2 packed, U/Cb first; uses NPP's YCbCr → RGB conversion)
 in_tensor_name : str, optional
     The name of the input tensor. Default value is ``""`` (empty string).
 out_tensor_name : str, optional

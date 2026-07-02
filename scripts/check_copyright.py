@@ -41,7 +41,7 @@ sys.path.append(os.path.normpath(os.path.join(SCRIPT_DIR, "../scripts")))
 import gitutils  # noqa: E402
 
 FilesToCheck = [
-    re.compile(r"[.](cmake|cpp|cu|cuh|h|hpp|sh|pxd|py|pyx|yaml)$"),
+    re.compile(r"[.](cmake|cpp|css|cu|cuh|h|hpp|sh|pxd|py|pyx|yaml)$"),
     re.compile(r"CMakeLists[.]txt$"),
     re.compile(r"Dockerfile$"),
     re.compile(r"[.]dockerfile$"),

@@ -99,6 +99,17 @@ if(HOLOSCAN_BUILD_TESTS)
   )
   # Use a negative id to test with a non-existent device
   set_tests_properties(EXAMPLE_PYTHON_PING_DISTRIBUTED_INVALID_DEVICE_TEST PROPERTIES
+    RESOURCE_LOCK "distributed_ucx"
     ENVIRONMENT "HOLOSCAN_UCX_DEVICE_ID=-5"
+  )
+
+  # Lock the UCX-using tests so they serialize against each other and against
+  # other distributed tests across the suite. The _HELP_STRING_TEST only runs
+  # `--help` so it does not need the lock.
+  set_tests_properties(
+    EXAMPLE_PYTHON_PING_DISTRIBUTED_TEST
+    EXAMPLE_PYTHON_PING_DISTRIBUTED_GPU_TEST
+    EXAMPLE_PYTHON_PING_DISTRIBUTED_FLOW_TRACKING_TEST
+    PROPERTIES RESOURCE_LOCK "distributed_ucx"
   )
 endif()

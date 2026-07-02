@@ -71,7 +71,7 @@ namespace holoscan::ops {
  *
  * ==Parameters==
  *
- * - **backend_id**: Logical backend name for capability reporting (e.g. "v4l2", "vendor.aja").
+ * - **backend_id**: Logical backend name for capability reporting (e.g. "v4l2", "vendor.example").
  * - **channel_index**: Zero-based channel index when one channel per operator instance.
  * - **channel_indices**: Optional list of channel indices for multi-channel singleton-SDK fallback
  *   When non-empty, operators may treat this as the authoritative channel set.

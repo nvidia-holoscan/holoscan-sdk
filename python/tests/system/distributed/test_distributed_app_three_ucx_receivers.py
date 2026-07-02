@@ -209,7 +209,7 @@ def launch_app(use_new_receivers=True, data_flow_tracking=False, logfile=None):
             app.run()
 
 
-@pytest.mark.parametrize("use_new_receivers,", [True, False])
+@pytest.mark.parametrize("use_new_receivers", [True, False])
 @pytest.mark.parametrize("data_flow_tracking", [True, False])
 def test_distributed_app_three_ucx_receivers(use_new_receivers, data_flow_tracking, capfd):
     global NUM_MSGS

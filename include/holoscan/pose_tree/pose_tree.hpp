@@ -183,10 +183,12 @@ class PoseTree {
    * @param history_chunk_size Chunk size for history allocation.
    * @return Success or error status.
    */
-  expected_t<void> init(int32_t number_frames = 1024, int32_t number_edges = 16384,
-                        int32_t history_length = 1048576, int32_t default_number_edges = 16,
-                        int32_t default_history_length = 1024, int32_t edges_chunk_size = 4,
-                        int32_t history_chunk_size = 64);
+  [[nodiscard]] expected_t<void> init(int32_t number_frames = 1024, int32_t number_edges = 16384,
+                                      int32_t history_length = 1048576,
+                                      int32_t default_number_edges = 16,
+                                      int32_t default_history_length = 1024,
+                                      int32_t edges_chunk_size = 4,
+                                      int32_t history_chunk_size = 64);
 
   /**
    * @brief Deinitialize the PoseTree and free all allocated resources.
@@ -199,14 +201,14 @@ class PoseTree {
    * @param start_frame_id The first id to be assigned by this PoseTree (must be > 0(.
    * @param increment How much increment to leave between two frames id..
    */
-  expected_t<void> set_multithreading_info(frame_t start_frame_id, frame_t increment);
+  [[nodiscard]] expected_t<void> set_multithreading_info(frame_t start_frame_id, frame_t increment);
 
   /**
    * @brief Get the current PoseTree version.
    *
    * @return Current version of the PoseTree.
    */
-  version_t get_pose_tree_version() const;
+  [[nodiscard]] version_t get_pose_tree_version() const;
 
   /**
    * @brief Create a new frame in the PoseTree.
@@ -220,7 +222,7 @@ class PoseTree {
    * @param name Human-readable name for the frame.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> create_frame_with_id(frame_t frame_id, std::string_view name);
+  [[nodiscard]] expected_t<frame_t> create_frame_with_id(frame_t frame_id, std::string_view name);
 
   /**
    * @brief Create a new frame in the PoseTree.
@@ -234,7 +236,7 @@ class PoseTree {
    * @param number_edges Hint for maximum number of edges this frame will have.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> create_frame(std::string_view name, int32_t number_edges);
+  [[nodiscard]] expected_t<frame_t> create_frame(std::string_view name, int32_t number_edges);
 
   /**
    * @brief Create a new frame in the PoseTree with a name.
@@ -244,7 +246,7 @@ class PoseTree {
    * @param name Human-readable name for the frame.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> create_frame(std::string_view name);
+  [[nodiscard]] expected_t<frame_t> create_frame(std::string_view name);
 
   /**
    * @brief Create a new frame in the PoseTree with edge count hint.
@@ -254,7 +256,7 @@ class PoseTree {
    * @param number_edges Hint for maximum number of edges this frame will have.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> create_frame(int32_t number_edges);
+  [[nodiscard]] expected_t<frame_t> create_frame(int32_t number_edges);
 
   /**
    * @brief Create a new frame in the PoseTree with default settings.
@@ -264,7 +266,7 @@ class PoseTree {
    *
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> create_frame();
+  [[nodiscard]] expected_t<frame_t> create_frame();
 
   /**
    * @brief Find a frame with the given name.
@@ -272,7 +274,7 @@ class PoseTree {
    * @param name Name of the frame to find.
    * @return Frame id on success, Error::kFrameNotFound if no such frame exists.
    */
-  expected_t<frame_t> find_frame(std::string_view name) const;
+  [[nodiscard]] expected_t<frame_t> find_frame(std::string_view name) const;
 
   /**
    * @brief Find a frame with the given name, or create it if it doesn't exist.
@@ -280,7 +282,7 @@ class PoseTree {
    * @param name Name of the frame to find or create.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> find_or_create_frame(std::string_view name);
+  [[nodiscard]] expected_t<frame_t> find_or_create_frame(std::string_view name);
 
   /**
    * @brief Find a frame with the given name, or create it with edge count hint if it doesn't exist.
@@ -289,7 +291,8 @@ class PoseTree {
    * @param number_edges Hint for maximum number of edges this frame will have.
    * @return Frame id on success, error on failure.
    */
-  expected_t<frame_t> find_or_create_frame(std::string_view name, int32_t number_edges);
+  [[nodiscard]] expected_t<frame_t> find_or_create_frame(std::string_view name,
+                                                         int32_t number_edges);
 
   /**
    * @brief Create an edge between two frames.
@@ -298,7 +301,7 @@ class PoseTree {
    * @param rhs Right hand side frame.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(frame_t lhs, frame_t rhs);
+  [[nodiscard]] expected_t<version_t> create_edges(frame_t lhs, frame_t rhs);
 
   /**
    * @brief Create an edge between two frames with maximum length hint.
@@ -308,7 +311,8 @@ class PoseTree {
    * @param maximum_length Hint for maximum history length.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(frame_t lhs, frame_t rhs, int32_t maximum_length);
+  [[nodiscard]] expected_t<version_t> create_edges(frame_t lhs, frame_t rhs,
+                                                   int32_t maximum_length);
 
   /**
    * @brief Create an edge between two frames with access method.
@@ -318,8 +322,8 @@ class PoseTree {
    * @param method Access method for the edge history.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(frame_t lhs, frame_t rhs,
-                                     PoseTreeEdgeHistory::AccessMethod method);
+  [[nodiscard]] expected_t<version_t> create_edges(frame_t lhs, frame_t rhs,
+                                                   PoseTreeEdgeHistory::AccessMethod method);
 
   /**
    * @brief Create an edge between two frames with maximum length and access method.
@@ -330,8 +334,8 @@ class PoseTree {
    * @param method Access method for the edge history.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(frame_t lhs, frame_t rhs, int32_t maximum_length,
-                                     PoseTreeEdgeHistory::AccessMethod method);
+  [[nodiscard]] expected_t<version_t> create_edges(frame_t lhs, frame_t rhs, int32_t maximum_length,
+                                                   PoseTreeEdgeHistory::AccessMethod method);
 
   /**
    * @brief Create an edge between two frames using string names.
@@ -340,7 +344,7 @@ class PoseTree {
    * @param rhs Name of right hand side frame.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs);
+  [[nodiscard]] expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs);
 
   /**
    * @brief Create an edge between two frames using string names with maximum length hint.
@@ -350,8 +354,8 @@ class PoseTree {
    * @param maximum_length Hint for maximum history length.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
-                                     int32_t maximum_length);
+  [[nodiscard]] expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
+                                                   int32_t maximum_length);
 
   /**
    * @brief Create an edge between two frames using string names with access method.
@@ -361,8 +365,8 @@ class PoseTree {
    * @param method Access method for the edge history.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
-                                     PoseTreeEdgeHistory::AccessMethod method);
+  [[nodiscard]] expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
+                                                   PoseTreeEdgeHistory::AccessMethod method);
 
   /**
    * @brief Create an edge between two frames using string names with maximum length and access
@@ -374,9 +378,9 @@ class PoseTree {
    * @param method Access method for the edge history.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
-                                     int32_t maximum_length,
-                                     PoseTreeEdgeHistory::AccessMethod method);
+  [[nodiscard]] expected_t<version_t> create_edges(std::string_view lhs, std::string_view rhs,
+                                                   int32_t maximum_length,
+                                                   PoseTreeEdgeHistory::AccessMethod method);
 
   /**
    * @brief Delete a frame in the PoseTree and all its relations to other frames.
@@ -388,7 +392,7 @@ class PoseTree {
    * @param uid Frame id to delete.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> delete_frame(frame_t uid);
+  [[nodiscard]] expected_t<version_t> delete_frame(frame_t uid);
 
   /**
    * @brief Delete a frame in the PoseTree by name and all its relations to other frames.
@@ -396,7 +400,7 @@ class PoseTree {
    * @param name Name of the frame to delete.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> delete_frame(std::string_view name);
+  [[nodiscard]] expected_t<version_t> delete_frame(std::string_view name);
 
   /**
    * @brief Delete an edge and free the memory.
@@ -408,7 +412,7 @@ class PoseTree {
    * @param rhs Right hand side frame.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> delete_edge(frame_t lhs, frame_t rhs);
+  [[nodiscard]] expected_t<version_t> delete_edge(frame_t lhs, frame_t rhs);
 
   /**
    * @brief Delete an edge by frame names and free the memory.
@@ -417,7 +421,7 @@ class PoseTree {
    * @param rhs Name of right hand side frame.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> delete_edge(std::string_view lhs, std::string_view rhs);
+  [[nodiscard]] expected_t<version_t> delete_edge(std::string_view lhs, std::string_view rhs);
 
   /**
    * @brief Disconnect a frame from all the others starting at a given time.
@@ -426,7 +430,7 @@ class PoseTree {
    * @param time Time at which to start the disconnection.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> disconnect_frame(frame_t uid, double time);
+  [[nodiscard]] expected_t<version_t> disconnect_frame(frame_t uid, double time);
 
   /**
    * @brief Disconnect a frame by name from all the others starting at a given time.
@@ -435,7 +439,7 @@ class PoseTree {
    * @param time Time at which to start the disconnection.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> disconnect_frame(std::string_view name, double time);
+  [[nodiscard]] expected_t<version_t> disconnect_frame(std::string_view name, double time);
 
   /**
    * @brief Disconnect an edge starting at a given time.
@@ -445,7 +449,7 @@ class PoseTree {
    * @param time Time at which to start the disconnection.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> disconnect_edge(frame_t lhs, frame_t rhs, double time);
+  [[nodiscard]] expected_t<version_t> disconnect_edge(frame_t lhs, frame_t rhs, double time);
 
   /**
    * @brief Disconnect an edge by frame names starting at a given time.
@@ -455,7 +459,8 @@ class PoseTree {
    * @param time Time at which to start the disconnection.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> disconnect_edge(std::string_view lhs, std::string_view rhs, double time);
+  [[nodiscard]] expected_t<version_t> disconnect_edge(std::string_view lhs, std::string_view rhs,
+                                                      double time);
 
   // Disable all the implicit cast (to make sure to catch a call with the wrong type for the time)
   template <class... Args>
@@ -469,14 +474,14 @@ class PoseTree {
    * @param uid Frame id.
    * @return Frame name on success, error on failure.
    */
-  expected_t<std::string_view> get_frame_name(frame_t uid) const;
+  [[nodiscard]] expected_t<std::string_view> get_frame_name(frame_t uid) const;
 
   /**
    * @brief Retrieve the parameters used to initialize this PoseTree.
    *
    * @return Initialization parameters on success, or an error on failure.
    */
-  expected_t<InitParameters> get_init_parameters() const;
+  [[nodiscard]] expected_t<InitParameters> get_init_parameters() const;
 
   /**
    * @brief Get the latest pose between two frames as well as the time of that pose.
@@ -487,7 +492,7 @@ class PoseTree {
    * @param rhs Right hand side frame.
    * @return Pair of pose and time on success, error on failure.
    */
-  expected_t<std::pair<Pose3d, double>> get_latest(frame_t lhs, frame_t rhs) const;
+  [[nodiscard]] expected_t<std::pair<Pose3d, double>> get_latest(frame_t lhs, frame_t rhs) const;
 
   /**
    * @brief Get the latest pose between two frames by name as well as the time of that pose.
@@ -496,8 +501,8 @@ class PoseTree {
    * @param rhs Name of right hand side frame.
    * @return Pair of pose and time on success, error on failure.
    */
-  expected_t<std::pair<Pose3d, double>> get_latest(std::string_view lhs,
-                                                   std::string_view rhs) const;
+  [[nodiscard]] expected_t<std::pair<Pose3d, double>> get_latest(std::string_view lhs,
+                                                                 std::string_view rhs) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames in the PoseTree at the given time.
@@ -512,8 +517,9 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time,
-                         PoseTreeEdgeHistory::AccessMethod method, version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time,
+                                       PoseTreeEdgeHistory::AccessMethod method,
+                                       version_t version) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames at the given time and version.
@@ -524,7 +530,8 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time, version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time,
+                                       version_t version) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames at the given time with access method.
@@ -535,8 +542,8 @@ class PoseTree {
    * @param method Access method for interpolation.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time,
-                         PoseTreeEdgeHistory::AccessMethod method) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time,
+                                       PoseTreeEdgeHistory::AccessMethod method) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames at the given time.
@@ -546,7 +553,7 @@ class PoseTree {
    * @param time Time at which to query the pose.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs, double time) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames at a specific version.
@@ -556,7 +563,7 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs, version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs, version_t version) const;
 
   /**
    * @brief Get the latest pose lhs_T_rhs between two frames.
@@ -565,7 +572,7 @@ class PoseTree {
    * @param rhs Right hand side frame.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(frame_t lhs, frame_t rhs) const;
+  [[nodiscard]] expected_t<Pose3d> get(frame_t lhs, frame_t rhs) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames by name at the given time.
@@ -577,8 +584,9 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
-                         PoseTreeEdgeHistory::AccessMethod method, version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
+                                       PoseTreeEdgeHistory::AccessMethod method,
+                                       version_t version) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames by name at the given time and version.
@@ -589,8 +597,8 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
-                         version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
+                                       version_t version) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames by name at a specific version.
@@ -600,7 +608,8 @@ class PoseTree {
    * @param version Version of the PoseTree to query.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, version_t version) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs,
+                                       version_t version) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames by name at the given time with access method.
@@ -611,8 +620,8 @@ class PoseTree {
    * @param method Access method for interpolation.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
-                         PoseTreeEdgeHistory::AccessMethod method) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time,
+                                       PoseTreeEdgeHistory::AccessMethod method) const;
 
   /**
    * @brief Get the pose lhs_T_rhs between two frames by name at the given time.
@@ -622,7 +631,8 @@ class PoseTree {
    * @param time Time at which to query the pose.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs, double time) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs,
+                                       double time) const;
 
   /**
    * @brief Get the latest pose lhs_T_rhs between two frames by name.
@@ -631,7 +641,7 @@ class PoseTree {
    * @param rhs Name of right hand side frame.
    * @return Pose on success, error on failure.
    */
-  expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs) const;
+  [[nodiscard]] expected_t<Pose3d> get(std::string_view lhs, std::string_view rhs) const;
 
   // Disable all the implicit cast (to make sure to catch a call with the wrong type for the time)
   template <class... Args>
@@ -647,7 +657,7 @@ class PoseTree {
    * @return 2D pose on success, error on failure.
    */
   template <class... Args>
-  expected_t<Pose2d> get_pose2_xy(Args&&... args) const {
+  [[nodiscard]] expected_t<Pose2d> get_pose2_xy(Args&&... args) const {
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     return get(std::forward<Args>(args)...).map([](const Pose3d& pose_3d) {
       return pose_3d.to_pose2_xy();
@@ -668,7 +678,8 @@ class PoseTree {
    * @param lhs_T_rhs Pose transformation from lhs to rhs.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> set(frame_t lhs, frame_t rhs, double time, const Pose3d& lhs_T_rhs);
+  [[nodiscard]] expected_t<version_t> set(frame_t lhs, frame_t rhs, double time,
+                                          const Pose3d& lhs_T_rhs);
 
   /**
    * @brief Set the pose between two frames by name in the PoseTree.
@@ -679,8 +690,8 @@ class PoseTree {
    * @param lhs_T_rhs Pose transformation from lhs to rhs.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> set(std::string_view lhs, std::string_view rhs, double time,
-                            const Pose3d& lhs_T_rhs);
+  [[nodiscard]] expected_t<version_t> set(std::string_view lhs, std::string_view rhs, double time,
+                                          const Pose3d& lhs_T_rhs);
 
   /**
    * @brief Helper function to set a Pose2d instead of Pose3d.
@@ -691,7 +702,8 @@ class PoseTree {
    * @param lhs_T_rhs 2D pose transformation from lhs to rhs.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> set(frame_t lhs, frame_t rhs, double time, const Pose2d& lhs_T_rhs) {
+  [[nodiscard]] expected_t<version_t> set(frame_t lhs, frame_t rhs, double time,
+                                          const Pose2d& lhs_T_rhs) {
     return set(lhs, rhs, time, Pose3d::from_pose2_xy(lhs_T_rhs));
   }
 
@@ -704,8 +716,8 @@ class PoseTree {
    * @param lhs_T_rhs 2D pose transformation from lhs to rhs.
    * @return Version id of the change on success, error on failure.
    */
-  expected_t<version_t> set(std::string_view lhs, std::string_view rhs, double time,
-                            const Pose2d& lhs_T_rhs) {
+  [[nodiscard]] expected_t<version_t> set(std::string_view lhs, std::string_view rhs, double time,
+                                          const Pose2d& lhs_T_rhs) {
     return set(lhs, rhs, time, Pose3d::from_pose2_xy(lhs_T_rhs));
   }
   // Then we disable all the calls not made with double.
@@ -723,7 +735,7 @@ class PoseTree {
    * @return Success or error status.
    */
   template <typename T>
-  expected_t<void> get_edge_uids(T& container) const {
+  [[nodiscard]] expected_t<void> get_edge_uids(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     if (container.capacity() < static_cast<typename T::size_type>(edges_map_.size())) {
       return unexpected_t(Error::kOutOfMemory);
@@ -757,7 +769,7 @@ class PoseTree {
    * @return Success or error status.
    */
   template <typename T>
-  expected_t<void> get_edge_names(T& container) const {
+  [[nodiscard]] expected_t<void> get_edge_names(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     container.clear();
     if (container.capacity() < edges_map_.size()) {
@@ -796,7 +808,7 @@ class PoseTree {
    * @return Success or error status.
    */
   template <typename T>
-  expected_t<void> get_frame_uids(T& container) const {
+  [[nodiscard]] expected_t<void> get_frame_uids(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     container.clear();
     if (container.capacity() < name_to_uid_map_keys_.size()) {
@@ -823,7 +835,7 @@ class PoseTree {
    * @return Success or error status.
    */
   template <typename T>
-  expected_t<void> get_frame_names(T& container) const {
+  [[nodiscard]] expected_t<void> get_frame_names(T& container) const {
     std::shared_lock<std::shared_timed_mutex> lock(mutex_);
     container.clear();
     if (container.capacity() < name_to_uid_map_keys_.size()) {
@@ -844,7 +856,7 @@ class PoseTree {
    * @param callback Callback function to register.
    * @return Unique ID for the callback on success, error on failure.
    */
-  expected_t<uid_t> add_create_frame_callback(const CreateFrameCallback& callback);
+  [[nodiscard]] expected_t<uid_t> add_create_frame_callback(const CreateFrameCallback& callback);
 
   /**
    * @brief Deregister a callback function for frame creation.
@@ -852,7 +864,7 @@ class PoseTree {
    * @param cid Component ID of the callback to remove.
    * @return Success or error status.
    */
-  expected_t<void> remove_create_frame_callback(uid_t cid);
+  [[nodiscard]] expected_t<void> remove_create_frame_callback(uid_t cid);
 
   /**
    * @brief Register a callback function for every time an edge is set.
@@ -860,7 +872,7 @@ class PoseTree {
    * @param callback Callback function to register.
    * @return Unique ID for the callback on success, error on failure.
    */
-  expected_t<uid_t> add_set_edge_callback(const SetEdgeCallback& callback);
+  [[nodiscard]] expected_t<uid_t> add_set_edge_callback(const SetEdgeCallback& callback);
 
   /**
    * @brief Deregister a callback function for edge setting.
@@ -868,7 +880,7 @@ class PoseTree {
    * @param cid Component ID of the callback to remove.
    * @return Success or error status.
    */
-  expected_t<void> remove_set_edge_callback(uid_t cid);
+  [[nodiscard]] expected_t<void> remove_set_edge_callback(uid_t cid);
 
   /**
    * @brief Convert an error code to a human readable error string.
@@ -876,7 +888,7 @@ class PoseTree {
    * @param error Error code to convert.
    * @return Human-readable error string.
    */
-  static const char* error_to_str(Error error);
+  [[nodiscard]] static const char* error_to_str(Error error);
 
  private:
   /// @brief Internal version of get_frame_name that assumes the lock is already held.

@@ -91,7 +91,7 @@ namespace holoscan::ops {
  *   - Add a `CudaStreamCondition` to delay scheduling until upstream GPU work has completed.
  *
  * For more details on CUDA stream handling in Holoscan, see:
- * https://docs.nvidia.com/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html
+ * https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling
  */
 class InferenceProcessorOp : public holoscan::Operator {
  public:

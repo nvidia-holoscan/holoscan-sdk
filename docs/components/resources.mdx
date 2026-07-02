@@ -1,0 +1,421 @@
+Resource classes represent resources such as a allocators, clocks, transmitters, or receivers that may be used as a parameter for operators or schedulers. The resource classes that are likely to be directly used by application authors are documented here.
+
+<Note>
+
+There are a number of other resources classes used internally which are not documented here, but appear in the API Documentation ([C++](../api-reference/holoscan/classes/resource)/Python (`holoscan.resources`)).
+
+</Note>
+
+
+## Allocator
+
+### UnboundedAllocator
+
+An allocator that uses dynamic host or device memory allocation without an upper bound. This allocator does not take any user-specified parameters. This memory pool is easy to use and is recommended for initial prototyping. Once an application is working, switching to a `BlockMemoryPool` instead may help provide additional performance.
+
+### BlockMemoryPool
+
+This is a memory pool which provides a user-specified number of equally sized blocks of memory. Using this memory pool provides a way to allocate memory blocks once and reuse the blocks on each subsequent call to an Operator's `compute` method. This saves overhead relative to allocating memory again each time `compute` is called. For the built-in operators which accept a memory pool parameter, there is a section in its API docstrings titled "Device Memory Requirements" which provides guidance on the `num_blocks` and `block_size` needed for use with this memory pool.
+
+- The `storage_type` parameter can be set to determine the memory storage type used by the operator. This can be 0 for page-locked host memory (allocated with `cudaMallocHost`), 1 for device memory (allocated with `cudaMalloc`) or 2 for system memory (allocated with C++ `new`).
+- The `block_size` parameter determines the size of a single block in the memory pool in bytes. Any allocation requests made of this allocator must fit into this block size.
+- The `num_blocks` parameter controls the total number of blocks that are allocated in the memory pool.
+- The `dev_id` parameter is an optional parameter that can be used to specify the CUDA ID of the device on which the memory pool will be created.
+
+### StreamOrderedAllocator
+
+This allocator uses CUDA's [Stream-Ordered Memory Allocator](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/stream-ordered-memory-allocation.html#stream-ordered-memory-allocator) (`cudaMallocAsync`/`cudaFreeAsync`) to dynamically allocate CUDA device memory. Stream-ordered allocation enables memory operations to be tied to specific CUDA streams, allowing allocation and deallocation without blocking the host or other streams.
+
+This allocator **only supports CUDA device memory**. If host memory is also needed, use `RMMAllocator` instead (see [choosing between allocators](../components/resources#choosing-allocators) below).
+
+- The `device_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
+- The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
+- The `release_threshold` parameter specifies the amount of reserved memory to hold onto before trying to release memory back to the OS. This is an optional parameter that defaults to "4MB". See note below on the format used to specify the value.
+- The `dev_id` parameter is an optional parameter that can be used to specify the GPU device ID (as an integer) on which the memory pool will be created.
+
+### RMMAllocator
+
+This allocator provides a pair of memory pools (one is a CUDA device memory pool and the other corresponds to pinned host memory). The underlying implementation is based on the [RAPIDS memory manager](https://github.com/rapidsai/rmm) (RMM) and uses a pair of `rmm::mr::pool_memory_resource` resource types (The device memory pool is a `rmm::mr::cuda_memory_resource` and the host pool is a `rmm::mr::pinned_memory_resource`). Unlike `BlockMemoryPool`, this allocator can be used with operators like `VideoStreamReplayerOp` that require an allocator capable of allocating both host and device memory. Rather than fixed block sizes, it uses just an initial memory size to allocate and a maximum size that the pool can expand to.
+
+- The `device_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
+- The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
+- The `host_memory_initial_size` parameter specifies the initial size of the host (pinned) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
+- The `host_memory_max_size` parameter specifies the maximum size of the host (pinned) memory pool. This is an optional parameter that defaults to twice the value of `host_memory_initial_size`. See note below on the format used to specify the value.
+- The `dev_id` parameter is an optional parameter that can be used to specify the GPU device ID (as an integer) on which the memory pool will be created.
+
+<Note>
+
+The values for the memory parameters, such as `device_memory_initial_size` must be specified in the form of a string containing a non-negative integer value followed by a suffix representing the units. Supported units are B, KB, MB, GB and TB where the values are powers of 1024 bytes
+(e.g. MB = 1024 * 1024 bytes). Examples of valid units are "512MB", "256 KB", "1 GB". If a floating point number is specified that decimal portion will be truncated (i.e. the value is rounded down to the nearest integer).
+
+</Note>
+
+
+<Anchor id="choosing-allocators" />
+
+### Choosing Between Device Allocators
+
+Holoscan provides several allocator types with different characteristics:
+
+| Feature | UnboundedAllocator | BlockMemoryPool | StreamOrderedAllocator | RMMAllocator |
+|---------|-------------------|-----------------|------------------------|--------------|
+| **Device memory** | Yes | Yes | Yes | Yes |
+| **Pinned host memory** | Yes | Yes | No | Yes |
+| **System memory** | Yes | Yes | No | No |
+| **Async allocation**\* | No | No | Yes | Yes |
+| **Mechanism** | Dynamic (`cudaMalloc`/`new`) | Fixed-size blocks | Pool (CUDA stream-ordered) | Pool (RMM) |
+
+\* "Async allocation" means the allocator uses stream-ordered APIs (e.g., `cudaMallocAsync`) or async memory pools (e.g., RMM). These APIs can still block the host if the pool needs to grow or release memory back to the OS.
+
+**When to use each allocator:**
+
+- **`UnboundedAllocator`**: Good for initial prototyping. Uses dynamic allocation on each call without memory reuse. Supports all memory types including system memory (C++ `new`).
+
+- **`BlockMemoryPool`**: Best for predictable workloads with known memory requirements. Pre-allocates fixed-size blocks that are reused across `compute` calls, avoiding allocation overhead. Requires specifying `block_size` and `num_blocks` upfront.
+
+- **`StreamOrderedAllocator`**: Device memory only. Uses CUDA's native stream-ordered allocator which integrates with stream semantics for efficient memory reuse. Inherits from `CudaAllocator`, providing `allocate_async`/`free_async` methods for stream-ordered allocation.
+
+- **`RMMAllocator`**: Provides both device and pinned host memory pools. Required for operators like `VideoStreamReplayerOp` that need both memory types. Inherits from `CudaAllocator`, providing `allocate_async`/`free_async` methods.
+
+### MatXAllocator (Utility)
+
+The `MatXAllocator` class (defined in `holoscan/utils/matx_allocator.hpp`) is a lightweight adapter that enables any Holoscan SDK allocator to be used with [MatX](https://nvidia.github.io/MatX/) GPU tensor operations. MatX uses compile-time duck typing (SFINAE) to detect custom allocators — it requires `allocate(size_t)` and `deallocate(void*, size_t)` methods, which `MatXAllocator` provides by delegating to the underlying Holoscan allocator.
+
+**Key features:**
+
+- Works with any Holoscan allocator: `BlockMemoryPool`, `UnboundedAllocator`, `StreamOrderedAllocator`, `RMMAllocator`
+- Stream-aware: when constructed with a `cudaStream_t` and a `CudaAllocator`-derived allocator (e.g., `RMMAllocator`, `StreamOrderedAllocator`), uses `allocate_async`/`free_async` for stream-ordered allocation
+- For `BlockMemoryPool` with a stream, uses GXF-level stream-aware deferred deallocation
+
+**Behavior by allocator type** (behavior depends on whether a CUDA stream is passed to `MatXAllocator`, not on the allocator class itself):
+
+| Allocator | Stream | Allocation | Deallocation |
+|---|---|---|---|
+| `RMMAllocator` / `StreamOrderedAllocator` | Yes | Async (stream-ordered) | Async (stream-ordered) |
+| `RMMAllocator` / `StreamOrderedAllocator` | No | Sync | Sync |
+| `BlockMemoryPool` | Yes | Sync | Deferred (CUDA event) |
+| `BlockMemoryPool` | No | Sync | Sync (immediate) |
+| `UnboundedAllocator` | Any | Sync | Sync |
+
+"Stream" = whether a non-null `cudaStream_t` is passed to `MatXAllocator`. Rows 1–2 refer to the same allocator type; the distinction is whether `MatXAllocator` is constructed with a non-null stream. "Sync" means *not stream-ordered* (no `cudaMallocAsync`/`cudaFreeAsync`); it does **not** mean each allocation forces a GPU sync. For `BlockMemoryPool`, allocation from the preallocated pool is CPU bookkeeping only.
+
+**Usage example (C++):**
+
+```cpp
+#include <holoscan/utils/matx_allocator.hpp>
+
+// Inside an operator's compute() method, where allocator_ is a
+// Parameter<std::shared_ptr<Allocator>> registered in setup():
+holoscan::MatXAllocator matx_alloc(allocator_.get());
+
+// Or with a CUDA stream for stream-ordered allocation:
+holoscan::MatXAllocator matx_alloc(allocator_.get(), cuda_stream);
+
+// Use with MatX tensor operations — memory comes from the Holoscan allocator
+auto tensor = matx::make_tensor<float>({1024}, matx_alloc);
+
+// Stream rebinding for multi-stream pipelines:
+auto alloc2 = matx_alloc.with_stream(another_stream);
+```
+
+<Note>
+
+MatX's `make_tensor` with a custom allocator does **not** accept a CUDA stream parameter.
+To use stream-ordered allocation, bind the stream when constructing the `MatXAllocator`.
+Use `with_stream()` to create allocators for different streams without rebuilding from scratch.
+
+</Note>
+
+
+<Note>
+
+The `MatXAllocator` does **not** own the underlying allocator. The allocator must outlive the `MatXAllocator` and any tensors allocated through it. In practice, register the allocator as a shared resource in `setup()` and construct the `MatXAllocator` with `allocator_.get()` in `compute()`.
+
+</Note>
+
+
+<Note>
+
+To import a `holoscan::Tensor` into MatX via DLPack, use `tensor->to_dlpack()` and MatX's `make_tensor(TensorType&, const DLManagedTensor)` overload. Manage the returned `DLManagedTensor*` with a scope guard (e.g., `std::unique_ptr` with a custom deleter). See the `matx_allocator` example for a complete demonstration of both raw-pointer and DLPack-based import.
+
+</Note>
+
+
+See the `matx_allocator` example under `examples/matx/matx_allocator/` for a complete working application.
+
+### CudaStreamPool
+
+This allocator creates a pool of CUDA streams.
+
+- The `stream_flags` parameter specifies the flags sent to [cudaStreamCreateWithPriority](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html) when creating the streams in the pool.
+- The `stream_priority` parameter specifies the priority sent to [cudaStreamCreateWithPriority](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html) when creating the streams in the pool. Lower values have a higher priority.
+- The `reserved_size` parameter specifies the initial number of CUDA streams created in the pool upon initialization.
+- The `max_size` parameter is an optional parameter that can be used to specify a maximum number of CUDA streams that can be present in the pool. The default value of 0 means that the size of the pool is unlimited.
+- The `dev_id` parameter is an optional parameter that can be used to specify the CUDA ID of the device on which the stream pool will be created.
+
+## Clock
+
+Clock classes can be provided via a `clock` parameter to the `Scheduler` classes to manage the flow of time.
+
+All clock classes provide a common set of methods that can be used at runtime in user applications.
+
+- The time() (`Clock::time`) method returns the current time in seconds (floating point).
+- The timestamp() (`Clock::timestamp`) method returns the current time as an integer number of nanoseconds.
+- The sleep_for() (`Clock::sleep_for`) method sleeps for a specified duration in ns. An overloaded version of this method allows specifying the duration using a `std::chrono::duration<Rep, Period>` from the C++ API or a [datetime.timedelta](https://docs.python.org/3/library/datetime.html#datetime.timedelta) from the Python API.
+- The sleep_until() (`Clock::sleep_until`) method sleeps until a specified target time in ns.
+
+### Realtime Clock
+
+The `RealtimeClock` respects the true duration of conditions such as `PeriodicCondition`. It is the default clock type and the one that would likely be used in user applications.
+
+In addition to the general clock methods documented above:
+
+- This class has a set_time_scale() (`Clock::set_time_scale`) method which can be used to dynamically change the time scale used by the clock.
+- The parameter `initial_time_offset` can be used to set an initial offset in the time at initialization.
+- The parameter `initial_time_scale` can be used to modify the scale of time. For instance, a scale of 2.0 would cause time to run twice as fast.
+- The parameter `use_time_since_epoch` makes times relative to the [POSIX epoch](https://en.wikipedia.org/wiki/Epoch_(computing)) (`initial_time_offset` becomes an offset from epoch).
+
+### Manual Clock
+
+The `ManualClock` compresses time intervals (e.g., `PeriodicCondition` proceeds immediately rather than waiting for the specified period). It is provided mainly for use during testing/development.
+
+The parameter `initial_timestamp` controls the initial timestamp on the clock in ns.
+
+### Synthetic Clock
+
+The `SyntheticClock` is a clock where time flow is synthesized, like from a recording or a simulation.
+
+The parameter `initial_timestamp` controls the initial timestamp on the clock in ns.
+
+## Transmitter (advanced)
+
+Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators a `DoubleBufferTransmitter` will automatically be used by default, while for connections between fragments in a distributed application, a `UcxTransmitter` will be used. When data frame flow tracking is enabled any `DoubleBufferTransmitter` will be replaced by an `AnnotatedDoubleBufferTransmitter` which also records the timestamps needed for that feature. `AsyncBufferTransmitter` is optionally used when `IOSpec::ConnectorType::kAsyncBuffer` is used in the `add_flow` method for lock-free, wait-free and asynchronous data flow.
+
+### DoubleBufferTransmitter
+
+This is the default transmitter class used by output ports of operators within a fragment.
+
+### AsyncBufferTransmitter
+
+This is an optional transmitter class that can be used to connect two operators for lock-free, wait-free and asynchronous data flow. This transmitter is used by passing `IOSpec::ConnectorType::kAsyncBuffer` as the connector type in the `add_flow` method.
+
+### UcxTransmitter
+
+This is the transmitter class used by output ports of operators that connect fragments in a distributed applications. It takes care of sending UCX active messages and serializing their contents.
+
+## Receiver (advanced)
+
+Typically users don't need to explicitly assign transmitter or receiver classes to the IOSpec ports of Holoscan SDK operators. For connections between operators, a `DoubleBufferReceiver` will be used by default, while for connections between fragments in a distributed application, the `UcxReceiver` will be used. When data frame flow tracking is enabled, any `DoubleBufferReceiver` will be replaced by an `AnnotatedDoubleBufferReceiver` which also records the timestamps needed for that feature. `AsyncBufferReceiver` is optionally used when `IOSpec::ConnectorType::kAsyncBuffer` is used in the `add_flow` method for lock-free, wait-free and asynchronous data flow.
+
+### DoubleBufferReceiver
+
+This is the receiver class used by input ports of operators within a fragment.
+
+### AsyncBufferReceiver
+
+This is an optional receiver class that can be used to connect two operators for lock-free, wait-free and asynchronous data flow. This receiver is used by passing `IOSpec::ConnectorType::kAsyncBuffer` as the connector type in the `add_flow` method.
+
+### UcxReceiver
+
+This is the receiver class used by input ports of operators that connect fragments in a distributed applications. It takes care of receiving UCX active messages and deserializing their contents.
+
+## Condition Combiners
+
+The default behavior for Holoscan's schedulers is AND combination of any conditions on an operator when determining if it should execute. It is possible to assign conditions to a different `ConditionCombiner` class which will combine the conditions using the rules of this combiner and omit those conditions from consideration by the default AND combiner.
+
+### OrConditionCombiner
+
+The `OrConditionCombiner` applies an OR condition to the conditions passed to its "terms" argument. For example, assume an operator had a `CountCondition` as well as a `MessageAvailableCondition` for port "in1" and a `MessageAvailableCondition` for port "in2". If an `OrConditionCombiner` was added to the operator with the two message-available conditions passed to its "terms" argument, then the scheduling logic for the operator would be:
+
+- (CountCondition satisfied) AND ((message available on port "in1") OR (message available on port "in2"))
+
+In other words, any condition like the `CountCondition` in this example that is not otherwise assigned to a custom `ConditionCombiner` will use the default AND combiner.
+
+Holoscan provides a `IOSpec::or_combine_port_conditions` method which can be called from `Operator::setup` to enable OR combination of conditions that apply to specific input (or output) ports.
+
+## System Resources
+
+The components in this "system resources" section are related to system resources such as CPU Threads that can be used by operators.
+
+### ThreadPool
+
+This resource represents a thread pool that can be used to pin operators to run using specific CPU threads. This functionality is not supported by the `GreedyScheduler` because it is single-threaded, but it is supported by both the `EventBasedScheduler` and `MultiThreadScheduler`. Unlike other resource types, a ThreadPool should **not** be created via `make_resource` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)), but should instead use the dedicated `make_thread_pool` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)) method. This dedicated method is necessary as the thread pool requires some additional initialization logic that is not required by the other resource types. See the section on [configuring thread pools](../using-the-sdk/create-an-application#configuring-app-thread-pools) in the user guide for usage.
+
+- The parameter `initial_size` indicates the number of threads to initialize the thread pool with.
+
+## Data Logger Resources
+
+These native resource types are intended to add users in writing their own implementations of the holoscan::DataLogger interface that can be constructed via `Fragment::make_resource` and use Parameters in the same way as other resources (e.g. reading values either from user-provided `Arg` and/or `ArgList` or via reading from the application's provided YAML config).
+
+### DataLoggerResource
+
+A base class that can be inherited from to create data loggers where the logging runs synchronously on the same thread that called `Operator::compute`.
+
+If additional parameters are added in the child class, the user should make sure to call `DataLoggerResource::setup()` within their `setup` method override so that the base parameters are also available.
+
+- The `serializer` parameter specifies the text serializer used to convert data to string format. If not provided, a default SimpleTextSerializer will be created automatically.
+- The `log_inputs` parameter controls whether to log input messages. Default is True.
+- The `log_outputs` parameter controls whether to log output messages. Default is True.
+- The `log_tensor_data_content` parameter controls whether to log the actual content of tensor data. Default is False.
+- The `log_metadata` parameter controls whether to log metadata associated with messages. Default is True.
+- The `allowlist_patterns` parameter is a list of regex patterns. Only messages matching these patterns will be logged. If empty, all messages are allowed.
+- The `denylist_patterns` parameter is a list of regex patterns. Messages matching these patterns will be filtered out. If `allowlist_patterns` is specified, it takes precedence, and `denylist_patterns` is ignored.
+
+### AsyncDataLoggerResource
+
+A base class that can be inherited from to create data loggers where the logging runs asynchronously via a dedicated queue and worker thread that is managed by the logger resource. This is likely to be more performant than using `DataLoggerResource` in most cases.
+
+If additional parameters are added in the child class, the user should make sure to call `AsyncDataLoggerResource::setup()` within their `setup` method override so that the base parameters are also available.
+
+The AsyncDataLoggerResource inherits all of the parameters from DataLoggerResource and adds the following:
+
+- The `max_queue_size` parameter specifies the maximum number of entries in the data queue. The data queue handles metadata and tensor headers without full tensor content.
+- The `worker_sleep_time` parameter specifies the sleep duration in nanoseconds when the data queue is empty. Lower values reduce latency but increase CPU usage.
+- The `queue_policy` parameter controls how queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
+- The `large_data_max_queue_size` parameter specifies the maximum number of entries in the large data queue. The large data queue handles full tensor content for detailed logging.
+- The `large_data_worker_sleep_time` parameter specifies the sleep duration in nanoseconds when the large data queue is empty.
+- The `large_data_queue_policy` parameter controls how large data queue overflow is handled. Can be `kReject` (default) to reject new items with a warning, or `kRaise` to throw an exception. In the YAML configuration for this parameter, you can use string values "reject" or "raise" (case-insensitive).
+- The `enable_large_data_queue` parameter controls whether to enable the large data queue and worker thread for processing full tensor content.
+- The `shutdown_timeout` parameter specifies the maximum time in nanoseconds to wait for worker threads to shutdown gracefully.
+- The `queue_type` parameter specifies the queue implementation to use. Can be `LockFree` (default) for higher throughput with per-producer FIFO ordering only, or `Ordered` for strict global FIFO ordering across all producers at the cost of lower throughput. In the YAML configuration for this parameter, you can use string values "lockfree", "lock_free", or "ordered" (case-insensitive).
+
+#### Ensuring FIFO Ordering Per Operator
+
+When using the `LockFree` queue type (default), the AsyncDataLoggerResource maintains FIFO order per-producer thread, but not globally across all producers. Since multiple operators may run on different threads, messages from different operators can be interleaved in any order.
+
+To ensure that messages from a specific operator maintain strict FIFO order in the logs, you can use a `ThreadPool` resource to pin the operator to a specific worker thread. This ensures the operator's `compute()` method is always called by the same thread, guaranteeing that all messages from that operator come from the same producer thread and preserving FIFO order for that operator's messages. See [configuring thread pools](../using-the-sdk/create-an-application#configuring-app-thread-pools) for details on how to create thread pools and pin operators to them.
+
+If strict global FIFO ordering across all operators is required (based on enqueue timestamps), use the `Ordered` queue type instead, though this will result in lower throughput due to mutex contention.
+
+## CUDA Green Context Resources
+
+CUDA Green Context is an advanced feature that enables partitioning of a GPU into multiple isolated execution contexts, each with its own set of Streaming Multiprocessors (SMs). This allows for fine-grained control over GPU resource allocation, enabling multiple operators or applications to share a single GPU without interfering with each other's workloads. Holoscan provides resource classes to manage and utilize CUDA Green Contexts.
+
+### CudaGreenContextPool
+
+This resource manages a pool of CUDA Green Contexts, each representing a partition of the GPU with a specified number of SMs. The pool is typically created once per application and individual green contexts are allocated from it for use by operators. A default green context can be specified through the `default_context_index` parameter. When this parameter is a negative number or not specified (default), the last green context partition will be used as the default. This can be the green context partition with the remaining SMs that are not used in `sms_per_partition`.
+
+- The `dev_id` parameter specifies the CUDA device ID on which the green context pool will be created.
+- The `flags` parameter specifies additional configuration flags for the green context pool, default 0. (Refer to the CUDA Green Context documentation for supported flag values.)
+- The `num_partitions` parameter specifies the number of green context partitions to create.
+- The `sms_per_partition` parameter is a list specifying the number of SMs to allocate to each partition. The number used should be a multiple of `min_sm_count`.
+- The `default_context_index` parameter specifies which green context partition is used as the default. When it is a negative number or not specified (default), the last green context partition will be used as default. This can be the green context partition with the remaining SMs that are not used in `sms_per_partition`.
+- The `min_sm_count` parameter is used when splitting GPU SMs into groups. The default value is 2.
+
+### CudaGreenContext
+
+This resource represents a single CUDA Green Context, which is a partition of the GPU with a dedicated set of Streaming Multiprocessors (SMs). `CudaGreenContext` resources are typically created from a `CudaGreenContextPool` and can be bound to a `CudaStreamPool` to control which GPU partition they create cuda streams from. This enables fine-grained control over GPU resource allocation and isolation between different operators or applications.
+
+- The `green_context_pool` parameter specifies the `CudaGreenContextPool` resource from which this green context is allocated. This must be set to an existing pool resource.
+- The `index` parameter specifies the index of the green context partition within the pool to use. If not specified or specified as a negative number, the default green context from `green_context_pool` will be used.
+
+By assigning different `CudaGreenContext` resources to different operators, users can ensure that each operator runs in its own isolated GPU partition, improving performance isolation and resource management in complex applications.
+
+<Anchor id="cuda-stream-resources" />
+
+## CUDA Stream and Event Types
+
+The following types are used internally by the Holoscan SDK's execution runtime for managing CUDA streams and events during operator execution. They originate from the underlying GXF (Graph Execution Framework) CUDA extension and may be encountered when working with GPU-accelerated operators. For guidance on handling CUDA streams in your operators, see the [CUDA Stream Handling](../holoscan_cuda_stream_handling.mdx) guide.
+
+### CudaStream
+
+Holds and provides access to a native `cudaStream_t`. `CudaStream` handles are allocated by `CudaStreamPool`. A handle remains valid until explicitly released via `CudaStreamPool.releaseStream()` or implicitly when `CudaStreamPool` is deactivated.
+
+Use `stream()` to obtain the native `cudaStream_t` for submitting GPU operations. After submitting work, call `record(event, input_entity, sync_cb)` to extend the input entity's lifecycle until the GPU consumes it, preventing premature buffer release.
+
+### CudaStreamId
+
+Holds a CUDA stream ID used to look up the corresponding `CudaStream` handle. The `stream_cid` field should be the component ID of a `CudaStream`.
+
+### CudaEvent
+
+Holds and provides access to a native `cudaEvent_t` handle. Initialize via `init(flags, dev_id)` or set a third-party event via `initWithEvent(event, dev_id, free_fnc)`. The event remains valid until `deinit` is called (or until destruction).
+
+### CudaStreamSync
+
+A synchronization component that must be placed in the pipeline after all CUDA operator stages. When a message entity is received, it finds all `CudaStreamId` components in that message, extracts each `CudaStream`, and synchronizes all previously recorded events along with submitted GPU operations.
+
+<Warning>
+
+`CudaStreamSync` must be present in the graph when `CudaStream.record()` is used, otherwise memory leaks may occur.
+
+</Warning>
+
+
+<Anchor id="multimedia-data-types" />
+
+## Multimedia Data Types
+
+The following data types are used by Holoscan SDK operators that process audio and video data. They originate from the underlying GXF multimedia extension and define the buffer formats and metadata used when passing media data between operators.
+
+### VideoBuffer
+
+`VideoBuffer` holds memory and metadata for a video frame, analogous to a `Tensor` but with video-specific metadata. `VideoBufferInfo` captures the following fields:
+
+| Field | Description |
+|---|---|
+| `width` | Width of the video frame |
+| `height` | Height of the video frame |
+| `color_format` | VideoFormat of the frame |
+| `color_planes` | ColorPlane(s) for the VideoFormat |
+| `surface_layout` | SurfaceLayout of the frame |
+
+Supported `VideoFormat` values:
+
+| VideoFormat | Description |
+|---|---|
+| `GXF_VIDEO_FORMAT_YUV420` | BT.601 multi-planar 4:2:0 YUV |
+| `GXF_VIDEO_FORMAT_YUV420_ER` | BT.601 multi-planar 4:2:0 YUV ER |
+| `GXF_VIDEO_FORMAT_YUV420_709` | BT.709 multi-planar 4:2:0 YUV |
+| `GXF_VIDEO_FORMAT_YUV420_709_ER` | BT.709 multi-planar 4:2:0 YUV ER |
+| `GXF_VIDEO_FORMAT_NV12` | BT.601 multi-planar 4:2:0 YUV with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_ER` | BT.601 multi-planar 4:2:0 YUV ER with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_709` | BT.709 multi-planar 4:2:0 YUV with interleaved UV |
+| `GXF_VIDEO_FORMAT_NV12_709_ER` | BT.709 multi-planar 4:2:0 YUV ER with interleaved UV |
+| `GXF_VIDEO_FORMAT_RGBA` | RGBA-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGRA` | BGRA-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_ARGB` | ARGB-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_ABGR` | ABGR-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_RGBX` | RGBX-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGRX` | BGRX-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_XRGB` | XRGB-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_XBGR` | XBGR-8-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_RGB` | RGB-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_BGR` | BGR-8-8-8 single plane |
+| `GXF_VIDEO_FORMAT_R8_G8_B8` | RGB unsigned 8-bit multiplanar |
+| `GXF_VIDEO_FORMAT_B8_G8_R8` | BGR unsigned 8-bit multiplanar |
+| `GXF_VIDEO_FORMAT_GRAY` | 8-bit grayscale single plane |
+
+Supported `SurfaceLayout` values:
+
+| SurfaceLayout | Description |
+|---|---|
+| `GXF_SURFACE_LAYOUT_PITCH_LINEAR` | Pitch-linear surface memory |
+| `GXF_SURFACE_LAYOUT_BLOCK_LINEAR` | Block-linear surface memory |
+
+### AudioBuffer
+
+`AudioBuffer` holds memory and metadata for an audio frame, analogous to a `Tensor` but with audio-specific metadata. `AudioBufferInfo` captures the following fields:
+
+| Field | Description |
+|---|---|
+| `channels` | Number of channels in an audio frame |
+| `samples` | Number of samples in an audio frame |
+| `sampling_rate` | Sampling rate in Hz |
+| `bytes_per_sample` | Number of bytes per sample |
+| `audio_format` | AudioFormat of the frame |
+| `audio_layout` | AudioLayout of the frame |
+
+Supported `AudioFormat` values:
+
+| AudioFormat | Description |
+|---|---|
+| `GXF_AUDIO_FORMAT_S16LE` | 16-bit signed PCM audio |
+| `GXF_AUDIO_FORMAT_F32LE` | 32-bit floating-point audio |
+
+Supported `AudioLayout` values:
+
+| AudioLayout | Description |
+|---|---|
+| `GXF_AUDIO_LAYOUT_INTERLEAVED` | Interleaved channel data (e.g., LRLRLR) |
+| `GXF_AUDIO_LAYOUT_NON_INTERLEAVED` | Non-interleaved channel data (e.g., LLLRRR) |

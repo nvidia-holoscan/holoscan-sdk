@@ -428,6 +428,11 @@ void FormatConverterGpuResidentOp::initialize() {
         "FormatConverterGpuResidentOp: resize is not supported for YUYV input (use 3/4-channel "
         "packed RGB/RGBA).");
   }
+  if (do_resize && in_dtype_ == FormatDType::kUYVY) {
+    throw std::runtime_error(
+        "FormatConverterGpuResidentOp: resize is not supported for UYVY input (use 3/4-channel "
+        "packed RGB/RGBA).");
+  }
   if (do_resize && in_dtype_ == FormatDType::kFloat32) {
     throw std::runtime_error(
         "FormatConverterGpuResidentOp: resize is not supported for float32 input tensors.");
@@ -466,12 +471,21 @@ void FormatConverterGpuResidentOp::initialize() {
     }
   }
 
+  // Packed 4:2:2 chroma subsampling shares U/V between adjacent pixel pairs; require even width.
+  if ((in_dtype_ == FormatDType::kYUYV || in_dtype_ == FormatDType::kUYVY) &&
+      (src_cols_ % 2) != 0) {
+    throw std::runtime_error(
+        fmt::format("FormatConverterGpuResidentOp: {} input requires an even width, got {}.",
+                    in_dtype_str_.get(),
+                    src_cols_));
+  }
+
   work_rows_ = do_resize ? rh : src_rows_;
   work_cols_ = do_resize ? rw : src_cols_;
 
   if (isPlanarYuvInput(in_dtype_)) {
     in_channels_ = 0;
-  } else if (in_dtype_ == FormatDType::kYUYV) {
+  } else if (in_dtype_ == FormatDType::kYUYV || in_dtype_ == FormatDType::kUYVY) {
     in_channels_ = 2;
   } else if (in_dtype_ == FormatDType::kRGB888 || in_dtype_ == FormatDType::kUnsigned8 ||
              in_dtype_ == FormatDType::kFloat32 || in_dtype_ == FormatDType::kRGB161616) {
@@ -499,6 +513,7 @@ void FormatConverterGpuResidentOp::initialize() {
     case FormatConversionType::kYUV420ToRGB888:
     case FormatConversionType::kRGBA8888ToFloat32:
     case FormatConversionType::kYUYVToRGB888:
+    case FormatConversionType::kUYVYToRGB888:
       out_channels_ = 3;
       break;
     default:
@@ -899,6 +914,14 @@ void FormatConverterGpuResidentOp::launchConvert(
       const int32_t in_step = input_plane_layout[0].stride_bytes;
       auto* out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
       status = nppiYUV422ToRGB_8u_C2C3R_Ctx(
+          in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
+      break;
+    }
+    case FormatConversionType::kUYVYToRGB888: {
+      const auto* in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
+      const int32_t in_step = input_plane_layout[0].stride_bytes;
+      auto* out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+      status = nppiCbYCr422ToRGB_8u_C2C3R_Ctx(
           in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
       break;
     }

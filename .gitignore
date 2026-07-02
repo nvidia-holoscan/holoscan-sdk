@@ -34,6 +34,8 @@ temp/
 releases/
 develop-eggs/
 dist/
+!docs/fern/dist/
+!docs/fern/dist/**
 downloads/
 eggs/
 .eggs/

@@ -340,7 +340,12 @@ void PoseTreeUCXClient::run() {
                     local_rhs = rhs_it->second;
                   }
 
-                  impl_->pose_tree->set(local_lhs, local_rhs, delta_msg.data.edge_data.time, pose);
+                  auto set_result = impl_->pose_tree->set(
+                      local_lhs, local_rhs, delta_msg.data.edge_data.time, pose);
+                  if (!set_result) {
+                    HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Failed to apply delta edge set: {}",
+                                       PoseTree::error_to_str(set_result.error()));
+                  }
                   is_external_pose_tree_update_ = false;
                   break;
                 }
@@ -423,7 +428,11 @@ void PoseTreeUCXClient::run() {
               }
               local_lhs = lhs_it->second;
               local_rhs = rhs_it->second;
-              impl_->pose_tree->set(local_lhs, local_rhs, edge.time, pose);
+              auto set_result = impl_->pose_tree->set(local_lhs, local_rhs, edge.time, pose);
+              if (!set_result) {
+                HOLOSCAN_LOG_ERROR("PoseTreeUCXClient: Failed to apply snapshot edge set: {}",
+                                   PoseTree::error_to_str(set_result.error()));
+              }
             }
 
             // Publish the snapshot mapping in one shot.

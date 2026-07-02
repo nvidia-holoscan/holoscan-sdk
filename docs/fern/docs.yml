@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://schema.buildwithfern.dev/docs-yml.json
+
+# Library API docs (Beta): `fern docs md generate`, then `python3 public/docs/scripts/fix_generated_library_mdx.py`
+# (fixes ParamField type ampersands, default=""..."" string literals, description angle brackets).
+# See https://buildwithfern.com/learn/docs/api-references/library-reference
+libraries:
+  holoscan-cpp:
+    input:
+      git: https://github.com/nvidia-holoscan/holoscan-sdk
+      subpath: include/holoscan
+    output:
+      path: ./generated/api-reference/cpp
+    lang: cpp
+ # holoscan-python:
+ #   input:
+ #     git: https://github.com/nvidia-holoscan/holoscan-sdk
+ #     subpath: python/holoscan
+ #   output:
+ #     path: ./docs/generated/api-reference/python
+ #   lang: python
+
+instances:
+  - url: nvidia-holoscan.docs.buildwithfern.com/holoscan/sdk-user-guide
+    custom-domain: docs.nvidia.com/holoscan/sdk-user-guide
+    multi-source: true
+
+global-theme: nvidia
+
+ai-search:
+  location:
+    - docs
+
+title: Holoscan SDK Documentation
+
+versions:
+      # holoscan-version-sync:begin
+      - display-name: 4.4 (Latest)
+      # holoscan-version-sync:end
+        path: ./index.yml
+        availability: ga
+      # To add an older version later:
+      #   1. Create ./v3.5/ with the snapshot content for that release.
+      #   2. Add a nav file at ./versions/v3.5.yml pointing at those pages.
+      #   3. Append an entry below (older versions get versioned URL paths like /v3.5/...):
+      # - display-name: '3.5'
+      #   path: ./versions/v3.5.yml
+      #   availability: stable
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+colors:
+  accentPrimary:
+    dark: '#76B900'
+    light: '#76B900'
+  background:
+    light: '#FFFFFF'
+    dark: '#000000'
+typography:
+  bodyFont:
+    name: NVIDIA
+    paths:
+      - path: assets/fonts/NVIDIASans.woff2
+        style: normal
+      - path: assets/fonts/NVIDIASans_Italic.woff2
+        style: italic
+  codeFont:
+    name: RobotoMono
+    paths:
+      - path: assets/fonts/RobotoMono.woff2
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+logo:
+  dark: assets/NVIDIA_dark.svg
+  light: assets/NVIDIA_light.svg
+  height: 20
+  href: /holoscan/sdk-user-guide
+  right-text: Documentation
+
+favicon: assets/NVIDIA_symbol.svg
+
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
+  - path: dist/output.js
+    strategy: afterInteractive
+css:
+  - assets/main.css
+  - dist/output.css
+
+redirects:
+  # Paths are relative to the site root; subpath prefix matches instances + custom-domain.
+  # Legacy HTML URLs used .../path/to/page/index.html; Fern canonical URLs omit index.html.
+  - source: "/holoscan/sdk-user-guide/index.html"
+    destination: "/holoscan/sdk-user-guide/introduction/overview"
+  # AJA / Emergent setup moved to HoloHub (Holoscan SDK v3.0+).
+  - source: "/holoscan/sdk-user-guide/setup/third-party-hardware-setup/aja-setup"
+    destination: "https://nvidia-holoscan.github.io/holohub/operators/aja_source/"
+  - source: "/holoscan/sdk-user-guide/setup/third-party-hardware-setup/emergent-setup"
+    destination: "https://nvidia-holoscan.github.io/holohub/operators/emergent_source/"
+  - source: "/holoscan/sdk-user-guide/aja_setup.html"
+    destination: "https://nvidia-holoscan.github.io/holohub/operators/aja_source/"
+  - source: "/holoscan/sdk-user-guide/emergent_setup.html"
+    destination: "https://nvidia-holoscan.github.io/holohub/operators/emergent_source/"

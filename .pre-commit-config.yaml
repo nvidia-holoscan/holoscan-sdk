@@ -62,24 +62,27 @@ repos:
           - common-debian.sh
           # Updated excludes to handle both root depths
           - --exclude
-          - ^(public/)?\.cache
+          - (public/)?\.cache
           - --exclude
-          - ^(public/)?build
+          - (public/)?build
           - --exclude
-          - ^(public/)?install
+          - (public/)?install
           - --exclude
-          - ^(public/)?build-*
+          - (public/)?build-*
           - --exclude
-          - ^(public/)?install-*
+          - (public/)?install-*
           - --exclude
-          - ^(public/)?modules/holoviz/thirdparty/
+          - (public/)?modules/holoviz/thirdparty/
           - --exclude
           - .*\.patch$
+          # Fern bundled dist/ output (generated files, no NVIDIA copyright header).
+          - --exclude
+          - (public/)?docs/fern/dist/
           # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
           - --exclude
-          - public/modules/holoipc/examples/fastdds_benchmark/
+          - (public/)?modules/holoipc/examples/fastdds_benchmark/
           - --exclude
-          - public/modules/holoipc/examples/fastdds_example/
+          - (public/)?modules/holoipc/examples/fastdds_example/
           - --update-current-year
         language: system
         pass_filenames: true
@@ -116,7 +119,7 @@ repos:
           - tomli>=2.0.1,<3.0; python_version<'3.11'
         files: ^(public/)?
         args:
-          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch
+          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*docs/fern/dist*
           - --ignore-regex=.*codespell-ignore$
           - --toml=.codespell.toml
           - --write-changes
@@ -178,7 +181,9 @@ repos:
     hooks:
       - id: markdownlint
         args: [--fix, --config, public/.markdownlint.yaml]
-        files: ^public/.*\.md$
+        files: ^(public/)?.*\.mdx?$
+        types_or: [markdown, mdx]
+        exclude: ^swipat/summary\.md$
 
   # clang-format
   - repo: https://github.com/pre-commit/mirrors-clang-format

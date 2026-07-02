@@ -618,6 +618,9 @@ RUN --mount=type=bind,from=onnxruntime-src,source=${ORT_DIR}/src,target=${ORT_DI
 FROM base AS onnxruntime-downloader
 ARG ONNX_RUNTIME_VERSION
 
+# Expected SHA256 checksums for ORT tarballs (see public/checksums/)
+COPY checksums/onnxruntime-${ONNX_RUNTIME_VERSION}.sha256 /tmp/onnxruntime.sha256
+
 # Download ORT binaries from artifactory
 WORKDIR /opt/onnxruntime
 RUN CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2) \
@@ -625,14 +628,28 @@ RUN CUDA_MAJOR_MINOR=$(echo ${CUDA_VERSION} | cut -d. -f1-2) \
         # Use ONNX Runtime CUDA 13.0 pre-built binary for convenience
         CUDA_MAJOR_MINOR="13.0"; \
     fi \
-    && curl -S -L -# -o ort.tgz \
-        https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz \
-    && echo "Downloaded ONNX Runtime from onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz" \
+    && ORT_ARCHIVE="onnxruntime-${ONNX_RUNTIME_VERSION}-cuda-${CUDA_MAJOR_MINOR}-$(uname -m).tar.gz" \
+    && ORT_URL="https://edge.urm.nvidia.com/artifactory/sw-holoscan-thirdparty-generic-local/onnxruntime/${ORT_ARCHIVE}" \
+    && curl -S -L -# -D /tmp/ort.headers -o ort.tgz "${ORT_URL}" \
+    && echo "Downloaded ONNX Runtime from ${ORT_ARCHIVE}" \
     && ARCHIVE_SIZE=$(stat -c%s "ort.tgz") \
     && if [ "${ARCHIVE_SIZE}" -lt 1024 ]; then \
         echo "Error: Downloaded archive ort.tgz is less than 1KB in size (${ARCHIVE_SIZE} bytes). Possible download error." >&2; \
         exit 2; \
-    fi
+    fi \
+    && EXPECTED_SHA=$(grep -F " ${ORT_ARCHIVE}" /tmp/onnxruntime.sha256 | awk '{print $1}') \
+    && if [ -z "${EXPECTED_SHA}" ]; then \
+        echo "Error: No SHA256 checksum in repository for ${ORT_ARCHIVE}" >&2; \
+        exit 2; \
+    fi \
+    && HEADER_SHA=$(grep -i '^x-checksum-sha256:' /tmp/ort.headers | awk '{print $2}' | tr -d '\r') \
+    && if [ "${HEADER_SHA}" != "${EXPECTED_SHA}" ]; then \
+        echo "Error: Repository SHA256 does not match Artifactory X-Checksum-Sha256 for ${ORT_ARCHIVE}" >&2; \
+        echo "  Repository:  ${EXPECTED_SHA}" >&2; \
+        echo "  Artifactory: ${HEADER_SHA}" >&2; \
+        exit 2; \
+    fi \
+    && echo "${EXPECTED_SHA} ort.tgz" | sha256sum -c -
 RUN mkdir -p ${ONNX_RUNTIME_VERSION}
 RUN tar -xf ort.tgz -C ${ONNX_RUNTIME_VERSION} --strip-components 2 --no-same-owner --no-same-permissions
 
@@ -928,7 +945,12 @@ RUN DOCA_ARCH=$(uname -m); \
         > /etc/apt/sources.list.d/doca.list \
     && DOCA_HOSTNAME=$(echo "${DOCA_REPO_ROOT}" | sed 's|https://\([^/]*\).*|\1|') \
     && echo "Package: *\nPin: origin \"${DOCA_HOSTNAME}\"\nPin-Priority: 800" \
-        > /etc/apt/preferences.d/doca-pin
+        > /etc/apt/preferences.d/doca-pin \
+    && DOCA_LATEST_URL="${DOCA_REPO_ROOT}/latest/${DISTRO}/${DOCA_ARCH}/" \
+    && DOCA_LATEST_GPG_KEY_PATH="/etc/apt/trusted.gpg.d/doca-latest-keyring.gpg" \
+    && curl -fsSL ${DOCA_LATEST_URL}/doca_keyring.gpg -o ${DOCA_LATEST_GPG_KEY_PATH} \
+    && echo "deb [signed-by=${DOCA_LATEST_GPG_KEY_PATH}] ${DOCA_LATEST_URL} ./" \
+        >> /etc/apt/sources.list.d/doca.list
 
 # Setup LLVM APT repository (for newer clang-tidy)
 # https://apt.llvm.org/
@@ -1054,6 +1076,10 @@ COPY --from=apt-repo-config /etc/apt/trusted.gpg.d/ /etc/apt/trusted.gpg.d/
 #  libjpeg-turbo8-dev - (8.0) v4l2 mjpeg dependency
 #  ucx-*: needed for distributed apps (holoscan core) - comes from the DOCA repository
 #  ibverbs* rdma*: needed for ConnectX RDMA support for ucx
+#  doca-sdk-gpunetio: runtime library for HSB gpu_roce_transceiver operator
+#  libdoca-sdk-gpunetio-dev: doca-gpunetio pkg-config + headers for HSB gpu_roce_transceiver operator
+#    (requires DOCA "latest" repo — libdoca-sdk-gpunetio-dev was omitted from the pinned 3.3.0 directory)
+#  libdoca-sdk-verbs-dev: provides doca-verbs pkg-config + headers for HSB gpu_roce_transceiver operator
 ARG LLVM_VERSION=18
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-cache-$TARGETARCH-$GPU_TYPE \
     --mount=type=cache,target=/var/lib/apt,sharing=locked,id=holoscan-sdk-apt-lib-$TARGETARCH-$GPU_TYPE \
@@ -1081,6 +1107,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=holoscan-sdk-apt-
         libjpeg-turbo8-dev \
         libtinyxml2-dev \
         ibverbs-providers libibverbs1 librdmacm1 \
+        doca-sdk-gpunetio \
+        libdoca-sdk-gpunetio-dev \
+        libdoca-sdk-verbs-dev \
     && ln -sf /usr/bin/clang-tidy-${LLVM_VERSION} /usr/bin/clang-tidy
 
 # Workaround: Remove cuda-compat-13-* which is known to not function properly.

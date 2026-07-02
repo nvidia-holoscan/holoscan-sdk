@@ -38,6 +38,7 @@ enum class FormatDType {
   kNV12BT709CSC,
   kNV12BT601Full,
   kYUYV,
+  kUYVY,
   kRGB161616,
   kRGBA16161616,
   kUnsigned16
@@ -58,6 +59,7 @@ enum class FormatConversionType {
   kNV12BT709CSCToRGB888,
   kNV12BT601FullToRGB888,
   kYUYVToRGB888,
+  kUYVYToRGB888,
   kRGB161616ToRGB888,
   kRGBA16161616ToRGB888,
 };
@@ -93,6 +95,9 @@ inline FormatDType toFormatDType(const std::string& str) {
   }
   if (str == "yuyv") {
     return FormatDType::kYUYV;
+  }
+  if (str == "uyvy") {
+    return FormatDType::kUYVY;
   }
   if (str == "rgb161616") {
     return FormatDType::kRGB161616;
@@ -143,6 +148,9 @@ inline constexpr FormatConversionType getFormatConversionType(FormatDType from, 
   if (from == FormatDType::kYUYV && to == FormatDType::kUnsigned8) {
     return FormatConversionType::kYUYVToRGB888;
   }
+  if (from == FormatDType::kUYVY && to == FormatDType::kUnsigned8) {
+    return FormatConversionType::kUYVYToRGB888;
+  }
   if (from == FormatDType::kRGBA16161616 &&
       (to == FormatDType::kUnsigned8 || to == FormatDType::kRGB888)) {
     return FormatConversionType::kRGBA16161616ToRGB888;
@@ -173,6 +181,7 @@ inline constexpr uint32_t elementSizeFromFormatDType(FormatDType dtype) {
     case FormatDType::kNV12BT709CSC:
     case FormatDType::kNV12BT601Full:
     case FormatDType::kYUYV:
+    case FormatDType::kUYVY:
       return sizeof(uint8_t);
     case FormatDType::kRGB161616:
     case FormatDType::kRGBA16161616:
@@ -195,6 +204,7 @@ inline constexpr nvidia::gxf::PrimitiveType primitiveTypeFromFormatDType(FormatD
     case FormatDType::kNV12BT709HDTV:
     case FormatDType::kNV12BT709CSC:
     case FormatDType::kYUYV:
+    case FormatDType::kUYVY:
       return nvidia::gxf::PrimitiveType::kUnsigned8;
     case FormatDType::kRGB161616:
     case FormatDType::kRGBA16161616:
@@ -245,6 +255,18 @@ inline gxf_result_t verifyFormatDTypeChannels(FormatDType dtype, int channel_cou
         return GXF_FAILURE;
       }
       break;
+    case FormatDType::kYUYV:
+      if (channel_count != 2) {
+        HOLOSCAN_LOG_ERROR("Invalid channel count for YUYV {} != 2\n", channel_count);
+        return GXF_FAILURE;
+      }
+      break;
+    case FormatDType::kUYVY:
+      if (channel_count != 2) {
+        HOLOSCAN_LOG_ERROR("Invalid channel count for UYVY {} != 2\n", channel_count);
+        return GXF_FAILURE;
+      }
+      break;
     default:
       break;
   }
@@ -275,6 +297,18 @@ inline void verifyFormatDTypeChannelsOrThrow(FormatDType dtype, int channel_coun
       if (channel_count != 4) {
         throw std::runtime_error(
             fmt::format("Invalid channel count for RGBA8888 {} != 4", channel_count));
+      }
+      break;
+    case FormatDType::kYUYV:
+      if (channel_count != 2) {
+        throw std::runtime_error(
+            fmt::format("Invalid channel count for YUYV {} != 2", channel_count));
+      }
+      break;
+    case FormatDType::kUYVY:
+      if (channel_count != 2) {
+        throw std::runtime_error(
+            fmt::format("Invalid channel count for UYVY {} != 2", channel_count));
       }
       break;
     default:

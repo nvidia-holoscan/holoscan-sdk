@@ -67,14 +67,14 @@ int64_t get_duration_ns(const py::object& duration) {
     int64_t days = PyDateTime_DELTA_GET_DAYS(duration.ptr());
     int64_t seconds = PyDateTime_DELTA_GET_SECONDS(duration.ptr());
     if (days > 0) {
-      int seconds_per_day = 24 * 3600;
+      int64_t seconds_per_day = 24 * 3600;
       seconds += days * seconds_per_day;
     }
     int64_t microseconds = PyDateTime_DELTA_GET_MICROSECONDS(duration.ptr());
     if (seconds > 0) {
-      microseconds += 1000000 * seconds;
+      microseconds += int64_t(1'000'000) * seconds;
     }
-    int64_t delta_ns = 1000 * microseconds;
+    int64_t delta_ns = int64_t(1000) * microseconds;
     return delta_ns;
   }
   throw std::runtime_error("expected an integer or datetime.timedelta type");

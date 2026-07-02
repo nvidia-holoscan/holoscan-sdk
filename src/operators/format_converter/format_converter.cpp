@@ -111,6 +111,17 @@ void FormatConverterOp::start() {
     in_primitive_type_ = primitiveTypeFromFormatDType(in_dtype_);
   }
 
+  // Resize requires a 3- or 4-channel packed layout (NPP's resize entry points used below).
+  // Reject upfront for the packed 4:2:2 YUV inputs to surface a clear error rather than failing
+  // deep in the conversion pipeline.
+  if ((resize_width_.get() > 0 || resize_height_.get() > 0) &&
+      (in_dtype_ == FormatDType::kYUYV || in_dtype_ == FormatDType::kUYVY)) {
+    throw std::runtime_error(fmt::format(
+        "FormatConverterOp: resize is not supported for {} input (use 3/4-channel packed "
+        "RGB/RGBA).",
+        in_dtype_str_.get()));
+  }
+
   switch (resize_mode_) {
     case 0:
       // resize_mode_.set(NPPI_INTER_CUBIC);
@@ -399,6 +410,15 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
                     in_channels));
   }
 
+  // Packed 4:2:2 chroma subsampling shares U/V between adjacent pixel pairs, so the width must
+  // be even. NPP would otherwise fail with NPP_ODD_ROI_WIDTH_ERROR; surface a clearer message.
+  if ((in_dtype_ == FormatDType::kYUYV || in_dtype_ == FormatDType::kUYVY) && (columns % 2) != 0) {
+    throw std::runtime_error(
+        fmt::format("FormatConverterOp: {} input requires an even width, got {}.",
+                    in_dtype_str_.get(),
+                    columns));
+  }
+
   // Resize the input image before converting data type
   if (resize_width_ > 0 && resize_height_ > 0) {
     auto resize_result = resizeImage(in_tensor_data,
@@ -446,7 +466,8 @@ void FormatConverterOp::compute(InputContext& op_input, OutputContext& op_output
     case FormatConversionType::kNV12BT709HDTVToRGB888:
     case FormatConversionType::kYUV420ToRGB888:
     case FormatConversionType::kRGBA8888ToFloat32:
-    case FormatConversionType::kYUYVToRGB888: {
+    case FormatConversionType::kYUYVToRGB888:
+    case FormatConversionType::kUYVYToRGB888: {
       out_channels = 3;
       out_shape = nvidia::gxf::Shape{out_shape.dimension(0), out_shape.dimension(1), out_channels};
       break;
@@ -947,6 +968,21 @@ void FormatConverterOp::convertTensorFormat(
       if (status != NPP_SUCCESS) {
         throw std::runtime_error(fmt::format(
             "yuyv to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
+      }
+      break;
+    }
+    case FormatConversionType::kUYVYToRGB888: {
+      const auto in_tensor_ptr = static_cast<const uint8_t*>(in_tensor_data);
+
+      const int32_t in_step = in_color_planes[0].stride;
+
+      const auto out_tensor_ptr = static_cast<uint8_t*>(out_tensor_data);
+
+      status = nppiCbYCr422ToRGB_8u_C2C3R_Ctx(
+          in_tensor_ptr, in_step, out_tensor_ptr, dst_step, roi, npp_stream_ctx_);
+      if (status != NPP_SUCCESS) {
+        throw std::runtime_error(fmt::format(
+            "uyvy to rgb888 conversion failed (NPP error code: {})", static_cast<int>(status)));
       }
       break;
     }

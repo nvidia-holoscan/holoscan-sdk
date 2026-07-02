@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <ctime>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -367,7 +368,8 @@ class FormatConverterGpuResidentTest : public ::testing::Test {
     std::vector<T_out> host_output_gpu(out_elem_count);
     std::vector<T_out> host_output_ref(out_elem_count);
 
-    unsigned int seed = static_cast<unsigned int>(time(nullptr));
+    std::random_device rd;
+    unsigned int seed = rd();
     for (size_t i = 0; i < in_elem_count; ++i) {
       if constexpr (std::is_same_v<T_in, uint8_t>) {
         host_input[i] = static_cast<uint8_t>(rand_r(&seed) % 256);

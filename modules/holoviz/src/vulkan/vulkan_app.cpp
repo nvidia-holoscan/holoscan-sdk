@@ -40,6 +40,7 @@
 #include <filesystem>
 #include <list>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -282,6 +283,11 @@ class Vulkan::Impl {
   Window::CallbackHandle framebuffer_size_callback_handle_;
   std::optional<SurfaceFormat> surface_format_;
   PresentMode present_mode_ = PresentMode::AUTO;
+
+  bool warned_missing_fb_color_format_ = false;
+  // Tracks (framebuffer format, output image format) pairs for which a bit-depth quantization
+  // warning has already been emitted, so each distinct mismatch warns once.
+  std::set<std::pair<ImageFormat, ImageFormat>> bit_depth_warnings_issued_;
 
   std::unique_ptr<CudaService> cuda_service_;
 
@@ -2066,6 +2072,38 @@ void Vulkan::Impl::upload_to_buffer(size_t data_size, const void* data, const Bu
 void Vulkan::Impl::draw_texture(Texture* texture, Texture* depth_texture, Texture* lut,
                                 float opacity, const nvmath::mat4f& view_matrix) {
   const vk::CommandBuffer cmd_buf = command_buffers_[get_active_image_index()].get();
+
+  // Skip LUT draws here: the image texture is an index map, while the LUT texture represents
+  // post-lookup color precision. A useful LUT quantization warning would need separate wording.
+  if (!lut) {
+    vk::Format fb_vk_color_format = fb_sequence_->get_color_format();
+    std::optional<ImageFormat> fb_color_format = to_image_format(fb_vk_color_format);
+
+    if (fb_color_format.has_value()) {
+      const uint32_t fb_bit_depth = format_bit_depth(fb_color_format.value());
+      const uint32_t texture_bit_depth = format_bit_depth(texture->format_);
+
+      if (texture_bit_depth > fb_bit_depth) {
+        const auto format_pair = std::make_pair(fb_color_format.value(), texture->format_);
+
+        if (bit_depth_warnings_issued_.insert(format_pair).second) {
+          HOLOSCAN_LOG_WARN(
+              "Surface format '{}' stores {} bits per color channel, while texture "
+              "format '{}' stores {} bits. Rendered colors will be "
+              "quantized when written to the surface.",
+              magic_enum::enum_name(fb_color_format.value()),
+              fb_bit_depth,
+              magic_enum::enum_name(texture->format_),
+              texture_bit_depth);
+        }
+      }
+    } else if (!warned_missing_fb_color_format_) {
+      HOLOSCAN_LOG_WARN(
+          "Unable to determine the color format of the framebuffer, bit depth mismatch warnings "
+          "will be skipped.");
+      warned_missing_fb_color_format_ = true;
+    }
+  }
 
   PushConstantFragment push_constants;
   push_constants.flags = 0;

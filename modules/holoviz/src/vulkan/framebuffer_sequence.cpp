@@ -73,10 +73,10 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
   auto surface_formats = get_surface_formats();
 #ifdef _DEBUG
   HOLOSCAN_LOG_INFO("Available surface formats:");
-  for (auto& syrface_format : surface_formats) {
+  for (auto& surface_format : surface_formats) {
     HOLOSCAN_LOG_INFO("    {}, {}",
-                      vk::to_string(to_vulkan_format(syrface_format.image_format_)),
-                      vk::to_string(to_vulkan_color_space(syrface_format.color_space_)));
+                      vk::to_string(to_vulkan_format(surface_format.image_format_)),
+                      vk::to_string(to_vulkan_color_space(surface_format.color_space_)));
   }
 #endif
 
@@ -116,11 +116,10 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
     if (!found_surface_format) {
       // not found, pick the first one
       surface_format = surface_formats[0];
-      HOLOSCAN_LOG_WARN("Surface format '{}, {}' not found, using first available format '{}, {}'",
-                        int(surface_format.value().image_format_),
-                        int(surface_format.value().color_space_),
-                        int(surface_formats[0].image_format_),
-                        int(surface_formats[0].color_space_));
+      HOLOSCAN_LOG_WARN(
+          "Preferred surface formats not found, using first available format '{}, {}'",
+          int(surface_formats[0].image_format_),
+          int(surface_formats[0].color_space_));
     }
   }
 
@@ -152,28 +151,6 @@ void FramebufferSequence::init(nvvk::ResourceAllocator* alloc, vk::Device device
 
   HOLOSCAN_LOG_INFO(
       "Using surface format '{}, {}'", vk::to_string(color_format_), vk::to_string(color_space_));
-
-  // Preemptive warning: if the selected surface format is 8-bit, any 10-bit InputSpec
-  // (A2B10G10R10_UNORM_PACK32, A2R10G10B10_UNORM_PACK32) the application provides will be
-  // silently quantized at present time. We cannot inspect InputSpec from here, so this is a
-  // capability notice rather than an observation of actual misuse. Guarded with a static flag
-  // so swapchain recreation (e.g., on window resize) does not respam the log.
-  static bool warned_8bit_surface_quantization = false;
-  const std::array<ImageFormat, 3> eight_bit_surface_formats = {
-      ImageFormat::R8G8B8A8_UNORM, ImageFormat::B8G8R8A8_UNORM, ImageFormat::A8B8G8R8_UNORM_PACK32};
-  if (!warned_8bit_surface_quantization &&
-      std::find(eight_bit_surface_formats.begin(),
-                eight_bit_surface_formats.end(),
-                surface_format.value().image_format_) != eight_bit_surface_formats.end()) {
-    HOLOSCAN_LOG_WARN(
-        "Surface format '{}' is 8-bit. If 10-bit input formats are used "
-        "(A2B10G10R10_UNORM_PACK32, A2R10G10B10_UNORM_PACK32), output will be quantized "
-        "to 8-bit. To enable 10-bit output:\n"
-        "  GLFW mode:      sudo nvidia-xconfig --depth=30, then restart X\n"
-        "  Exclusive mode: not supported on this driver path (see CLARAHOLOS-1352)",
-        vk::to_string(color_format_));
-    warned_8bit_surface_quantization = true;
-  }
 
   // pick the first available depth format in order of preference
   depth_format_ = vk::Format::eUndefined;

@@ -1,1418 +1,299 @@
-diff --git a/.gitignore b/.gitignore
-index a7513b81..aa20065e 100644
---- a/.gitignore
-+++ b/.gitignore
-@@ -8,9 +8,10 @@ cscope.*
- .vscode/
- # cache
- .cache
--# build folders
-+# build folders and artifacts
- build
- *.egg-info
-+*.whl
- # tao peoplenet files
- *.fp16
- *.onnx
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index f95e951e..6ffbe490 100644
+index fbb8218..9c3ea1a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -25,6 +25,8 @@ option(HOLOLINK_BUILD_ARGUS_ISP "Build Argus ISP support" OFF)
- option(HOLOLINK_BUILD_SIPL "Build NvSIPL capture components" OFF)
- option(HOLOLINK_BUILD_EMULATOR "Build HSB Emulator components" ON)
- option(HOLOLINK_BUILD_FUSA "Build NvFusa capture components" OFF)
-+option(HOLOLINK_BUILD_CPACK "Build DEB package" OFF)
-+option(HOLOLINK_BUILD_EXPORT "Install Hololink targets" ON)
+@@ -41,13 +41,8 @@ file(READ "VERSION" HOLOLINK_VERSION)
+ string(STRIP ${HOLOLINK_VERSION} HOLOLINK_VERSION)
+ string(REGEX MATCH "^([0-9]+\.[0-9]+\.[0-9]+)" HOLOLINK_VERSION_NUM ${HOLOLINK_VERSION})
  
- if (HOLOLINK_BUILD_PYTHON AND NOT HOLOLINK_BUILD_EMULATOR)
-   message(FATAL_ERROR "If building Python bindings, HOLOLINK_BUILD_EMULATOR must be ON")
-@@ -44,14 +46,16 @@ project(hololink
+-set(PROJECT_LANGUAGES CXX)
+-if (NOT HOLOLINK_BUILD_ONLY_NATIVE)
+-  list(APPEND PROJECT_LANGUAGES CUDA)
+-endif()
+-
+ project(hololink
+-  LANGUAGES ${PROJECT_LANGUAGES}
++  LANGUAGES CXX
    VERSION ${HOLOLINK_VERSION_NUM})
  
  # To discover our custom CMake modules
--list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake)
-+list(APPEND CMAKE_MODULE_PATH ${hololink_SOURCE_DIR}/cmake)
+@@ -55,6 +50,14 @@ list(APPEND CMAKE_MODULE_PATH ${hololink_SOURCE_DIR}/cmake)
  
  # Find globally required dependencies
- include(hololink_deps/fmt)
- 
  if (NOT HOLOLINK_BUILD_ONLY_NATIVE)
--  # Find Holoscan
--  find_package(holoscan 3.6 REQUIRED CONFIG PATHS "/opt/nvidia/holoscan")
-+  # Find Holoscan if it is not already defined for source build with FetchContent
-+  if(NOT holoscan_SOURCE_DIR)
-+    find_package(holoscan 3.6 REQUIRED CONFIG PATHS "/opt/nvidia/holoscan")
++  # Initialize CUDA architecture target list by precedence:
++  #     -DCMAKE_CUDA_ARCHITECTURES > $ENV{CUDAARCHS} > `native`
++  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
++    set(CMAKE_CUDA_ARCHITECTURES "native")
 +  endif()
- 
-   # enabled trace and debug log messages in debug build only
-   if(CMAKE_BUILD_TYPE STREQUAL "Release")
-@@ -81,6 +85,7 @@ if(HOLOLINK_BUILD_EXAMPLES)
- endif()
- if(NOT HOLOLINK_BUILD_ONLY_NATIVE)
-   if(HOLOLINK_BUILD_TESTS)
-+    enable_testing()
-     add_subdirectory(tests)
-   endif()
-   if(HOLOLINK_BUILD_PYTHON)
-@@ -90,7 +95,11 @@ add_subdirectory(scripts)
- endif()
- 
- # Add packaging
--include(cmake/HololinkCPack.cmake)
-+if(HOLOLINK_BUILD_CPACK)
-+  include(cmake/HololinkCPack.cmake)
-+endif()
- 
- # Add export
--include(cmake/HololinkExport.cmake)
-+if(HOLOLINK_BUILD_EXPORT)
-+  include(cmake/HololinkExport.cmake)
-+endif()
-diff --git a/cmake/HololinkCPack.cmake b/cmake/HololinkCPack.cmake
-index 9dcc86af..9419ab76 100644
---- a/cmake/HololinkCPack.cmake
-+++ b/cmake/HololinkCPack.cmake
-@@ -30,8 +30,8 @@ set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
- 
- set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Julien Jomier")
- 
--set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE")
--set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
-+set(CPACK_RESOURCE_FILE_LICENSE "${hololink_SOURCE_DIR}/LICENSE")
-+set(CPACK_RESOURCE_FILE_README "${hololink_SOURCE_DIR}/README.md")
- 
- # Sets the package name as debian format
- set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-diff --git a/cmake/HololinkExport.cmake b/cmake/HololinkExport.cmake
-index 19ae1733..82d8102c 100644
---- a/cmake/HololinkExport.cmake
-+++ b/cmake/HololinkExport.cmake
-@@ -6,6 +6,7 @@ install(EXPORT HololinkTargets
-   NAMESPACE hololink::
-   FILE HololinkTargets.cmake
-   DESTINATION ${HOLOLINK_INSTALL_CMAKEDIR}
-+  COMPONENT hololink-cmake
- )
- 
- configure_package_config_file(
-@@ -26,4 +27,5 @@ install(FILES
-   ${CMAKE_CURRENT_BINARY_DIR}/HololinkConfig.cmake
-   ${CMAKE_CURRENT_BINARY_DIR}/HololinkConfigVersion.cmake
-   DESTINATION ${HOLOLINK_INSTALL_CMAKEDIR}
-+  COMPONENT hololink-cmake
- )
-diff --git a/cmake/pybind11_add_hololink_module.cmake b/cmake/pybind11_add_hololink_module.cmake
-index c431db61..ed04b870 100644
---- a/cmake/pybind11_add_hololink_module.cmake
-+++ b/cmake/pybind11_add_hololink_module.cmake
-@@ -17,19 +17,80 @@
- find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
- include(hololink_deps/pybind11)
- 
-+# Helper function to copy pure Python files to the module output directory
-+# Usage:
-+#   copy_hololink_python_files(
-+#       TARGET_NAME <name>           # Name for the custom target (required)
-+#       DESTINATION <subdir>         # Relative build subdirectory (e.g. "sensors/vb1940", or empty for module root)
-+#       FILES <file1> <file2> ...    # List of Python files to copy. Note that all files are placed in the same
-+#                                    # output destination folder, without respect for input subfolder structures.
-+#   )
-+function(copy_hololink_python_files)
-+    cmake_parse_arguments(COPY                  # PREFIX
-+        ""                                      # OPTIONS
-+        "TARGET_NAME;DESTINATION"               # ONEVAL
-+        "FILES"                                 # MULTIVAL
-+        ${ARGN}
-+    )
++  enable_language(CUDA)
++  message(STATUS "hololink: initialized CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
 +
-+    if(NOT COPY_TARGET_NAME)
-+        message(FATAL_ERROR "copy_hololink_python_files: TARGET_NAME is required")
-+    endif()
-+    if(NOT COPY_FILES)
-+        message(FATAL_ERROR "copy_hololink_python_files: FILES is required")
-+    endif()
-+
-+    # Build destination path, handling empty DESTINATION for root-level files
-+    if(COPY_DESTINATION)
-+        # Make COPY_DESTINATION absolute relative to HOLOLINK_PYTHON_MODULE_OUT_DIR
-+        cmake_path(ABSOLUTE_PATH COPY_DESTINATION BASE_DIRECTORY "${HOLOLINK_PYTHON_MODULE_OUT_DIR}" OUTPUT_VARIABLE _dest_dir)
-+    else()
-+        set(_dest_dir "${HOLOLINK_PYTHON_MODULE_OUT_DIR}")
-+    endif()
-+    # Ensure destination directory hierarchy exists
-+    file(MAKE_DIRECTORY "${_dest_dir}")
-+
-+    set(_output_files)
-+    foreach(_source_file ${COPY_FILES})
-+        # Convert to absolute path (handles both absolute and relative paths)
-+        set(_source_path "${_source_file}")
-+        cmake_path(ABSOLUTE_PATH _source_path BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
-+
-+        # Extract just the filename for the destination
-+        cmake_path(GET _source_file FILENAME _filename)
-+        set(_output_file "${_dest_dir}/${_filename}")
-+
-+        list(APPEND _output_files "${_output_file}")
-+        add_custom_command(
-+            OUTPUT "${_output_file}"
-+            COMMAND ${CMAKE_COMMAND} -E copy
-+                "${_source_path}" "${_output_file}"
-+            DEPENDS "${_source_path}"
-+            COMMENT "Copying ${_filename} to ${_output_file}"
-+        )
-+    endforeach()
-+
-+    add_custom_target(${COPY_TARGET_NAME} ALL
-+        DEPENDS ${_output_files}
-+    )
-+    add_dependencies(hololink_python_all ${COPY_TARGET_NAME})
-+endfunction()
-+
- # Helper function to generate pybind11 operator modules
- function(pybind11_add_hololink_module)
-     cmake_parse_arguments(MODULE                # PREFIX
-         ""                                      # OPTIONS
--        "CPP_CMAKE_TARGET;CLASS_NAME;IMPORT"    # ONEVAL
-+        "CPP_CMAKE_TARGET;CLASS_NAME;IMPORT;NAME"    # ONEVAL
-         "SOURCES"                               # MULTIVAL
-         ${ARGN}
-     )
+   # Find Holoscan if it is not already defined for source build with FetchContent
+   if(NOT holoscan_SOURCE_DIR)
+     find_package(holoscan 4.0 REQUIRED CONFIG PATHS "/opt/nvidia/holoscan")
+diff --git a/docker/Dockerfile b/docker/Dockerfile
+index 3d3d391..0a82892 100644
+--- a/docker/Dockerfile
++++ b/docker/Dockerfile
+@@ -205,7 +205,6 @@ FROM build_${CONTAINER_TYPE}
+ # ARGs must be redeclared after FROM to be available in this build stage
+ ARG HSDK_VERSION=invalid
+ ARG L4T_VERSION=invalid
+-ARG CUDA_NATIVE_ARCH=invalid
+ ARG IBV_DEVICES=
+ ARG TARGETARCH
+ ARG DOCA_VERSION=3.3.0
+@@ -217,7 +216,6 @@ ENV IBV_DEVICES=${IBV_DEVICES}
+ ENV PIP_BREAK_SYSTEM_PACKAGES=1
+ # run as root user...ignore warnings about installing as root inside container
+ ENV PIP_ROOT_USER_ACTION=ignore
+-ENV CUDA_NATIVE_ARCH=${CUDA_NATIVE_ARCH}
+ ENV CUDA_VERSION_MINOR_PATCH="${CUDA_VERSION#*.}"
+ ENV CUDA_VERSION_MINOR="${CUDA_VERSION_MINOR_PATCH%%.*}"
+ ENV CUDA_PATH=/usr/local/cuda
+diff --git a/docker/Dockerfile.demo b/docker/Dockerfile.demo
+index 96a8276..00102e2 100644
+--- a/docker/Dockerfile.demo
++++ b/docker/Dockerfile.demo
+@@ -33,6 +33,12 @@ WORKDIR /opt/hololink
+ # RoCE receiver: GPU VRAM frame buffers require working GPUDirect RDMA.
+ # Set OFF via docker/build.sh --disable-roce-gpu-vram when the PCIe path does not support it.
+ ARG HOLOLINK_ROCE_USE_GPU_VRAM=ON
++# Semicolon-separated list of CUDA architectures to target by default during the wheel build below.
++# https://cmake.org/cmake/help/latest/envvar/CUDAARCHS.html
++# Allowable values:
++#   https://cmake.org/cmake/help/latest/prop_tgt/CUDA_ARCHITECTURES.html
++#   https://developer.nvidia.com/cuda-gpus
++ARG CUDAARCHS=native
  
--    set(MODULE_NAME ${MODULE_CPP_CMAKE_TARGET})
-+    if(NOT MODULE_NAME)
-+        set(MODULE_NAME ${MODULE_CPP_CMAKE_TARGET})
-+    endif()
-+
-     set(target_name ${MODULE_NAME}_python)
-     pybind11_add_module(${target_name} MODULE ${MODULE_SOURCES})
--
-     target_include_directories(${target_name}
-         PUBLIC ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/pydoc
-     )
-@@ -58,7 +119,7 @@ function(pybind11_add_hololink_module)
-                 # Add RPATH to find hololink_core module at runtime
-                 file(RELATIVE_PATH core_relative_path
-                     ${CMAKE_CURRENT_LIST_DIR}
--                    ${CMAKE_SOURCE_DIR}/python/hololink/hololink_core
-+                    ${hololink_SOURCE_DIR}/python/hololink/hololink_core
-                 )
-                 set_property(TARGET ${target_name}
-                     APPEND PROPERTY BUILD_RPATH "\$ORIGIN/${core_relative_path}"
-@@ -74,7 +135,7 @@ function(pybind11_add_hololink_module)
-     # Sets the rpath of the module
-     file(RELATIVE_PATH install_lib_relative_path
-         ${CMAKE_CURRENT_LIST_DIR}
--        ${CMAKE_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}
-+        ${hololink_SOURCE_DIR}/${HOLOSCAN_INSTALL_LIB_DIR}
-     )
-     list(APPEND _rpath
-         "\$ORIGIN/${install_lib_relative_path}" # in our install tree (same layout as src)
-@@ -86,11 +147,11 @@ function(pybind11_add_hololink_module)
-     )
-     unset(_rpath)
+ # See build.sh for why INSTALL_ENVIRONMENT is here.
+ ARG INSTALL_ENVIRONMENT=""
+diff --git a/docker/build.sh b/docker/build.sh
+index 1952e5e..89b6a5b 100755
+--- a/docker/build.sh
++++ b/docker/build.sh
+@@ -88,14 +88,15 @@ then
+     echo "Warning: Cannot determine product name from DMI. This system/configuration may not be supported."
+ fi
  
--    # Define and create a directory to store python bindings the hololink python module
-     file(RELATIVE_PATH module_relative_path
--        ${CMAKE_SOURCE_DIR}/python/hololink
-+        ${hololink_SOURCE_DIR}/python/hololink
-         ${CMAKE_CURRENT_LIST_DIR}
-     )
-+
-     set(module_out_dir ${HOLOLINK_PYTHON_MODULE_OUT_DIR}/${module_relative_path})
-     file(MAKE_DIRECTORY ${module_out_dir})
+-# compiles a minimal binary as CUDA program verbosely to detect the native architecture used for the available GPU(s) and captures it in output
+-# this will be passed to docker container environment to be available to cmake both during container build and HSB rebuilds for targets that have architecture dependencies, e.g. gpu_roce_transceiver
+-CUDA_NATIVE_ARCH=$(echo -n "int main(void) {return 0; }" | /usr/local/cuda/bin/nvcc -arch=native --verbose -x cu -o /tmp/main - 2>&1 | grep -m 1 -oE "__CUDA_ARCH__=[^-]+" | cut -d= -f2 | tr -d ' ')
+-if [ -z "$CUDA_NATIVE_ARCH" ]; then
+-    CUDA_NATIVE_ARCH=800
++# compiles a minimal binary as CUDA program verbosely to detect the native architecture used for the available GPU(s) and captures it in output.
++# this is exported to the container as CMAKE_CUDA_ARCHITECTURES so cmake picks it up directly for all CUDA targets (including gpu_roce_transceiver)
++# without ever needing nvcc -arch=native inside the container (which has no GPU access during build).
++HOLOLINK_CUDA_ARCHS=$(echo -n "int main(void) {return 0; }" | /usr/local/cuda/bin/nvcc -arch=native --verbose -x cu -o /tmp/main - 2>&1 | grep -m 1 -oE "__CUDA_ARCH__=[^-]+" | cut -d= -f2 | tr -d ' ')
++if [ -z "$HOLOLINK_CUDA_ARCHS" ]; then
++    HOLOLINK_CUDA_ARCHS=800
+ fi
+-# The result above will be for example 890 for compute 8.9. Remove the trailing digit
+-CUDA_NATIVE_ARCH="${CUDA_NATIVE_ARCH%?}"
++# The result above will be for example 890 for compute 8.9. Remove the trailing digit to get the CMake form (e.g. 89).
++HOLOLINK_CUDA_ARCHS="${HOLOLINK_CUDA_ARCHS%?}"
  
-@@ -114,4 +175,6 @@ function(pybind11_add_hololink_module)
-         OUTPUT_NAME _${MODULE_NAME}
-     )
- 
-+    add_dependencies(hololink_python_all ${target_name})
-+
- endfunction()
-diff --git a/docker/Dockerfile.package b/docker/Dockerfile.package
-index de73dcc7..03a65504 100644
---- a/docker/Dockerfile.package
-+++ b/docker/Dockerfile.package
-@@ -35,6 +35,7 @@ RUN cd /opt/hololink \
-     && rm -rf build \
-     && cmake -S . -B build -G Ninja \
-        -DBUILD_SHARED_LIBS:BOOL=OFF \
-+       -DHOLOLINK_BUILD_CPACK:BOOL=ON \
-        -DHOLOLINK_BUILD_PYTHON:BOOL=ON \
-        -DHOLOLINK_PYTHON_INSTALL_DIR:STRING=python/hololink \
-        -DCPACK_GENERATOR:STRING=DEB \
+ # detect infiniband devices. HOLOLINK_BUILD_ROCE is set to 1 if any are found
+ IBV_DEVICES=""
+@@ -277,7 +278,7 @@ echo "CONTAINER_TYPE: $CONTAINER_TYPE"
+ echo "PROTOTYPE_OPTIONS: $PROTOTYPE_OPTIONS"
+ echo "INSTALL_ENVIRONMENT: $INSTALL_ENVIRONMENT"
+ echo "L4T_VERSION: $L4T_VERSION"
+-echo "CUDA_NATIVE_ARCH: $CUDA_NATIVE_ARCH"
++echo "HOLOLINK_CUDA_ARCHS: $HOLOLINK_CUDA_ARCHS"
+ echo "IBV_DEVICES: $IBV_DEVICES"
+ echo "HOLOLINK_ROCE_USE_GPU_VRAM: $HOLOLINK_ROCE_USE_GPU_VRAM"
+ set -x
+@@ -290,7 +291,6 @@ DOCKER_BUILDKIT=1 docker build \
+     --build-arg "CONTAINER_TYPE=$CONTAINER_TYPE" \
+     --build-arg "HSDK_VERSION=$HSDK_VERSION" \
+     --build-arg "L4T_VERSION=$L4T_VERSION" \
+-    --build-arg "CUDA_NATIVE_ARCH=$CUDA_NATIVE_ARCH" \
+     --build-arg "IBV_DEVICES=$IBV_DEVICES" \
+     -t hololink-prototype:$VERSION \
+     -f $HERE/Dockerfile \
+@@ -302,6 +302,7 @@ DOCKER_BUILDKIT=1 docker build \
+     --network=host \
+     --build-arg CONTAINER_VERSION=hololink-prototype:$VERSION \
+     --build-arg "INSTALL_ENVIRONMENT=$INSTALL_ENVIRONMENT" \
++    --build-arg "CUDAARCHS=$HOLOLINK_CUDA_ARCHS" \
+     --build-arg "HOLOLINK_ROCE_USE_GPU_VRAM=$HOLOLINK_ROCE_USE_GPU_VRAM" \
+     -t hololink-demo:$VERSION \
+     -f $HERE/Dockerfile.demo \
 diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
-index ca64d49c..b37bcc2c 100644
+index c56df12..eb30318 100644
 --- a/examples/CMakeLists.txt
 +++ b/examples/CMakeLists.txt
-@@ -247,7 +247,12 @@ list(APPEND EXAMPLE_INSTALL_FILES
-     stereo_imx274_player.py
-     stereo_imx477_player.py
-     tao_peoplenet.py
--    vb1940_player.py)
-+    vb1940_player.py
+@@ -279,11 +279,13 @@ if(HOLOLINK_BUILD_ROCE)
+       sub_frame_vb1940_player.cpp
+       )
+ 
+-    add_test(NAME sub_frame_vb1940_player_test
+-              COMMAND sub_frame_vb1940_player --frame-limit=10 --headless --sub-frame-rows=1080
+-              WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+-    set_tests_properties(sub_frame_vb1940_player_test PROPERTIES
+-                          FAIL_REGULAR_EXPRESSION "ERROR;\\[error\\]")
++    if(HOLOLINK_BUILD_TESTS)
++      add_test(NAME sub_frame_vb1940_player_test
++                COMMAND sub_frame_vb1940_player --frame-limit=10 --sub-frame-rows=1080
++                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
++      set_tests_properties(sub_frame_vb1940_player_test PROPERTIES
++                            FAIL_REGULAR_EXPRESSION "ERROR;\\[error\\]")
++    endif()
+ 
+     target_link_libraries(sub_frame_vb1940_player
+       PRIVATE
+diff --git a/examples/sub_frame_vb1940_player.cpp b/examples/sub_frame_vb1940_player.cpp
+index 6bfa5b5..2a90b5c 100644
+--- a/examples/sub_frame_vb1940_player.cpp
++++ b/examples/sub_frame_vb1940_player.cpp
+@@ -34,10 +34,7 @@
+ #include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
+ #include <holoscan/holoscan.hpp>
+ #include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
+-#include <holoscan/version_config.hpp>
+ 
+-#define HOLOSCAN_VERSION \
+-    (HOLOSCAN_VERSION_MAJOR * 10000 + HOLOSCAN_VERSION_MINOR * 100 + HOLOSCAN_VERSION_PATCH)
+ 
+ namespace {
+ 
+diff --git a/src/hololink/emulation/src/CMakeLists.txt b/src/hololink/emulation/src/CMakeLists.txt
+index a910025..a021419 100644
+--- a/src/hololink/emulation/src/CMakeLists.txt
++++ b/src/hololink/emulation/src/CMakeLists.txt
+@@ -40,8 +40,9 @@ endif()
+ 
+ add_library(hololink::emulation ALIAS emulation)
+ 
+-# INTERFACE has no artifact; DESTINATION is ignored for it. Export all three targets.
+-install(TARGETS emulation emulation_host emulation_common
++# INTERFACE has no artifact; DESTINATION is ignored for it.
++# Handle target(s) declared in this folder
++install(TARGETS emulation
+     EXPORT HololinkTargets
+     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+diff --git a/src/hololink/emulation/src/STM32/CMakeLists.txt b/src/hololink/emulation/src/STM32/CMakeLists.txt
+index ff8295e..6d606bb 100644
+--- a/src/hololink/emulation/src/STM32/CMakeLists.txt
++++ b/src/hololink/emulation/src/STM32/CMakeLists.txt
+@@ -90,6 +90,11 @@ target_link_libraries(emulation_host
+ 
+ set_property(TARGET emulation_host PROPERTY POSITION_INDEPENDENT_CODE ON)
+ 
++install(TARGETS emulation_host
++    EXPORT HololinkTargets
++    DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    COMPONENT hololink-emulation)
 +
-+    body_pose_estimation.yaml
-+    example_configuration.yaml
-+    tao_peoplenet.yaml
-+)
- if(HOLOLINK_BUILD_FUSA)
-   list(APPEND EXAMPLE_INSTALL_FILES
-     fusa_coe_imx274_player.py
-diff --git a/examples/stereo_imx274_player.py b/examples/stereo_imx274_player.py
-index ef739bd1..77d1327c 100644
---- a/examples/stereo_imx274_player.py
-+++ b/examples/stereo_imx274_player.py
-@@ -186,7 +186,7 @@ class HoloscanApplication(holoscan.core.Application):
-             * rgba_components_per_pixel
-             * ctypes.sizeof(ctypes.c_uint16)
-             * self._camera_left._height,
--            num_blocks=6,
-+            num_blocks=6 * 3,  # Holoscan SDK >=v3.11: Fixed early block release
-         )
-         demosaic_left = holoscan.operators.BayerDemosaicOp(
-             self,
-diff --git a/examples/vb1940_player.cpp b/examples/vb1940_player.cpp
-index 9d3ab6ec..cdbe9c31 100644
---- a/examples/vb1940_player.cpp
-+++ b/examples/vb1940_player.cpp
-@@ -17,6 +17,7 @@
+ add_library(emulationroce STATIC
+     rocev2_data_plane.cpp
+     rocev2_transmitter.cpp
+@@ -114,4 +119,9 @@ target_link_libraries(emulationroce
+ #target_compile_definitions(emulationroce PRIVATE "-Dlocal")
+ set_property(TARGET emulationroce PROPERTY POSITION_INDEPENDENT_CODE ON)
  
- #include <chrono>
- #include <cstdint>
-+#include <filesystem>
- #include <iostream>
- #include <memory>
- #include <string>
-@@ -65,6 +66,18 @@ public:
-         , camera_mode_(camera_mode)
-         , frame_limit_(frame_limit)
-     {
-+        if (ibv_name_.empty()) {
-+            // Select the first available device to be the default
-+            auto infiniband_devices = hololink::infiniband_devices();
-+            if (!infiniband_devices.empty()) {
-+                ibv_name_ = infiniband_devices[0];
-+                HOLOSCAN_LOG_INFO("Using IBV device: {}", ibv_name_);
-+            } else {
-+                throw std::runtime_error(
-+                    "No InfiniBand devices found. Please specify a device using --ibv-name or ensure "
-+                    "an InfiniBand device is configured.");
-+            }
-+        }
-     }
- 
-     void compose() override
-@@ -162,11 +175,11 @@ int main(int argc, char** argv)
-     using namespace hololink::args;
-     OptionsDescription options_description("Allowed options");
- 
--    // Select the first available device to be the default
--    std::string default_ibv_name;
--    auto infiniband_devices = hololink::infiniband_devices();
--    if (!infiniband_devices.empty())
--        default_ibv_name = infiniband_devices[0];
-+    std::string default_config = "example_configuration.yaml";
-+    if (argc > 0 && argv[0] && std::string(argv[0]).find('/') != std::string::npos) {
-+        auto abs = std::filesystem::absolute(argv[0]);
-+        default_config = (abs.parent_path() / "example_configuration.yaml").string();
-+    }
- 
-     // clang-format off
-     options_description.add_options()
-@@ -174,9 +187,9 @@ int main(int argc, char** argv)
-         ("headless", bool_switch()->default_value(false), "Run in headless mode")
-         ("fullscreen", bool_switch()->default_value(false), "Run in fullscreen mode")
-         ("frame-limit", value<int>()->default_value(0), "Exit after receiving this many frames")
--        ("configuration", value<std::string>()->default_value("example_configuration.yaml"), "Configuration file")
-+        ("configuration", value<std::string>()->default_value(default_config), "Configuration file")
-         ("hololink", value<std::string>()->default_value("192.168.0.2"), "IP address of Hololink board")
--        ("ibv-name", value<std::string>()->default_value(default_ibv_name), "IBV device to use")
-+        ("ibv-name", value<std::string>()->default_value(""), "IBV device to use (default: first available device)")
-         ("ibv-port", value<uint32_t>()->default_value(1), "Port number of IBV device (default: 1)")
-         ("use-sensor", value<uint32_t>()->default_value(0), "Use the specific sensor (0 or 1, default=0)")
-         ;
-@@ -199,6 +212,7 @@ int main(int argc, char** argv)
-         cuDevicePrimaryCtxRetain(&cu_context, cu_device);
- 
-         // Get a handle to the Hololink device
-+        HOLOSCAN_LOG_INFO("Finding Hololink channel for IP: {}", variables_map["hololink"].as<std::string>());
-         auto channel_metadata = hololink::Enumerator::find_channel(variables_map["hololink"].as<std::string>());
-         hololink::DataChannel::use_sensor(channel_metadata, use_sensor);
-         hololink::DataChannel hololink_channel(channel_metadata);
-diff --git a/python/CMakeLists.txt b/python/CMakeLists.txt
-index b0834e00..d108f216 100644
---- a/python/CMakeLists.txt
-+++ b/python/CMakeLists.txt
-@@ -13,5 +13,20 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
- 
-+# Define and create a directory to store python operators under the hololink python module
-+set(HOLOLINK_PYTHON_MODULE_OUT_DIR "${CMAKE_BINARY_DIR}/python/${CMAKE_INSTALL_LIBDIR}/hololink" CACHE PATH
-+    "Output build directory for hololink python modules")
+-add_library(hololink::emulation::roce ALIAS emulationroce)
+\ No newline at end of file
++add_library(hololink::emulation::roce ALIAS emulationroce)
 +
-+# Convert to absolute path if relative
-+if(NOT IS_ABSOLUTE "${HOLOLINK_PYTHON_MODULE_OUT_DIR}")
-+    cmake_path(ABSOLUTE_PATH HOLOLINK_PYTHON_MODULE_OUT_DIR BASE_DIRECTORY "${hololink_BINARY_DIR}")
-+endif()
-+file(MAKE_DIRECTORY ${HOLOLINK_PYTHON_MODULE_OUT_DIR})
-+set(HOLOLINK_PYTHON_INSTALL_DIR "python" CACHE PATH "Output installation directory for hololink python modules")
-+
-+add_custom_target(hololink_python_all ALL
-+    COMMENT "adding hololink_python_all target"
-+)
-+
- add_subdirectory(hololink)
- add_subdirectory(tools)
-diff --git a/python/hololink/CMakeLists.txt b/python/hololink/CMakeLists.txt
-index c4e71066..f8359013 100644
---- a/python/hololink/CMakeLists.txt
-+++ b/python/hololink/CMakeLists.txt
-@@ -13,17 +13,21 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
++install(TARGETS stm32_hal_driver emulation_host emulationroce
++    EXPORT HololinkTargets
++    DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    COMPONENT hololink-emulation)
+diff --git a/src/hololink/emulation/src/common/CMakeLists.txt b/src/hololink/emulation/src/common/CMakeLists.txt
+index 657933c..973ce5a 100644
+--- a/src/hololink/emulation/src/common/CMakeLists.txt
++++ b/src/hololink/emulation/src/common/CMakeLists.txt
+@@ -38,3 +38,8 @@ target_link_libraries(emulation_common
+ )
  
--# Define and create a directory to store python operators under the hololink python module
--set(HOLOLINK_PYTHON_MODULE_OUT_DIR ${CMAKE_BINARY_DIR}/python/${CMAKE_INSTALL_LIBDIR})
--file(MAKE_DIRECTORY ${HOLOLINK_PYTHON_MODULE_OUT_DIR})
-+include(pybind11_add_hololink_module)
+ set_property(TARGET emulation_common PROPERTY POSITION_INDEPENDENT_CODE ON)
 +
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_python_files
-+    FILES
-+        __init__.py
-+        renesas_bajoran_lite_ts1.py
-+        renesas_bajoran_lite_ts2.py
-+)
++install(TARGETS emulation_common
++    EXPORT HololinkTargets
++    DESTINATION ${CMAKE_INSTALL_LIBDIR}
++    COMPONENT hololink-emulation)
+diff --git a/src/hololink/emulation/src/linux/CMakeLists.txt b/src/hololink/emulation/src/linux/CMakeLists.txt
+index d05a701..3be7d51 100644
+--- a/src/hololink/emulation/src/linux/CMakeLists.txt
++++ b/src/hololink/emulation/src/linux/CMakeLists.txt
+@@ -86,7 +86,7 @@ set_property(TARGET emulationroce PROPERTY POSITION_INDEPENDENT_CODE ON)
  
- add_subdirectory(hololink_core)
- add_subdirectory(operators)
- add_subdirectory(sensors)
- add_subdirectory(emulation)
+ add_library(hololink::emulation::roce ALIAS emulationroce)
  
--include(pybind11_add_hololink_module)
+-install(TARGETS emulationroce
++install(TARGETS emulation_host emulationroce
+     EXPORT HololinkTargets
+     DESTINATION ${CMAKE_INSTALL_LIBDIR}
+     COMPONENT hololink-emulation)
+diff --git a/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt b/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
+index f21cad8..404fe10 100644
+--- a/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
++++ b/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
+@@ -29,7 +29,6 @@ SET(DOCA_PATH /opt/mellanox/doca)
+ pkg_search_module(DOCA_GPUNETIO REQUIRED doca-gpunetio)
+ pkg_search_module(DOCA_VERBS REQUIRED doca-verbs)
+ 
+-enable_language(CUDA)
+ # Check if DOCA is available
+ message(STATUS "DOCA found at ${DOCA_PATH}")
+ 
+@@ -40,40 +39,28 @@ add_library(gpu_roce_transceiver STATIC
+   gpu_roce_transceiver_kernel.cu
+ )
+ 
+-set(LOCAL_CUDA_ARCHITECTURES "")
++# doca-gpunetio requires sm_80+. We don't filter CMAKE_CUDA_ARCHITECTURES (explicit user intent
++# is respected and an unbuildable arch should fail early at link time) but we warn so the source
++# of any subsequent doca-gpunetio link error is obvious. "native" is a CMake 3.24+ sentinel
++# resolved at configure time and is skipped by the numeric check.
++set(_grt_low_archs "")
+ if (DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "")
+-  # Keep only architectures >= 80; compare numeric part only (values may be e.g. 80-virtual, 70-real)
+-  # architectures < 70 will fail to build/link with doca-gpunetio. doca gpunetio development suggests minimum 80
+   foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
++    if(arch STREQUAL "native")
++      message(STATUS "gpu_roce_transceiver: skipped \"native\" arch check against the anticipated doca-gpunetio sm_80 minimum.")
++      continue()
++    endif()
+     string(REGEX REPLACE "^([0-9]+).*" "\\1" arch_num "${arch}")
+-    if(NOT arch_num LESS 80)
+-      list(APPEND LOCAL_CUDA_ARCHITECTURES ${arch})
+-    else()
+-      message(STATUS "gpu_roce_transceiver: ${arch} compute capability not used when building gpu_roce_transceiver. must be at least 80")
++    if(arch_num LESS 80)
++      list(APPEND _grt_low_archs ${arch})
+     endif()
+   endforeach()
+ endif()
 -
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET hololink
-     CLASS_NAME "Timeout"
-@@ -33,13 +37,10 @@ pybind11_add_hololink_module(
- # Note: Link against _hololink_core.so is handled automatically by pybind11_add_hololink_module
- # since the hololink target depends on hololink_core
- 
--# install compiled modules
--if(NOT HOLOLINK_PYTHON_INSTALL_DIR)
--    set(HOLOLINK_PYTHON_INSTALL_DIR .)
+-# Default to compute_80 if empty for compatibility across target platforms and doca-gpunetio
+-if(LOCAL_CUDA_ARCHITECTURES STREQUAL "")
+-  list(APPEND LOCAL_CUDA_ARCHITECTURES 80-virtual)
+-  message(STATUS "gpu_roce_transceiver: adding 80-virtual to CUDA_ARCHITECTURES for a minimally compatible build")
 -endif()
-+# install compiled HoloLink Python module
- install(
-     DIRECTORY "${HOLOLINK_PYTHON_MODULE_OUT_DIR}/"
--    DESTINATION "${HOLOLINK_PYTHON_INSTALL_DIR}"
-+    DESTINATION "${HOLOLINK_PYTHON_INSTALL_DIR}/hololink"
-     FILE_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-     DIRECTORY_PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
-     COMPONENT "hololink-python_libs"
-diff --git a/python/hololink/emulation/CMakeLists.txt b/python/hololink/emulation/CMakeLists.txt
-index bfd41c93..9f52e244 100644
---- a/python/hololink/emulation/CMakeLists.txt
-+++ b/python/hololink/emulation/CMakeLists.txt
-@@ -17,7 +17,13 @@
- 
- include(pybind11_add_hololink_module)
- 
--set(EMULATION_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/hololink/emulation/python/hololink/emulation)
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_emulation_python_files
-+    DESTINATION emulation
-+    FILES __init__.py
-+)
-+
-+set(EMULATION_SOURCE_DIR ${hololink_SOURCE_DIR}/src/hololink/emulation/python/hololink/emulation)
- 
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET emulation
-diff --git a/python/hololink/emulation/sensors/CMakeLists.txt b/python/hololink/emulation/sensors/CMakeLists.txt
-index f12a6809..ab0fa5aa 100644
---- a/python/hololink/emulation/sensors/CMakeLists.txt
-+++ b/python/hololink/emulation/sensors/CMakeLists.txt
-@@ -17,7 +17,13 @@
- 
- include(pybind11_add_hololink_module)
- 
--set(EMULATION_SENSORS_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src/hololink/emulation/python/hololink/emulation/sensors)
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_emulation_sensors_python_files
-+    DESTINATION emulation/sensors
-+    FILES __init__.py
-+)
-+
-+set(EMULATION_SENSORS_SOURCE_DIR ${hololink_SOURCE_DIR}/src/hololink/emulation/python/hololink/emulation/sensors)
-         
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET emulation_sensors
-diff --git a/python/hololink/hololink_core/CMakeLists.txt b/python/hololink/hololink_core/CMakeLists.txt
-index ee1d4e5f..17c98664 100644
---- a/python/hololink/hololink_core/CMakeLists.txt
-+++ b/python/hololink/hololink_core/CMakeLists.txt
-@@ -15,6 +15,12 @@
- 
- include(pybind11_add_hololink_module)
- 
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_core_files
-+    DESTINATION hololink_core
-+    FILES __init__.py
-+)
-+
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET hololink_core
-     CLASS_NAME "ArpWrapper,Deserializer,Reactor,Serializer"
-diff --git a/python/hololink/operators/CMakeLists.txt b/python/hololink/operators/CMakeLists.txt
-index eae8eaea..c954a039 100644
---- a/python/hololink/operators/CMakeLists.txt
-+++ b/python/hololink/operators/CMakeLists.txt
-@@ -13,6 +13,17 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
- 
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_operators_python
-+    DESTINATION operators
-+    FILES
-+        __init__.py
-+        base_receiver_op.py
-+        image_shift_to_uint8_operator.py
-+        linux_coe_receiver_operator.py
-+        linux_receiver_operator.py
-+)
-+
- # include the operators
- if(HOLOLINK_BUILD_ARGUS_ISP)
-   add_subdirectory(argus_isp)
-diff --git a/python/hololink/sensors/CMakeLists.txt b/python/hololink/sensors/CMakeLists.txt
-index 9392a7d8..041bea60 100644
---- a/python/hololink/sensors/CMakeLists.txt
-+++ b/python/hololink/sensors/CMakeLists.txt
-@@ -1,4 +1,4 @@
--# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
- # SPDX-License-Identifier: Apache-2.0
- #
- # Licensed under the Apache License, Version 2.0 (the "License");
-@@ -15,10 +15,26 @@
- 
- include(pybind11_add_hololink_module)
- 
--add_subdirectory(camera)
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_python
-+    DESTINATION sensors
-+    FILES
-+        __init__.py
-+        csi.py
-+        imx477.py
-+        linux_camera.py
-+        v4l2_ids.py
-+)
-+
- 
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET hololink_sensor
-     CLASS_NAME "Sensor"
-     SOURCES sensors.cpp
- )
-+
-+add_subdirectory(camera)
-+add_subdirectory(ecam0m30tof)
-+add_subdirectory(imx274)
-+add_subdirectory(imx715)
-+add_subdirectory(vb1940)
-diff --git a/python/hololink/sensors/camera/CMakeLists.txt b/python/hololink/sensors/camera/CMakeLists.txt
-index 4772d0ed..c22c80c7 100644
---- a/python/hololink/sensors/camera/CMakeLists.txt
-+++ b/python/hololink/sensors/camera/CMakeLists.txt
-@@ -15,6 +15,12 @@
- 
- include(pybind11_add_hololink_module)
- 
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_camera_files
-+    DESTINATION sensors/camera
-+    FILES __init__.py
-+)
-+
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET hololink_camera_sensor
-     CLASS_NAME "CameraSensor"
-diff --git a/python/hololink/sensors/camera/imx274/CMakeLists.txt b/python/hololink/sensors/camera/imx274/CMakeLists.txt
-index ce4ab4bc..8245c00c 100644
---- a/python/hololink/sensors/camera/imx274/CMakeLists.txt
-+++ b/python/hololink/sensors/camera/imx274/CMakeLists.txt
-@@ -15,6 +15,12 @@
- 
- include(pybind11_add_hololink_module)
- 
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_camera_imx274_files
-+    DESTINATION sensors/camera/imx274
-+    FILES __init__.py
-+)
-+
- pybind11_add_hololink_module(
-     CPP_CMAKE_TARGET native_imx274_camera_sensor
-     CLASS_NAME "NativeImx274Sensor"
-diff --git a/python/hololink/sensors/ecam0m30tof/CMakeLists.txt b/python/hololink/sensors/ecam0m30tof/CMakeLists.txt
-new file mode 100644
-index 00000000..2b4969a6
---- /dev/null
-+++ b/python/hololink/sensors/ecam0m30tof/CMakeLists.txt
-@@ -0,0 +1,24 @@
-+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-+# SPDX-License-Identifier: Apache-2.0
-+#
-+# Licensed under the Apache License, Version 2.0 (the "License");
-+# you may not use this file except in compliance with the License.
-+# You may obtain a copy of the License at
-+#
-+# http://www.apache.org/licenses/LICENSE-2.0
-+#
-+# Unless required by applicable law or agreed to in writing, software
-+# distributed under the License is distributed on an "AS IS" BASIS,
-+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# See the License for the specific language governing permissions and
-+# limitations under the License.
-+
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_ecam0m30tof
-+    DESTINATION sensors/ecam0m30tof
-+    FILES
-+        __init__.py
-+        ecam0m30tof.py
-+        li_i2c_expander.py
-+        ricbox_out_to_py.py
-+)
-diff --git a/python/hololink/sensors/imx274/CMakeLists.txt b/python/hololink/sensors/imx274/CMakeLists.txt
-new file mode 100644
-index 00000000..3be02643
---- /dev/null
-+++ b/python/hololink/sensors/imx274/CMakeLists.txt
-@@ -0,0 +1,25 @@
-+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-+# SPDX-License-Identifier: Apache-2.0
-+#
-+# Licensed under the Apache License, Version 2.0 (the "License");
-+# you may not use this file except in compliance with the License.
-+# You may obtain a copy of the License at
-+#
-+# http://www.apache.org/licenses/LICENSE-2.0
-+#
-+# Unless required by applicable law or agreed to in writing, software
-+# distributed under the License is distributed on an "AS IS" BASIS,
-+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# See the License for the specific language governing permissions and
-+# limitations under the License.
-+
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_imx274
-+    DESTINATION sensors/imx274
-+    FILES
-+        __init__.py
-+        dual_imx274.py
-+        imx274_mode.py
-+        li_i2c_expander.py
-+        ricbox_out_to_py.py
-+)
-diff --git a/python/hololink/sensors/imx715/CMakeLists.txt b/python/hololink/sensors/imx715/CMakeLists.txt
-new file mode 100644
-index 00000000..ff555b05
---- /dev/null
-+++ b/python/hololink/sensors/imx715/CMakeLists.txt
-@@ -0,0 +1,24 @@
-+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-+# SPDX-License-Identifier: Apache-2.0
-+#
-+# Licensed under the Apache License, Version 2.0 (the "License");
-+# you may not use this file except in compliance with the License.
-+# You may obtain a copy of the License at
-+#
-+# http://www.apache.org/licenses/LICENSE-2.0
-+#
-+# Unless required by applicable law or agreed to in writing, software
-+# distributed under the License is distributed on an "AS IS" BASIS,
-+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# See the License for the specific language governing permissions and
-+# limitations under the License.
-+
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_imx715
-+    DESTINATION sensors/imx715
-+    FILES
-+        __init__.py
-+        imx715.py
-+        li_i2c_expander.py
-+        ricbox_out_to_py.py
-+)
-diff --git a/python/hololink/sensors/vb1940/CMakeLists.txt b/python/hololink/sensors/vb1940/CMakeLists.txt
-new file mode 100644
-index 00000000..fab61993
---- /dev/null
-+++ b/python/hololink/sensors/vb1940/CMakeLists.txt
-@@ -0,0 +1,24 @@
-+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-+# SPDX-License-Identifier: Apache-2.0
-+#
-+# Licensed under the Apache License, Version 2.0 (the "License");
-+# you may not use this file except in compliance with the License.
-+# You may obtain a copy of the License at
-+#
-+# http://www.apache.org/licenses/LICENSE-2.0
-+#
-+# Unless required by applicable law or agreed to in writing, software
-+# distributed under the License is distributed on an "AS IS" BASIS,
-+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+# See the License for the specific language governing permissions and
-+# limitations under the License.
-+
-+copy_hololink_python_files(
-+    TARGET_NAME copy_hololink_sensors_vb1940
-+    DESTINATION sensors/vb1940
-+    FILES
-+        __init__.py
-+        imu.py
-+        vb1940_mode.py
-+        vb1940.py
-+)
-diff --git a/python/setup.py b/python/setup.py
-index 1b432745..9bf06604 100644
---- a/python/setup.py
-+++ b/python/setup.py
-@@ -63,7 +63,7 @@ setuptools.setup(
-         cmake_build_extension.CMakeExtension(
-             name="_hololink",
-             # Name of the resulting package name (import hololink)
--            install_prefix="hololink",
-+            install_prefix="",
-             # Selects the folder where the main CMakeLists.txt is stored
-             source_dir="..",
-             cmake_configure_options=[
-@@ -76,6 +76,7 @@ setuptools.setup(
-                 f"-DHOLOLINK_BUILD_FUSA={'ON' if os.path.isdir('/usr/src/jetson_sipl_api/sipl/fusa') else 'OFF'}",
-                 # Add this to debug the code
-                 # "-DCMAKE_BUILD_TYPE=Debug",
-+                "-DHOLOLINK_PYTHON_INSTALL_DIR:PATH=.",
-             ],
-         ),
-     ],
-diff --git a/python/tools/CMakeLists.txt b/python/tools/CMakeLists.txt
-index 86d234a1..426eca99 100644
---- a/python/tools/CMakeLists.txt
-+++ b/python/tools/CMakeLists.txt
-@@ -13,9 +13,14 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
- 
--# Install the tools
--install(FILES hololink.py
--        imx274.py
--        polarfire_esb.py
--        DESTINATION tools
--        COMPONENT hololink-python_tools)
-+set(HOLOLINK_TOOLS_FILES
-+    hololink.py
-+    imx274.py
-+    polarfire_esb.py
-+)
-+
-+copy_hololink_python_files(
-+    TARGET_NAME hololink_tools_python
-+    DESTINATION tools
-+    FILES ${HOLOLINK_TOOLS_FILES}
-+)
-diff --git a/src/hololink/common/cuda_helper.cpp b/src/hololink/common/cuda_helper.cpp
-index fbcc7ad5..a97d25a3 100644
---- a/src/hololink/common/cuda_helper.cpp
-+++ b/src/hololink/common/cuda_helper.cpp
-@@ -38,6 +38,29 @@
- 
- namespace hololink::common {
- 
-+std::string current_device_sm_arch()
-+{
-+    CUdevice device;
-+    CudaCheck(cuCtxGetDevice(&device));
-+    int major = 0;
-+    int minor = 0;
-+    CudaCheck(cuDeviceGetAttribute(&major, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device));
-+    CudaCheck(cuDeviceGetAttribute(&minor, CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR, device));
-+    std::stringstream buf;
-+    buf << "sm_" << major << minor;
-+    return buf.str();
-+}
-+
-+static bool has_arch_option(const std::vector<std::string>& options)
-+{
-+    for (const auto& option : options) {
-+        if (option.find("--gpu-architecture=") == 0 || option.find("-arch=") == 0) {
-+            return true;
-+        }
-+    }
-+    return false;
-+}
-+
- CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
-     const std::vector<std::string>& functions, const std::vector<std::string>& options)
- {
-@@ -48,7 +71,16 @@ CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
-         0, // numHeaders
-         NULL, // headers
-         NULL)); // includeNames
-+    // NVRTC must target a real SM (sm_<m><n>) to emit CUBIN. We load CUBIN via
-+    // cuModuleLoadDataEx below to bypass the driver's PTX->SASS JIT, which is
-+    // rejected on R580.00 when the NVRTC toolchain is newer than the driver
-+    // (CUDA_ERROR_UNSUPPORTED_PTX_VERSION). See NVBugs 6110136, 6059987.
-+    std::string arch_option;
-     std::vector<const char*> compile_options;
-+    if (!has_arch_option(options)) {
-+        arch_option = "--gpu-architecture=" + current_device_sm_arch();
-+        compile_options.push_back(arch_option.c_str());
-+    }
-     for (auto&& option : options) {
-         compile_options.push_back(option.c_str());
-     }
-@@ -64,16 +96,16 @@ CudaFunctionLauncher::CudaFunctionLauncher(const char* source,
-         buf << "Failed to compile: " << log.get();
-         throw std::runtime_error(buf.str().c_str());
-     }
--    // Obtain PTX from the program.
--    size_t ptxSize;
--    NvRTCCheck(nvrtcGetPTXSize(prog, &ptxSize));
--    std::unique_ptr<char[]> ptx(new char[ptxSize]);
--    NvRTCCheck(nvrtcGetPTX(prog, ptx.get()));
-+    // Obtain CUBIN from the program (real-arch target required, set above).
-+    size_t cubinSize;
-+    NvRTCCheck(nvrtcGetCUBINSize(prog, &cubinSize));
-+    std::unique_ptr<char[]> cubin(new char[cubinSize]);
-+    NvRTCCheck(nvrtcGetCUBIN(prog, cubin.get()));
-     // Destroy the program.
-     NvRTCCheck(nvrtcDestroyProgram(&prog));
- 
--    // Load the generated PTX and get a handle to the kernels
--    CudaCheck(cuModuleLoadDataEx(&module_, ptx.get(), 0, 0, 0));
-+    // Load the generated CUBIN and get a handle to the kernels.
-+    CudaCheck(cuModuleLoadDataEx(&module_, cubin.get(), 0, 0, 0));
-     for (auto&& function : functions) {
-         LaunchParams launch_params;
-         CudaCheck(cuModuleGetFunction(&launch_params.function_, module_, function.c_str()));
-diff --git a/src/hololink/common/cuda_helper.hpp b/src/hololink/common/cuda_helper.hpp
-index 734e8b12..c5db8933 100644
---- a/src/hololink/common/cuda_helper.hpp
-+++ b/src/hololink/common/cuda_helper.hpp
-@@ -41,6 +41,15 @@ struct fmt::formatter<CUresult> : fmt::formatter<int> {
- 
- namespace hololink::common {
- 
-+/**
-+ * Returns the compute-capability arch string for the device attached to the
-+ * current CUDA context, e.g. "sm_90", "sm_100", "sm_110". Used to target
-+ * NVRTC CUBIN emission at a specific SM so we bypass the driver's PTX JIT
-+ * (required on platforms like R580.00 where PTX from newer NVRTC toolchains
-+ * is rejected with CUDA_ERROR_UNSUPPORTED_PTX_VERSION).
-+ */
-+std::string current_device_sm_arch();
-+
- /**
-  * CUDA driver API error check helper
-  */
-diff --git a/src/hololink/core/CMakeLists.txt b/src/hololink/core/CMakeLists.txt
-index 434ff049..d8a9e898 100644
---- a/src/hololink/core/CMakeLists.txt
-+++ b/src/hololink/core/CMakeLists.txt
-@@ -66,6 +66,7 @@ install(FILES
-         networking.hpp
-         nullable_pointer.hpp
-         nvtx_trace.hpp
-+        packetizer_program.hpp
-         reactor.hpp
-         serializer.hpp
-         smart_object_pool.hpp
-diff --git a/src/hololink/emulation/CMakeLists.txt b/src/hololink/emulation/CMakeLists.txt
-index ce744add..e8176ba6 100644
---- a/src/hololink/emulation/CMakeLists.txt
-+++ b/src/hololink/emulation/CMakeLists.txt
-@@ -30,7 +30,7 @@ add_library(emulation STATIC
-     utils.cpp
- )
- 
--if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-+if(hololink_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-     # this is for building emulator-only
-     include(../../../cmake/hololink_deps/dlpack.cmake)
- 
-diff --git a/src/hololink/expr_eval/expr_eval.cu b/src/hololink/expr_eval/expr_eval.cu
-index 1ed94095..3ff34126 100644
---- a/src/hololink/expr_eval/expr_eval.cu
-+++ b/src/hololink/expr_eval/expr_eval.cu
-@@ -134,8 +134,12 @@ static void log_and_throw(const std::string& msg) {
-   throw std::runtime_error(msg);
- }
- 
--// Parallel Thread Execution - a Cuda compilation result.
--using CudaPtx = std::string;
-+// NVRTC compilation artifact (CUBIN - driver-ready SASS). Stored as a byte
-+// buffer in a std::string for convenience. We emit CUBIN rather than PTX to
-+// bypass the driver's PTX->SASS JIT, which is rejected on R580.00 when the
-+// NVRTC toolchain is newer than the driver (CUDA_ERROR_UNSUPPORTED_PTX_VERSION).
-+// See NVBugs 6110136, 6059987.
-+using CudaBinary = std::string;
- 
- // A wrapper class for nvrtcProgram
- class CudaProgram {
-@@ -178,13 +182,14 @@ public:
-     return log;
-   }
- 
--  // Get the PTX (The compilation artifact)
--  CudaPtx get_ptx() const {
--    size_t ptx_size;
--    NVRTC_CHECK(nvrtcGetPTXSize(program_, &ptx_size));
--    CudaPtx ptx(ptx_size, '\0');
--    NVRTC_CHECK(nvrtcGetPTX(program_, ptx.data()));
--    return ptx;
-+  // Get the CUBIN (the compilation artifact - real-arch SASS, loadable via
-+  // cuModuleLoadDataEx without driver-side PTX JIT).
-+  CudaBinary get_cubin() const {
-+    size_t cubin_size;
-+    NVRTC_CHECK(nvrtcGetCUBINSize(program_, &cubin_size));
-+    CudaBinary cubin(cubin_size, '\0');
-+    NVRTC_CHECK(nvrtcGetCUBIN(program_, cubin.data()));
-+    return cubin;
-   }
- 
- private:
-@@ -197,8 +202,8 @@ private:
- class CudaModule {
- public:
-   CudaModule() = default;
--  CudaModule(const CudaPtx& ptx) {
--    CudaCheck(cuModuleLoadDataEx(&module_, ptx.data(), 0, nullptr, nullptr));
-+  CudaModule(const CudaBinary& cubin) {
-+    CudaCheck(cuModuleLoadDataEx(&module_, cubin.data(), 0, nullptr, nullptr));
-   }
- 
-   CudaModule(CudaModule&) = delete;
-@@ -406,9 +411,13 @@ extern "C" __global__ void )" << cuda_kernel_name << R"((float* output, int coun
-   HSB_LOG_DEBUG("Expression Evaluator Cuda code:\n{}", cuda_code);
-   CudaProgram cuda_program(cuda_code);
- 
--  // Compile
-+  // Compile. NVRTC must target a real SM (sm_<m><n>) to emit CUBIN; see
-+  // CudaBinary comment above. Query the active context's device so we match
-+  // the GPU at runtime rather than a build-time assumption.
-+  const std::string arch_option = "--gpu-architecture=" + hololink::common::current_device_sm_arch();
-   std::vector<std::string> include_paths;
-   std::vector<const char*> options;
-+  options.push_back(arch_option.c_str());
-   std::stringstream ss_paths(cuda_toolkit_include_paths_);
-   std::string token;
- 
-@@ -421,7 +430,7 @@ extern "C" __global__ void )" << cuda_kernel_name << R"((float* output, int coun
-   cuda_program.compile(options);
- 
-   // Create a Cuda module and get the Cuda Function
--  CudaModule cuda_module(cuda_program.get_ptx());
-+  CudaModule cuda_module(cuda_program.get_cubin());
-   CUfunction cuda_function(cuda_module.get_function(cuda_kernel_name));
-   
-   // Create an Expression object and return it
-diff --git a/src/hololink/operators/iq_dec/iq_dec_op.cpp b/src/hololink/operators/iq_dec/iq_dec_op.cpp
-index 96929ad8..60ee5419 100644
---- a/src/hololink/operators/iq_dec/iq_dec_op.cpp
-+++ b/src/hololink/operators/iq_dec/iq_dec_op.cpp
-@@ -94,7 +94,7 @@ void IQDecoderOp::compute(holoscan::InputContext& op_input, [[maybe_unused]] hol
-     HSB_LOG_DEBUG("Received {} bytes", encoded_tensor->nbytes());
-     auto number_of_iq_elements = encoded_tensor->nbytes() / sizeof(uint16_t); // Each in-phase/quadrature sample is encoded into 16 bit (each sample is 32 bit)
-     if (number_of_iq_elements % 8 != 0) {
--        throw std::runtime_error("Invalid encoded tensor size");
-+        throw std::runtime_error("Invalid encoded tensor size: " + std::to_string(encoded_tensor->nbytes()));
-     }
- 
-     int tensor_size = static_cast<int>(number_of_iq_elements);
-diff --git a/src/hololink/operators/iq_enc/iq_enc_op.cpp b/src/hololink/operators/iq_enc/iq_enc_op.cpp
-index 80018cbb..a8e94395 100644
---- a/src/hololink/operators/iq_enc/iq_enc_op.cpp
-+++ b/src/hololink/operators/iq_enc/iq_enc_op.cpp
-@@ -88,7 +88,7 @@ void IQEncoderOp::compute(holoscan::InputContext& op_input, [[maybe_unused]] hol
- 
-     auto tensor_iq = maybe_tensor.value();
-     if (tensor_iq->size() % 8) {
--        throw std::runtime_error("Invalid IQ signal");
-+        throw std::runtime_error("Invalid IQ signal with size: " + std::to_string(tensor_iq->size()));
-     }
- 
-     // Create CUDA buffer
-diff --git a/src/hololink/operators/sig_viewer/CMakeLists.txt b/src/hololink/operators/sig_viewer/CMakeLists.txt
-index 8c662fa8..ba197cf2 100644
---- a/src/hololink/operators/sig_viewer/CMakeLists.txt
-+++ b/src/hololink/operators/sig_viewer/CMakeLists.txt
-@@ -28,11 +28,18 @@ target_include_directories(sig_viewer
-     $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
- )
- 
-+find_package(CUDAToolkit REQUIRED)
-+find_package(CCCL REQUIRED)
- target_link_libraries(sig_viewer
--  PRIVATE
--    cufft
-+  PUBLIC
-+    CCCL::CCCL     # For Thrust project headers
-+    CUDA::cudart
-     hololink
-+    hololink::core
-     holoscan::core
-+  PRIVATE
-+    CUDA::cufft
-+    CUDA::cuda_driver
-     holoscan::viz::imgui
- )
- 
-diff --git a/src/hololink/operators/sig_viewer/sig_viewer_op.cpp b/src/hololink/operators/sig_viewer/sig_viewer_op.cpp
-index 6a8c6b1a..e796b568 100644
---- a/src/hololink/operators/sig_viewer/sig_viewer_op.cpp
-+++ b/src/hololink/operators/sig_viewer/sig_viewer_op.cpp
-@@ -22,8 +22,7 @@
- 
- #include <imgui.h>
- 
--#include <holoscan/operators/holoviz/holoviz.hpp>
--#include <holoviz/holoviz.hpp>
-+#include <holoscan/core/operator.hpp>
- 
- #include <hololink/common/cuda_error.hpp>
- #include <hololink/core/logging_internal.hpp>
-diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
-index 98d47170..57a33a07 100644
---- a/tests/CMakeLists.txt
-+++ b/tests/CMakeLists.txt
-@@ -13,9 +13,6 @@
- # See the License for the specific language governing permissions and
- # limitations under the License.
- 
--# Enable testing for the current directory and below
--enable_testing()
 -
- # Find or fetch gtest
- include(hololink_deps/gtest)
+-# If CUDA_NATIVE_ARCH is set, append it to LOCAL_CUDA_ARCHITECTURES; else use -arch=native
+-if(NOT "$ENV{CUDA_NATIVE_ARCH}" STREQUAL "")
+-  list(APPEND LOCAL_CUDA_ARCHITECTURES "$ENV{CUDA_NATIVE_ARCH}")
+-else()
+-  # Force native architecture for optimized performance on platform if available
+-  # This can actually fail if container nvcc and host driver are different versions
+-  # in which case nvcc will default to a significantly older compute capability, which may fail for gpu_roce_transceiver.
+-  # if this happens and result is not desired, the build should set CUDA_NATIVE_ARCH in the environment to the desired/native architecture
+-  target_compile_options(gpu_roce_transceiver PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
+-    -arch=native
+-    >)
++if(_grt_low_archs)
++  # Anticipate sm_80 minimum from doca-gpunetio, but do not enforce it here.
++  message(WARNING "gpu_roce_transceiver: Requested CUDA arch(s) ${_grt_low_archs} below the anticipated sm_80 minimum "
++    "required by doca-gpunetio; build may fail at link time.")
+ endif()
+-message(STATUS "gpu_roce_transceiver: build architectures ${LOCAL_CUDA_ARCHITECTURES} and native")
+-set_property(TARGET gpu_roce_transceiver PROPERTY CUDA_ARCHITECTURES ${LOCAL_CUDA_ARCHITECTURES})
  
-@@ -66,7 +63,7 @@ endfunction()
- # ##################################################################################################
- # * core tests ----------------------------------------------------------------------------------
- ConfigureTest(
--    iq_encoder_decoder_test
-+    hololink_iq_encoder_decoder_test
-   SOURCES
-     iq_encoder_decoder_test.cpp
-   LINK_LIBRARIES
-@@ -75,7 +72,7 @@ ConfigureTest(
- )
- 
- ConfigureTest(
--    signal_generator_test
-+    hololink_signal_generator_test
-   SOURCES
-     signal_generator_test.cpp
-   LINK_LIBRARIES
-@@ -83,9 +80,20 @@ ConfigureTest(
- )
- 
- ConfigureTest(
--    roce_transmitter_test
-+    hololink_roce_transmitter_test
-   SOURCES
--  roce_transmitter_test.cpp
-+    roce_transmitter_test.cpp
-   LINK_LIBRARIES
-     hololink::operators::roce_transmitter
- )
-+set_tests_properties(hololink_roce_transmitter_test PROPERTIES
-+  SKIP_REGULAR_EXPRESSION "Failed to find GID with IP based RoCE V2|No RoCE-capable InfiniBand device available"
-+)
-+
-+if(HOLOLINK_BUILD_PYTHON)
-+  add_test(
-+    NAME hololink_python_basic_test
-+    COMMAND python3 -m pytest -vv -s
-+    WORKING_DIRECTORY ${hololink_SOURCE_DIR}
-+  )
-+endif()
-diff --git a/tests/iq_encoder_decoder_test.cpp b/tests/iq_encoder_decoder_test.cpp
-index 86bc2c92..18dfe44b 100644
---- a/tests/iq_encoder_decoder_test.cpp
-+++ b/tests/iq_encoder_decoder_test.cpp
-@@ -49,7 +49,7 @@ Tensor create_tensor(void* context, gxf_uid_t allocator_uid, const Data& data)
- 
- class DataGeneratorOp : public holoscan::Operator {
- public:
--    using DataGenerator = std::function<Data()>;
-+    using DataPtr = std::shared_ptr<const Data>;
-     HOLOSCAN_OPERATOR_FORWARD_ARGS(DataGeneratorOp)
-     DataGeneratorOp() = default;
- 
-@@ -57,10 +57,12 @@ public:
-     {
-         spec.output<Tensor>(output_name);
- 
--        // Register converters for arguments not defined by Holoscan
--        register_converter<DataGenerator>();
-+        // Register converters for arguments not defined by Holoscan.
-+        // Use DataPtr instead of std::function to avoid bad_any_cast with std::function<void()>
-+        // registered in hololink's base_receiver_op.
-+        register_converter<DataPtr>();
- 
--        spec.param(data_generator_, "data_generator", "DataGenerator", "Data Generator");
-+        spec.param(data_, "data", "Data", "Data to emit");
-     }
- 
-     void initialize() override
-@@ -77,15 +79,17 @@ public:
-     void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-         holoscan::ExecutionContext& context) override
-     {
--        auto data = data_generator_.get()();
--        auto tensor = create_tensor(context.context(), allocator_->gxf_cid(), data);
-+        auto data = data_.get();
-+        if (!data)
-+            throw std::runtime_error("DataGeneratorOp: no data");
-+        auto tensor = create_tensor(context.context(), allocator_->gxf_cid(), *data);
-         op_output.emit(tensor);
-     }
- 
- private:
-     static inline const char* output_name = "output";
-     std::shared_ptr<holoscan::Allocator> allocator_;
--    holoscan::Parameter<DataGenerator> data_generator_;
-+    holoscan::Parameter<DataPtr> data_;
- };
- 
- class DataValidatorOp : public holoscan::Operator {
-@@ -122,10 +126,10 @@ private:
- class IQEncoderDecoderTestApp : public holoscan::Application {
- public:
-     IQEncoderDecoderTestApp(
--        const DataGeneratorOp::DataGenerator& data_generator,
-+        DataGeneratorOp::DataPtr data,
-         const DataValidatorOp::DataValidator& data_validator,
-         float scale = 1.0f)
--        : data_generator_(data_generator)
-+        : data_(data)
-         , data_validator_(data_validator)
-         , scale_(scale)
-     {
-@@ -136,7 +140,7 @@ public:
-         data_generator_op_ = make_operator<DataGeneratorOp>(
-             "DataGenerator",
-             make_condition<holoscan::CountCondition>(1),
--            holoscan::Arg("data_generator", data_generator_));
-+            holoscan::Arg("data", data_));
-         iq_encoder_op_ = make_operator<operators::IQEncoderOp>(
-             "IQ Encoder",
-             holoscan::Arg("scale", scale_));
-@@ -153,7 +157,7 @@ public:
-     }
- 
- private:
--    const DataGeneratorOp::DataGenerator& data_generator_;
-+    DataGeneratorOp::DataPtr data_;
-     const DataValidatorOp::DataValidator& data_validator_;
-     float scale_ = 1.0f;
- 
-@@ -167,9 +171,7 @@ TEST(IQEncoderDecoderTest, DefaultRange)
- {
-     Data d { .0, .1, .2, .3, .4, .5, .6, .7 };
-     IQEncoderDecoderTestApp app(
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         DataValidatorOp::DataValidator([&d](const Data& data) {
-             EXPECT_TRUE(std::equal(data.begin(), data.end(), d.begin(), [](float lhs, float rhs) { return std::abs(lhs - rhs) <= 1.0f / SHRT_MAX; }));
-         }));
-@@ -180,9 +182,7 @@ TEST(IQEncoderDecoderTest, ClampedRange)
- {
-     Data d { 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7 };
-     IQEncoderDecoderTestApp app(
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         DataValidatorOp::DataValidator([](const Data& data) {
-             EXPECT_TRUE(std::all_of(data.begin(), data.end(), [](float value) { return value == 1.0f; }));
-         }));
-@@ -194,9 +194,7 @@ TEST(IQEncoderDecoderTest, ScaledRange)
-     Data d { 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7 };
-     float scale = 2.0f;
-     IQEncoderDecoderTestApp app(
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         DataValidatorOp::DataValidator([&d, scale](const Data& data) {
-             EXPECT_TRUE(std::equal(data.begin(), data.end(), d.begin(), [scale](float lhs, float rhs) { return std::abs(lhs - rhs) <= scale / SHRT_MAX; }));
-         }),
-@@ -210,11 +208,8 @@ TEST(IQEncoderDecoderTest, InvalidBufferSize)
-         EXPECT_ANY_THROW({
-             Data d(i, 0.0f);
-             IQEncoderDecoderTestApp app(
--                DataGeneratorOp::DataGenerator([&d] {
--                    return d;
--                }),
--                DataValidatorOp::DataValidator([&d](const Data&) {
--                }));
-+                std::make_shared<Data>(d),
-+                DataValidatorOp::DataValidator([](const Data&) {}));
-             app.run();
-         });
-     }
-@@ -230,5 +225,5 @@ TEST(IQEncoderDecoderTest, InvalidBufferSize)
-         static bool decode(const Node&, TYPE&) { throw std::runtime_error("Unsupported"); } \
-     };
- 
--YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataGenerator);
-+YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataPtr);
- YAML_CONVERTER(hololink::tests::DataValidatorOp::DataValidator);
-diff --git a/tests/roce_transmitter_test.cpp b/tests/roce_transmitter_test.cpp
-index e69376e5..0a9c5aa8 100644
---- a/tests/roce_transmitter_test.cpp
-+++ b/tests/roce_transmitter_test.cpp
-@@ -18,6 +18,7 @@
- #include "gtest/gtest.h"
- 
- #include <chrono>
-+#include <optional>
- #include <memory>
- #include <random>
- #include <string>
-@@ -51,10 +52,26 @@ static std::string get_device_ip(const std::string& device_name, int ib_port)
-     return operators::ibv::gid_to_ipv4(gid);
- }
- 
--static operators::ibv::DeviceList device_list;
--static std::string ibv_name = device_list.get(0).name();
--static uint32_t ibv_port = 1;
--static std::string host_ip = get_device_ip(ibv_name, ibv_port);
-+struct RoceTestDeviceInfo {
-+    std::string ibv_name;
-+    uint32_t ibv_port;
-+    std::string host_ip;
-+};
-+
-+static std::optional<RoceTestDeviceInfo> get_roce_test_device_info()
-+{
-+    operators::ibv::DeviceList device_list;
-+    if (device_list.size() == 0) {
-+        return std::nullopt;
-+    }
-+    std::string ibv_name = device_list.get(0).name();
-+    uint32_t ibv_port = 1;
-+    std::string host_ip = get_device_ip(ibv_name, ibv_port);
-+    if (host_ip.empty()) {
-+        return std::nullopt;
-+    }
-+    return RoceTestDeviceInfo{ibv_name, ibv_port, host_ip};
-+}
- 
- using Tensor = std::shared_ptr<holoscan::Tensor>;
- using Data = std::vector<float>;
-@@ -77,7 +94,7 @@ static Tensor create_tensor(void* context, gxf_uid_t allocator_uid, const Data&
- 
- class DataGeneratorOp : public holoscan::Operator {
- public:
--    using DataGenerator = std::function<Data()>;
-+    using DataPtr = std::shared_ptr<const Data>;
-     HOLOSCAN_OPERATOR_FORWARD_ARGS(DataGeneratorOp)
-     DataGeneratorOp() = default;
- 
-@@ -85,10 +102,12 @@ public:
-     {
-         spec.output<Tensor>(output_name);
- 
--        // Register converters for arguments not defined by Holoscan
--        register_converter<DataGenerator>();
-+        // Register converters for arguments not defined by Holoscan.
-+        // Use DataPtr instead of std::function to avoid bad_any_cast with std::function<void()>
-+        // registered in hololink's base_receiver_op.
-+        register_converter<DataPtr>();
- 
--        spec.param(data_generator_, "data_generator", "DataGenerator", "Data Generator");
-+        spec.param(data_, "data", "Data", "Data to emit");
-     }
- 
-     void initialize() override
-@@ -105,15 +124,17 @@ public:
-     void compute(holoscan::InputContext& op_input, holoscan::OutputContext& op_output,
-         holoscan::ExecutionContext& context) override
-     {
--        auto data = data_generator_.get()();
--        auto tensor = create_tensor(context.context(), allocator_->gxf_cid(), data);
-+        auto data = data_.get();
-+        if (!data)
-+            throw std::runtime_error("DataGeneratorOp: no data");
-+        auto tensor = create_tensor(context.context(), allocator_->gxf_cid(), *data);
-         op_output.emit(tensor);
-     }
- 
- private:
-     static inline const char* output_name = "output";
-     std::shared_ptr<holoscan::Allocator> allocator_;
--    holoscan::Parameter<DataGenerator> data_generator_;
-+    holoscan::Parameter<DataPtr> data_;
- };
- 
- class RoceReceiver {
-@@ -216,10 +237,12 @@ private:
- class RoceTransmitterTestApp : public holoscan::Application {
- public:
-     RoceTransmitterTestApp(size_t roce_transmitter_buffer_size,
--        const DataGeneratorOp::DataGenerator& data_generator, const RoceReceiver::DataValidator& data_validator)
-+        DataGeneratorOp::DataPtr data, const RoceReceiver::DataValidator& data_validator,
-+        const RoceTestDeviceInfo& device_info)
-         : roce_transmitter_buffer_size_(roce_transmitter_buffer_size)
--        , data_generator_(data_generator)
--        , roce_receiver_(data_validator, roce_transmitter_buffer_size_, ibv_name, ibv_port, host_ip)
-+        , data_(data)
-+        , roce_receiver_(data_validator, roce_transmitter_buffer_size_, device_info.ibv_name, device_info.ibv_port, device_info.host_ip)
-+        , device_info_(device_info)
-     {
-     }
- 
-@@ -228,12 +251,12 @@ public:
-         data_generator_op_ = make_operator<DataGeneratorOp>(
-             "DataGenerator",
-             make_condition<holoscan::CountCondition>(1),
--            holoscan::Arg("data_generator", data_generator_));
-+            holoscan::Arg("data", data_));
-         roce_transmitter_op_ = make_operator<hololink::operators::RoceTransmitterOp>(
-             "Roce Transmitter",
--            holoscan::Arg("ibv_name", ibv_name.c_str()),
--            holoscan::Arg("ibv_port", ibv_port),
--            holoscan::Arg("hololink_ip", host_ip.c_str()),
-+            holoscan::Arg("ibv_name", device_info_.ibv_name.c_str()),
-+            holoscan::Arg("ibv_port", device_info_.ibv_port),
-+            holoscan::Arg("hololink_ip", device_info_.host_ip.c_str()),
-             holoscan::Arg("ibv_qp", roce_receiver_.get_qp_num()),
-             holoscan::Arg("buffer_size", roce_transmitter_buffer_size_),
-             holoscan::Arg("queue_size", static_cast<uint64_t>(1)),
-@@ -255,8 +278,9 @@ public:
- 
- private:
-     size_t roce_transmitter_buffer_size_;
--    const DataGeneratorOp::DataGenerator& data_generator_;
-+    DataGeneratorOp::DataPtr data_;
-     RoceReceiver roce_receiver_;
-+    RoceTestDeviceInfo device_info_;
- 
-     std::shared_ptr<DataGeneratorOp> data_generator_op_;
-     std::shared_ptr<hololink::operators::RoceTransmitterOp> roce_transmitter_op_;
-@@ -274,43 +298,52 @@ static Data generate_data(size_t size)
- 
- TEST(RoceTransmitterTest, float_8)
- {
-+    auto device_info = get_roce_test_device_info();
-+    if (!device_info) {
-+        GTEST_SKIP() << "No RoCE-capable InfiniBand device available";
-+    }
-     Data d(generate_data(8));
-     RoceTransmitterTestApp app(
-         d.size() * sizeof(Data::value_type),
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         RoceReceiver::DataValidator([&d](const Data& data) {
-             EXPECT_TRUE(std::equal(d.begin(), d.begin() + d.size(), data.begin()));
--        }));
-+        }),
-+        *device_info);
-     app.run();
- }
- 
- TEST(RoceTransmitterTest, float_4K)
- {
-+    auto device_info = get_roce_test_device_info();
-+    if (!device_info) {
-+        GTEST_SKIP() << "No RoCE-capable InfiniBand device available";
-+    }
-     Data d(generate_data(4 * 1024));
-     RoceTransmitterTestApp app(
-         d.size() * sizeof(Data::value_type),
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         RoceReceiver::DataValidator([&d](const Data& data) {
-             EXPECT_TRUE(std::equal(d.begin(), d.begin() + d.size(), data.begin()));
--        }));
-+        }),
-+        *device_info);
-     app.run();
- }
- 
- TEST(RoceTransmitterTest, float_1M)
- {
-+    auto device_info = get_roce_test_device_info();
-+    if (!device_info) {
-+        GTEST_SKIP() << "No RoCE-capable InfiniBand device available";
-+    }
-     Data d(generate_data(4 * 1024));
-     RoceTransmitterTestApp app(
-         d.size() * sizeof(Data::value_type),
--        DataGeneratorOp::DataGenerator([&d] {
--            return d;
--        }),
-+        std::make_shared<Data>(d),
-         RoceReceiver::DataValidator([&d](const Data& data) {
-             EXPECT_TRUE(std::equal(d.begin(), d.begin() + d.size(), data.begin()));
--        }));
-+        }),
-+        *device_info);
-     app.run();
- }
- 
-@@ -324,4 +357,4 @@ TEST(RoceTransmitterTest, float_1M)
-         static bool decode(const Node&, TYPE&) { throw std::runtime_error("Unsupported"); } \
-     };
- 
--YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataGenerator);
-+YAML_CONVERTER(hololink::tests::DataGeneratorOp::DataPtr);
-diff --git a/src/hololink/core/logging_internal.hpp b/src/hololink/core/logging_internal.hpp
-index a788729..0f909b1 100644
---- a/src/hololink/core/logging_internal.hpp
-+++ b/src/hololink/core/logging_internal.hpp
-@@ -28,13 +28,6 @@
- #include <fmt/format.h>
- #include <fmt/ranges.h>
- 
--#if FMT_VERSION >= 110000
--namespace fmt {
--template <typename Char>
--using buffer_context = buffered_context<Char>;
--}
--#endif
--
- /**
-  * @brief Formatter for Metadata
-  *
-@@ -77,8 +70,12 @@ template <typename FormatT, typename... ArgsT>
- static inline void hsb_log_fmt(char const* file, unsigned line, const char* function, HsbLogLevel level, const FormatT& format, ArgsT&&... args)
- {
-     if (level >= hsb_log_level) {
--        auto fmt_args = fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...);
--        hsb_logger(file, line, function, level, fmt::vformat(format, fmt_args).c_str());
-+#if FMT_VERSION >= 110000
-+        auto fmt_args = fmt::make_format_args(args...);
-+#else
-+        auto fmt_args = fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT>>>(args...);
-+#endif
-+        hsb_logger(file, line, function, level, fmt::vformat(fmt::string_view(format), fmt_args).c_str());
-     }
- }
- 
+ # to silence doca api warnings publicly
+ target_compile_options(gpu_roce_transceiver PUBLIC -DDOCA_ALLOW_EXPERIMENTAL_API=1)

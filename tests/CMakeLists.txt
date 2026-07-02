@@ -38,9 +38,18 @@ include(GoogleTest)
 #
 # Optional: EXTRA_ENVIRONMENT — semicolon-separated VAR=value pairs merged into gtest_discover_tests
 # ENVIRONMENT (set_tests_properties on the target name does not apply to discovered tests).
+# Optional: TEST_PREFIX — string prepended to every discovered test case name.
+# Optional: EXTRA_PROPERTIES — additional `<prop> <value>` pairs appended to the PROPERTIES argument
+# of gtest_discover_tests. Use this for e.g. `RESOURCE_LOCK "name"` or `RUN_SERIAL TRUE` on every
+# discovered test from this target.
+#
+# Convention: place all keyword arguments (TEST_PREFIX, EXTRA_ENVIRONMENT, EXTRA_PROPERTIES) AFTER
+# the source file list. EXTRA_PROPERTIES is a multi-value keyword and cmake_parse_arguments will
+# greedily consume any positional arguments that follow it as part of the property list, dropping
+# them from the source file list.
 function(ConfigureTest CMAKE_TEST_NAME)
   # PARSE_ARGV reads from ARGV (not ARGN); start at ARGV1 so the target name stays in ARGV0.
-  cmake_parse_arguments(PARSE_ARGV 1 CT "" "EXTRA_ENVIRONMENT;TEST_PREFIX" "")
+  cmake_parse_arguments(PARSE_ARGV 1 CT "" "EXTRA_ENVIRONMENT;TEST_PREFIX" "EXTRA_PROPERTIES")
   set(_configure_test_sources ${CT_UNPARSED_ARGUMENTS})
   if(NOT _configure_test_sources)
     message(FATAL_ERROR "ConfigureTest(${CMAKE_TEST_NAME}): no source files listed")
@@ -84,10 +93,17 @@ function(ConfigureTest CMAKE_TEST_NAME)
   if(CT_TEST_PREFIX)
     set(_test_prefix_arg TEST_PREFIX "${CT_TEST_PREFIX}")
   endif()
+  # Order matters: place single-valued properties (RESOURCE_LOCK, RUN_SERIAL,
+  # ...) BEFORE the list-valued ENVIRONMENT. gtest_discover_tests' generated
+  # set_tests_properties call gets multi-arg expansion on ENVIRONMENT (one
+  # bracket-string per env var); CMake treats ENVIRONMENT as a greedy
+  # list-property only at the END of the property list, so any property name
+  # appearing after ENVIRONMENT (e.g. RESOURCE_LOCK) gets consumed as an env
+  # value and silently lost.
   gtest_discover_tests(${CMAKE_TEST_NAME}
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     DISCOVERY_MODE PRE_TEST
-    PROPERTIES ENVIRONMENT "${_gtest_test_environment}"
+    PROPERTIES ${CT_EXTRA_PROPERTIES} ENVIRONMENT "${_gtest_test_environment}"
     ${_test_prefix_arg}
   )
 
@@ -373,6 +389,13 @@ add_dependencies(OPERATORS_CLASSES_TEST racerx_data)
 # * inference operator tests -----------------------------------------------------------------------
 ConfigureTest(INFERENCE_OPERATOR_TEST
   operators/inference/test_inference_operator.cpp
+  # RESOURCE_LOCK "inference": the parametrized fixture has cases with
+  # test_two=true that spawn two inference pipelines in parallel inside a
+  # single process. Under high CTest -j, those cases race with each other
+  # (and with other GPU-heavy tests) on tensor-fill vs inference-trigger
+  # ordering, producing zeroed outputs. Serialize the entire family until
+  # the underlying race is investigated.
+  EXTRA_PROPERTIES RESOURCE_LOCK "inference"
 )
 target_link_libraries(INFERENCE_OPERATOR_TEST
   PRIVATE
@@ -527,8 +550,6 @@ endif()
 
 ConfigureTest(
   SYSTEM_DISTRIBUTED_EBS_TEST
-  TEST_PREFIX "EBS_"
-  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}"
   system/distributed/async_data_logger_distributed_shutdown_test.cpp
   system/distributed/distributed_app.cpp
   system/distributed/distributed_app_scheduler_test.cpp
@@ -540,8 +561,15 @@ ConfigureTest(
   system/distributed/pose_tree_ucx_snapshot_delta_ordering_test.cpp
   system/distributed/single_tensor_transmit.cpp
   system/distributed/standalone_fragments.cpp
+  system/distributed/ucx_capacity_propagation_test.cpp
   system/distributed/ucx_message_serialization_ping_app.cpp
   system/env_wrapper.cpp
+  TEST_PREFIX "EBS_"
+  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_EBS_TEST_FLAGS}"
+  # RESOURCE_LOCK "distributed_ucx": UCX-using tests serialize against each
+  # other (across all distributed test binaries and example tests) to avoid
+  # port-collision races under parallel CTest. Non-UCX tests are unaffected.
+  EXTRA_PROPERTIES RESOURCE_LOCK "distributed_ucx"
 )
 target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   PRIVATE
@@ -554,6 +582,10 @@ target_link_libraries(SYSTEM_DISTRIBUTED_EBS_TEST
   holoscan::ops::ping_tensor_rx
   holoscan::ops::ping_tensor_tx
   ucxx::ucxx
+)
+target_include_directories(SYSTEM_DISTRIBUTED_EBS_TEST
+  PRIVATE
+  ${CMAKE_SOURCE_DIR}/examples/tensor_interop/cpp
 )
 
 # Repeat distributed tests, but setting environment variables to use the multi-thread scheduler
@@ -582,10 +614,11 @@ endif()
 
 ConfigureTest(
   SYSTEM_DISTRIBUTED_MTS_TEST
-  TEST_PREFIX "MTS_"
-  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS}"
   system/distributed/distributed_app.cpp
   system/env_wrapper.cpp
+  TEST_PREFIX "MTS_"
+  EXTRA_ENVIRONMENT "${CMAKE_SYSTEM_DISTRIBUTED_MTS_TEST_FLAGS}"
+  EXTRA_PROPERTIES RESOURCE_LOCK "distributed_ucx"
 )
 target_link_libraries(SYSTEM_DISTRIBUTED_MTS_TEST
   PRIVATE

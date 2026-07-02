@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,11 +67,16 @@ class OrbitSetterOp : public holoscan::Operator {
     if (pose_tree_manager) {
       pose_tree_ = pose_tree_manager->tree();
       // Create frames & edges once.
-      pose_tree_->create_frame("sun");
-      pose_tree_->create_frame("earth");
-      pose_tree_->create_frame("moon");
-      pose_tree_->create_edges("sun", "earth");
-      pose_tree_->create_edges("earth", "moon");
+      auto pose_tree_result =
+          pose_tree_->create_frame("sun")
+              .and_then([&]() { return pose_tree_->create_frame("earth"); })
+              .and_then([&]() { return pose_tree_->create_frame("moon"); })
+              .and_then([&]() { return pose_tree_->create_edges("sun", "earth"); })
+              .and_then([&]() { return pose_tree_->create_edges("earth", "moon"); });
+      if (!pose_tree_result) {
+        HOLOSCAN_LOG_ERROR("Failed to populate the pose_tree: {}",
+                           holoscan::PoseTree::error_to_str(pose_tree_result.error()));
+      }
     } else {
       HOLOSCAN_LOG_ERROR("PoseTreeManager not found");
     }
@@ -109,7 +114,11 @@ class OrbitSetterOp : public holoscan::Operator {
     holoscan::SO3d earth_rot = holoscan::SO3d::from_axis_angle({0.0, 0.0, 1.0}, theta_e + half_pi);
 
     if (pose_tree_) {
-      pose_tree_->set("sun", "earth", now, {earth_rot, earth_pos});
+      auto result = pose_tree_->set("sun", "earth", now, {earth_rot, earth_pos});
+      if (!result) {
+        HOLOSCAN_LOG_ERROR("Failed to set pose sun -> earth: {}",
+                           holoscan::PoseTree::error_to_str(result.error()));
+      }
     } else {
       HOLOSCAN_LOG_ERROR("PoseTree not found (unable to set sun → earth pose)");
     }
@@ -118,7 +127,11 @@ class OrbitSetterOp : public holoscan::Operator {
     holoscan::Vector3d moon_pos(r_moon * std::cos(theta_m), r_moon * std::sin(theta_m), 0.0);
     holoscan::SO3d moon_rot = holoscan::SO3d::from_axis_angle({0.0, 0.0, 1.0}, theta_m);
     if (pose_tree_) {
-      pose_tree_->set("earth", "moon", now, {moon_rot, moon_pos});
+      auto result = pose_tree_->set("earth", "moon", now, {moon_rot, moon_pos});
+      if (!result) {
+        HOLOSCAN_LOG_ERROR("Failed to set pose earth -> moon: {}",
+                           holoscan::PoseTree::error_to_str(result.error()));
+      }
     } else {
       HOLOSCAN_LOG_ERROR("PoseTree not found (unable to set earth → moon pose)");
     }

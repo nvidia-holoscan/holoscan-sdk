@@ -1,0 +1,75 @@
+<Anchor id="optimize-jetpack" />
+
+On NVIDIA Jetson developer kits (such as [Jetson AGX Thor](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-thor/) and [Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/)), the [JetPack](https://developer.nvidia.com/embedded/jetpack) / [Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux) Board Support Package (BSP) is tuned for general-purpose development out of the box. Two adjustments help Holoscan applications achieve lower, more predictable latency:
+
+- [Installing the real-time kernel](setup/additional-setup/optimizing-jetpack#jetpack-rt-kernel) to reduce scheduling jitter for time-critical pipelines.
+- [Running with a minimal, headless BSP](setup/additional-setup/optimizing-jetpack#jetpack-headless-minimal-bsp) so the device's compute and memory are spent on your application rather than a desktop environment.
+
+<Note>
+
+This guide targets Jetson developer kits running JetPack / Jetson Linux. For production deployments on the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) developer kit, a more aggressively minimized runtime can be built with [OpenEmbedded/Yocto](setup/additional-setup/deployment-stack).
+
+</Note>
+
+<Anchor id="jetpack-rt-kernel" />
+
+## Install a Real-Time Kernel
+
+The kernel that ships with JetPack uses voluntary preemption. NVIDIA also distributes a `PREEMPT_RT` (real-time) kernel for Jetson Linux that lets the scheduler preempt lower-priority work more aggressively, lowering worst-case scheduling latency. This pairs well with Holoscan's [Linux real-time scheduling policies](using-the-sdk/create-an-application#configuring-app-thread-pools-realtime) (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`): the SDK only *requests* a policy from the kernel, so a real-time kernel gives those requests the most consistent effect.
+
+The real-time kernel installs alongside the standard kernel through an over-the-air (OTA) update, so you can switch between them without reflashing. For the authoritative install procedure and supported platforms, see the **Real-Time Kernel** page (under *Kernel Customization*) of the Jetson Linux Developer Guide — for example, the [R39.2 release](https://docs.nvidia.com/jetson/archives/r39.2/DeveloperGuide/SD/Kernel/RealTimeKernel.html). If that version-specific link has moved, browse to the guide for your release from the [Jetson Software documentation](https://docs.nvidia.com/jetson/index.html) hub. The package set differs slightly between JetPack 6 (Jetson Orin) and JetPack 7 (Jetson Thor), so use the guide that matches the release installed on your device.
+
+<Warning title="Attention">
+
+NVIDIA provides the Jetson real-time kernel with **Developer-Preview quality**. It is not the default kernel and is not intended for production use. Evaluate it against your own latency and stability requirements.
+
+</Warning>
+
+<Tip>
+
+A real-time kernel reduces scheduling *jitter*, but the largest latency gains come from combining it with CPU isolation and real-time scheduling policies in your application. See [Rt Scheduling Prerequisites](components/schedulers#rt-scheduling-prerequisites) for the host-and-container privilege checklist and [Host CPU isolation](performance/performance-considerations#host-cpu-isolation) for boot-time core isolation (`isolcpus`, `nohz_full`, `rcu_nocbs`) and the CPU frequency governor. On Jetson, the kernel command line lives in `/boot/extlinux/extlinux.conf` rather than GRUB.
+
+</Tip>
+
+<Anchor id="jetpack-headless-minimal-bsp" />
+
+## Run Headless With a Minimal BSP
+
+Holoscan ships its own runtime dependencies — through the [NGC container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan), the Debian package, the Python wheel, or Conda (see [SDK Installation](setup/sdk-installation)). It does not require the full JetPack SDK component stack (CUDA samples, developer tools, and desktop applications) to be installed on the device. Running just a **minimal BSP plus the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)**, with the desktop disabled, keeps memory and CPU available for your application:
+
+- Jetson uses **unified memory** shared between the CPU and GPU, so RAM reclaimed from the desktop's display server and compositor is directly available to GPU workloads.
+- Fewer background services and no window manager means less CPU contention and fewer wake-ups competing with time-critical operators.
+
+### Default Footprint by Installation Method
+
+What lands on the device by default depends on how JetPack is installed:
+
+| Installation method | BSP | NVIDIA Container Toolkit | JetPack SDK components (CUDA, samples, ...) |
+| --- | --- | --- | --- |
+| **ISO / USB-stick installer** | Yes | Yes (default) | No |
+| **[NVIDIA SDK Manager](https://docs.nvidia.com/sdk-manager/install-with-sdkm-jetson/index.html)** | Yes | Optional (second stage) | Optional (second stage) |
+
+The **ISO installer** (the recommended method for recent devkits, including Jetson Thor and Jetson Orin) flashes a minimal BSP and pre-configures Docker with the NVIDIA Container Toolkit, while leaving out the JetPack SDK components — which is exactly the lean baseline described above. No separate Ubuntu host PC is required.
+
+With **SDK Manager**, the JetPack SDK components and container toolkit are installed only when selected in the second stage. To reproduce the minimal footprint, flash only the **Jetson OS** (the base BSP) and deselect **Jetson SDK Components**.
+
+### Install the NVIDIA Container Toolkit
+
+The ISO / USB-stick installer sets up Docker and the NVIDIA Container Toolkit for you, so you can skip this step. If you flashed with SDK Manager or a manual `Linux_for_Tegra` flow instead, follow the developer kit's [Docker setup guide](https://docs.nvidia.com/jetson/agx-thor-devkit/user-guide/latest/setup_docker.html) to install and configure the container toolkit so containers can access the GPU.
+
+### Disable the Desktop
+
+The desktop is part of the default Jetson Linux root filesystem rather than the JetPack SDK components, so the developer kit boots into a graphical session by default — even after an ISO install or an SDK Manager flash of **Jetson OS** alone. For headless operation, change the default boot target to a console-only (multi-user) session and reboot:
+
+```bash
+sudo systemctl set-default multi-user.target
+sudo reboot
+```
+
+To restore the desktop later, set the target back:
+
+```bash
+sudo systemctl set-default graphical.target
+```
+
+You can also switch for the current session only with `sudo init 3` (console) and `sudo init 5` (desktop).

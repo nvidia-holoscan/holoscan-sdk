@@ -41,6 +41,7 @@ holoscan_add_pytest_tests(
   PREFIX python-api-system-distributed-ebs
   PYTEST_ARGS -v --durations=0
   ENVIRONMENT "${CMAKE_DISTRIBUTED_TEST_FLAGS};HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=event_based"
+  RESOURCE_LOCK "distributed_ucx"
 )
 
 # Distributed coverage with Multi-Threaded Scheduler
@@ -53,4 +54,5 @@ holoscan_add_pytest_tests(
   PREFIX python-api-system-distributed-mts
   PYTEST_ARGS -v --durations=0 -k "not ucx"
   ENVIRONMENT "${CMAKE_DISTRIBUTED_TEST_FLAGS};HOLOSCAN_DISTRIBUTED_APP_SCHEDULER=multi_thread"
+  RESOURCE_LOCK "distributed_ucx"
 )

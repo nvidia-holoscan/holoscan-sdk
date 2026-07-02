@@ -21,9 +21,14 @@ add_executable(holoscan::viz::unittests ALIAS ${PROJECT_NAME})
 # Disable clang-tidy for test files
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "")
 
+find_package(CUDAToolkit REQUIRED)
+find_package(Vulkan REQUIRED)
+
 target_sources(${PROJECT_NAME}
     PRIVATE
         util/unique_value_test.cpp
+        util/format_bit_depth_test.cpp
+        ../../src/vulkan/format_util.cpp
     )
 
 target_compile_definitions(${PROJECT_NAME}
@@ -36,6 +41,10 @@ target_compile_definitions(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         GTest::gtest_main
+        CUDA::cuda_driver
+        Vulkan::Vulkan
+        magic_enum::magic_enum
+        fmt
     )
 
 target_include_directories(${PROJECT_NAME}

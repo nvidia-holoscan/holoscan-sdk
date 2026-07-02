@@ -1,0 +1,163 @@
+navigation:
+  - section: Introduction
+    contents:
+      - page: Overview
+        path: ../overview.mdx
+      - page: Relevant Technologies
+        path: ../relevant_technologies.mdx
+      - page: Getting Started
+        path: ../getting_started.mdx
+
+  - section: Setup
+    contents:
+      - page: SDK Installation
+        path: ../sdk_installation.mdx
+      - section: Additional Setup
+        path: ../additional_setup.mdx
+        collapsed: true
+        contents:
+          - page: Enabling GPUDirect RDMA
+            path: ../set_up_gpudirect_rdma.mdx
+          - page: Enable G-SYNC
+            path: ../enable_gsync.mdx
+          - page: Disable variable backlight
+            path: ../disable_variable_backlight.mdx
+          - page: Enable exclusive display
+            path: ../enable_exclusive_display.mdx
+          - page: Use iGPU with dGPU
+            path: ../use_igpu_with_dgpu.mdx
+          - page: Optimizing JetPack
+            path: ../optimize_jetpack.mdx
+          - page: Deployment stack
+            path: ../deployment_stack.mdx
+      - section: Third Party Hardware Setup
+        path: ../third_party_hw_setup.mdx
+        collapsed: true
+        contents:
+          - page: Holoscan Sensor Bridge
+            path: ../holoscan_sensor_bridge.mdx
+
+  - section: Holoscan CLI
+    contents:
+      - page: Holoscan CLI
+        path: ../holoscan_cli.mdx
+
+  - section: Using the SDK
+    contents:
+      - page: Holoscan Core
+        path: ../holoscan_core.mdx
+      - page: GPU Resident Execution
+        path: ../gpu_resident.mdx
+      - section: Holoscan by Example
+        path: ../holoscan_by_example.mdx
+        collapsed: true
+        contents:
+          - page: Hello World
+            path: ../examples/hello_world.mdx
+          - page: Ping Simple
+            path: ../examples/ping_simple.mdx
+          - page: Ping Custom Op
+            path: ../examples/ping_custom_op.mdx
+          - page: Ping Multi Port
+            path: ../examples/ping_multi_port.mdx
+          - page: Video Replayer
+            path: ../examples/video_replayer.mdx
+          - page: Video Replayer Distributed
+            path: ../examples/video_replayer_distributed.mdx
+          - page: BYOM
+            path: ../examples/byom.mdx
+          - page: Custom CUDA Kernel Sample
+            path: ../examples/custom_cuda_kernel_sample.mdx
+      - page: Create an Application
+        path: ../holoscan_create_app.mdx
+      - page: Create a Distributed Application
+        path: ../holoscan_create_distributed_app.mdx
+      - page: Create an Operator
+        path: ../holoscan_create_operator.mdx
+      - page: Create an Operator via Decorator
+        path: ../holoscan_create_operator_via_decorator.mdx
+      - page: Create a Condition
+        path: ../holoscan_create_condition.mdx
+      - page: Dynamic Flow Control
+        path: ../holoscan_dynamic_flow_control.mdx
+      - page: CUDA Stream Handling
+        path: ../holoscan_cuda_stream_handling.mdx
+      - page: Logging
+        path: ../holoscan_logging.mdx
+      - page: Data Logging
+        path: ../holoscan_data_logging.mdx
+      - page: Debugging
+        path: ../holoscan_debugging.mdx
+      - page: Python Operator Bindings
+        path: ../holoscan_create_operator_python_bindings.mdx
+
+  - section: Operators
+    contents:
+      - page: Operators and Extensions
+        path: ../holoscan_operators_extensions.mdx
+      - page: Visualization
+        path: ../visualization.mdx
+      - page: Inference
+        path: ../inference.mdx
+      - page: Testing
+        path: ../testing.mdx
+      - page: Video I/O Vendor Implementation Guide
+        path: ../video_io_vendor_implementation_guide.mdx
+
+  - section: Components
+    contents:
+      - page: Schedulers
+        path: ../components/schedulers.mdx
+      - page: Conditions
+        path: ../components/conditions.mdx
+      - page: Resources
+        path: ../components/resources.mdx
+      - page: Analytics
+        path: ../components/analytics.mdx
+
+  - section: AI Skills
+    contents:
+      - page: Ai Skills
+        path: ../ai_skills.mdx
+
+  - section: API reference
+    availability: beta
+    contents:
+      - folder: ./generated/api-reference/cpp/holoscan
+        title: C++ API
+        collapsed: true
+
+  - section: Performance
+    contents:
+      - page: Performance Considerations
+        path: ../performance_considerations.mdx
+      - page: Flow Tracking
+        path: ../flow_tracking.mdx
+      - page: GXF Job Statistics
+        path: ../gxf_job_statistics.mdx
+      - page: Nsight Profiling
+        path: ../nsight_profiling.mdx
+
+  - section: HoloHub
+    contents:
+      - page: HoloHub Overview
+        path: ../holohub_overview.mdx
+
+  - section: FAQ
+    contents:
+      - page: FAQ
+        path: ../hsdk_faq.mdx
+
+  - section: Resources
+    collapsed: true
+    contents:
+      - link: Developer page
+        href: https://developer.nvidia.com/holoscan-sdk
+      - link: Support forum
+        href: https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757
+      - link: NGC containers
+        href: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan
+      - link: GitHub repository
+        href: https://github.com/nvidia-holoscan
+      - link: Previous releases (Sphinx)
+        href: https://docs.nvidia.com/holoscan-sdk/index.html

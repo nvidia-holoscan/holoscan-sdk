@@ -48,14 +48,6 @@ init_globals() {
     export SDK_BUILD_DIR="build"
     export SDK_INSTALL_DIR="install"
 
-    # Define constants for docs
-    export DOCS_BASE_IMG="holoscan-docs-deps"
-    export DOCS_HTML_IMG="holoscan-docs-html-builder"
-    export DOCS_PDF_IMG="holoscan-docs-pdf-builder"
-    export DOCS_SRC_DIR="docs"
-    export LIVE_HTML_IP="0.0.0.0"
-    export LIVE_HTML_PORT="8888"
-
     # Use buildkit for docker build
     export DOCKER_BUILDKIT=1
 
@@ -1066,6 +1058,16 @@ test() {
         local run_headless=""
     fi
 
+    # Give the ctest container its own /dev/shm (overridable via the environment).
+    # launch()'s default --ipc=host shares the CI Docker-in-Docker host's 64 MB
+    # /dev/shm and ignores --shm-size, so the integrated HSB (Holoscan Sensor
+    # Bridge) Python tests exhaust it on import (ENOSPC, masquerading as a full
+    # disk). A private namespace with --shm-size mirrors HSB's standalone CI
+    # (ci/ci.sh: --shm-size=1gb, no --ipc=host); UCX still works via CAP_SYS_PTRACE.
+    : "${HOLOSCAN_DOCKER_IPC:=private}"
+    : "${HOLOSCAN_DOCKER_SHM_SIZE:=1gb}"
+    export HOLOSCAN_DOCKER_IPC HOLOSCAN_DOCKER_SHM_SIZE
+
     # Run ctest and capture output while also displaying it in real-time
     local ctest_output
     local ctest_exit_code
@@ -1325,9 +1327,23 @@ launch() {
     #   Define path for cupy' kernel cache, needed since $HOME does
     #   not exist when running with `-u id:group`
     #
-    # --ipc=host
+    # --ipc=${HOLOSCAN_DOCKER_IPC:-host}
+    #   IPC namespace for the container. Defaults to `host` so UCX can share
+    #   memory with processes outside the container. Override with
+    #   HOLOSCAN_DOCKER_IPC (e.g. `private`) to give the container its own
+    #   /dev/shm whose size is then controlled by --shm-size (see below) instead
+    #   of inheriting the host's /dev/shm. The `test` command sets this to a
+    #   private namespace by default; see the note there.
+    #
+    # ${HOLOSCAN_DOCKER_SHM_SIZE:+--shm-size=...}
+    #   Size of the container's /dev/shm. Only takes effect with a non-`host`
+    #   IPC namespace (Docker ignores --shm-size under --ipc=host, where the
+    #   host's /dev/shm is used directly). Unset by default; set via
+    #   HOLOSCAN_DOCKER_SHM_SIZE.
+    #
     # --cap-add=CAP_SYS_PTRACE
     #   Allow process tracing to enable shared memory transport for UCX
+    #   (UCX's cross-memory-attach relies on CAP_SYS_PTRACE, not on --ipc=host)
     #
     # --cap-add=CAP_SYS_NICE
     # --ulimit rtprio=10
@@ -1375,7 +1391,8 @@ launch() {
         -e HOLOSCAN_INPUT_PATH=${container_top}/data \
         -e HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data \
         -e CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache \
-        --ipc=host \
+        --ipc=${HOLOSCAN_DOCKER_IPC:-host} \
+        ${HOLOSCAN_DOCKER_SHM_SIZE:+--shm-size=${HOLOSCAN_DOCKER_SHM_SIZE}} \
         --cap-add=CAP_SYS_PTRACE \
         --cap-add=CAP_SYS_NICE \
         --ulimit rtprio=10 \
@@ -1559,209 +1576,6 @@ EOF
     done;
 
     run_command code --folder-uri ${remote_uri}
-}
-
-#===============================================================================
-# Section: Docs
-#===============================================================================
-
-clear_docs_desc() { c_echo 'Delete user guide build artifacts
-'
-}
-clear_docs() {
-    run_command make -C "${TOP}/${DOCS_SRC_DIR}" clean
-}
-
-build_docs_builder_desc() { c_echo 'Build the docker image to build the user guide
-
-Pulls in all the dependencies needed to generate the user guide in HTML or PDF,
-such as sphinx, doxygen, exhale, latex, etc...
-'
-}
-build_docs_builder() {
-    local extra_args="$@"
-
-    # The docs-base stage does not depend on the holoscan build image and can be cached
-    # and reused easily
-    run_command $HOLOSCAN_DOCKER_EXE build \
-        --build-arg BUILDKIT_INLINE_CACHE=1 \
-        --network=host \
-        --target "docs-base" \
-        -t ${DOCS_BASE_IMG} \
-        ${NO_CACHE} \
-        ${extra_args} \
-        ${TOP}/${DOCS_SRC_DIR}
-}
-
-run_html_builder() {
-    local cmd="$1"
-
-    # Prerequisite steps
-    if [ "$DO_STANDALONE" != "true" ]; then
-        build
-    fi
-
-    # Current build image to base on
-    local current_build_img="$(get_build_img_name):$(get_git_sha)"
-
-    # We need to run `import holoscan` to be able to generate pydoc, so we need the holoscan
-    # dependencies there, which come from the holoscan build image. By depending on the holoscan
-    # build image the `docs-html` stage below can't be cached easily (unlike `docs-base` above)
-    # but it should be lean and quick since we copy all build dependencies from `docs-base`.
-    run_command $HOLOSCAN_DOCKER_EXE build \
-        --network=host \
-        --target "docs-html" \
-        --build-arg BASE_IMAGE=${current_build_img} \
-        -t ${DOCS_HTML_IMG} \
-        ${NO_CACHE} \
-        ${TOP}/${DOCS_SRC_DIR}
-
-    # Run HTML generation with sphynx. We need nvidia runtime and the SDK mounted and pythonpath
-    # to be able to import it for pydoc generation.
-    # --net=host is only for allowing sphinx-autobuild to serve the HTML pages for live editing.
-    run_command $HOLOSCAN_DOCKER_EXE run \
-        --rm \
-        --net=host \
-        --interactive \
-        ${USE_TTY} \
-        --entrypoint=bash \
-        -u $(id -u):$(id -g) \
-        --runtime=nvidia \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -w /workspace/holoscan-sdk/${DOCS_SRC_DIR} \
-        -e PYTHONPATH=/workspace/holoscan-sdk/$(get_install_dir)/python/lib \
-        ${DOCS_HTML_IMG} \
-        -c "$cmd"
-}
-
-build_html_desc() { c_echo 'Generate HTML pages of the user guide
-
-Arguments:
-    --no-api   - Skip C++/Python api docs
-'
-}
-build_html() {
-    local tags=""
-
-    # Parse CLI arguments
-    while [[ $# -gt 0 ]]; do
-    case $1 in
-        --no-api)
-            tags="-t=noapi"
-            shift
-        ;;
-        *)
-            shift
-        ;;
-    esac
-    done
-
-    run_html_builder "make -j html SPHINXOPTS=${tags}"
-}
-
-live_html_desc() { c_echo "Generate and serve HTML pages of the user guide
-
-Auto-reload on updates
-
-Arguments:
-    -i|--ip   - Specifics IP address to serve the HTML guide (default: $LIVE_HTML_IP)
-    -p|--port - Specifics address port to serve the HTML guide (default: $LIVE_HTML_PORT)
-    --no-api  - Skip C++/Python api docs
-"
-}
-live_html() {
-    local ip=$LIVE_HTML_IP
-    local port=$LIVE_HTML_PORT
-    local tags="-t=noexhale"
-
-    # Parse CLI arguments
-    while [[ $# -gt 0 ]]; do
-    case $1 in
-        -i|--ip)
-            ip="$2"
-            shift
-            shift
-        ;;
-        -p|--port)
-            port="$2"
-            shift
-            shift
-        ;;
-        --no-api)
-            tags="-t=noapi"
-            shift
-        ;;
-        *)
-            shift
-        ;;
-    esac
-    done
-
-    run_html_builder "make -j livehtml SPHINXOPTS='${tags} --host ${ip} --port ${port}'"
-}
-
-build_pdf_desc() { c_echo 'Generate PDF of the user guide
-'
-}
-build_pdf() {
-    local extra_args="$@"
-
-    # Build PDF builder docker image
-    run_command $HOLOSCAN_DOCKER_EXE build \
-        --build-arg BUILDKIT_INLINE_CACHE=1 \
-        --network=host \
-        --target "docs-pdf" \
-        -t ${DOCS_PDF_IMG} \
-        ${NO_CACHE} \
-        ${extra_args} \
-        ${TOP}/${DOCS_SRC_DIR}
-
-    # Generate the PDF without the exhale/doxygen API documentation
-    run_command $HOLOSCAN_DOCKER_EXE run \
-        --rm \
-        --interactive \
-        ${USE_TTY} \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}:/workspace/holoscan-sdk \
-        -w /workspace/holoscan-sdk/${DOCS_SRC_DIR} \
-        ${DOCS_PDF_IMG} \
-        sh -c 'make latexpdf SPHINXOPTS=-t=noapi'
-}
-
-docs_linkcheck_desc() { c_echo 'Check if links in the user guide are valid
-
-Uses ghcr.io/linkchecker
-'
-}
-docs_linkcheck() {
-    local html_dir=$(find "${DOCS_SRC_DIR}" -name "html" -type d)
-    run_command $HOLOSCAN_DOCKER_EXE run \
-        --rm \
-        --net=host \
-        --interactive \
-        ${USE_TTY} \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}/${html_dir}:/html \
-        ghcr.io/linkchecker/linkchecker \
-        --check-extern /html/index.html
-}
-
-docs_spellcheck_desc() { c_echo 'Check for spelling and grammar in the user guide
-
-Uses jdkato/vale.
-'
-}
-docs_spellcheck() {
-    run_command $HOLOSCAN_DOCKER_EXE run \
-        --rm \
-        --interactive \
-        ${USE_TTY} \
-        -u $(id -u):$(id -g) \
-        -v ${TOP}/${DOCS_SRC_DIR}:/${DOCS_SRC_DIR} \
-        -w /${DOCS_SRC_DIR} \
-        --entrypoint=sh \
-        jdkato/vale -c \
-        "find . -name '*.md' -o -name '*.rst' | grep -v 'api' | xargs vale"
 }
 
 #===============================================================================

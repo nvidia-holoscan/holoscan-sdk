@@ -103,6 +103,9 @@ class HashMap {
    * @return True if the key exists, false otherwise.
    */
   bool has(const Key& key) const {
+    if (capacity_ == 0) {
+      return false;
+    }
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {
@@ -124,6 +127,9 @@ class HashMap {
    * @return Value associated with the key on success, Error::kKeyNotFound if key doesn't exist.
    */
   expected_t<Value> get(const Key& key) const {
+    if (capacity_ == 0) {
+      return unexpected_t(Error::kKeyNotFound);
+    }
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {
@@ -189,6 +195,9 @@ class HashMap {
    * @return Success or error status. Error::kKeyNotFound if the key doesn't exist.
    */
   expected_t<void> erase(const Key& key) {
+    if (capacity_ == 0) {
+      return unexpected_t(Error::kKeyNotFound);
+    }
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {
@@ -244,7 +253,7 @@ class HashMap {
    */
   template <typename ValueType>
   expected_t<Value*> insert_impl(const Key& key, ValueType&& value) {
-    if (size_ >= max_size_) {
+    if (size_ >= max_size_ || capacity_ == 0) {
       return unexpected_t(Error::kHashMapFull);
     }
     hash_t hash = std::hash<Key>{}(key);
@@ -306,6 +315,9 @@ class HashMap {
    * @return The index associated with the key on success, Error::kKeyNotFound if key doesn't exist.
    */
   expected_t<int32_t> get_index(const Key& key) const {
+    if (capacity_ == 0) {
+      return unexpected_t(Error::kKeyNotFound);
+    }
     hash_t hash = std::hash<Key>{}(key);
     int32_t index = hash % capacity_;
     while (entries_[index].is_occupied) {

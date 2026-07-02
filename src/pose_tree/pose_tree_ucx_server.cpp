@@ -502,13 +502,17 @@ PoseTreeUCXServer::PoseTreeUCXServer(std::shared_ptr<PoseTree> pose_tree,
   // TODO(gbae): This is a hack to avoid shared object with worker. We should find a better way to
   // do this.
   pose_tree_ = std::make_shared<PoseTree>();
-  pose_tree_->init(pose_tree_init_params_.number_frames,
-                   pose_tree_init_params_.number_edges,
-                   pose_tree_init_params_.history_length,
-                   pose_tree_init_params_.default_number_edges,
-                   pose_tree_init_params_.default_history_length,
-                   pose_tree_init_params_.edges_chunk_size,
-                   pose_tree_init_params_.history_chunk_size);
+  auto init_result = pose_tree_->init(pose_tree_init_params_.number_frames,
+                                      pose_tree_init_params_.number_edges,
+                                      pose_tree_init_params_.history_length,
+                                      pose_tree_init_params_.default_number_edges,
+                                      pose_tree_init_params_.default_history_length,
+                                      pose_tree_init_params_.edges_chunk_size,
+                                      pose_tree_init_params_.history_chunk_size);
+  if (!init_result) {
+    throw std::runtime_error(std::string("Failed to initialize PoseTree for PoseTreeUCXServer: ") +
+                             PoseTree::error_to_str(init_result.error()));
+  }
   impl_->pose_tree = pose_tree_;
   impl_->pose_tree_init_params = pose_tree_init_params_;
   impl_->maximum_clients_ = config_.maximum_clients;

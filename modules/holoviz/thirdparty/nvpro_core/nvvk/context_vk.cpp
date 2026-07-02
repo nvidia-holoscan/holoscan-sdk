@@ -198,7 +198,9 @@ bool Context::initInstance(const ContextCreateInfo& info) {
   if (info.verboseUsed) {
     uint32_t version;
     VkResult result = vkEnumerateInstanceVersion(&version);
-    NVVK_CHECK(result);
+    if(NVVK_CHECK(result)) {
+      return false;
+    }
     LOGI("_______________\n");
     LOGI("Vulkan Version:\n");
     LOGI(" - available:  %d.%d.%d\n",
@@ -275,7 +277,9 @@ bool Context::initInstance(const ContextCreateInfo& info) {
   instanceCreateInfo.ppEnabledLayerNames = usedInstanceLayers.data();
   instanceCreateInfo.pNext = info.instanceCreateInfoExt;
 
-  NVVK_CHECK(vkCreateInstance(&instanceCreateInfo, nullptr, &m_instance));
+  if(NVVK_CHECK(vkCreateInstance(&instanceCreateInfo, nullptr, &m_instance))) {
+    return false;
+  }
 
   for (const auto& it : usedInstanceExtensions) {
     if (strcmp(it, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
@@ -922,10 +926,14 @@ bool Context::hasMandatoryExtensions(VkPhysicalDevice physicalDevice, const Cont
   std::vector<VkExtensionProperties> extensionProperties;
 
   uint32_t count;
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
+  if(NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr))) {
+    return false;
+  }
   extensionProperties.resize(count);
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(
-      physicalDevice, nullptr, &count, extensionProperties.data()));
+  if(NVVK_CHECK(vkEnumerateDeviceExtensionProperties(
+      physicalDevice, nullptr, &count, extensionProperties.data()))) {
+    return false;
+  }
   extensionProperties.resize(std::min(extensionProperties.size(), size_t(count)));
 
   return checkEntryArray(extensionProperties, info.deviceExtensions, bVerbose);
@@ -954,27 +962,45 @@ bool Context::checkEntryArray(const std::vector<VkExtensionProperties>& properti
 std::vector<VkPhysicalDevice> Context::getPhysicalDevices() {
   uint32_t nbElems;
   std::vector<VkPhysicalDevice> physicalDevices;
-  NVVK_CHECK(vkEnumeratePhysicalDevices(m_instance, &nbElems, nullptr));
+  if(NVVK_CHECK(vkEnumeratePhysicalDevices(m_instance, &nbElems, nullptr))) {
+    physicalDevices.clear();
+    return physicalDevices;
+  }
   physicalDevices.resize(nbElems);
-  NVVK_CHECK(vkEnumeratePhysicalDevices(m_instance, &nbElems, physicalDevices.data()));
+  if(NVVK_CHECK(vkEnumeratePhysicalDevices(m_instance, &nbElems, physicalDevices.data()))) {
+    physicalDevices.clear();
+    return physicalDevices;
+  }
   return physicalDevices;
 }
 
 std::vector<VkPhysicalDeviceGroupProperties> Context::getPhysicalDeviceGroups() {
   uint32_t deviceGroupCount;
   std::vector<VkPhysicalDeviceGroupProperties> groups;
-  NVVK_CHECK(vkEnumeratePhysicalDeviceGroups(m_instance, &deviceGroupCount, nullptr));
+  if(NVVK_CHECK(vkEnumeratePhysicalDeviceGroups(m_instance, &deviceGroupCount, nullptr))) {
+    groups.clear();
+    return groups;
+  }
   groups.resize(deviceGroupCount);
-  NVVK_CHECK(vkEnumeratePhysicalDeviceGroups(m_instance, &deviceGroupCount, groups.data()));
+  if(NVVK_CHECK(vkEnumeratePhysicalDeviceGroups(m_instance, &deviceGroupCount, groups.data()))) {
+    groups.clear();
+    return groups;
+  }
   return groups;
 }
 
 std::vector<VkLayerProperties> Context::getInstanceLayers() {
   uint32_t count;
   std::vector<VkLayerProperties> layerProperties;
-  NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, nullptr));
+  if(NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, nullptr))) {
+    layerProperties.clear();
+    return layerProperties;
+  }
   layerProperties.resize(count);
-  NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, layerProperties.data()));
+  if(NVVK_CHECK(vkEnumerateInstanceLayerProperties(&count, layerProperties.data()))) {
+    layerProperties.clear();
+    return layerProperties;
+  }
   layerProperties.resize(std::min(layerProperties.size(), size_t(count)));
   return layerProperties;
 }
@@ -982,9 +1008,15 @@ std::vector<VkLayerProperties> Context::getInstanceLayers() {
 std::vector<VkExtensionProperties> Context::getInstanceExtensions() {
   uint32_t count;
   std::vector<VkExtensionProperties> extensionProperties;
-  NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr));
+  if(NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, nullptr))) {
+    extensionProperties.clear();
+    return extensionProperties;
+  }
   extensionProperties.resize(count);
-  NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensionProperties.data()));
+  if(NVVK_CHECK(vkEnumerateInstanceExtensionProperties(nullptr, &count, extensionProperties.data()))) {
+    extensionProperties.clear();
+    return extensionProperties;
+  }
   extensionProperties.resize(std::min(extensionProperties.size(), size_t(count)));
   return extensionProperties;
 }
@@ -992,10 +1024,16 @@ std::vector<VkExtensionProperties> Context::getInstanceExtensions() {
 std::vector<VkExtensionProperties> Context::getDeviceExtensions(VkPhysicalDevice physicalDevice) {
   uint32_t count;
   std::vector<VkExtensionProperties> extensionProperties;
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr));
+  if(NVVK_CHECK(vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &count, nullptr))) {
+    extensionProperties.clear();
+    return extensionProperties;
+  }
   extensionProperties.resize(count);
-  NVVK_CHECK(vkEnumerateDeviceExtensionProperties(
-      physicalDevice, nullptr, &count, extensionProperties.data()));
+  if(NVVK_CHECK(vkEnumerateDeviceExtensionProperties(
+      physicalDevice, nullptr, &count, extensionProperties.data()))) {
+    extensionProperties.clear();
+    return extensionProperties;
+  }
   extensionProperties.resize(std::min(extensionProperties.size(), size_t(count)));
   return extensionProperties;
 }

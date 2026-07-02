@@ -49,13 +49,17 @@ void PoseTreeManager::initialize() {
 
   pose_tree_instance_ = std::make_shared<PoseTree>();
   // Initialize the underlying PoseTree with configured parameters
-  pose_tree_instance_->init(number_frames_.get(),
-                            number_edges_.get(),
-                            history_length_.get(),
-                            default_number_edges_.get(),
-                            default_history_length_.get(),
-                            edges_chunk_size_.get(),
-                            history_chunk_size_.get());
+  auto init_result = pose_tree_instance_->init(number_frames_.get(),
+                                               number_edges_.get(),
+                                               history_length_.get(),
+                                               default_number_edges_.get(),
+                                               default_history_length_.get(),
+                                               edges_chunk_size_.get(),
+                                               history_chunk_size_.get());
+  if (!init_result) {
+    throw std::runtime_error(fmt::format("Failed to initialize PoseTree: {}",
+                                         PoseTree::error_to_str(init_result.error())));
+  }
   HOLOSCAN_LOG_DEBUG("PoseTree (0x{:x}) initialized with the following parameters:",
                      reinterpret_cast<uintptr_t>(pose_tree_instance_.get()));
   HOLOSCAN_LOG_DEBUG("  number_frames: {}", number_frames_.get());

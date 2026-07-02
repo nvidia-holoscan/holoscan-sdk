@@ -338,12 +338,14 @@ pre-commit run clang-format --all-files
 
 ### Building the User Guide
 
-The source of the user guide hosted at <https://docs.nvidia.com/holoscan/sdk-user-guide> is located in [docs](./docs/). It can be built with the following commands:
+The source of the user guide hosted at <https://docs.nvidia.com/holoscan/sdk-user-guide> is located in [docs](./docs/). From the **holoscan-sdk repository root**, build and validate with Fern:
 
-- PDF: `./run build_pdf`
-- HTML: `./run build_html` (auto-reload: `./run live_html`)
+```sh
+python3 public/docs/scripts/build_holoscan_docs.py
+python3 public/docs/scripts/build_holoscan_docs.py --preview
+```
 
-Run `./run help` for more commands related to the user guide documentation.
+See [docs/README.md](./docs/README.md) for authoring and publishing details.
 
 ### VSCode
 

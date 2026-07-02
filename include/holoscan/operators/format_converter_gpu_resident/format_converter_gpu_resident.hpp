@@ -70,7 +70,7 @@ struct FormatConverterPlaneLayout {
  * - **width**, **height**: Source frame size in pixels. For YUV420 / NV12, both must be even.
  * - **in_dtype**, **out_dtype**: Same string values as `FormatConverterOp` (`rgb888`, `uint8`,
  *   `float32`, `rgba8888`, `yuv420`, `nv12_bt601_full`, `nv12_bt709_hdtv`, `nv12_bt709_csc`,
- *   `yuyv`, `rgb161616`, `rgba16161616`, etc.).
+ *   `yuyv`, `uyvy`, `rgb161616`, `rgba16161616`, etc.).
  * - **resize_width**, **resize_height**: If both are positive, resize the packed RGB/RGBA/float
  *   input before conversion (same restriction as `FormatConverterOp`: not supported for planar
  *   YUV420 / NV12 inputs).

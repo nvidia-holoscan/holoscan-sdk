@@ -25,10 +25,12 @@
 #     PYTEST_ARGS -v --durations=0
 #     [TIMEOUT 1000]
 #     [ENVIRONMENT "VAR1=val1;VAR2=val2"]
+#     [RESOURCE_LOCK "lock1" "lock2"]  # CTest RESOURCE_LOCK applied to every
+#                                      # registered entry from this call
 #   )
 function(holoscan_add_pytest_tests)
   set(oneValueArgs TEST_DIRECTORY WORKING_DIRECTORY PREFIX TIMEOUT)
-  set(multiValueArgs FILES PYTEST_ARGS ENVIRONMENT)
+  set(multiValueArgs FILES PYTEST_ARGS ENVIRONMENT RESOURCE_LOCK)
   cmake_parse_arguments(ARG "" "${oneValueArgs}" "${multiValueArgs}" ${ARGN})
 
   foreach(_file IN LISTS ARG_FILES)
@@ -55,6 +57,10 @@ function(holoscan_add_pytest_tests)
 
     if(ARG_TIMEOUT)
       set_tests_properties(${_test_name} PROPERTIES TIMEOUT ${ARG_TIMEOUT})
+    endif()
+
+    if(ARG_RESOURCE_LOCK)
+      set_tests_properties(${_test_name} PROPERTIES RESOURCE_LOCK "${ARG_RESOURCE_LOCK}")
     endif()
   endforeach()
 endfunction()

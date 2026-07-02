@@ -1283,6 +1283,33 @@ void create_virtual_operators_and_connections(
   }
 }
 
+// Copy user-specified 'capacity'/'policy' connector arguments from an existing connector resource
+// into 'dst', unless 'dst' already provides them. Used to preserve a user-configured queue
+// capacity/policy when a cross-fragment UCX transmitter is (re)created, which would otherwise
+// silently revert the capacity to 1 (CLARAHOLOS-2896).
+//
+// Note: this runs before the source operator is initialized, so the connector's 'capacity_'/
+// 'policy_' Parameters are not yet bound. The values are therefore read from the stored
+// construction arguments (Resource::args()) rather than from the Parameters.
+void preserve_user_connector_args(ArgList& dst, const std::shared_ptr<Resource>& existing) {
+  if (!existing) {
+    return;
+  }
+  auto dst_has = [&dst](const std::string& arg_name) {
+    for (const auto& arg : dst) {
+      if (arg.name() == arg_name) {
+        return true;
+      }
+    }
+    return false;
+  };
+  for (const auto& arg : existing->args()) {
+    if ((arg.name() == "capacity" || arg.name() == "policy") && !dst_has(arg.name())) {
+      dst.add(arg);
+    }
+  }
+}
+
 }  // unnamed namespace
 
 void GXFExecutor::connect_ucx_transmitters_to_virtual_ops(
@@ -1320,8 +1347,14 @@ void GXFExecutor::connect_ucx_transmitters_to_virtual_ops(
           auto out_spec =
               get_operator_port_iospec(last_transmitter_op, port_name, IOSpec::IOType::kOutput);
 
+          // Preserve any user-specified capacity/policy from the original connector so that a
+          // user-configured queue capacity (> 1) is not silently discarded when the cross-fragment
+          // UCX transmitter is created (CLARAHOLOS-2896).
+          ArgList connector_args = virtual_op->arg_list();
+          preserve_user_connector_args(connector_args, out_spec->connector());
+
           // Create the connector for out_spec from the virtual_op
-          out_spec->connector(virtual_op->connector_type(), virtual_op->arg_list());
+          out_spec->connector(virtual_op->connector_type(), connector_args);
         }
       } break;
       case IOSpec::IOType::kInput: {
@@ -1479,6 +1512,14 @@ void GXFExecutor::connect_broadcast_to_previous_op(
             // from the current Operator's arguments.
             if (op_type == Operator::OperatorType::kVirtual) {
               auto& arg_list = static_cast<ops::VirtualOperator*>(op.get())->arg_list();
+              // Preserve the user-specified capacity/policy from the source operator's connector
+              // instead of defaulting to 1 (CLARAHOLOS-2896). 'prev_connector' belongs to an
+              // already-initialized predecessor, so its capacity_/policy_ Parameters are bound.
+              auto prev_ucx_connector = std::dynamic_pointer_cast<UcxTransmitter>(prev_connector);
+              if (prev_ucx_connector) {
+                prev_connector_capacity = prev_ucx_connector->capacity_;
+                prev_connector_policy = prev_ucx_connector->policy_;
+              }
               transmitter =
                   std::make_shared<UcxTransmitter>(Arg("capacity", prev_connector_capacity),
                                                    Arg("policy", prev_connector_policy),

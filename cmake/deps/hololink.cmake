@@ -22,8 +22,8 @@ if(hololink_FOUND OR TARGET hololink::hololink)
     return()
 endif()
 
-# Holoscan Sensor Bridge 2.5.0 + "top of tree" continuous fixes
-set(HOLOLINK_VERSION 6930609c4) # 2.5.0-PB6
+# Holoscan Sensor Bridge 2.6.0
+set(HOLOLINK_VERSION 2.6.0)
 
 rapids_cpm_find(hololink ${HOLOLINK_VERSION}
     GLOBAL_TARGETS
@@ -41,7 +41,7 @@ rapids_cpm_find(hololink ${HOLOLINK_VERSION}
     CPM_ARGS
         GITHUB_REPOSITORY nvidia-holoscan/holoscan-sensor-bridge
         GIT_TAG ${HOLOLINK_VERSION}
-        PATCH_COMMAND git apply ${CMAKE_CURRENT_LIST_DIR}/patches/hololink.patch
+        PATCH_COMMAND sh -c "patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/patches/hololink.patch" || [ $? -eq 1 ]
         GIT_SHALLOW TRUE
         GIT_PROGRESS TRUE
 

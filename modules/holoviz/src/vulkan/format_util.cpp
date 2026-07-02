@@ -27,7 +27,7 @@ namespace holoscan::viz {
 
 void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
                  uint32_t* component_size, uint32_t* width_divisor, uint32_t* height_divisor,
-                 uint32_t plane) {
+                 uint32_t plane, uint32_t* bit_depth) {
   if (width_divisor) {
     *width_divisor = 1;
   }
@@ -42,6 +42,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::R8_SRGB:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::R16_UINT:
     case ImageFormat::R16_SINT:
@@ -50,18 +53,33 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::R16_SFLOAT:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::R32_UINT:
     case ImageFormat::R32_SINT:
+      *channels = *hw_channels = 1U;
+      *component_size = sizeof(uint32_t);
+      if (bit_depth) {
+        *bit_depth = 32;
+      }
+      break;
     // packed formats are treated as single component formats
     case ImageFormat::A2B10G10R10_UNORM_PACK32:
     case ImageFormat::A2R10G10B10_UNORM_PACK32:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
+      if (bit_depth) {
+        *bit_depth = 10;
+      }
       break;
     case ImageFormat::R32_SFLOAT:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(float);
+      if (bit_depth) {
+        *bit_depth = 32;
+      }
       break;
     case ImageFormat::R8G8B8_UNORM:
     case ImageFormat::R8G8B8_SNORM:
@@ -69,6 +87,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *channels = 3U;
       *hw_channels = 4U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::R8G8B8A8_UNORM:
     case ImageFormat::R8G8B8A8_SNORM:
@@ -79,33 +100,54 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::A8B8G8R8_SRGB_PACK32:
       *channels = *hw_channels = 4U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::R16G16B16A16_UNORM:
     case ImageFormat::R16G16B16A16_SNORM:
     case ImageFormat::R16G16B16A16_SFLOAT:
       *channels = *hw_channels = 4U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::R32G32B32A32_SFLOAT:
       *channels = *hw_channels = 4U;
       *component_size = sizeof(float);
+      if (bit_depth) {
+        *bit_depth = 32;
+      }
       break;
     case ImageFormat::D16_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::X8_D24_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
+      if (bit_depth) {
+        *bit_depth = 24;
+      }
       break;
     case ImageFormat::D32_SFLOAT:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint32_t);
+      if (bit_depth) {
+        *bit_depth = 32;
+      }
       break;
     case ImageFormat::Y8U8Y8V8_422_UNORM:
     case ImageFormat::U8Y8V8Y8_422_UNORM:
       *channels = *hw_channels = 2U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::Y8_U8V8_2PLANE_420_UNORM:
       if (plane == 0) {
@@ -123,6 +165,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
             "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::Y8_U8V8_2PLANE_422_UNORM:
       if (plane == 0) {
@@ -137,10 +182,16 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
             "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       break;
     case ImageFormat::Y8_U8_V8_3PLANE_420_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
         if (width_divisor) {
@@ -157,6 +208,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::Y8_U8_V8_3PLANE_422_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint8_t);
+      if (bit_depth) {
+        *bit_depth = 8;
+      }
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
         if (width_divisor) {
@@ -183,6 +237,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
             "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::Y16_U16V16_2PLANE_422_UNORM:
       if (plane == 0) {
@@ -197,10 +254,16 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
             "Format {}, plane {}: unhandled plane index", magic_enum::enum_name(format), plane));
       }
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::Y16_U16_V16_3PLANE_420_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
         if (width_divisor) {
@@ -217,6 +280,9 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
     case ImageFormat::Y16_U16_V16_3PLANE_422_UNORM:
       *channels = *hw_channels = 1U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       if (plane == 0) {
       } else if ((plane == 1) || (plane == 2)) {
         if (width_divisor) {
@@ -233,16 +299,28 @@ void format_info(ImageFormat format, uint32_t* channels, uint32_t* hw_channels,
       *channels = 3U;
       *hw_channels = 4U;
       *component_size = sizeof(uint16_t);
+      if (bit_depth) {
+        *bit_depth = 16;
+      }
       break;
     case ImageFormat::R32G32B32_SFLOAT:
       *channels = 3U;
       *hw_channels = 4U;
       *component_size = sizeof(float);
+      if (bit_depth) {
+        *bit_depth = 32;
+      }
       break;
     default:
       throw std::runtime_error(
           fmt::format("Format {}: unhandled image format", magic_enum::enum_name(format)));
   }
+}
+
+uint32_t format_bit_depth(ImageFormat format) {
+  uint32_t channels, hw_channels, component_size, bit_depth;
+  format_info(format, &channels, &hw_channels, &component_size, nullptr, nullptr, 0, &bit_depth);
+  return bit_depth;
 }
 
 vk::Format to_vulkan_format(ImageFormat format) {

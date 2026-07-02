@@ -2,7 +2,6 @@
 
 This folder includes the following scripts:
 
-- [`aja_build.sh`](#aja_build)
 - [`check_copyright.py`](#check_copyrightpy)
 - [`convert_gxf_entities_to_images.py`](#convert_gxf_entities_to_imagespy)
 - [`convert_gxf_entities_to_video.py`](#convert_gxf_entities_to_videopy)
@@ -19,10 +18,6 @@ This folder includes the following scripts:
 > Note: these will be included in the SDK installation at `/opt/nvidia/holoscan/bin`
 
 ____
-
-## aja_build.sh
-
-Builds the AJA SDK with the proper flags and optionally loads the driver.
 
 ## convert_gxf_entities_to_images.py
 

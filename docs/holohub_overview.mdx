@@ -1,0 +1,78 @@
+{/*  markdownlint-disable MD041  */}
+<Anchor id="holohub" />
+
+Holohub is the community collection of reference applications, reusable operators, tutorials, and benchmarks built on top of the Holoscan SDK.
+It complements the SDK by showing production-style patterns for real sensor pipelines, AI inference, visualization, and multi-operator graph design.
+The [Holohub documentation website](https://nvidia-holoscan.github.io/holohub/) is the best place to browse applications, operators, tutorials, and benchmarks before running locally.
+
+<Note>
+
+**Holohub is an open, community-driven project and is not an officially supported NVIDIA product.** It is not covered by the NVAIE (NVIDIA AI Enterprise) maintenance plan, so official support channels may not address Holohub-specific issues.
+
+The Holohub repository is hosted on the [NVIDIA GitHub organization](https://github.com/nvidia-holoscan/holohub) and welcomes community participation. If you discover a bug, have a feature request, or want to suggest improvements, please open an issue on the [Holohub issue tracker](https://github.com/nvidia-holoscan/holohub/issues).
+
+Interested in contributing code, documentation, or examples? Read the [Contributing to Holohub guide](https://github.com/nvidia-holoscan/holohub/blob/main/CONTRIBUTING.md) for details on submitting pull requests, code style, and becoming an active contributor to the Holohub ecosystem.
+
+</Note>
+
+
+## What Holohub Provides
+
+- **Reference applications** that demonstrate complete end-to-end pipelines.
+- **Reusable operators** that can be imported into your own projects.
+- **Tutorials and examples** that focus on specific developer workflows.
+- **Benchmarks** for evaluating performance and deployment configurations.
+- **Command-line interface** for building, running, and managing applications and operators.
+
+## Relationship to the Holoscan SDK
+
+The Holoscan SDK provides the core runtime, scheduling, resources, and built-in operators.
+Holohub builds on those SDK capabilities with higher-level, domain-oriented examples and components.
+
+In practice:
+
+- Use the SDK docs to understand core APIs, runtime behavior, and operator development.
+- Use Holohub to discover working patterns you can run, inspect, and adapt.
+
+## Operators vs Applications
+
+Holohub separates reusable building blocks from complete solutions:
+
+- **Operator**: a modular processing component (for example, a pre-processing or post-processing stage) designed to be reused across graphs.
+- **Application**: a full Holoscan graph composed of operators, conditions, and resources that can be run as a complete pipeline.
+
+This separation helps teams prototype quickly with existing operators, then package complete reference applications for deployment and benchmarking.
+
+## Command-line interface (CLI)
+
+The Holohub CLI provides a unified interface for building, running, and managing applications and operators.
+
+For most users, a single command is enough:
+
+```bash
+./holohub run <application_name>
+```
+
+This command orchestrates the end-to-end workflow by preparing and launching the required Docker environment, building the selected application, and running it with the application's preconfigured arguments and parameters. For more details, see the [Holoscan CLI](holoscan_cli.mdx) guide.
+
+## Repository Layout
+
+The [holohub repository](https://github.com/nvidia-holoscan/holohub) is organized around discoverable components:
+
+- `applications/`: runnable reference applications.
+- `operators/`: reusable custom operators.
+- `benchmarks/`: performance and scaling evaluations.
+- `tutorials/`: focused how-to examples.
+
+Most applications and operators include a `metadata.json` file.
+These metadata files describe tags, dependencies, supported platforms, and compatibility details, and are used by Holohub tooling to discover and manage components.
+
+## When to Use Holohub
+
+Holohub is especially useful when you want to:
+
+- Start from a working reference rather than building from scratch.
+- Learn best practices for composing operators into robust graphs.
+- Compare multiple implementation patterns for similar tasks.
+- Evaluate performance with realistic workloads.
+- Contribute to the community by sharing your own operators, applications, workflows, and tools.

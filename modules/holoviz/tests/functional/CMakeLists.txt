@@ -39,6 +39,7 @@ set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "")
 
 target_sources(${PROJECT_NAME}
     PRIVATE
+        bit_depth_quantization_warning_test.cpp
         callback_test.cpp
         camera_pose_test.cpp
         display_event_fallback_test.cpp

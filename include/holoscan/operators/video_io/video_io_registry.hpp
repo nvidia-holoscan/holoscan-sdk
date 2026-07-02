@@ -33,7 +33,7 @@ using VideoTransmitCapabilityEnumerator = std::function<std::vector<VideoTransmi
  * @brief Register a capability enumerator for video acquisition.
  *
  * Multiple enumerators may be registered per @p backend_id; results are concatenated in
- * registration order. Vendor extensions should use a distinct backend_id (e.g. "vendor.aja").
+ * registration order. Vendor extensions should use a distinct backend_id (e.g. "vendor.example").
  *
  * @param backend_id Non-empty identifier for the stack or vendor integration.
  * @param enumerator Callable that returns `VideoCaptureCapabilities` without starting a pipeline.

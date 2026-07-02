@@ -122,7 +122,8 @@ The following examples demonstrate how to seamlessly leverage third-party framew
 The following examples demonstrate how sensors can be used as input streams to your holoscan applications:
 
 - [**v4l2 camera**](v4l2_camera): for USB and HDMI input, such as USB cameras or HDMI output of laptop
-- [**AJA capture**](aja_capture): for AJA capture cards
+
+For additional video capture hardware, see [HoloHub](https://github.com/nvidia-holoscan/holohub).
 
 ### GXF and Holoscan
 

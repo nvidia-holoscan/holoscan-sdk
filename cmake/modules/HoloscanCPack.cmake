@@ -20,31 +20,6 @@ install(FILES "${CMAKE_CURRENT_LIST_DIR}/cpack/NOTICE.txt"
     COMPONENT holoscan-cpack
 )
 
-# Copy Apache 2.0 license (public/LICENSE.txt) into the doc directory for the
-# Debian package: Debian convention uses "copyright", and an explicit LICENSE.txt
-# makes the Apache 2.0 redistribution text easy to find for SPDX and downstream
-# compliance tooling.
-include(GNUInstallDirs)
-if(HOLOSCAN_ALLOW_SYSTEM_INSTALL)
-  set(LICENSE_DESTINATION "/usr/share/doc/holoscan/")
-else()
-  set(LICENSE_DESTINATION "${CMAKE_INSTALL_DOCDIR}")
-endif()
-
-set(_HOLOSCAN_APACHE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
-
-install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
-    DESTINATION ${LICENSE_DESTINATION}
-    RENAME copyright
-    COMPONENT holoscan-cpack
-)
-
-install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
-    DESTINATION ${LICENSE_DESTINATION}
-    RENAME LICENSE.txt
-    COMPONENT holoscan-cpack
-)
-
 # CPACK config
 set(CPACK_PACKAGE_NAME ${PROJECT_NAME} CACHE STRING "Holoscan SDK")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Holoscan SDK"
@@ -60,6 +35,30 @@ set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Julien Jomier")
+
+# Copy Apache 2.0 license into the package doc directory.
+# Debian convention uses the file name "copyright"; LICENSE.txt is kept as an
+# explicit copy for SPDX and downstream compliance tooling.
+include(GNUInstallDirs)
+if(HOLOSCAN_ALLOW_SYSTEM_INSTALL)
+  set(LICENSE_DESTINATION "/usr/share/doc/${CPACK_PACKAGE_NAME}/")
+else()
+  set(LICENSE_DESTINATION "${CMAKE_INSTALL_DOCDIR}")
+endif()
+
+set(_HOLOSCAN_APACHE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
+
+install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
+    DESTINATION "${LICENSE_DESTINATION}"
+    RENAME copyright
+    COMPONENT holoscan-cpack
+)
+
+install(FILES "${_HOLOSCAN_APACHE_LICENSE}"
+    DESTINATION ${LICENSE_DESTINATION}
+    RENAME LICENSE.txt
+    COMPONENT holoscan-cpack
+)
 
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/LICENSE.txt")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_SOURCE_DIR}/README.md")
@@ -127,6 +126,9 @@ endif()
 # - libnvinfer-bin: meta package including required nvinfer libs.
 #   Needed for all inference backends
 #   Note: only libnvinfer, libnvonnxparsers, libnvinfer-plugin needed at runtime
+#   Note: Because nvinfer packages do not adhere to strict semantic versioning, a (<<11) upper bound in RECOMMENDS does not prevent TRT 11 — apt skips
+#   unsatisfiable RECOMMENDS and TRT 11 still enters via libnvinfer-dev DEPENDS.
+#   Pin libnvinfer-bin to TRT 10 explicitly at install time.
 # - libcublas: needed by CuPy (runtime), libtorch (runtime), MatX (dev), and OnnxRuntime (runtime)
 #   Note: also a dependency of the libnvinfer packages
 # - cuda-nvrtc: libtorch & CuPy dependency

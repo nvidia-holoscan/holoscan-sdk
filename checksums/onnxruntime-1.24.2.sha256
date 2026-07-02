@@ -1,0 +1,6 @@
+# ONNX Runtime pre-built tarballs (sw-holoscan-thirdparty-generic-local/onnxruntime/).
+# Regenerate: scripts/update_onnxruntime_checksums.sh [ORT_VERSION]
+1193780deda009d15106f7dd374204ac3c8aa0abd49c766913edf0363b1dac42  onnxruntime-1.24.2-cuda-12.6-aarch64.tar.gz
+ff927bdb372acc5598235d0c1bc2daf88c885a001ce686d7a0dfea9fde54e7be  onnxruntime-1.24.2-cuda-12.6-x86_64.tar.gz
+a940bcb13e600ee30df5d560956a2647dc39ef1914bde1e4eb45b4c8cb4ee1c3  onnxruntime-1.24.2-cuda-13.0-aarch64.tar.gz
+78184733661d4743b3eb2271213627aec9d2e4387cd747f4a2e0314e7327b898  onnxruntime-1.24.2-cuda-13.0-x86_64.tar.gz
