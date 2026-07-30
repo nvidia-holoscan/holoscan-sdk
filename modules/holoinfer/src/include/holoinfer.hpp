@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 #ifndef MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
 #define MODULES_HOLOINFER_SRC_INCLUDE_HOLOINFER_HPP
@@ -33,6 +21,9 @@ namespace holoscan {
 namespace inference {
 
 class ManagerProcessor;
+
+// Forward-declared ManagerInfer class
+class ManagerInfer;
 
 /**
  * Inference Context class
@@ -65,6 +56,69 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
                                 cudaStream_t cuda_stream = 0);
 
   /**
+   * Streamlined inference dispatch for the single-model / single-GPU /
+   * static-shape / non-parallel configuration.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @param model_name         Model key into infer_param_ / pre_processor_map_.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                     cudaStream_t cuda_stream, const std::string& model_name);
+
+  /**
+   * Multi-model SEQUENTIAL fast-path dispatch.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_seq_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                         cudaStream_t cuda_stream);
+
+  /**
+   * Multi-model PARALLEL fast-path dispatch.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_par_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                         cudaStream_t cuda_stream);
+
+  /**
+   * Streamlined single-model dispatch for dynamic-shape pipelines.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @param model_name         Model key into infer_param_ / pre_processor_map_.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_dyn_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                         cudaStream_t cuda_stream, const std::string& model_name);
+
+  /**
+   * Streamlined multi-model sequential dispatch for dynamic-shape pipelines.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_dyn_seq_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                             cudaStream_t cuda_stream);
+
+  /**
+   * Streamlined multi-model parallel dispatch for dynamic-shape pipelines.
+   *
+   * @param inference_specs    The same specs object used by execute_inference().
+   * @param cuda_stream        Stream to record/wait on for cross-stream sync.
+   * @return InferStatus.
+   */
+  InferStatus execute_inference_dyn_par_fast(std::shared_ptr<InferenceSpecs>& inference_specs,
+                                             cudaStream_t cuda_stream);
+
+  /**
    * Gets output dimension per model
    *
    * @return Map of model as key mapped to the output dimension (of inferred data)
@@ -80,6 +134,9 @@ class _HOLOSCAN_EXTERNAL_API_ InferContext {
 
  private:
   std::string unique_id_;
+
+  // @brief Cached ManagerInfer pointer.
+  std::shared_ptr<ManagerInfer> cached_manager_;
 };
 
 /**

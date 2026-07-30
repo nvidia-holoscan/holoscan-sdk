@@ -2,7 +2,7 @@
 
 <Tip>
 
-In most cases, applications will be built using one of several provided conditions documented in the [condition components section](components/conditions.mdx) of this user guide. This page illustrates the advanced use case of adding a user-defined condition to control when an operator can execute.
+In most cases, applications will be built using one of several provided conditions documented in the [condition components section](/holoscan/sdk-user-guide/components/conditions) of this user guide. This page illustrates the advanced use case of adding a user-defined condition to control when an operator can execute.
 
 </Tip>
 
@@ -13,8 +13,8 @@ In most cases, applications will be built using one of several provided conditio
 
 When assembling a C++ application, two types of conditions can be used:
 
- 1. **[Native C++ conditions](using-the-sdk/create-a-condition#native-conditions)**: custom conditions defined in C++ without using the GXF API, by creating a subclass of `holoscan::Condition`.
- 2. **[GXF Conditions](components/conditions#gxf-conditions)**: conditions defined in the underlying C++ library by inheriting from the holoscan::ops::GXFCondition (`holoscan::GXFCondition`) class. These conditions wrap GXF scheduling term components from GXF extensions. Examples are `holoscan::CountCondition` for limiting operator execution to a specified count and `holoscan::PeriodicCondition` for restricting the rate of execution of an operator to a specified period. Several additional built-in conditions are documented in the [condition components section](components/conditions.mdx).
+ 1. **[Native C++ conditions](#native-conditions)**: custom conditions defined in C++ without using the GXF API, by creating a subclass of `holoscan::Condition`.
+ 2. **[GXF Conditions](/holoscan/sdk-user-guide/components/conditions#gxf-conditions)**: conditions defined in the underlying C++ library by inheriting from the holoscan::ops::GXFCondition (`holoscan::GXFCondition`) class. These conditions wrap GXF scheduling term components from GXF extensions. Examples are `holoscan::CountCondition` for limiting operator execution to a specified count and `holoscan::PeriodicCondition` for restricting the rate of execution of an operator to a specified period. Several additional built-in conditions are documented in the [condition components section](/holoscan/sdk-user-guide/components/conditions).
 
 <Note>
 
@@ -45,7 +45,7 @@ It is possible to assign a mixture of GXF conditions and native conditions to an
 
   The overall readiness of an operator to execute will be determined by AND combination of the status of all of the individual conditions present on an operator. In other words, the operator will only be able to execute once all conditions are in a `kReady` state. If any condition is in `kNever` state, the operator will never execute again.
 
-  When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific `holoscan::Scheduler` being used by the application. For example, the `holoscan::GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the `holoscan::EventBasedScheduler` and `holoscan::MultiThreadScheduler` can have multiple worker threads that allow operators to execute in parallel.
+  When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific `holoscan::Scheduler` being used by the application. For example, the `holoscan::GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the `holoscan::EventBasedScheduler` (and the legacy `holoscan::MultiThreadScheduler`) can have multiple worker threads that allow operators to execute in parallel.
 
 </Tab>
 <Tab title="Python" language="python">
@@ -62,7 +62,7 @@ It is possible to assign a mixture of GXF conditions and native conditions to an
 
   The overall readiness of an operator to execute will be determined by AND combination of the status of all of the individual conditions present on an operator. In other words, the operator will only be able to execute once all conditions are in a `READY` state. If any condition is in `NEVER` state, the operator will never execute again.
 
-  When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific `holoscan::Scheduler` being used by the application. For example, the `holoscan.schedulers.GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the `holoscan.schedulers.EventBasedScheduler` and `holoscan.schedulers.MultiThreadScheduler` can have multiple worker threads that allow operators to execute in parallel.
+  When multiple operators are ready to execute at the same time, the order in which they execute will depend on the specific `holoscan::Scheduler` being used by the application. For example, the `holoscan.schedulers.GreedyScheduler` executes one operator at a time in a fixed, deterministic order while the `holoscan.schedulers.EventBasedScheduler` (and the legacy `holoscan.schedulers.MultiThreadScheduler`) can have multiple worker threads that allow operators to execute in parallel.
 
 </Tab>
 </Tabs>
@@ -70,7 +70,7 @@ It is possible to assign a mixture of GXF conditions and native conditions to an
 
 <Note>
 
-When using `kWaitEvent` / `WAIT_EVENT`, your condition must call `notify_scheduler()` (C++ (`holoscan::Condition::notify_scheduler`)/Python (`holoscan.core.Condition.notify_scheduler`)) when the asynchronous event completes to wake the scheduler. This is the mechanism used by `CudaStreamCondition` and `AsynchronousCondition`. See the [Event Based Conditions](using-the-sdk/create-a-condition#event-based-conditions) section below for details on implementing event-based conditions.
+When using `kWaitEvent` / `WAIT_EVENT`, your condition must call `notify_scheduler()` (C++ (`holoscan::Condition::notify_scheduler`)/Python (`holoscan.core.Condition.notify_scheduler`)) when the asynchronous event completes to wake the scheduler. This is the mechanism used by `CudaStreamCondition` and `AsynchronousCondition`. See the [Event Based Conditions](#event-based-conditions) section below for details on implementing event-based conditions.
 
 </Note>
 
@@ -556,11 +556,11 @@ void on_execute(int64_t timestamp) override {
 
 For Python, the same pattern applies using `threading.Lock` for thread safety instead of atomics. See the C++ implementation as a reference for the overall structure.
 
-The built-in `holoscan::CudaStreamCondition` uses this pattern with `cudaLaunchHostFunc()` to register a CUDA host callback that fires when GPU work on a stream completes. See the [CUDA stream handling documentation](holoscan_cuda_stream_handling.mdx#pre-scheduling-synchronization-with-cudastreamcondition) for more details.
+The built-in `holoscan::CudaStreamCondition` uses this pattern with `cudaLaunchHostFunc()` to register a CUDA host callback that fires when GPU work on a stream completes. See the [CUDA stream handling documentation](/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling#pre-scheduling-synchronization-with-cudastreamcondition) for more details.
 
 #### Override behavior for default Operator port conditions
 
-The [section on customizing input and output ports](using-the-sdk/create-an-operator#further-customizing-inputs-and-outputs), explains that when a user adds a port without specifying any condition in `Operator::setup`,  a default one is added. This default is a `MessageAvailableCondition` for input ports or a `DownstreamMessageAffordableCondition` for output ports).
+The [section on customizing input and output ports](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#further-customizing-inputs-and-outputs), explains that when a user adds a port without specifying any condition in `Operator::setup`,  a default one is added. This default is a `MessageAvailableCondition` for input ports or a `DownstreamMessageAffordableCondition` for output ports).
 
 If the user has supplied their own `Condition` to `make_operator` (C++) or as a positional argument to the operator constructor (Python) and that condition has a "receiver" or "transmitter" argument corresponding to an Operator port name, then a default condition should **not** be added to that port. This is done to avoid having multiple, potentially conflicting conditions on the same port. However, if the `Operator::setup` method **explicitly** specifies a condition via a call to `IOSpec::condition`, then that explicit condition would still be added to the port in addition to any other user-supplied one.
 

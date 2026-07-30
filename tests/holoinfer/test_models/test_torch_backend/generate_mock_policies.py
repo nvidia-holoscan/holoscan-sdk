@@ -1,19 +1,9 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """  # noqa: E501
+
+import datetime
 
 import torch
 import yaml
@@ -121,22 +111,11 @@ def generate_yaml(inputs, output):
 
 def get_copyright_header():
     """Generate copyright header for YAML files."""
+    current_year = datetime.datetime.now().year
     return (
-        "# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. "
-        "All rights reserved.\n"
+        f"# SPDX-FileCopyrightText: Copyright (c) {current_year} "
+        "NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
         "# SPDX-License-Identifier: Apache-2.0\n"
-        "#\n"
-        '# Licensed under the Apache License, Version 2.0 (the "License");\n'
-        "# you may not use this file except in compliance with the License.\n"
-        "# You may obtain a copy of the License at\n"
-        "#\n"
-        "# http://www.apache.org/licenses/LICENSE-2.0\n"
-        "#\n"
-        "# Unless required by applicable law or agreed to in writing, software\n"
-        '# distributed under the License is distributed on an "AS IS" BASIS,\n'
-        "# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n"
-        "# See the License for the specific language governing permissions and\n"
-        "# limitations under the License.\n"
         "\n"
     )
 

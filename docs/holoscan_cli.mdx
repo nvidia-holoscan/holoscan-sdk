@@ -28,7 +28,7 @@ Use the wrapper defaults, or configure the SDK base image explicitly with `--bas
 ## Prerequisites
 
 Use wrapper-based CLI workflows on a platform supported by the Holoscan SDK, such as an x86_64 Ubuntu workstation with an NVIDIA GPU or a supported NVIDIA ARM developer kit.
-See [SDK Installation](sdk_installation.mdx) for Holoscan SDK platform and runtime prerequisites.
+See [SDK Installation](/holoscan/sdk-user-guide/setup/sdk-installation) for Holoscan SDK platform and runtime prerequisites.
 
 Container workflows also require Docker, the Docker buildx plugin, and the NVIDIA Container Toolkit.
 Host builds with `--local` additionally require the build tools and SDK installation expected by the source project you are building.
@@ -115,18 +115,18 @@ A repository wrapper can provide a default SDK container version, and you can ov
 {/*  holoscan-version-sync:begin  */}
 
 ```bash
-<repository-wrapper> build-container --base-img nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda13 <project_name>
+<repository-wrapper> build-container --base-img nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda13 <project_name>
 ```
 
 You can also configure the base repository and SDK version separately:
 
 ```bash
 export HOLOSCAN_CLI_BASE_IMAGE=nvcr.io/nvidia/clara-holoscan/holoscan
-export HOLOSCAN_CLI_BASE_SDK_VERSION=4.4.0
+export HOLOSCAN_CLI_BASE_SDK_VERSION=4.5.0
 <repository-wrapper> build-container <project_name>
 ```
 
-With the default CUDA selection, the second form derives a full base image tag such as `nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda13`.
+With the default CUDA selection, the second form derives a full base image tag such as `nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda13`.
 
 {/*  holoscan-version-sync:end  */}
 
@@ -172,7 +172,7 @@ Not every command applies to every project type; check the project's README and 
 {/*  holoscan-version-sync:begin  */}
 
 `holoscan-cli` release versions are aligned with Holoscan SDK GA release versions when the CLI is released with an SDK version.
-For example, a CLI release published with Holoscan SDK 4.4.0 is published as `holoscan-cli==4.4.0`.
+For example, a CLI release published with Holoscan SDK 4.5.0 is published as `holoscan-cli==4.5.0`.
 CLI-only fixes between SDK releases use the patch component for that release line.
 
 {/*  holoscan-version-sync:end  */}

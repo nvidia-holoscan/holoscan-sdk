@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #ifndef HOLOSCAN_OPERATORS_INFERENCE_INFERENCE_HPP
@@ -160,14 +148,24 @@ class InferenceOp : public holoscan::Operator {
   using ActivationSpec = holoscan::inference::ActivationSpec;
 
  private:
-  ///  @brief Map with key as model name and value as vector of inferred tensor name
+  ///  @brief Map with key as model name and value as vector of inferred tensor name.
+  ///  YAML key: `inference_map` (legacy). Prefer `output_map` for new code.
   Parameter<DataVecMap> inference_map_;
+
+  ///  @brief NEW preferred name for `inference_map`. YAML key: `output_map`.
+  ///  When both are provided, `output_map` takes precedence.
+  Parameter<DataVecMap> output_map_;
 
   ///  @brief Map with key as model name and value as model file path
   Parameter<DataMap> model_path_map_;
 
-  ///  @brief Map with key as model name and value as vector of input tensor names
+  ///  @brief Map with key as model name and value as vector of input tensor names.
+  ///  YAML key: `pre_processor_map` (legacy). Prefer `input_map` for new code.
   Parameter<DataVecMap> pre_processor_map_;
+
+  ///  @brief NEW preferred name for `pre_processor_map`. YAML key: `input_map`.
+  ///  When both are provided, `input_map` takes precedence.
+  Parameter<DataVecMap> input_map_;
 
   /// @brief Map with key as model name and value as GPU ID for inference
   Parameter<DataMap> device_map_;
@@ -269,6 +267,54 @@ class InferenceOp : public holoscan::Operator {
   /// Persistent cache for the output GXF entity and per-tensor allocation metadata.
   /// Avoids creating a new entity and allocating tensor buffers on every compute() call.
   holoscan::utils::TensorTransmitCache transmit_cache_;
+
+  // @brief Cache of static output dimensions populated on first compute() call.
+  std::map<std::string, std::vector<std::vector<int64_t>>> cached_output_dims_;
+  bool cached_output_dims_valid_ = false;
+
+  // @brief Cache for the cached variant of data per model. When the operator is
+  // configured with dynamic_input_dims_ == false, this cache lets us skip dtype validation,
+  // dims rebuild and per-tensor map find/insert on every compute() call.
+  holoscan::utils::TensorExtractCache extract_cache_;
+
+  // @brief Cached single-model name used by the single-model fast paths.
+  std::string fast_single_model_name_;
+
+  // @brief Seven-state dispatch enum. Selected automatically at start() from
+  // the operator's existing configuration (backend, model count, parallel_inference,
+  // dynamic_input_dims, activation_map, temporal_map, device_map).
+  // Fast paths are enabled ONLY when every model uses the "trt" backend and no
+  // advanced feature (activation_map / temporal_map / multi-GPU device_map) is in use.
+  //   STATIC-shape fast paths:
+  //     - kFast       : single-model, static shape
+  //     - kSeqFast    : multi-model, static shape, sequential
+  //     - kParFast    : multi-model, static shape, parallel
+  //   DYNAMIC-shape fast paths (chosen when dynamic_input_dims_ is true):
+  //     - kDynFast    : single-model, dynamic shape
+  //     - kDynSeqFast : multi-model, dynamic shape, sequential
+  //     - kDynParFast : multi-model, dynamic shape, parallel
+  //   Fallback:
+  //     - kStandard   : canonical execute_inference (handles non-TRT backends and
+  //                     advanced features)
+  enum class DispatchKind {
+    kFast,
+    kSeqFast,
+    kParFast,
+    kDynFast,
+    kDynSeqFast,
+    kDynParFast,
+    kStandard
+  };
+  DispatchKind dispatch_kind_ = DispatchKind::kStandard;
+
+  // @brief Snapshot of Parameter<bool>s read on the per-compute() call path.
+  bool cached_input_on_cuda_ = true;
+  bool cached_output_on_cuda_ = true;
+  bool cached_transmit_on_cuda_ = true;
+  bool cached_dynamic_input_dims_ = false;
+
+  // @brief Cached last upstream CUDA stream attached to the transmitter port.
+  cudaStream_t last_set_transmit_stream_ = nullptr;
 };
 
 }  // namespace holoscan::ops

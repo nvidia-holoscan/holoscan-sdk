@@ -1,18 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include <gtest/gtest.h>
@@ -196,6 +184,82 @@ class OperatorStatusApp : public Application {
   std::shared_ptr<TestMonitorOp> monitor_;
 };
 
+class FindOperatorNoOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(FindOperatorNoOp)
+
+  FindOperatorNoOp() = default;
+
+  void compute(InputContext&, OutputContext&, ExecutionContext&) override {}
+};
+
+class FindOperatorCheckOp : public Operator {
+ public:
+  HOLOSCAN_OPERATOR_FORWARD_ARGS(FindOperatorCheckOp)
+
+  FindOperatorCheckOp() = default;
+
+  void setup(OperatorSpec& spec) override {
+    spec.param(operator_names_,
+               "operator_names",
+               "Operator Names",
+               "Names of operators to find",
+               std::vector<std::string>{});
+  }
+
+  void compute(InputContext&, OutputContext&, ExecutionContext&) override {
+    context_found_ = execution_context() != nullptr;
+    if (context_found_) {
+      auto exec_context = execution_context();
+      for (const auto& op_name : operator_names_.get()) {
+        auto found_op = exec_context->find_operator(op_name);
+        found_operators_[op_name] = found_op != nullptr && found_op->name() == op_name;
+      }
+      missing_operator_found_ = exec_context->find_operator("non_existent") != nullptr;
+    }
+
+    fragment()->stop_execution();
+  }
+
+  bool context_found() const { return context_found_; }
+
+  bool found_operator(const std::string& op_name) const {
+    auto it = found_operators_.find(op_name);
+    return it != found_operators_.end() && it->second;
+  }
+
+  bool missing_operator_found() const { return missing_operator_found_; }
+
+ private:
+  Parameter<std::vector<std::string>> operator_names_;
+  std::unordered_map<std::string, bool> found_operators_;
+  bool context_found_ = false;
+  bool missing_operator_found_ = false;
+};
+
+class FindOperatorLookupApp : public Application {
+ public:
+  void compose() override {
+    const std::vector<std::string> op_names{"source", "processor", "consumer"};
+
+    source_ = make_operator<FindOperatorNoOp>("source", make_condition<CountCondition>(1));
+    processor_ = make_operator<FindOperatorNoOp>("processor", make_condition<CountCondition>(1));
+    consumer_ = make_operator<FindOperatorNoOp>("consumer", make_condition<CountCondition>(1));
+    checker_ = make_operator<FindOperatorCheckOp>(
+        "checker", make_condition<CountCondition>(1), Arg("operator_names", op_names));
+
+    add_operator(source_);
+    add_operator(processor_);
+    add_operator(consumer_);
+    add_operator(checker_);
+  }
+
+  std::shared_ptr<FindOperatorNoOp> source_;
+  std::shared_ptr<FindOperatorNoOp> processor_;
+  std::shared_ptr<FindOperatorNoOp> consumer_;
+  std::shared_ptr<FindOperatorCheckOp> checker_;
+};
+
 TEST(OperatorStatus, TestOperatorStatusTracking) {
   auto app = make_application<OperatorStatusApp>();
   app->scheduler(app->make_scheduler<EventBasedScheduler>(
@@ -263,7 +327,7 @@ TEST(OperatorStatus, TestStopExecution) {
 }
 
 TEST(OperatorStatus, TestFindOperator) {
-  auto app = make_application<OperatorStatusApp>();
+  auto app = make_application<FindOperatorLookupApp>();
 
   // Run the application
   app->scheduler(app->make_scheduler<EventBasedScheduler>(
@@ -278,23 +342,17 @@ TEST(OperatorStatus, TestFindOperator) {
   EXPECT_TRUE(log_output.find("error") == std::string::npos) << "=== LOG ===\n"
                                                              << log_output << "\n===========\n";
 
-  // Get the monitor operator
-  auto monitor = app->monitor_;
-
-  // Test that the execution context can find operators by name
-  auto execution_context = monitor->execution_context();
-  ASSERT_NE(execution_context, nullptr);
+  auto checker = app->checker_;
+  ASSERT_NE(checker, nullptr);
+  ASSERT_TRUE(checker->context_found());
 
   const std::vector<std::string> op_names{"source", "processor", "consumer"};
   for (const auto& op_name : op_names) {
-    auto found_op = execution_context->find_operator(op_name);
-    EXPECT_NE(found_op, nullptr);
-    EXPECT_EQ(found_op->name(), op_name);
+    EXPECT_TRUE(checker->found_operator(op_name)) << "Could not find operator: " << op_name;
   }
 
   // Test finding non-existent operator
-  auto not_found = execution_context->find_operator("non_existent");
-  EXPECT_EQ(not_found, nullptr);
+  EXPECT_FALSE(checker->missing_operator_found());
 }
 
 class AsyncTestOp : public Operator {

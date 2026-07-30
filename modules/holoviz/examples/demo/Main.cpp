@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 // NOLINTBEGIN(cppcoreguidelines-pro-bounds-constant-array-index,cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
@@ -383,6 +371,8 @@ void loadImage() {
   }
 
   const uint32_t row_pitch = width * components;
+  // total size of the loaded image buffer, used to bound the source pointer below
+  const size_t image_data_size = static_cast<size_t>(height) * row_pitch;
 
   // for YUV textures width and height must be a multiple of 2
   width &= ~1;
@@ -401,7 +391,12 @@ void loadImage() {
   uint8_t* dst_y8 = source_data[3].host_mems[0].get();
   uint8_t* dst_u8v8 = source_data[3].host_mems[1].get();
   for (uint32_t y = 0; y < height; ++y) {
-    uint8_t const* src = &image_data[y * row_pitch];
+    // explicitly bound the source row offset to the loaded buffer (satisfies cpp:S3519)
+    const size_t row_offset = static_cast<size_t>(y) * row_pitch;
+    if (row_offset + row_pitch > image_data_size) {
+      break;
+    }
+    uint8_t const* src = &image_data[row_offset];
     for (uint32_t x = 0; x < width; ++x) {
       const uint8_t r = src[0];
       const uint8_t g = src[1];

@@ -35,7 +35,7 @@ These conditions fall under various types as detailed below. Often, conditions a
 
 <Note>
 
-Detailed APIs can be found here: [C++](../api-reference/holoscan/classes/condition)/Python (`holoscan.conditions`).
+Detailed APIs can be found here: [C++](/holoscan/sdk-user-guide/api-reference/holoscan/classes/condition)/Python (`holoscan.conditions`).
 
 </Note>
 
@@ -50,7 +50,7 @@ The priority of various states during AND combine follows the order `NEVER`, `WA
 
 **OR combination of conditions**
 
-An `OrConditionCombiner` class is also provided which can be used to allow OR combination of the set of conditions associated with it. For concrete code on how to configure an operator to use OR combination see the section on OR combination of conditions([C++](../using-the-sdk/create-an-operator#or-combiner-cpp), [Python](../using-the-sdk/create-an-operator#or-combiner-python)) or port conditions([C++](../using-the-sdk/create-an-operator#or-port-combine-cpp), [Python](../using-the-sdk/create-an-operator#or-port-combine-python)). The general logic when combining conditions is described in the following section and example.
+An `OrConditionCombiner` class is also provided which can be used to allow OR combination of the set of conditions associated with it. For concrete code on how to configure an operator to use OR combination see the section on OR combination of conditions([C++](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#or-combiner-cpp), [Python](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#or-combiner-python)) or port conditions([C++](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#or-port-combine-cpp), [Python](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#or-port-combine-python)). The general logic when combining conditions is described in the following section and example.
 
 Note that when OR combining conditions if any of the conditions has state NEVER the combination will also return NEVER.
 

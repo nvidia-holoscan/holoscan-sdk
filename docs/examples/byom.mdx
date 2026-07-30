@@ -218,7 +218,7 @@ Next, we look at the operators and their parameters defined in the application Y
   - The `pre_processor_map` parameter (lines `17-18`) maps the model name(s) to input tensor name(s).
   Here, "source_video" matches the output tensor name of the preprocessor (line `10`).
   The `inference_map` parameter maps the model name(s) to the output tensor name(s).
-  Here, "output" matches the input tensor name of the postprocessor (line `23`).  For more details on `InferenceOp` parameters, see [Customizing Multiai Op](../using-the-sdk/holoscan-by-example/byom#customizing-multiai-op) or refer to [holoinfer](../operators/inference).
+  Here, "output" matches the input tensor name of the postprocessor (line `23`).  For more details on `InferenceOp` parameters, see [Customizing Multiai Op](#customizing-multiai-op) or refer to [holoinfer](/holoscan/sdk-user-guide/operators/inference).
 
   - The `network_output_type` parameter is commented out on line `24` to remind ourselves that this second branch is currently not generating anything interesting.  If not specified, this parameter defaults to "softmax" for `SegmentationPostprocessorOp`.
 
@@ -407,7 +407,7 @@ sudo chmod a+w /opt/nvidia/holoscan/examples/bring_your_own_model/model
 
 ## Customizing the Inference Operator
 
-The built-in `InferenceOp` operator provides the functionality of the [holoinfer](../operators/inference).
+The built-in `InferenceOp` operator provides the functionality of the [holoinfer](/holoscan/sdk-user-guide/operators/inference).
 This operator has a `receivers` port that can connect to any number of upstream ports to allow for multiai inferencing, and one `transmitter` port to send results downstream.
 Below is a description of some of the operator's parameters and a general guidance on how to use them.
 

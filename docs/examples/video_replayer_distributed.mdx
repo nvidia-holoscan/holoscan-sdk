@@ -1,6 +1,6 @@
 <Anchor id="video-replayer-distributed-example" />
 
-In this example, we extend the previous [video replayer application](video_replayer.mdx) into a multi-node [distributed application](../holoscan_create_distributed_app.mdx). A distributed application is made up of multiple Fragments (C++ (`holoscan::Fragment`)/Python (`holoscan.core.Fragment`)), each of which may run on its own node.
+In this example, we extend the previous [video replayer application](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer) into a multi-node [distributed application](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application). A distributed application is made up of multiple Fragments (C++ (`holoscan::Fragment`)/Python (`holoscan.core.Fragment`)), each of which may run on its own node.
 
 In the distributed case we will:
 
@@ -23,7 +23,7 @@ Here is the diagram of the operators and workflow used in this example.
 ![Workflow to load and display video from a file](https://kroki.io/graphviz/svg/eNpVjUEKwjAQRfc5xZCVLuwBlLp2IQhV3JRSUjPYwTQJk7Sg1rsbUYuuhs_895-mMyvfwkAaXc3ojboi15pCZGr6iBrugpW9aOJcbgsprNMIZWiVx5zx5FhXKyG-JJRGNWhyeXwN7iOj6orPb-dHGF0ffR9n6cxhCQe0wbFMCwPdJnbjjEs59UuyVZIgDchh6sMI8k-6WMMv_3ZkWTahshIP8QQK7VSC)
 
 
-This is the same workflow as the [single fragment video replayer](video_replayer.mdx). Each operator is assigned to a separate fragment and there is now a network connection between the fragments.
+This is the same workflow as the [single fragment video replayer](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer). Each operator is assigned to a separate fragment and there is now a network connection between the fragments.
 
 ## Defining and Connecting Fragments
 
@@ -193,6 +193,6 @@ Instructions for running the distributed application involve calling the applica
 
 <Tip>
 
-Refer to [UCX Network Interface Selection](../using-the-sdk/create-a-distributed-application#ucx-network-selection) when running a distributed application across multiple nodes.
+Refer to [UCX Network Interface Selection](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application#ucx-network-selection) when running a distributed application across multiple nodes.
 
 </Tip>

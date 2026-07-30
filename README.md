@@ -45,7 +45,7 @@ The Holoscan team publishes agent-readable skills that help you install, run, an
 the SDK from inside AI coding assistants such as Claude Code, Cursor, and GitHub Copilot CLI.
 The skills live in the public [NVIDIA/skills](https://github.com/NVIDIA/skills) repository
 and are installed with the bundled `skills` CLI, which runs through `npx` and prompts you
-to choose a skill and an install destination — no manual cloning required:
+to choose a skill and an install destination; no manual cloning required:
 
 ```bash
 npx skills add nvidia/skills

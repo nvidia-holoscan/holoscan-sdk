@@ -1,10 +1,15 @@
 # yaml-language-server: $schema=https://schema.buildwithfern.dev/docs-yml.json
 
-# Library API docs (Beta): `fern docs md generate`, then `python3 public/docs/scripts/fix_generated_library_mdx.py`
+# Library API docs (Beta): `fern docs md generate`, then
+# `python3 docs/scripts/fix_generated_library_mdx.py`
 # (fixes ParamField type ampersands, default=""..."" string literals, description angle brackets).
 # See https://buildwithfern.com/learn/docs/api-references/library-reference
 libraries:
   holoscan-cpp:
+    # `fern docs md generate` has Fern parse this configured public repository on its
+    # servers and materializes the raw MDX in output.path. `build_holoscan_docs.py`
+    # then post-processes those local files in place before validation or publication.
+    # A documentation preview ID does not select a Git ref.
     input:
       git: https://github.com/nvidia-holoscan/holoscan-sdk
       subpath: include/holoscan
@@ -33,18 +38,22 @@ ai-search:
 title: Holoscan SDK Documentation
 
 versions:
-      # holoscan-version-sync:begin
-      - display-name: 4.4 (Latest)
-      # holoscan-version-sync:end
-        path: ./index.yml
-        availability: ga
-      # To add an older version later:
-      #   1. Create ./v3.5/ with the snapshot content for that release.
-      #   2. Add a nav file at ./versions/v3.5.yml pointing at those pages.
-      #   3. Append an entry below (older versions get versioned URL paths like /v3.5/...):
-      # - display-name: '3.5'
-      #   path: ./versions/v3.5.yml
-      #   availability: stable
+  # holoscan-version-sync:begin
+  - display-name: 4.5 (Latest)
+  # holoscan-version-sync:end
+    path: ./index.yml
+    availability: ga
+  # "Archives" is a lightweight version entry (top version bar) whose only page
+  # redirects to the previous releases hosted on docs.nvidia.com (Sphinx).
+  - display-name: Archives
+    path: ./versions/archives.yml
+  # To add an older version later:
+  #   1. Create ./v3.5/ with the snapshot content for that release.
+  #   2. Add a nav file at ./versions/v3.5.yml pointing at those pages.
+  #   3. Append an entry below (older versions get versioned URL paths like /v3.5/...):
+  # - display-name: '3.5'
+  #   path: ./versions/v3.5.yml
+  #   availability: stable
 
 layout:
   searchbar-placement: header
@@ -82,7 +91,7 @@ logo:
   light: assets/NVIDIA_light.svg
   height: 20
   href: /holoscan/sdk-user-guide
-  right-text: Documentation
+  right-text: Holoscan SDK Documentation
 
 favicon: assets/NVIDIA_symbol.svg
 

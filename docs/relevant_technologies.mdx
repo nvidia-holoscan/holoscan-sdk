@@ -3,13 +3,13 @@
 Holoscan accelerates streaming AI applications by leveraging both hardware and software.
 The Holoscan SDK relies on multiple core technologies to achieve low latency and high throughput:
 
-- [gpudirect_rdma](introduction/relevant-technologies#rivermax-and-gpudirect-rdma)
-- [gxf-tech](introduction/relevant-technologies#graph-execution-framework)
-- [tensorrt](introduction/relevant-technologies#tensorrt-optimized-inference)
-- [cuda_rendering_interop](introduction/relevant-technologies#interoperability-between-cuda-and-rendering-frameworks)
-- [npp](introduction/relevant-technologies#accelerated-image-transformations)
-- [ucx](introduction/relevant-technologies#unified-communications-x)
-- [matx](introduction/relevant-technologies#matx-accelerated-computing)
+- [gpudirect_rdma](#rivermax-and-gpudirect-rdma)
+- [gxf-tech](#graph-execution-framework)
+- [tensorrt](#tensorrt-optimized-inference)
+- [cuda_rendering_interop](#interoperability-between-cuda-and-rendering-frameworks)
+- [npp](#accelerated-image-transformations)
+- [ucx](#unified-communications-x)
+- [matx](#matx-accelerated-computing)
 
 <Anchor id="gpudirect_rdma" />
 
@@ -47,12 +47,12 @@ For historical context and to help interpret older code or documentation, here i
 | GXF Concept | Holoscan SDK Equivalent | Description |
 |---|---|---|
 | **Entity** | (implicit) | A node in the computation graph; a container for components. In the Holoscan SDK, an Operator implicitly represents an entity. |
-| **Codelet** | **[Operator](generated/api-reference/cpp/holoscan/classes/Application.mdx)** | A component that executes custom code via lifecycle methods (`start`, `tick`/`compute`, `stop`). |
-| **Component** | **[Resource](generated/api-reference/cpp/holoscan/classes/Application.mdx)** | Supporting functionality such as memory allocators, clocks, or serializers attached to an entity. |
-| **Scheduling Term** | **[Condition](generated/api-reference/cpp/holoscan/classes/Application.mdx)** | A predicate that determines when an operator is ready for execution. |
-| **Receiver / Transmitter** | **[Input / Output Port](generated/api-reference/cpp/holoscan/classes/Application.mdx)** | Message-passing endpoints between operators. |
+| **Codelet** | **[Operator](/holoscan/sdk-user-guide/api-reference/holoscan/classes/operator)** | A component that executes custom code via lifecycle methods (`start`, `tick`/`compute`, `stop`). |
+| **Component** | **[Resource](/holoscan/sdk-user-guide/api-reference/holoscan/classes/resource)** | Supporting functionality such as memory allocators, clocks, or serializers attached to an entity. |
+| **Scheduling Term** | **[Condition](/holoscan/sdk-user-guide/api-reference/holoscan/classes/condition)** | A predicate that determines when an operator is ready for execution. |
+| **Receiver / Transmitter** | **[Input / Output Port](/holoscan/sdk-user-guide/api-reference/holoscan/classes/iospec)** | Message-passing endpoints between operators. |
 | **Connection** | **Flow (Edge)** | A directed edge in the application graph connecting an output port to an input port. |
-| **Scheduler** | **[Scheduler](generated/api-reference/cpp/holoscan/classes/Application.mdx)** | Orchestrates the execution of operators based on their conditions. |
+| **Scheduler** | **[Scheduler](/holoscan/sdk-user-guide/api-reference/holoscan/classes/scheduler)** | Orchestrates the execution of operators based on their conditions. |
 | **GXF Extension** | **Operator / Resource library** | A shared library that registers components with the runtime. Native Holoscan operators do not require GXF extension registration. |
 
 <Anchor id="tensorrt" />
@@ -61,7 +61,7 @@ For historical context and to help interpret older code or documentation, here i
 
 [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt) is a deep learning inference framework based on CUDA that provided the highest optimizations to run on NVIDIA GPUs, including the NVIDIA Developer Kits.
 
-The [inference module](operators/inference) leverages TensorRT among other backends, and provides the ability to execute multiple inferences in parallel.
+The [inference module](/holoscan/sdk-user-guide/operators/inference) leverages TensorRT among other backends, and provides the ability to execute multiple inferences in parallel.
 
 <Anchor id="cuda_rendering_interop" />
 
@@ -69,7 +69,7 @@ The [inference module](operators/inference) leverages TensorRT among other backe
 
 Vulkan is commonly used for real-time visualization and, like CUDA, is executed on the GPU. This provides an opportunity for efficient sharing of resources between CUDA and this rendering framework.
 
-The [Holoviz](operators/visualization) module uses the [external resource interoperability](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXTRES__INTEROP.html) functions of the low-level CUDA driver application programming interface, the Vulkan [external memory](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html) and [external semaphore](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore.html) extensions.
+The [Holoviz](/holoscan/sdk-user-guide/operators/visualization) module uses the [external resource interoperability](https://docs.nvidia.com/cuda/cuda-driver-api/group__CUDA__EXTRES__INTEROP.html) functions of the low-level CUDA driver application programming interface, the Vulkan [external memory](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_memory_fd.html) and [external semaphore](https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_KHR_external_semaphore.html) extensions.
 
 <Anchor id="npp" />
 

@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 // Array subscript access is performance-critical for real-time Vulkan rendering.
@@ -285,6 +273,7 @@ class Vulkan::Impl {
   PresentMode present_mode_ = PresentMode::AUTO;
 
   bool warned_missing_fb_color_format_ = false;
+  bool warned_swapchain_recreation_unsupported_ = false;
   // Tracks (framebuffer format, output image format) pairs for which a bit-depth quantization
   // warning has already been emitted, so each distinct mismatch warns once.
   std::set<std::pair<ImageFormat, ImageFormat>> bit_depth_warnings_issued_;
@@ -810,6 +799,18 @@ void Vulkan::Impl::set_present_mode(PresentMode present_mode) {
   if (present_mode != present_mode_) {
     present_mode_ = present_mode;
     if (fb_sequence_) {
+      if (!window_->supports_swapchain_recreation()) {
+        if (!warned_swapchain_recreation_unsupported_) {
+          HOLOSCAN_LOG_WARN(
+              "Present mode change requested after init on a surface that does not support "
+              "swapchain recreation. The swapchain will not be recreated; set the present mode "
+              "before calling Init() to apply it.");
+          warned_swapchain_recreation_unsupported_ = true;
+        }
+        // present_mode_ has been updated above to reflect user intent, but the swapchain is
+        // not recreated — the surface type does not allow it after display acquisition.
+        return;
+      }
       fb_sequence_->update(size_.width, size_.height, present_mode_, &size_);
       {
         const vk::CommandBuffer cmd_buffer = create_temp_cmd_buffer();

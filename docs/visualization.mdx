@@ -7,11 +7,11 @@ Holoviz provides the functionality to composite real-time streams of frames with
 
 For maximum performance, Holoviz makes use of [Vulkan](https://www.vulkan.org/), which is already installed as part of the NVIDIA GPU driver.
 
-Holoscan provides the [Holoviz operator](operators/visualization#holoviz-operator) which is sufficient for many, even complex visualization tasks. The [Holoviz operator](operators/visualization#holoviz-operator) is used by multiple Holoscan [example applications](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples).
+Holoscan provides the [Holoviz operator](#holoviz-operator) which is sufficient for many, even complex visualization tasks. The [Holoviz operator](#holoviz-operator) is used by multiple Holoscan [example applications](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples).
 
-Additionally, for more advanced use cases, the [Holoviz module](operators/visualization#holoviz-module) can be used to create application-specific visualization operators. The [Holoviz module](operators/visualization#holoviz-module) provides a C++ API and is also used by the [Holoviz operator](operators/visualization#holoviz-operator).
+Additionally, for more advanced use cases, the [Holoviz module](#holoviz-module) can be used to create application-specific visualization operators. The [Holoviz module](#holoviz-module) provides a C++ API and is also used by the [Holoviz operator](#holoviz-operator).
 
-The term Holoviz is used for both the [Holoviz operator](operators/visualization#holoviz-operator) and the [Holoviz module](operators/visualization#holoviz-module) below. Both the operator and the module roughly support the same feature set. Where applicable, information on how to use a feature with the operator and the module is provided. It's explicitly mentioned below when features are not supported by the operator.
+The term Holoviz is used for both the [Holoviz operator](#holoviz-operator) and the [Holoviz module](#holoviz-module) below. Both the operator and the module roughly support the same feature set. Where applicable, information on how to use a feature with the operator and the module is provided. It's explicitly mentioned below when features are not supported by the operator.
 
 ## Layers
 
@@ -904,7 +904,7 @@ Result:
 
 ### API
 
-[namespace_holoscan__viz](generated/api-reference/cpp/holoscan/classes/Application.mdx)
+The Holoviz module classes and functions in the `holoscan::viz` namespace are documented in the [C++ API reference](/holoscan/sdk-user-guide/api-reference/holoscan).
 
 ### Holoviz Module Examples
 
@@ -972,10 +972,10 @@ However, there are a few differences with the fullscreen mode. In this mode:
 - **Display Control**: Takes exclusive control of the specified display,
   preventing other applications from using it. Keyboard and mouse interactions
   are not supported.
-- **Setup Required**: Requires the display to be disabled in the X server configuration or the display manager to be stopped (see [Configure a Display for Exclusive Use](operators/visualization#configure-a-display-for-exclusive-use)).
+- **Setup Required**: Requires the display to be disabled in the X server configuration or the display manager to be stopped (see [Configure a Display for Exclusive Use](#configure-a-display-for-exclusive-use)).
 - **Vulkan Extensions**: Uses Vulkan's direct display extensions.
 - **G-SYNC Support**: G-SYNC is currently not supported in exclusive display mode.
 
 To enable exclusive display mode, set the `use_exclusive_display` parameter to
 `true` (as shown in [Enable Exclusive Display in
-Holoviz](operators/visualization#enable-exclusive-display-in-holoviz)).
+Holoviz](/holoscan/sdk-user-guide/operators/visualization#enable-exclusive-display-in-holoviz)).

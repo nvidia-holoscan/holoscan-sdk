@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include <holoscan/core/application.hpp>
@@ -508,6 +496,10 @@ void Application::set_ucx_env() {
   // Disable UCX CM to use all devices
   // (see issue 4233845)
   setenv("UCX_CM_USE_ALL_DEVICES", "n", 0);
+  // Set keepalive interval default: UCX_KEEPALIVE_INTERVAL is a UCP-level config read at ucp_init()
+  // time. Addresses fork safety issue where UCX_KEEPALIVE_INTERNAL may not otherwise initialize to
+  // a safe value in child processes.
+  setenv("UCX_KEEPALIVE_INTERVAL", "20s", 0);
 
   // Disable UCX memory type cache
   // (see https://ucx-py.readthedocs.io/en/latest/configuration.html#ucx-memtype-cache and

@@ -46,13 +46,13 @@ GPU-resident operators inherit from `holoscan::GPUResidentOperator` instead of t
 
 #### Built-in GPU-resident operators
 
-The SDK also supports concrete `holoscan::ops` classes that inherit from `holoscan::GPUResidentOperator`. They follow the same static buffer and capture rules as in the [API reference](using-the-sdk/gpu-resident-execution#api-reference) section below. These are distinct from the CPU-driven operators listed under [Holoscan Operators](operators/operators-and-extensions#holoscan-operators) (for example `holoscan::ops::FormatConverterOp`): GPU-resident variants fix sizes and formats at initialization and use device ports only.
+The SDK also supports concrete `holoscan::ops` classes that inherit from `holoscan::GPUResidentOperator`. They follow the same static buffer and capture rules as in the [API reference](#api-reference) section below. These are distinct from the CPU-driven operators listed under [Holoscan Operators](/holoscan/sdk-user-guide/operators/operators-and-extensions#holoscan-operators) (for example `holoscan::ops::FormatConverterOp`): GPU-resident variants fix sizes and formats at initialization and use device ports only.
 
 | Class | Typical use | API reference |
 | ----- | ----------- | ------------- |
 | **BayerDemosaicGpuResidentOp** | Demosaic a single-channel Bayer frame to RGB or RGBA on the GPU (NPP), with width, height, and dtypes fixed at init. | C++ (`holoscan::ops::BayerDemosaicGpuResidentOp`) |
 | **FormatConverterGpuResidentOp** | Convert between supported tensor-packed and planar YUV layouts on the GPU (NPP), mirroring a subset of `holoscan::ops::FormatConverterOp` with fixed dimensions and optional plane stride/offset overrides. | C++ (`holoscan::ops::FormatConverterGpuResidentOp`) |
-| **GPUResidentInferenceOp** | Run TensorRT inference inside a GPU-resident fragment (HoloInfer). See `public/examples/gpu_resident_inference_example/` in the [Examples](using-the-sdk/gpu-resident-execution#examples) section. | C++ (`holoscan::ops::GPUResidentInferenceOp`) |
+| **GPUResidentInferenceOp** | Run TensorRT inference inside a GPU-resident fragment (HoloInfer). See `public/examples/gpu_resident_inference_example/` in the [Examples](#examples) section. | C++ (`holoscan::ops::GPUResidentInferenceOp`) |
 
 #### GPU-resident operators on HoloHub
 
@@ -96,13 +96,13 @@ class MyGpuResidentFragment : public holoscan::Fragment {
 // Holoscan SDK will automatically detect that MyGpuResidentFragment should use GPU-resident graphs
 ```
 
-Access GPU-resident controls via `fragment->gpu_resident()` after calling `run_async()`. More details on the [API reference](using-the-sdk/gpu-resident-execution#api-reference) section.
+Access GPU-resident controls via `fragment->gpu_resident()` after calling `run_async()`. More details on the [API reference](#api-reference) section.
 
 There can only be one GPU-resident fragment per Holoscan SDK application. Other traditional Holoscan SDK fragments can co-exist with a GPU-resident fragment in the same application. However, connections between GPU-resident and traditional Holoscan SDK fragments and operators (with GXF backend) are not supported.
 
 #### Main Workload Processing GPU-resident Fragment
 
-The GPU-resident fragment is designated as the main workload processing fragment. The main data processing such as image processing, AI model inference happens in this main fragment. There is also an optional [data ready handler](using-the-sdk/gpu-resident-execution#data-ready-handler-optional) fragment that can be used to augment the main fragment to automatically handle external sensor data inputs.
+The GPU-resident fragment is designated as the main workload processing fragment. The main data processing such as image processing, AI model inference happens in this main fragment. There is also an optional [data ready handler](#data-ready-handler-optional) fragment that can be used to augment the main fragment to automatically handle external sensor data inputs.
 
 ### Data Ready Handler (Optional)
 
@@ -148,7 +148,7 @@ Optionally, the host CPU can also control the GPU-resident graphs by the followi
 
 This is useful for debugging, development, testing and cases where GPU-direct technologies are not available/yet integrated.
 
-When using host CPU-driven graphs with functions like `cudaMemcpy` to read back results between iterations, enable `sync_with_host()` before launching the graph to guarantee that all device memory writes are visible to the host before `result_ready()` returns `true`. See [sync_with_host](using-the-sdk/gpu-resident-execution#configuration-methods) for details.
+When using host CPU-driven graphs with functions like `cudaMemcpy` to read back results between iterations, enable `sync_with_host()` before launching the graph to guarantee that all device memory writes are visible to the host before `result_ready()` returns `true`. See [sync_with_host](#configuration-methods) for details.
 
 ## API Reference
 
@@ -473,7 +473,7 @@ Fully working examples demonstrating GPU-resident graph execution are available 
 ### Operator Design
 
 - **Keep compute() lightweight**: Only launch CUDA kernels; avoid CPU work as CPU calls won't be repeated in the graph execution phase.
-- **Operator granularity**: GPU-resident graph execution captures the workflow into a CUDA Graph and replays it on the GPU. This typically has much lower per-operator scheduling overhead (~0.5-2 microseconds kernel transition latency) than CPU-driven graph execution, making finer-grained operator decomposition more practical. See [performance_considerations](performance/performance-considerations) for comparison with CPU-based scheduling.
+- **Operator granularity**: GPU-resident graph execution captures the workflow into a CUDA Graph and replays it on the GPU. This typically has much lower per-operator scheduling overhead (~0.5-2 microseconds kernel transition latency) than CPU-driven graph execution, making finer-grained operator decomposition more practical. See [performance_considerations](/holoscan/sdk-user-guide/performance/performance-considerations) for comparison with CPU-based scheduling.
 - **Use provided streams**: Always use `cuda_stream()` for kernel launches in the main workload and `data_ready_handler_cuda_stream()` for kernel launches in the data ready handler.
 - **Pre-calculate sizes**: Determine buffer sizes at setup time, not runtime
 - **Avoid CPU-driven GPU Controls**: Avoid explicit CUDA synchronization and other CPU-driven GPU controls to get the most deterministic performance.

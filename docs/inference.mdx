@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Holoscan application that needs to run inference will use an inference operator. The built-in [Inference operator](operators/inference#inference-operator) (`InferenceOp`) can be used, and several related use cases are documented in the Inference operator section below. The use cases are created using the [parameter set](operators/inference#parameters-and-related-features) that must be defined in the configuration file of the Holoscan application. If the built-in `InferenceOp` doesn't cover a specific use case, users can create their own custom inference operator as documented in the [Creating an Inference Operator](operators/inference#creating-an-inference-operator) section.
+A Holoscan application that needs to run inference will use an inference operator. The built-in [Inference operator](#inference-operator) (`InferenceOp`) can be used, and several related use cases are documented in the Inference operator section below. The use cases are created using the [parameter set](#parameters-and-related-features) that must be defined in the configuration file of the Holoscan application. If the built-in `InferenceOp` doesn't cover a specific use case, users can create their own custom inference operator as documented in the [Creating an Inference Operator](#creating-an-inference-operator) section.
 
 The core inference functionality in the Holoscan SDK is provided by the Inference Module, which is a framework that facilitates designing and executing inference and processing applications through its APIs. It is used by the built-in `InferenceOp` which supports the same parameters as the Inference Module.  All parameters required by the Holoscan Inference Module are passed through a parameter set in the configuration file of an application.
 
@@ -44,7 +44,7 @@ Required parameters and related features available with the Holoscan Inference M
       - The YAML file must have the same name as the model file but with a `.yaml` extension (e.g., if the model is `my_model.pt`, the configuration file should be `my_model.yaml`).
       - The configuration file defines the input and output tensor formats, dimensions, and data types, enabling support for complex tensor structures beyond simple tensors.
       - The system automatically validates that the YAML configuration matches the actual model schema extracted from the torchscript model.
-      - See [Torch Backend Model Configuration](operators/inference#torch-backend-model-configuration) for detailed configuration examples and supported formats.
+      - See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed configuration examples and supported formats.
     - ONNX Runtime:
       - ONNX Runtime runtime libraries are not included in the Holoscan NGC container, Debian packages, or Python wheels. Install ONNX Runtime separately before using `backend: "onnxrt"`.
       - CUDA and CPU based inference supported both on x86_64 and aarch64.
@@ -65,12 +65,14 @@ Required parameters and related features available with the Holoscan Inference M
     - With a single entry, it is single inference; with more than one entry, multi AI inference is enabled.
     - Each entry in `model_path_map` has a unique keyword as key (used as an identifier by the Holoscan Inference Module), and the path to the model as value.
     - All model entries must have the models either in __onnx__ or __tensorrt engine file__ or __torchscript__ format.
-  - `pre_processor_map`: input tensor to the respective model is specified in `pre_processor_map` in the config file.
-    - The Holoscan Inference Module supports same input for multiple models or unique input per model.
-    - Each entry in `pre_processor_map` has a unique keyword representing the model (same as used in `model_path_map`), and a vector of tensor names as the value.
+  - `input_map` (alias: `pre_processor_map`): input tensor(s) per model.
+    - __Preferred name:__ `input_map`. The legacy YAML key `pre_processor_map` is retained for backward compatibility — existing configs continue to work unchanged. When both are set, `input_map` takes precedence and a warning is logged.
+    - The Holoscan Inference Module supports the same input tensor for multiple models, or a unique input per model.
+    - Each entry has a unique keyword representing the model (same as used in `model_path_map`), and a vector of tensor names as the value.
     - The Holoscan Inference Module supports multiple input tensors per model.
-  - `inference_map`: output tensors per model after inference is specified in `inference_map` in the config file.
-    - Each entry in `inference_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and a vector of the output tensor names as the value.
+  - `output_map` (alias: `inference_map`): output tensor(s) per model after inference.
+    - __Preferred name:__ `output_map`. The legacy YAML key `inference_map` is retained for backward compatibility — existing configs continue to work unchanged. When both are set, `output_map` takes precedence and a warning is logged.
+    - Each entry has a unique keyword representing the model (same as used in `model_path_map` and `input_map`), and a vector of the output tensor names as the value.
     - The Holoscan Inference Module supports multiple output tensors per model.
   - `parallel_inference`: Parallel or Sequential execution of inferences.
     - If multiple models are input, you can execute models in parallel.
@@ -91,8 +93,8 @@ Required parameters and related features available with the Holoscan Inference M
     - If DLA is enabled, use the GPU if a layer cannot be executed on DLA. If the fallback is disabled, engine creation will fail if a layer cannot executed on DLA.
     - It can be either `true` or `false`. Default value is `true`.
   - `is_engine_path`: if the input models are specified in __trt engine format__ in `model_path_map`, this flag must be set to `true`. Default value is `false`.
-  - `in_tensor_names`: Input tensor names to be used by `pre_processor_map`. This parameter is optional. If absent in the parameter map, values are derived from `pre_processor_map`.
-  - `out_tensor_names`: Output tensor names to be used by `inference_map`. This parameter is optional. If absent in the parameter map, values are derived from `inference_map`.
+  - `in_tensor_names`: Input tensor names to be used by `input_map` (a.k.a. `pre_processor_map`). This parameter is optional. If absent, values are derived from `input_map`.
+  - `out_tensor_names`: Output tensor names to be used by `output_map` (a.k.a. `inference_map`). This parameter is optional. If absent, values are derived from `output_map`.
   - `device_map`: Multi-GPU inferencing is enabled if `device_map` is populated in the parameter set.
     - Each entry in `device_map` has a unique keyword representing the model (same as used in `model_path_map` and `pre_processor_map`), and GPU identifier as the value. This GPU ID is used to execute the inference for the specified model.
     - GPUs specified in the `device_map` must have P2P (peer to peer) access and they must be connected to the same PCIE configuration. If P2P access is not possible among GPUs, the host (CPU memory) will be used to transfer the data.
@@ -174,11 +176,11 @@ inference:
         "model_1_unique_identifier": "path_to_model_1"
         "model_2_unique_identifier": "path_to_model_2"
         "model_3_unique_identifier": "path_to_model_3"
-    pre_processor_map:
+    input_map:                                   # preferred (alias: pre_processor_map)
         "model_1_unique_identifier": ["input_tensor_1_model_1_unique_identifier"]
         "model_2_unique_identifier": ["input_tensor_1_model_2_unique_identifier"]
         "model_3_unique_identifier": ["input_tensor_1_model_3_unique_identifier"]
-    inference_map:
+    output_map:                                  # preferred (alias: inference_map)
         "model_1_unique_identifier": ["output_tensor_1_model_1_unique_identifier"]
         "model_2_unique_identifier": ["output_tensor_1_model_2_unique_identifier"]
         "model_3_unique_identifier": ["output_tensor_1_model_3_unique_identifier"]
@@ -190,6 +192,121 @@ inference:
     transmit_on_cuda: true
     is_engine_path: false
 ```
+
+Legacy YAML keys `pre_processor_map` and `inference_map` still work — no config change is required. The new names (`input_map` / `output_map`) are recommended for new applications and clarity.
+
+## Fast-Path Dispatch
+
+`InferenceOp` has six optimized dispatch paths (three static-shape, three dynamic-shape) that are **auto-selected** at start-up whenever the pipeline is eligible. Fast paths are enabled only for TensorRT (`trt`) backends; any other backend runs the canonical dispatch path.
+
+### Eligibility
+
+A fast path is auto-selected when **both** hold:
+
+1. **All-TRT.** Either `backend: "trt"` (scalar) or every entry of `backend_map` is `"trt"`.
+2. **No advanced features.** None of these is in use: `activation_map`, `temporal_map`, or a `device_map` with more than one entry (multi-GPU).
+
+`dynamic_input_dims: true`, `dla_core` / `dla_core_map`, `parallel_inference`, and `is_engine_path` do **not** disqualify a fast path — the dispatcher routes to the correct variant automatically.
+
+### Which path is selected
+
+| Your pipeline | Auto-selected path |
+|---|---|
+| 1 TRT model, static shape | `kFast` |
+| 1 TRT model, dynamic shape | `kDynFast` |
+| ≥2 TRT models, static, `parallel_inference: false` | `kSeqFast` |
+| ≥2 TRT models, static, `parallel_inference: true` | `kParFast` |
+| ≥2 TRT models, dynamic, `parallel_inference: false` | `kDynSeqFast` |
+| ≥2 TRT models, dynamic, `parallel_inference: true` | `kDynParFast` |
+| Any ONNX / Torch model, or advanced feature in use | `kStandard` (canonical) |
+
+### Sample configs
+
+Fast paths are activated purely from the existing config — no additional keys are needed.
+
+__Single-model, static input shape → `kFast`:__
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "detector": "models/detector.onnx"
+    input_map:
+        "detector": ["input_tensor"]
+    output_map:
+        "detector": ["output_tensor"]
+    enable_cuda_graphs: true
+```
+
+__Multi-model, static shape, PARALLEL dispatch → `kParFast`:__
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "model_a": "models/a.onnx"
+        "model_b": "models/b.onnx"
+        "model_c": "models/c.onnx"
+        "model_d": "models/d.onnx"
+    input_map:
+        "model_a": ["input_a"]
+        "model_b": ["input_b"]
+        "model_c": ["input_c"]
+        "model_d": ["input_d"]
+    output_map:
+        "model_a": ["output_a"]
+        "model_b": ["output_b"]
+        "model_c": ["output_c"]
+        "model_d": ["output_d"]
+    parallel_inference: true
+    enable_cuda_graphs: true
+```
+
+For parallel dispatch, size the `CudaStreamPool` to at least `N * 3 + 16` so the operator can allocate one dedicated stream per model without exhausting the pool:
+
+```cpp
+auto stream_pool = make_resource<CudaStreamPool>(
+    "stream_pool", ...,
+    Arg("max_size", std::max<uint32_t>(16, N_models * 3u + 16u)));
+```
+
+If the pool cannot supply N distinct streams the operator prints a stderr diagnostic and safely demotes to the sequential fast path.
+
+__Multi-model, DYNAMIC input shape, parallel dispatch → `kDynParFast`:__
+
+```yaml
+inference:
+    backend: "trt"
+    model_path_map:
+        "model_a": "models/a.onnx"
+        "model_b": "models/b.onnx"
+    input_map:
+        "model_a": ["input_a"]
+        "model_b": ["input_b"]
+    output_map:
+        "model_a": ["output_a"]
+        "model_b": ["output_b"]
+    dynamic_input_dims: true
+    trt_opt_profile:
+        input_a: [1, 3, 64, 64, 1, 3, 512, 512, 1, 3, 1024, 1024]   # min opt max
+        input_b: [1, 3, 64, 64, 1, 3, 512, 512, 1, 3, 1024, 1024]
+    parallel_inference: true
+    enable_cuda_graphs: false    # CUDA Graphs conflict with dynamic dims
+```
+
+__Mixed backends (TRT + ONNX):__ any non-TRT entry disqualifies the fast paths; the operator uses `kStandard`. No config change is required — the pipeline still runs correctly.
+
+### Confirming the fast path is active
+
+When a fast path is auto-selected, the operator emits an INFO log line at start-up:
+
+```
+InferenceOp: fast path auto-selected (kFast) for single TRT model 'detector'.
+InferenceOp: fast path auto-selected (kParFast) for 4 TRT models (parallel).
+InferenceOp: fast path auto-selected (kDynSeqFast) for 3 TRT models (sequential).
+```
+
+If no such line appears, the operator is on the canonical (`kStandard`) dispatch path — either the pipeline is not all-TRT, or one of the advanced-feature blockers listed above is in use.
 
 ## Libtorch Installation
 
@@ -402,7 +519,7 @@ Some parameters have default values set for them in the `InferenceOp`. For any p
 
 <Note>
 
-When using the `torch` backend, ensure that a corresponding `model.yaml` configuration file exists alongside your torchscript model file. The YAML file must define the input and output tensor specifications as described in the [Torch Backend Model Configuration](operators/inference#torch-backend-model-configuration) section.
+When using the `torch` backend, ensure that a corresponding `model.yaml` configuration file exists alongside your torchscript model file. The YAML file must define the input and output tensor specifications as described in the [Torch Backend Model Configuration](#torch-backend-model-configuration) section.
 
 </Note>
 
@@ -849,7 +966,7 @@ inference:
       dtype: kFloat32
 ```
 
-For models with complex input/output structures (dictionaries, lists, nested structures), see the [Torch Backend Model Configuration](operators/inference#torch-backend-model-configuration) section for detailed examples.
+For models with complex input/output structures (dictionaries, lists, nested structures), see the [Torch Backend Model Configuration](#torch-backend-model-configuration) section for detailed examples.
 
 #### 3. Configure the Inference Operator
 
@@ -944,7 +1061,7 @@ __Problem:__ Attempting to use a `.pth` PyTorch model file directly results in e
 
 __Cause:__ The Holoscan SDK torch backend is based on libtorch and requires models in TorchScript format (`.pt`). The `.pth` format contains Python-specific state dictionaries that cannot be loaded by libtorch.
 
-__Solution:__ Convert your `.pth` model to TorchScript format. See the [Recipe: Running a PyTorch Model](operators/inference#recipe-running-a-pytorch-model) section above for detailed instructions.
+__Solution:__ Convert your `.pth` model to TorchScript format. See the [Recipe: Running a PyTorch Model](#recipe-running-a-pytorch-model) section above for detailed instructions.
 
 __Quick conversion example:__
 
@@ -981,7 +1098,7 @@ inference:
       dtype: kFloat32
 ```
 
-The system automatically validates that the YAML configuration matches the actual model schema. See [Torch Backend Model Configuration](operators/inference#torch-backend-model-configuration) for detailed examples including complex tensor structures.
+The system automatically validates that the YAML configuration matches the actual model schema. See [Torch Backend Model Configuration](#torch-backend-model-configuration) for detailed examples including complex tensor structures.
 
 ### Triton Backend Support
 

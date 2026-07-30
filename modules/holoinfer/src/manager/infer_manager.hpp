@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 #ifndef _HOLOSCAN_INFER_MANAGER_H
 #define _HOLOSCAN_INFER_MANAGER_H
@@ -142,6 +130,110 @@ class ManagerInfer {
    */
   DimType get_output_dimensions() const;
 
+  /**
+   * @brief Streamlined single-model dispatch for canonical InferenceOp.
+   *
+   * @param input_data Input data map
+   * @param output_data Output data map
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_fast(const DataMap& input_data, const DataMap& output_data,
+                                      cudaStream_t cuda_stream);
+
+  /// True after set_inference_params has populated the single-model fast-path cached
+  /// pointers. Consumed by InferContext::execute_inference_fast / _dyn_fast to decide
+  /// whether the fast dispatch or the map-keyed fallback is used.
+  bool has_fast_pointers() const noexcept { return fast_param_ != nullptr; }
+
+  /// Name of the single model cached for the fast path (set in set_inference_params when
+  /// path_map.size() == 1). Returns an empty string if the fast pointers are not populated.
+  const std::string& fast_model_name() const noexcept { return fast_model_name_; }
+
+  /**
+   * @brief Streamlined multi-model SEQUENTIAL dispatch using cached all_params_/all_ctx_ pointers
+   * and pre-built I/O DataBuffer vectors.
+   *
+   * @param input_data Input data map
+   * @param output_data Output data map
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_seq_fast(const DataMap& input_data, const DataMap& output_data,
+                                          cudaStream_t cuda_stream);
+
+  /**
+   * @brief Streamlined multi-model PARALLEL dispatch using per-model CUDA streams + completion
+   * events; bypasses work_queue. Falls back if par_streams_ is empty.
+   *
+   * @param input_data Input data map
+   * @param output_data Output data map
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_par_fast(const DataMap& input_data, const DataMap& output_data,
+                                          cudaStream_t cuda_stream);
+
+  /// True after set_inference_params has populated the multi-model fast-path pointer cache.
+  bool has_seq_fast_pointers() const noexcept { return !all_params_.empty(); }
+
+  /// True after set_inference_params has set up the per-model parallel streams + events.
+  bool has_par_fast_pointers() const noexcept { return !par_streams_.empty(); }
+
+  /**
+   * @brief Dynamic-shape single-model dispatch.
+   *
+   * @param specs Inference specs
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_dyn_fast(std::shared_ptr<InferenceSpecs>& specs,
+                                          cudaStream_t cuda_stream);
+
+  /**
+   * @brief Dynamic-shape multi-model sequential dispatch.
+   *
+   * @param specs Inference specs
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_dyn_seq_fast(std::shared_ptr<InferenceSpecs>& specs,
+                                              cudaStream_t cuda_stream);
+
+  /**
+   * @brief Dynamic-shape multi-model parallel dispatch.
+   *
+   * @param specs Inference specs
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_dyn_par_fast(std::shared_ptr<InferenceSpecs>& specs,
+                                              cudaStream_t cuda_stream);
+
+ private:
+  /**
+   * @brief Indexed worker for the work_queue parallel fallback (used when not all backends are
+   * TRT). Builds LOCAL per-worker I/O vectors so concurrent invocations don't race on
+   * shared state.
+   *
+   * @param model_index Model index
+   * @param input_data Input data map
+   * @param output_data Output data map
+   * @param cuda_stream CUDA stream
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus run_core_inference_indexed(size_t model_index, const DataMap& input_data,
+                                         const DataMap& output_data, cudaStream_t cuda_stream);
+
+  /**
+   * @brief Synthetic forward passes on every per-model parallel stream so CUDA-graph capture
+   * happens during setup, not in the first compute() call.
+   *
+   * @param passes Number of passes
+   * @return InferStatus with appropriate code and message
+   */
+  InferStatus prewarm_par_fast(int passes = 3);
+
  private:
   /// Flag to infer models in parallel. Defaults to False
   bool parallel_processing_ = false;
@@ -184,6 +276,39 @@ class ManagerInfer {
   /// Plugin handles backing dlopened inference contexts. Closed after contexts are destroyed.
   std::vector<void*> backend_plugin_handles_;
 
+  // @brief Pre-resolved raw pointers for the single-model fast path.
+  Params* fast_param_ = nullptr;
+  InferBase* fast_ctx_ = nullptr;
+  std::string fast_model_name_;
+
+  // @brief Pre-resolved per-tensor in/out DataBuffer pointers for the single-model fast path.
+  // Built lazily on first run_core_inference_fast call.
+  std::vector<std::shared_ptr<DataBuffer>> fast_indata_;
+  std::vector<std::shared_ptr<DataBuffer>> fast_outdata_;
+  bool fast_data_cached_ = false;
+
+  // @brief Multi-model fast-path pointer / vector cache]
+  // Parallel arrays indexed by model position (insertion order from path_map).
+  // Populated in set_inference_params() when fast_track_ is true AND the config is
+  // eligible (no activation/temporal/device/dla map, no GR inference, no dynamic dims).
+  std::vector<Params*> all_params_;
+  std::vector<InferBase*> all_ctx_;
+  std::vector<std::string> all_model_names_;
+  std::vector<std::vector<std::shared_ptr<DataBuffer>>> all_indata_;
+  std::vector<std::vector<std::shared_ptr<DataBuffer>>> all_outdata_;
+  bool seq_fast_data_cached_ = false;
+
+  // @brief Inline parallel TRT dispatch — per-model streams + events]
+  // Populated when fast_track_ AND parallel_processing_ AND all backends are TRT AND the
+  // executor's allocate_cuda_stream callback can supply N distinct streams. par_streams_
+  // empty means par-fast is unavailable and dispatcher will demote to work_queue.
+  std::vector<cudaStream_t> par_streams_;
+  std::vector<cudaEvent_t> par_done_events_;
+  cudaEvent_t par_outer_event_ = nullptr;
+
+  // @brief Mirror of InferenceSpecs::fast_multi_model_
+  bool fast_multi_model_ = false;
+
   /// Map storing input dimension per model
   DimType models_input_dims_;
 
@@ -219,11 +344,8 @@ class ManagerInfer {
       {"torch", holoinfer_backend::h_torch}};
 };
 
-/// Pointer to manager class for inference
-std::shared_ptr<ManagerInfer> g_manager;
-
-/// Map to store multi-instance managers
-std::map<std::string, std::shared_ptr<ManagerInfer>> g_managers;
+inline std::shared_ptr<ManagerInfer> g_manager;
+inline std::map<std::string, std::shared_ptr<ManagerInfer>> g_managers;
 
 }  // namespace inference
 }  // namespace holoscan

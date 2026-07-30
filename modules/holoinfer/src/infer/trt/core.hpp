@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 #include <cstring>
 #include <iostream>
@@ -64,6 +52,17 @@ class TrtInfer : public InferBase {
   InferStatus do_inference(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
                            std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
                            cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference);
+
+  /**
+   * @brief Stream-Shared Sequential Dispatch
+   * @param input_data Input DataBuffer(s)
+   * @param output_buffer Output DataBuffer(s) (populated in-place)
+   * @param stream The CUDA stream to enqueue inference work on.
+   * @return InferStatus
+   */
+  InferStatus do_inference_on_stream(const std::vector<std::shared_ptr<DataBuffer>>& input_data,
+                                     std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
+                                     cudaStream_t stream) override;
 
   /**
    * @brief Get input data dimensions to the model
@@ -210,6 +209,15 @@ class TrtInfer : public InferBase {
   bool first_phase_ = true;
   /// CUDA graph instance
   cudaGraphExec_t cuda_graph_instance_ = nullptr;
+
+  // @brief Output binding stability cache.
+  bool outputs_pinned_ = false;
+  std::vector<void*> last_output_addr_;
+  std::vector<std::vector<int64_t>> last_output_dims_;
+
+  // @brief Input Binding Stability Cache
+  bool inputs_pinned_ = false;
+  std::vector<void*> last_input_addr_;
 
   /// @brief Inference runtime
   std::unique_ptr<nvinfer1::IRuntime> infer_runtime_;

@@ -1,5 +1,7 @@
 # Create an application using the multi-threaded scheduler
 
+> **Note:** By default this example uses the recommended `EventBasedScheduler`. The legacy `MultiThreadScheduler` remains selectable for comparison (C++: the `scheduler` entry in `multithread.yaml`; Python: the `--multi_thread` flag) and is no longer recommended for new code. See [`docs/components/schedulers.mdx`](../../docs/components/schedulers.mdx) for guidance.
+
 These examples demonstrate how to build an application configured to use a multi-threaded scheduler. This application creates a user-controlled number of delay operators that can be run in parallel. If run in a single thread, the application's duration is approximately the sum of the delays of the individual delay operators. When all operators are run in parallel, the duration is roughly equal to the longest duration of any of the individual operators.
 
 *Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/components/schedulers.html) to learn more about the Multi-threaded scheduler.*
@@ -38,7 +40,7 @@ For the C++ application, the scheduler to be used can be set via the `scheduler`
 
 ## Python API
 
-- `multithread.py`: This example demonstrates how to configure and use a multi-threaded scheduler instead of the default single-threaded one. It involves three operators as described for the C++ API example described above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event_based` is specified, the event-based multithread scheduler will be used instead.
+- `multithread.py`: This example demonstrates how to configure and use a multi-threaded scheduler instead of the default single-threaded one. It involves three operators as described for the C++ API example described above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default the recommended `EventBasedScheduler` is used; pass `--multi_thread` to use the legacy polling-based `MultiThreadScheduler` instead.
 
 ### Build instructions
 
@@ -51,5 +53,5 @@ First, go in your `build` or `install` directory (automatically done by `./run l
 Then, run the app with the options of your choice. For example, to use 8 worker threads to run 32 delay operators with delays ranging linearly from 0.2 to (0.2 + 0.05 * 31), one would set:
 
 ```bash
-python3 ./examples/multithread/python/multithread.py --threads 8 --num_delay_ops 32 --delay 0.2 --delay_step 0.05 --event_based
+python3 ./examples/multithread/python/multithread.py --threads 8 --num_delay_ops 32 --delay 0.2 --delay_step 0.05
 ```

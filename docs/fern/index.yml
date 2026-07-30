@@ -1,8 +1,11 @@
 navigation:
   - section: Introduction
     contents:
-      - page: Overview
+      - page: Holoscan SDK Overview
         path: ../overview.mdx
+        # Keep the published /introduction/overview URL that redirects and
+        # external links target, independent of the sidebar title.
+        slug: overview
       - page: Relevant Technologies
         path: ../relevant_technologies.mdx
       - page: Getting Started
@@ -159,5 +162,3 @@ navigation:
         href: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan
       - link: GitHub repository
         href: https://github.com/nvidia-holoscan
-      - link: Previous releases (Sphinx)
-        href: https://docs.nvidia.com/holoscan-sdk/index.html

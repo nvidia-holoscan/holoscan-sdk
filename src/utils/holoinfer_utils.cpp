@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include <cuda_fp16.h>
@@ -377,6 +365,138 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
     return report_error(module, "Data extraction, Message: " + std::string(_ex.what()));
   } catch (...) {
     return report_error(module, "Data extraction, Unknown exception");
+  }
+  return GXF_SUCCESS;
+}
+
+// Cached variant of get_data_per_model.
+//
+// Two code paths:
+//   - Cold path  (cache.valid == false): delegates to the standard get_data_per_model() and
+//     populates the cache from the result (dims, dtype, message_index).
+//   - Hot path   (cache.valid == true):  bypasses dtype/storage validation and the inner
+//     message-search loop. Re-wraps each input tensor as a GxfTensorBuffer using the cached
+//     message_index — falling back to the slow path if the cached index no longer holds the
+//     tensor (defensive against upstream topology drift).
+gxf_result_t get_data_per_model_cached(InputContext& op_input,
+                                       const std::vector<std::string>& in_tensors,
+                                       HoloInfer::DataMap& data_per_input_tensor,
+                                       std::map<std::string, std::vector<int>>& dims_per_tensor,
+                                       bool cuda_buffer_out, const std::string& module,
+                                       cudaStream_t& cuda_stream_out, TensorExtractCache& cache) {
+  // Cold path: run the canonical extractor, then snapshot metadata into the cache.
+  if (!cache.valid) {
+    auto rc = get_data_per_model(op_input,
+                                 in_tensors,
+                                 data_per_input_tensor,
+                                 dims_per_tensor,
+                                 cuda_buffer_out,
+                                 module,
+                                 cuda_stream_out);
+    if (rc != GXF_SUCCESS) {
+      return rc;
+    }
+
+    cache.message_index.assign(in_tensors.size(), 0);
+    cache.dims_per_tensor = dims_per_tensor;
+
+    cache.data_buffer_ptrs.assign(in_tensors.size(), nullptr);
+    for (size_t i = 0; i < in_tensors.size(); ++i) {
+      auto it = data_per_input_tensor.find(in_tensors[i]);
+      if (it != data_per_input_tensor.end()) {
+        cache.data_buffer_ptrs[i] = it->second.get();
+      }
+    }
+    cache.valid = true;
+    return GXF_SUCCESS;
+  }
+
+  // Hot path. We rely on the caller (InferenceOp) having declared dynamic_input_dims_ ==
+  // false, so the cached dims/dtype/storage are guaranteed valid.
+  try {
+    nvidia::gxf::MemoryStorageType to = cuda_buffer_out ? nvidia::gxf::MemoryStorageType::kDevice
+                                                        : nvidia::gxf::MemoryStorageType::kHost;
+
+    auto maybe_messages = op_input.receive<std::vector<holoscan::gxf::Entity>>("receivers");
+    if (!maybe_messages || maybe_messages->empty()) {
+      return report_error(module, "Data extraction (cached), no input messages.");
+    }
+    auto messages = maybe_messages.value();
+    cuda_stream_out = op_input.receive_cuda_stream("receivers");
+
+    for (size_t i = 0; i < in_tensors.size(); ++i) {
+      // Look in the cached message index first; only loop on miss.
+      nvidia::gxf::Expected<nvidia::gxf::Handle<nvidia::gxf::Tensor>> maybe_in_tensor =
+          nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE};
+      size_t hit_idx = cache.message_index[i];
+      if (hit_idx < messages.size()) {
+        maybe_in_tensor =
+            messages[hit_idx].nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(in_tensors[i].c_str());
+      }
+      if (!maybe_in_tensor) {
+        // Fallback: linear search, then update the cache for next compute() call.
+        for (size_t j = 0; j < messages.size(); ++j) {
+          maybe_in_tensor =
+              messages[j].nvidia::gxf::Entity::get<nvidia::gxf::Tensor>(in_tensors[i].c_str());
+          if (maybe_in_tensor) {
+            cache.message_index[i] = j;
+            break;
+          }
+        }
+        if (!maybe_in_tensor) {
+          return report_error(module,
+                              "Data extraction (cached), tensor not found: " + in_tensors[i]);
+        }
+      }
+      const auto& in_tensor = maybe_in_tensor.value();
+
+      HoloInfer::DataBuffer* db_ptr =
+          (i < cache.data_buffer_ptrs.size()) ? cache.data_buffer_ptrs[i] : nullptr;
+      if (db_ptr == nullptr) {
+        cache.valid = false;
+        return get_data_per_model_cached(op_input,
+                                         in_tensors,
+                                         data_per_input_tensor,
+                                         dims_per_tensor,
+                                         cuda_buffer_out,
+                                         module,
+                                         cuda_stream_out,
+                                         cache);
+      }
+
+      const auto storage_type = in_tensor->storage_type();
+      if (storage_type == to) {
+        auto buffer =
+            std::make_shared<GxfTensorBuffer>(messages[cache.message_index[i]], in_tensor);
+        if (to == nvidia::gxf::MemoryStorageType::kDevice) {
+          db_ptr->device_buffer_ = buffer;
+        } else {
+          db_ptr->host_buffer_ = buffer;
+        }
+      } else {
+        const auto dtype = static_cast<HoloInfer::holoinfer_datatype>(cache.dtype_code[i]);
+        gxf_result_t status = extract_data(
+            std::shared_ptr<HoloInfer::DataBuffer>(db_ptr, [](HoloInfer::DataBuffer*) {}),
+            to,
+            storage_type,
+            dtype,
+            in_tensor->pointer(),
+            in_tensor->element_count(),
+            module,
+            cuda_stream_out);
+        if (status != GXF_SUCCESS) {
+          return report_error(
+              module, "Data extraction (cached), storage conversion failed for " + in_tensors[i]);
+        }
+      }
+    }
+    // dims_per_tensor is intentionally NOT re-populated; we rely on the cache's copy that was
+    // installed on the cold path. The reference is kept as an out-parameter to preserve the
+    // function signature shape of get_data_per_model().
+  } catch (std::exception& _ex) {
+    return report_error(module, "Data extraction (cached), Message: " + std::string(_ex.what()));
+  } catch (...) {
+    return report_error(module, "Data extraction (cached), Unknown exception");
   }
   return GXF_SUCCESS;
 }
@@ -848,46 +968,61 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
     }
 
     // Merge any dynamic output tensors discovered in input_data_map into out_tensors.
+    const size_t out_tensors_count_before = out_tensors.size();
     for (const auto& dtensor : input_data_map) {
       if (std::find(out_tensors.begin(), out_tensors.end(), dtensor.first) == out_tensors.end()) {
         out_tensors.push_back(dtensor.first);
       }
     }
 
-    for (unsigned int i = 0; i < out_tensors.size(); ++i) {
-      if (input_data_map.find(out_tensors[i]) == input_data_map.end()) {
-        return report_error(module,
-                            "Data Transmission, Mapped data not found for " + out_tensors[i]);
-      }
-      const auto& current_out_tensor = out_tensors[i];
+    if (out_tensors.size() != out_tensors_count_before && cache.resolved_valid) {
+      cache.resolved_valid = false;
+      cache.resolved_outputs.clear();
+    }
 
-      std::string key_name = "";
-      unsigned int tensor_index = 0;
-
-      if (model_to_tensor_map.size() > 0) {
-        for (const auto& [key_to_tensor, tensor_names_vector] : model_to_tensor_map) {
-          for (size_t a = 0; a < tensor_names_vector.size(); a++) {
-            if (tensor_names_vector[a].compare(current_out_tensor) == 0) {
-              key_name = key_to_tensor;
-              tensor_index = a;
-              break;
+    if (!cache.resolved_valid) {
+      cache.resolved_outputs.assign(out_tensors.size(), TensorTransmitCache::ResolvedOutput{});
+      for (unsigned int i = 0; i < out_tensors.size(); ++i) {
+        const auto& current_out_tensor = out_tensors[i];
+        auto data_it = input_data_map.find(current_out_tensor);
+        if (data_it == input_data_map.end()) {
+          return report_error(module,
+                              "Data Transmission, Mapped data not found for " + current_out_tensor);
+        }
+        std::string key_name;
+        unsigned int tensor_index = 0;
+        if (model_to_tensor_map.size() > 0) {
+          for (const auto& [k, tensor_names_vector] : model_to_tensor_map) {
+            for (size_t a = 0; a < tensor_names_vector.size(); ++a) {
+              if (tensor_names_vector[a].compare(current_out_tensor) == 0) {
+                key_name = k;
+                tensor_index = static_cast<unsigned int>(a);
+                break;
+              }
             }
-          }
-          if (key_name.length() != 0) {
-            break;
+            if (!key_name.empty())
+              break;
           }
         }
+        if (key_name.empty())
+          key_name = current_out_tensor;
+        if (tensor_out_dims_map.find(key_name) == tensor_out_dims_map.end()) {
+          return report_error(module, "Tensor mapping not found in dimension map for " + key_name);
+        }
+        auto& slot = cache.resolved_outputs[i];
+        slot.key_name = std::move(key_name);
+        slot.tensor_index = tensor_index;
+        slot.data_buffer = data_it->second.get();
+        slot.dtype = data_it->second->get_datatype();
       }
+      cache.resolved_valid = true;
+    }
 
-      if (key_name.length() == 0) {
-        key_name = current_out_tensor;
-      }
+    for (unsigned int i = 0; i < out_tensors.size(); ++i) {
+      const auto& current_out_tensor = out_tensors[i];
 
-      if (tensor_out_dims_map.find(key_name) == tensor_out_dims_map.end()) {
-        return report_error(module, "Tensor mapping not found in dimension map for " + key_name);
-      }
-
-      std::vector<int64_t> dims = tensor_out_dims_map.at(key_name)[tensor_index];
+      const auto& slot = cache.resolved_outputs[i];
+      std::vector<int64_t> dims = tensor_out_dims_map.at(slot.key_name)[slot.tensor_index];
 
       if (dims.size() < 1 || dims.size() > nvidia::gxf::Shape::kMaxRank) {
         HOLOSCAN_LOG_INFO("Number of dimensions of each output tensor must be between 1 and {}.",
@@ -899,7 +1034,8 @@ gxf_result_t transmit_data_per_model(gxf_context_t& cont,
       std::vector<int32_t> dimarray(dims.begin(), dims.end());
       nvidia::gxf::Shape output_shape = nvidia::gxf::Shape(dimarray);
       size_t buffer_size = std::accumulate(dims.begin(), dims.end(), 1, std::multiplies<size_t>());
-      auto tensor_dtype = input_data_map.at(current_out_tensor)->get_datatype();
+
+      auto tensor_dtype = slot.dtype;
 
       gxf_result_t stat = GXF_SUCCESS;
       switch (tensor_dtype) {

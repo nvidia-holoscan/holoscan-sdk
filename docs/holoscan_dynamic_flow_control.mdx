@@ -254,7 +254,7 @@ The output execution port (`__output_exec__`. `holoscan::Operator::kOutputExecPo
 <Note>
 
 Both the source and target operators must be native Holoscan operators.
-Attempting to connect a [GXF Operator](using-the-sdk/create-an-operator) to a native Holoscan operator, or vice versa, with an empty port map will result in an error.
+Attempting to connect a [GXF Operator](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator) to a native Holoscan operator, or vice versa, with an empty port map will result in an error.
 
 </Note>
 
@@ -265,7 +265,7 @@ Starting with Holoscan SDK v3.0, operators can be connected via `add_flow()` wit
 
 <Note>
 
-These execution port concepts also apply to Subgraph interface ports. Subgraphs can expose execution interface ports using `add_input_exec_interface_port()` and `add_output_exec_interface_port()`, allowing Subgraphs to participate in dynamic flow control just like operators. See the [Subgraph with Dynamic Flow Control](using-the-sdk/dynamic-flow-control#using-dynamic-flow-control-with-subgraphs) section below for details.
+These execution port concepts also apply to Subgraph interface ports. Subgraphs can expose execution interface ports using `add_input_exec_interface_port()` and `add_output_exec_interface_port()`, allowing Subgraphs to participate in dynamic flow control just like operators. See the [Subgraph with Dynamic Flow Control](#using-dynamic-flow-control-with-subgraphs) section below for details.
 
 </Note>
 
@@ -661,4 +661,4 @@ Note that the execution control examples are also related to the dynamic behavio
 The dynamic flow control feature has the following limitations:
 
 - It can only be used to connect operators within the same fragment. For inter-fragment flows (connecting operators across different fragments), explicit non-execution ports must be used instead of dynamic flows.
-- Both the source and target operators must be native Holoscan operators (not [GXF Operators](using-the-sdk/create-an-operator)).
+- Both the source and target operators must be native Holoscan operators (not [GXF Operators](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator)).

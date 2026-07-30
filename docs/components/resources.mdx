@@ -2,7 +2,7 @@ Resource classes represent resources such as a allocators, clocks, transmitters,
 
 <Note>
 
-There are a number of other resources classes used internally which are not documented here, but appear in the API Documentation ([C++](../api-reference/holoscan/classes/resource)/Python (`holoscan.resources`)).
+There are a number of other resources classes used internally which are not documented here, but appear in the API Documentation ([C++](/holoscan/sdk-user-guide/api-reference/holoscan/classes/resource)/Python (`holoscan.resources`)).
 
 </Note>
 
@@ -26,7 +26,7 @@ This is a memory pool which provides a user-specified number of equally sized bl
 
 This allocator uses CUDA's [Stream-Ordered Memory Allocator](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/stream-ordered-memory-allocation.html#stream-ordered-memory-allocator) (`cudaMallocAsync`/`cudaFreeAsync`) to dynamically allocate CUDA device memory. Stream-ordered allocation enables memory operations to be tied to specific CUDA streams, allowing allocation and deallocation without blocking the host or other streams.
 
-This allocator **only supports CUDA device memory**. If host memory is also needed, use `RMMAllocator` instead (see [choosing between allocators](../components/resources#choosing-allocators) below).
+This allocator **only supports CUDA device memory**. If host memory is also needed, use `RMMAllocator` instead (see [choosing between allocators](#choosing-allocators) below).
 
 - The `device_memory_initial_size` parameter specifies the initial size of the device (GPU) memory pool. This is an optional parameter that defaults to 8 MB on aarch64 and 16 MB on x86_64. See note below on the format used to specify the value.
 - The `device_memory_max_size` parameter specifies the maximum size of the device (GPU) memory pool. This is an optional parameter that defaults to twice the value of `device_memory_initial_size`. See note below on the format used to specify the value.
@@ -239,7 +239,7 @@ The components in this "system resources" section are related to system resource
 
 ### ThreadPool
 
-This resource represents a thread pool that can be used to pin operators to run using specific CPU threads. This functionality is not supported by the `GreedyScheduler` because it is single-threaded, but it is supported by both the `EventBasedScheduler` and `MultiThreadScheduler`. Unlike other resource types, a ThreadPool should **not** be created via `make_resource` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)), but should instead use the dedicated `make_thread_pool` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)) method. This dedicated method is necessary as the thread pool requires some additional initialization logic that is not required by the other resource types. See the section on [configuring thread pools](../using-the-sdk/create-an-application#configuring-app-thread-pools) in the user guide for usage.
+This resource represents a thread pool that can be used to pin operators to run using specific CPU threads. This functionality is not supported by the `GreedyScheduler` because it is single-threaded, but it is supported by `EventBasedScheduler` (and the legacy `MultiThreadScheduler`). Unlike other resource types, a ThreadPool should **not** be created via `make_resource` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)), but should instead use the dedicated `make_thread_pool` (C++ (`holoscan::Fragment::make_resource`)/Python (`holoscan.core.Fragment.make_resource`)) method. This dedicated method is necessary as the thread pool requires some additional initialization logic that is not required by the other resource types. See the section on [configuring thread pools](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-app-thread-pools) in the user guide for usage.
 
 - The parameter `initial_size` indicates the number of threads to initialize the thread pool with.
 
@@ -283,7 +283,7 @@ The AsyncDataLoggerResource inherits all of the parameters from DataLoggerResour
 
 When using the `LockFree` queue type (default), the AsyncDataLoggerResource maintains FIFO order per-producer thread, but not globally across all producers. Since multiple operators may run on different threads, messages from different operators can be interleaved in any order.
 
-To ensure that messages from a specific operator maintain strict FIFO order in the logs, you can use a `ThreadPool` resource to pin the operator to a specific worker thread. This ensures the operator's `compute()` method is always called by the same thread, guaranteeing that all messages from that operator come from the same producer thread and preserving FIFO order for that operator's messages. See [configuring thread pools](../using-the-sdk/create-an-application#configuring-app-thread-pools) for details on how to create thread pools and pin operators to them.
+To ensure that messages from a specific operator maintain strict FIFO order in the logs, you can use a `ThreadPool` resource to pin the operator to a specific worker thread. This ensures the operator's `compute()` method is always called by the same thread, guaranteeing that all messages from that operator come from the same producer thread and preserving FIFO order for that operator's messages. See [configuring thread pools](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-app-thread-pools) for details on how to create thread pools and pin operators to them.
 
 If strict global FIFO ordering across all operators is required (based on enqueue timestamps), use the `Ordered` queue type instead, though this will result in lower throughput due to mutex contention.
 
@@ -315,7 +315,7 @@ By assigning different `CudaGreenContext` resources to different operators, user
 
 ## CUDA Stream and Event Types
 
-The following types are used internally by the Holoscan SDK's execution runtime for managing CUDA streams and events during operator execution. They originate from the underlying GXF (Graph Execution Framework) CUDA extension and may be encountered when working with GPU-accelerated operators. For guidance on handling CUDA streams in your operators, see the [CUDA Stream Handling](../holoscan_cuda_stream_handling.mdx) guide.
+The following types are used internally by the Holoscan SDK's execution runtime for managing CUDA streams and events during operator execution. They originate from the underlying GXF (Graph Execution Framework) CUDA extension and may be encountered when working with GPU-accelerated operators. For guidance on handling CUDA streams in your operators, see the [CUDA Stream Handling](/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling) guide.
 
 ### CudaStream
 

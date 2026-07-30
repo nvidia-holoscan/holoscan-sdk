@@ -1,14 +1,14 @@
 <Note>
 
-Learn more about RDMA in the [technology overview](introduction/relevant-technologies#rivermax-and-gpudirect-rdma) section.
+Learn more about RDMA in the [technology overview](/holoscan/sdk-user-guide/introduction/relevant-technologies#rivermax-and-gpudirect-rdma) section.
 
 </Note>
 
 
 There are two parts to enabling RDMA for Holoscan:
 
-- [Enabling RDMA on the ConnectX SmartNIC](setup/additional-setup/enabling-gpudirect-rdma#enabling-rdma-on-the-connectx-smartnic)
-- [Enabling GPUDirect RDMA](setup/additional-setup/enabling-gpudirect-rdma#enabling-gpudirect-rdma)
+- [Enabling RDMA on the ConnectX SmartNIC](#enabling-rdma-on-the-connectx-smartnic)
+- [Enabling GPUDirect RDMA](#enabling-gpudirect-rdma)
 
 ## Enabling RDMA on the ConnectX SmartNIC
 
@@ -193,7 +193,7 @@ $ sudo dmesg | grep -w mlx5_core
 </Tip>
 
 
-The next step is to set a static IP on the interface you'd like to use so you can refer to it in your Holoscan applications (e.g., [Emergent cameras](https://github.com/nvidia-holoscan/holohub/blob/main/operators/emergent_source/setup.md), [distributed applications](holoscan_create_distributed_app.mdx)...).
+The next step is to set a static IP on the interface you'd like to use so you can refer to it in your Holoscan applications (e.g., [Emergent cameras](https://github.com/nvidia-holoscan/holohub/blob/main/operators/emergent_source/setup.md), [distributed applications](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application)...).
 
 First, check if you already have an address setup. We'll use the `eth3` interface in this example for `mlx5_1`:
 

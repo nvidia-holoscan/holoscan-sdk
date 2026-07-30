@@ -1,18 +1,6 @@
 /*
- * SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include <filesystem>
@@ -83,10 +71,10 @@ int main([[maybe_unused]] int argc, char** argv) {
   holoscan::ArgList scheduler_args{holoscan::Arg("stop_on_deadlock", true),
                                    holoscan::Arg("stop_on_deadlock_timeout", 500L)};
   if (scheduler == "multi_thread") {
-    // use MultiThreadScheduler instead of the default GreedyScheduler
+    // legacy MultiThreadScheduler; EventBasedScheduler is the recommended multi-threaded option
     app->scheduler(app->make_scheduler<holoscan::MultiThreadScheduler>("MTS", scheduler_args));
   } else if (scheduler == "event_based") {
-    // use EventBasedScheduler instead of the default GreedyScheduler
+    // EventBasedScheduler: recommended multi-threaded scheduler
     app->scheduler(app->make_scheduler<holoscan::EventBasedScheduler>("EBS", scheduler_args));
   } else if (scheduler == "greedy") {
     app->scheduler(app->make_scheduler<holoscan::GreedyScheduler>("GS", scheduler_args));

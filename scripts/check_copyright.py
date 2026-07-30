@@ -1,18 +1,6 @@
 """
 SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 """  # noqa: E501
 
 # This file is modified from the RAPIDS RAFT project which is under the
@@ -62,6 +50,116 @@ CheckDouble = re.compile(
     "All rights reserved."
 )
 
+APACHE_BOILERPLATE_LINES = [
+    'Licensed under the Apache License, Version 2.0 (the "License");',
+    "you may not use this file except in compliance with the License.",
+    "You may obtain a copy of the License at",
+    "",
+    "http://www.apache.org/licenses/LICENSE-2.0",
+    "",
+    "Unless required by applicable law or agreed to in writing, software",
+    'distributed under the License is distributed on an "AS IS" BASIS,',
+    "WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.",
+    "See the License for the specific language governing permissions and",
+    "limitations under the License.",
+]
+
+SPDX_COPYRIGHT_RE = (
+    r"SPDX-FileCopyrightText: Copyright \(c\) [^\n]+ NVIDIA CORPORATION & AFFILIATES\. "
+    r"All rights reserved\."
+)
+SPDX_LICENSE_RE = r"SPDX-License-Identifier: Apache-2\.0"
+
+
+def _boilerplate_line_re(text):
+    if text == 'Licensed under the Apache License, Version 2.0 (the "License");':
+        return r'Licensed under the Apache License, Version 2\.0 \(the \\?"License\\?"\);'
+    if text == "you may not use this file except in compliance with the License.":
+        return r"you may not use (?:this file|it) except in compliance with the License\."
+    if text == 'distributed under the License is distributed on an "AS IS" BASIS,':
+        return r'distributed under the License is distributed on an \\?"AS IS\\?" BASIS,'
+    return re.escape(text)
+
+
+def _comment_line(prefix, text):
+    if text:
+        return rf"{prefix}[ \t]*{_boilerplate_line_re(text)}\n"
+    return rf"{prefix}[ \t]*\n"
+
+
+def _line_comment_header(prefix):
+    comment = rf"{prefix}[ \t]*"
+    spdx = rf"(?P<spdx>{comment}{SPDX_COPYRIGHT_RE}\n{comment}{SPDX_LICENSE_RE}\n)"
+    boilerplate = rf"{prefix}[ \t]*\n" + "".join(
+        _comment_line(prefix, line) for line in APACHE_BOILERPLATE_LINES
+    )
+    trailing_comment_blank = rf"(?:{prefix}[ \t]*\n)?"
+    return re.compile(spdx + boilerplate + trailing_comment_blank, re.MULTILINE)
+
+
+def _block_comment_header(start, prefix, end):
+    spdx = (
+        rf"(?P<spdx>{re.escape(start)}\n"
+        rf"{prefix}{SPDX_COPYRIGHT_RE}\n"
+        rf"{prefix}{SPDX_LICENSE_RE}\n)"
+    )
+    boilerplate = rf"{prefix}[ \t]*\n" + "".join(
+        _comment_line(prefix, line) for line in APACHE_BOILERPLATE_LINES
+    )
+    return re.compile(spdx + boilerplate + rf"[ \t]*{re.escape(end.strip())}", re.MULTILINE)
+
+
+def _html_comment_header():
+    spdx = (
+        rf"(?P<spdx>{re.escape('<!--')}\n"
+        rf"{SPDX_COPYRIGHT_RE}\n"
+        rf"{SPDX_LICENSE_RE}\n)"
+    )
+    boilerplate = "\n" + "".join(
+        (_boilerplate_line_re(line) if line else "") + "\n" for line in APACHE_BOILERPLATE_LINES
+    )
+    return re.compile(spdx + boilerplate + re.escape("-->"), re.MULTILINE)
+
+
+def _docstring_header(quote):
+    spdx = rf"(?P<spdx>{re.escape(quote)}\n{SPDX_COPYRIGHT_RE}\n{SPDX_LICENSE_RE}\n)"
+    boilerplate = "\n" + "".join(
+        (_boilerplate_line_re(line) if line else "") + "\n" for line in APACHE_BOILERPLATE_LINES
+    )
+    return re.compile(spdx + boilerplate, re.MULTILINE)
+
+
+def _block_comment_header_spdx_after_boilerplate():
+    prefix = r"[ \t]*\*[ \t]*"
+    legacy_copyright = rf"{prefix}Copyright \(c\)[^\n]+\n"
+    spdx = rf"(?P<spdx>{prefix}{SPDX_COPYRIGHT_RE}\n{prefix}{SPDX_LICENSE_RE}\n)"
+    boilerplate = (
+        rf"(?:{legacy_copyright})?"
+        rf"{prefix}[ \t]*\n"
+        + "".join(_comment_line(prefix, line) for line in APACHE_BOILERPLATE_LINES)
+        + rf"{prefix}[ \t]*\n"
+    )
+    return re.compile(
+        rf"{re.escape('/*')}\n{boilerplate}{spdx}[ \t]*{re.escape('*/')}",
+        re.MULTILINE,
+    )
+
+
+LongHeaderPatterns = [
+    (_block_comment_header("/*", r"[ \t]*\*[ \t]*", " */"), r"\g<spdx> */"),
+    (_block_comment_header_spdx_after_boilerplate(), r"/*\n\g<spdx> */"),
+    (_line_comment_header(r"#"), r"\g<spdx>"),
+    (_line_comment_header(r"//"), r"\g<spdx>"),
+    (_line_comment_header(r"%"), r"\g<spdx>"),
+    (_html_comment_header(), r"\g<spdx>-->"),
+    (_docstring_header('"""'), r"\g<spdx>"),
+    (_docstring_header(chr(39) * 3), r"\g<spdx>"),
+]
+
+PREPROCESSOR_DIRECTIVE_RE = re.compile(
+    r"^#\s*(?:define|elif|else|endif|error|if|ifdef|ifndef|include|line|pragma|undef|warning)\b"
+)
+
 
 def check_this_file(f):
     # This check covers things like symlinks which point to files that DNE
@@ -100,6 +198,119 @@ def replace_current_year(line, start, end):
     return res
 
 
+def _header_region_end(contents):
+    """Return the end offset of the leading blank/comment header region."""
+    offset = 0
+    block_comment = False
+    html_comment = False
+    docstring_delimiter = None
+
+    for line in contents.splitlines(keepends=True):
+        stripped = line.strip()
+
+        if html_comment:
+            if "-->" in line:
+                html_comment = False
+            offset += len(line)
+            continue
+
+        if block_comment:
+            if "*/" in line:
+                block_comment = False
+            offset += len(line)
+            continue
+
+        if docstring_delimiter:
+            if docstring_delimiter in line:
+                docstring_delimiter = None
+            offset += len(line)
+            continue
+
+        if not stripped or (offset == 0 and line.startswith("#!")):
+            offset += len(line)
+            continue
+
+        if stripped.startswith("#"):
+            if PREPROCESSOR_DIRECTIVE_RE.match(stripped):
+                break
+            offset += len(line)
+            continue
+
+        if stripped.startswith(("%", "//")):
+            offset += len(line)
+            continue
+
+        if stripped.startswith("/*"):
+            if "*/" not in stripped[2:]:
+                block_comment = True
+            offset += len(line)
+            continue
+
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped[4:]:
+                html_comment = True
+            offset += len(line)
+            continue
+
+        for delimiter in ('"""', "'''"):
+            if stripped.startswith(delimiter):
+                if delimiter not in stripped[len(delimiter) :]:
+                    docstring_delimiter = delimiter
+                offset += len(line)
+                break
+        else:
+            break
+
+    return offset
+
+
+def shorten_license_header(contents):
+    header_end = _header_region_end(contents)
+    updated = contents[:header_end]
+    body = contents[header_end:]
+    total_count = 0
+    for pattern, replacement in LongHeaderPatterns:
+        updated, count = pattern.subn(replacement, updated)
+        total_count += count
+    return updated + body, total_count
+
+
+def check_long_header_file(f):
+    if not os.path.exists(f):
+        return False
+    if gitutils and gitutils.is_file_empty(f):
+        return False
+    if os.path.basename(f) == "LICENSE.txt" or os.path.splitext(f)[1] in {
+        ".diff",
+        ".patch",
+    }:
+        return False
+    return all(not exempt.search(f) for exempt in ExemptFiles)
+
+
+def has_long_license_header(f):
+    if not check_long_header_file(f):
+        return False
+    try:
+        with open(f, encoding="utf-8") as fp:
+            contents = fp.read()
+    except UnicodeDecodeError:
+        return False
+    _, count = shorten_license_header(contents)
+    return count > 0
+
+
+def _deduplicate_files(paths):
+    seen = set()
+    out = []
+    for path in paths:
+        normalized = _normalize_repo_path(path)
+        if normalized not in seen:
+            seen.add(normalized)
+            out.append(path)
+    return out
+
+
 def check_copyright(f, update_current_year):
     """
     Checks for copyright headers and their years
@@ -110,7 +321,10 @@ def check_copyright(f, update_current_year):
     cr_found = False
     year_matched = False
     with open(f, encoding="utf-8") as fp:
-        lines = fp.readlines()
+        contents = fp.read()
+    shortened_contents, shortened_count = shorten_license_header(contents)
+    check_contents = shortened_contents if update_current_year else contents
+    lines = check_contents.splitlines(keepends=True)
     for line in lines:
         line_num += 1
         start, end = get_copyright_years(line)
@@ -146,6 +360,15 @@ def check_copyright(f, update_current_year):
     # even if the year matches a copyright header, make the check pass
     if year_matched:
         errs = []
+    if shortened_count > 0 and not update_current_year:
+        e = [
+            f,
+            0,
+            "Deprecated long Apache boilerplate header detected "
+            f"({shortened_count} header(s)); run with --update-current-year",
+            None,
+        ]
+        errs.append(e)
 
     if update_current_year:
         errs_update = [x for x in errs if x[-1] is not None]
@@ -157,6 +380,9 @@ def check_copyright(f, update_current_year):
             )
             for _, line_num, __, replacement in errs_update:
                 lines[line_num - 1] = replacement
+        if shortened_count > 0:
+            print(f"File: {f}. Shortening {shortened_count} license header(s)")
+        if len(errs_update) > 0 or shortened_count > 0:
             with open(f, "w", encoding="utf-8") as out_file:
                 for new_line in lines:
                     out_file.write(new_line)
@@ -365,7 +591,9 @@ def check_copyright_main():
             changed = gitutils.changed_files_in_ref_range(base_ref, "HEAD", absolute_path=True)
             all_files = _intersect_with_changed_files(all_files, changed, had_input_paths)
 
-    files = [f for f in all_files if check_this_file(f)]
+    copyright_files = [f for f in all_files if check_this_file(f)]
+    long_header_files = [f for f in all_files if has_long_license_header(f)]
+    files = _deduplicate_files(copyright_files + long_header_files)
     errors = tuple(itertools.chain(*[check_copyright(f, args.update_current_year) for f in files]))
     if errors:
         print("Copyright headers incomplete in some of the files!")

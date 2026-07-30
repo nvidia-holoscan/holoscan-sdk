@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 // Array subscript access to TensorRT dimension arrays is performance-critical for inference.
@@ -437,6 +425,12 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
   // the input data
   check_cuda(cudaStreamWaitEvent(cuda_stream_, cuda_event_data));
 
+  // Input Binding Stability Cache
+  if (!inputs_pinned_ && last_input_addr_.empty()) {
+    last_input_addr_.assign(input_buffers.size(), nullptr);
+  }
+  size_t in_tensor_index = 0;
+
   for (auto& input_buffer : input_buffers) {
     if (input_buffer->device_buffer_ == nullptr) {
       status.set_message(" TRT inference core: Input Device buffer is null.");
@@ -476,23 +470,48 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       status.set_message(" TRT inference core: Incorrect input tensor name.");
       return status;
     }
-    auto set_flag = context_->setTensorAddress(tensor_name, input_buffer->device_buffer_->data());
+    void* cur_in_addr = input_buffer->device_buffer_->data();
 
+    // Input Binding Stability Cache
+    if (inputs_pinned_ && in_tensor_index < last_input_addr_.size() &&
+        last_input_addr_[in_tensor_index] == cur_in_addr) {
+      ++in_tensor_index;
+      continue;
+    }
+
+    auto set_flag = context_->setTensorAddress(tensor_name, cur_in_addr);
     if (!set_flag) {
       HOLOSCAN_LOG_ERROR("Buffer binding failed for {} in inference core.", tensor_name);
       status.set_message(" TRT inference core: Error binding input buffer.");
       return status;
     }
+    if (in_tensor_index < last_input_addr_.size()) {
+      last_input_addr_[in_tensor_index] = cur_in_addr;
+    }
+    ++in_tensor_index;
+  }
+  // Input Binding Stability Cache
+  // Pin the input bindings only after a full loop completes — guards against partial
+  // initialization if any input failed mid-loop.
+  if (!inputs_pinned_) {
+    inputs_pinned_ = true;
   }
 
   size_t out_tensors_index = 0;
+
+  // Lazily size the binding-stability caches the first time we run.
+  if (!outputs_pinned_ && last_output_addr_.empty()) {
+    last_output_addr_.assign(output_buffers.size(), nullptr);
+    last_output_dims_.assign(output_buffers.size(), {});
+  }
 
   for (auto& output_buffer : output_buffers) {
     if (output_buffer->device_buffer_ == nullptr) {
       status.set_message(" TRT inference core: Output Device buffer is null.");
       return status;
     }
-    if (output_buffer->device_buffer_->data() == nullptr) {
+    void* cur_addr = output_buffer->device_buffer_->data();
+    if (cur_addr == nullptr) {
       status.set_message(" TRT inference core: Data in Output Device buffer is null.");
       return status;
     }
@@ -502,12 +521,14 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
       return status;
     }
     auto tensor_name = engine_->getIOTensorName(io_index++);
+
     if (engine_->getTensorIOMode(tensor_name) != nvinfer1::TensorIOMode::kOUTPUT) {
       HOLOSCAN_LOG_ERROR("Tensor name {} not an output binding.", tensor_name);
       status.set_message(" TRT inference core: Incorrect output tensor name.");
       return status;
     }
 
+    // Get the output dimensions
     nvinfer1::Dims outputDims = context_->getTensorShape(tensor_name);
     for (int ai = 0; ai < outputDims.nbDims; ai++) {
       output_dims_[out_tensors_index][ai] = outputDims.d[ai];
@@ -522,16 +543,37 @@ InferStatus TrtInfer::do_inference(const std::vector<std::shared_ptr<DataBuffer>
     if (dynamic_buffer_size != output_buffer->device_buffer_->size()) {
       output_buffer->device_buffer_->resize(dynamic_buffer_size);
       output_buffer->host_buffer_->resize(dynamic_buffer_size);
+      // Resize changes the underlying pointer — make sure the address we re-bind below is
+      // the post-resize one. Also invalidate any previously pinned state for this slot since
+      // a graph captured against the old pointer would need to be re-captured.
+      cur_addr = output_buffer->device_buffer_->data();
     }
 
-    auto set_flag = context_->setTensorAddress(tensor_name, output_buffer->device_buffer_->data());
+    // Output Binding Stability Cache — skip only the setTensorAddress call
+    // when the bound address is unchanged; shape/size refresh above still ran.
+    if (outputs_pinned_ && last_output_addr_[out_tensors_index] == cur_addr) {
+      last_output_dims_[out_tensors_index] = output_dims_[out_tensors_index];
+      ++out_tensors_index;
+      continue;
+    }
+
+    auto set_flag = context_->setTensorAddress(tensor_name, cur_addr);
 
     if (!set_flag) {
       HOLOSCAN_LOG_ERROR("Buffer binding failed for {} in inference core.", tensor_name);
       status.set_message(" TRT inference core: Error binding output buffer.");
       return status;
     }
+
+    // Output Binding Stability Cache
+    last_output_addr_[out_tensors_index] = cur_addr;
+    last_output_dims_[out_tensors_index] = output_dims_[out_tensors_index];
     ++out_tensors_index;
+  }
+
+  // Pin outputs only after the first successful pass through the loop.
+  if (!outputs_pinned_) {
+    outputs_pinned_ = true;
   }
 
   bool capturing_graph = false;
@@ -659,6 +701,137 @@ void TrtInfer::do_gr_inference(void* input_buffer, void* output_buffer, cudaStre
   if (!infer_status) {
     throw std::runtime_error("TRT inference core: Inference failure in do_gr_inference.");
   }
+}
+
+// ============================================================================
+// Stream-Shared Sequential Dispatch
+// ============================================================================
+InferStatus TrtInfer::do_inference_on_stream(
+    const std::vector<std::shared_ptr<DataBuffer>>& input_buffers,
+    std::vector<std::shared_ptr<DataBuffer>>& output_buffers, cudaStream_t stream) {
+  InferStatus status(holoinfer_code::H_ERROR);
+  auto io_index = 0;
+
+  // Lazy input/output binding-stability caches (shared with the canonical path).
+  if (!inputs_pinned_ && last_input_addr_.empty()) {
+    last_input_addr_.assign(input_buffers.size(), nullptr);
+  }
+  size_t in_tensor_index = 0;
+  for (auto& input_buffer : input_buffers) {
+    if (input_buffer->device_buffer_ == nullptr) {
+      status.set_message(" TRT inference (on_stream): input device buffer null");
+      return status;
+    }
+    auto tensor_name = engine_->getIOTensorName(io_index++);
+    void* cur_in_addr = input_buffer->device_buffer_->data();
+    if (inputs_pinned_ && in_tensor_index < last_input_addr_.size() &&
+        last_input_addr_[in_tensor_index] == cur_in_addr) {
+      ++in_tensor_index;
+      continue;
+    }
+    if (!context_->setTensorAddress(tensor_name, cur_in_addr)) {
+      status.set_message(" TRT inference (on_stream): setTensorAddress(input) failed");
+      return status;
+    }
+    if (in_tensor_index < last_input_addr_.size()) {
+      last_input_addr_[in_tensor_index] = cur_in_addr;
+    }
+    ++in_tensor_index;
+  }
+  if (!inputs_pinned_) {
+    inputs_pinned_ = true;
+  }
+
+  if (!outputs_pinned_ && last_output_addr_.empty()) {
+    last_output_addr_.assign(output_buffers.size(), nullptr);
+    last_output_dims_.assign(output_buffers.size(), {});
+  }
+  size_t out_tensors_index = 0;
+  for (auto& output_buffer : output_buffers) {
+    void* cur_addr = output_buffer->device_buffer_->data();
+    auto tensor_name = engine_->getIOTensorName(io_index++);
+
+    // Refresh dims + size unconditionally (see do_inference for rationale) —
+    // dynamic-shape outputs can change per compute() call even when the
+    // underlying device pointer stays stable.
+    nvinfer1::Dims outputDims = context_->getTensorShape(tensor_name);
+    for (int ai = 0; ai < outputDims.nbDims; ++ai) {
+      output_dims_[out_tensors_index][ai] = outputDims.d[ai];
+    }
+    size_t dynamic_buffer_size = std::accumulate(output_dims_[out_tensors_index].begin(),
+                                                 output_dims_[out_tensors_index].end(),
+                                                 1,
+                                                 std::multiplies<size_t>());
+    if (dynamic_buffer_size != output_buffer->device_buffer_->size()) {
+      output_buffer->device_buffer_->resize(dynamic_buffer_size);
+      output_buffer->host_buffer_->resize(dynamic_buffer_size);
+      cur_addr = output_buffer->device_buffer_->data();
+    }
+    // Skip only the setTensorAddress call when the bound address is stable.
+    if (outputs_pinned_ && last_output_addr_[out_tensors_index] == cur_addr) {
+      last_output_dims_[out_tensors_index] = output_dims_[out_tensors_index];
+      ++out_tensors_index;
+      continue;
+    }
+    if (!context_->setTensorAddress(tensor_name, cur_addr)) {
+      status.set_message(" TRT inference (on_stream): setTensorAddress(output) failed");
+      return status;
+    }
+    last_output_addr_[out_tensors_index] = cur_addr;
+    last_output_dims_[out_tensors_index] = output_dims_[out_tensors_index];
+    ++out_tensors_index;
+  }
+  if (!outputs_pinned_) {
+    outputs_pinned_ = true;
+  }
+
+  // CUDA Graphs path: capture on FIRST call (since first_phase_ is true), replay after.
+  // Note: graph state (first_phase_, cuda_graph_instance_) is shared with do_inference(),
+  // but callers commit to one entry point per operator lifecycle so this is safe.
+  bool capturing = false;
+  if (enable_cuda_graphs_) {
+    if (!first_phase_) {
+      check_cuda(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+      capturing = true;
+    }
+    first_phase_ = false;
+  }
+
+  if (!context_->enqueueV3(stream)) {
+    if (capturing) {
+      cudaGraph_t g = nullptr;
+      check_cuda(cudaStreamEndCapture(stream, &g));
+      if (g)
+        check_cuda(cudaGraphDestroy(g));
+      capturing = false;
+      HOLOSCAN_LOG_WARN("TRT inference (on_stream): retrying without CUDA Graphs");
+      enable_cuda_graphs_ = false;
+      if (!context_->enqueueV3(stream)) {
+        status.set_message(" TRT inference (on_stream): enqueueV3 failed");
+        return status;
+      }
+    } else {
+      status.set_message(" TRT inference (on_stream): enqueueV3 failed");
+      return status;
+    }
+  }
+
+  if (capturing) {
+    cudaGraph_t g = nullptr;
+    check_cuda(cudaStreamEndCapture(stream, &g));
+    cudaGraphExecUpdateResultInfo upd;
+    if (cuda_graph_instance_)
+      check_cuda(cudaGraphExecUpdate(cuda_graph_instance_, g, &upd));
+    if (!cuda_graph_instance_ || upd.result != cudaGraphExecUpdateSuccess) {
+      if (cuda_graph_instance_)
+        check_cuda(cudaGraphExecDestroy(cuda_graph_instance_));
+      check_cuda(cudaGraphInstantiate(&cuda_graph_instance_, g, 0));
+    }
+    check_cuda(cudaGraphDestroy(g));
+    check_cuda(cudaGraphLaunch(cuda_graph_instance_, stream));
+  }
+
+  return InferStatus();
 }
 
 }  // namespace inference

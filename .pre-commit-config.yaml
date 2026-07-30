@@ -1,17 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 # Pre-commit hooks for Holoscan SDK
 # See https://pre-commit.com for more information
@@ -20,14 +8,14 @@
 default_language_version:
   python: python3
 
-# Skip all hooks for skills/ — files in this directory are verbatim upstream
+# Skip all hooks for skills/ - files in this directory are verbatim upstream
 # copies intended to match the source byte-for-byte. Modifying them in transit
 # (line endings, trailing whitespace, codespell auto-fixes, copyright year
 # bumps, etc.) breaks that byte-for-byte property and invalidates the detached
-# signature (`skill.oms.sig`) that ships alongside each skill — once the
+# signature (`skill.oms.sig`) that ships alongside each skill - once the
 # signature is attached, any in-place modification fails verification against
 # the trust anchor.
-exclude: ^(public/)?skills/
+exclude: ^skills/
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -41,7 +29,7 @@ repos:
         # Exclude .clang-format file because check-yaml do not support multi-document file
         exclude: ^.*\.patch|\.clang-format$
       - id: check-json
-        exclude: ^public/\.vscode/|^public/\.devcontainer/|.*\.patch$
+        exclude: ^\.vscode/|^\.devcontainer/|.*\.patch$
       - id: check-added-large-files
         exclude: ^.*\.patch$
 
@@ -53,39 +41,55 @@ repos:
         # Commit: staged paths only. ``--all-files``: auto-intersect vs main/release/latest refs
         # when present; else all matching files. Override baseline: HOLOSCAN_COPYRIGHT_BASE_REF or
         # ``--intersect-since-ref REF`` when invoking ``check_copyright.py`` (see ``--help``).
-        # Full tree: ``python3 public/scripts/check_copyright.py . --git-modified-only <ref>``.
-        entry: python3 public/scripts/check_copyright.py
+        # Full tree: ``python3 scripts/check_copyright.py . --git-modified-only <ref>``.
+        entry: python3 scripts/check_copyright.py
         args:
           - --exclude
           - CodeCoverage.cmake
           - --exclude
           - common-debian.sh
-          # Updated excludes to handle both root depths
+          # Paths are rooted at the repository layout represented by this config.
           - --exclude
-          - (public/)?\.cache
+          - \.cache
           - --exclude
-          - (public/)?build
+          - build
           - --exclude
-          - (public/)?install
+          - install
           - --exclude
-          - (public/)?build-*
+          - build-*
           - --exclude
-          - (public/)?install-*
+          - install-*
           - --exclude
-          - (public/)?modules/holoviz/thirdparty/
+          - modules/holoviz/thirdparty/
           - --exclude
           - .*\.patch$
           # Fern bundled dist/ output (generated files, no NVIDIA copyright header).
           - --exclude
-          - (public/)?docs/fern/dist/
+          - docs/fern/dist/
           # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
           - --exclude
-          - (public/)?modules/holoipc/examples/fastdds_benchmark/
+          - modules/holoipc/examples/fastdds_benchmark/
           - --exclude
-          - (public/)?modules/holoipc/examples/fastdds_example/
+          - modules/holoipc/examples/fastdds_example/
           - --update-current-year
         language: system
         pass_filenames: true
+
+      - id: check-doc-links
+        name: Check documentation links
+        entry: python3 docs/scripts/check_doc_links.py
+        language: system
+        pass_filenames: false
+        files: ^docs/
+
+      - id: test-check-copyright
+        name: Test copyright header checker
+        entry: pytest scripts/test_check_copyright.py
+        language: python
+        additional_dependencies:
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(check_copyright|test_check_copyright)\.py$
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
@@ -93,7 +97,7 @@ repos:
       - id: remove-tabs  # Replace tabs by whitespaces before committing
         args: [--whitespaces-count, '4']  # defaults to: 4
         exclude: |
-          (?x)^(public/)?(
+          (?x)^(
             modules/holoviz/thirdparty/
           )
         types_or: [c++, cmake, dockerfile, markdown, python, shell]
@@ -104,10 +108,10 @@ repos:
     hooks:
       - id: ruff-check
         args: [--fix]
-        files: ^(public/)?
+        files: ^
         exclude: ^scripts/register_devzone_release\.py$
       - id: ruff-format
-        files: ^(public/)?
+        files: ^
         exclude: ^scripts/register_devzone_release\.py$
 
   # Codespell
@@ -117,7 +121,7 @@ repos:
       - id: codespell
         additional_dependencies:
           - tomli>=2.0.1,<3.0; python_version<'3.11'
-        files: ^(public/)?
+        files: ^
         args:
           - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*docs/fern/dist*
           - --ignore-regex=.*codespell-ignore$
@@ -144,10 +148,10 @@ repos:
           - --exclude=modules/holoviz/thirdparty/nvpro_core
           - --exclude=examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu
           - --filter=-whitespace/indent_namespace,-build/c++17,-build/include_order
-        files: ^(public/)?.*\.(cpp|cu|cuh|h|hpp|cc|cxx)$
-        # Exclude patterns now handle the optional public/ prefix
+        files: ^.*\.(cpp|cu|cuh|h|hpp|cc|cxx)$
+        # Paths are rooted at the repository layout represented by this config.
         exclude: |
-          (?x)^(public/)?(
+          (?x)^(
             \.cache|
             \.local|
             tmp|
@@ -172,16 +176,16 @@ repos:
         additional_dependencies: ["cmakelint>=1.4.2,<2.0"]
         args:
           - "--filter=-whitespace/indent,-linelength,-readability/wonkycase,-convention/filename,-package/stdargs"
-        files: ^(public/)?.*(CMakeLists\.txt|\.cmake)$
-        exclude: ^(public/)?(build|install|build-|install-|\.cache)/
+        files: ^.*(CMakeLists\.txt|\.cmake)$
+        exclude: ^(build|install|build-|install-|\.cache)/
 
   # markdownlint
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.47.0
     hooks:
       - id: markdownlint
-        args: [--fix, --config, public/.markdownlint.yaml]
-        files: ^(public/)?.*\.mdx?$
+        args: [--fix, --config, .markdownlint.yaml]
+        files: ^.*\.mdx?$
         types_or: [markdown, mdx]
         exclude: ^swipat/summary\.md$
 

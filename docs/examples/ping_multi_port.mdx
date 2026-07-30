@@ -56,7 +56,7 @@ operators for our user-defined `ValueData` class.
 
   <Note>
 
-  The `HOLOSCAN_LOG_<LEVEL>()` macros can be used for logging with fmtlib syntax (lines `7`, `9` above) as demonstrated across this example. See the [Logging](../using-the-sdk/logging#holoscan-logging) section for more details.
+  The `HOLOSCAN_LOG_<LEVEL>()` macros can be used for logging with fmtlib syntax (lines `7`, `9` above) as demonstrated across this example. See the [Logging](/holoscan/sdk-user-guide/using-the-sdk/logging#holoscan-logging) section for more details.
 
   </Note>
 
@@ -90,7 +90,7 @@ operators for our user-defined `ValueData` class.
 
 ## Defining an Explicit Number of Inputs and Outputs
 
-After defining our custom `ValueData` class, we configure our operators' ports to send/receive messages of this type, similarly to the [previous example](ping_custom_op.mdx#configuring-operator-input-and-output-ports).
+After defining our custom `ValueData` class, we configure our operators' ports to send/receive messages of this type, similarly to the [previous example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-custom-op#configuring-operator-input-and-output-ports).
 
 This is the first operator - `PingTxOp` - sending `ValueData` objects on two ports, `out1` and `out2`:
 
@@ -313,7 +313,7 @@ In this workflow, `PingRxOp` has a single input port - `receivers` - that is con
   - The values are retrieved using `op_input.receive<std::vector<std::shared_ptr<ValueData>>>(...)`.
   - The type of `value_vector` is `std::vector<std::shared_ptr<ValueData>>` (lines `16-17`).
 
-  Please see [Retrieving Any Number of Inputs Cpp](../using-the-sdk/create-an-operator#retrieving-any-number-of-inputs-cpp) for more information on how to retrieve any number of inputs in C++.
+  Please see [Retrieving Any Number of Inputs Cpp](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#retrieving-any-number-of-inputs-cpp) for more information on how to retrieve any number of inputs in C++.
 
 </Tab>
 <Tab title="Python" language="python">
@@ -352,7 +352,7 @@ In this workflow, `PingRxOp` has a single input port - `receivers` - that is con
   defining an input port and setting the argument `size=IOSpec.ANY_SIZE` (line `21`).
   - The call to `receive()` returns a tuple of `ValueData` objects (line `24`).
 
-  Please see [Retrieving Any Number of Inputs Python](../using-the-sdk/create-an-operator#retrieving-any-number-of-inputs-python) for more information on how to retrieve any number of inputs in Python.
+  Please see [Retrieving Any Number of Inputs Python](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#retrieving-any-number-of-inputs-python) for more information on how to retrieve any number of inputs in Python.
 
 </Tab>
 </Tabs>
@@ -463,6 +463,6 @@ Running the application should give you output similar to the following in your 
 <Note>
 
 Depending on your log level you may see more or fewer messages. The output above was generated using the default value of `INFO`.
-Refer to the [Logging](../using-the-sdk/logging#holoscan-logging) section for more details on how to set the log level.
+Refer to the [Logging](/holoscan/sdk-user-guide/using-the-sdk/logging#holoscan-logging) section for more details on how to set the log level.
 
 </Note>

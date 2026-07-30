@@ -1,20 +1,9 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
+#include <holoscan/operators/inference/fast_path_eligibility.hpp>
 #include <holoscan/operators/inference/inference.hpp>
 
 #include <map>
@@ -165,15 +154,31 @@ void InferenceOp::setup(OperatorSpec& spec) {
              "Model Keyword with associated model inference activation",
              "Activation of model inference (1 = active, 0 = inactive).",
              DataMap());
+  // [Parameter rename] `input_map` is the new preferred YAML key; `pre_processor_map` is
+  // retained as a backward-compat alias. When both are set, `input_map` takes precedence.
   spec.param(pre_processor_map_,
              "pre_processor_map",
-             "Pre processor setting per model",
-             "Pre processed data to model map.",
+             "Pre-processor setting per model (LEGACY name, prefer 'input_map')",
+             "Map of model name → list of input tensor names. Backward-compat alias.",
              DataVecMap());
+  spec.param(input_map_,
+             "input_map",
+             "Input tensor(s) per model",
+             "Map of model name → list of input tensor names. Preferred name; supersedes "
+             "the legacy 'pre_processor_map' when both are set.",
+             DataVecMap());
+  // [Parameter rename] `output_map` is the new preferred YAML key; `inference_map` is
+  // retained as a backward-compat alias. When both are set, `output_map` takes precedence.
   spec.param(inference_map_,
              "inference_map",
-             "Inferred tensor per model",
-             "Tensor to model map.",
+             "Inferred tensor per model (LEGACY name, prefer 'output_map')",
+             "Map of model name → list of output tensor names. Backward-compat alias.",
+             DataVecMap());
+  spec.param(output_map_,
+             "output_map",
+             "Output tensor(s) per model",
+             "Map of model name → list of output tensor names. Preferred name; supersedes "
+             "the legacy 'inference_map' when both are set.",
              DataVecMap());
   spec.param(in_tensor_names_, "in_tensor_names", "Input Tensors", "Input tensors", {});
   spec.param(out_tensor_names_, "out_tensor_names", "Output Tensors", "Output tensors", {});
@@ -231,6 +236,35 @@ void InferenceOp::initialize() {
 
 void InferenceOp::start() {
   try {
+    // [Parameter rename backward compat] `input_map` / `output_map` are the preferred
+    // YAML keys; `pre_processor_map` / `inference_map` are retained as legacy aliases.
+    // When both are set the NEW name wins; when only the legacy is set, we fold it
+    // into the new-name Parameter so the rest of start() reads a single source of truth.
+    if (!input_map_.get().get_map().empty()) {
+      if (!pre_processor_map_.get().get_map().empty()) {
+        HOLOSCAN_LOG_WARN(
+            "InferenceOp: both 'input_map' and legacy 'pre_processor_map' set. "
+            "Using 'input_map'; ignoring 'pre_processor_map'.");
+      }
+      pre_processor_map_ = input_map_.get();
+    } else if (!pre_processor_map_.get().get_map().empty()) {
+      HOLOSCAN_LOG_INFO(
+          "InferenceOp: legacy YAML key 'pre_processor_map' detected. Prefer 'input_map' "
+          "in new configs; both are supported.");
+    }
+    if (!output_map_.get().get_map().empty()) {
+      if (!inference_map_.get().get_map().empty()) {
+        HOLOSCAN_LOG_WARN(
+            "InferenceOp: both 'output_map' and legacy 'inference_map' set. "
+            "Using 'output_map'; ignoring 'inference_map'.");
+      }
+      inference_map_ = output_map_.get();
+    } else if (!inference_map_.get().get_map().empty()) {
+      HOLOSCAN_LOG_INFO(
+          "InferenceOp: legacy YAML key 'inference_map' detected. Prefer 'output_map' "
+          "in new configs; both are supported.");
+    }
+
     auto status = HoloInfer::setup_inference_io(pre_processor_map_.get().get_map(),
                                                 inference_map_.get().get_map(),
                                                 model_inputs_,
@@ -329,6 +363,103 @@ void InferenceOp::start() {
                                                     dla_gpu_fallback_.get(),
                                                     false,
                                                     allocate_cuda_stream);
+    // ── Auto-detect the fastest safe dispatch path (TRT-only) ──
+    // Fast paths are enabled automatically when every configured model uses the
+    // "trt" backend AND none of the following blockers is present:
+    //   - activation_map / temporal_map
+    //   - any device_map entry routing a model off the default data-transfer GPU
+    //   - input_on_cuda=false / output_on_cuda=false / transmit_on_cuda=false
+    //     (do_inference_on_stream cannot host<->device stage buffers)
+    //   - chained models where one model consumes another's output
+    //     (the fast paths cannot enforce producer-before-consumer ordering)
+    // All other configurations run the canonical dispatch path. There is no
+    // user-facing opt-in — the operator never runs slower than it needs to for
+    // a given config.
+    {
+      const auto& path_map = model_path_map_.get().get_map();
+      const auto& act_map = activation_map_.get().get_map();
+      const auto& tmp_map = temporal_map_.get().get_map();
+      const auto& dev_map = device_map_.get().get_map();
+      const auto& pre_map = pre_processor_map_.get().get_map();
+      const auto& inf_map = inference_map_.get().get_map();
+      const bool has_activation = !act_map.empty();
+      const bool has_temporal = !tmp_map.empty();
+
+      // Multi-GPU blocker: any explicit device_map entry that routes a model to
+      // a device other than the operator's default data-transfer GPU (0). See
+      // fast_path_eligibility.hpp for the exact rule.
+      const bool has_off_gpu_dt_assignment =
+          inference_eligibility::has_off_gpu_dt_assignment(dev_map);
+
+      const bool has_dyn_dims = dynamic_input_dims_.get();
+      const bool has_parallel = parallel_inference_.get();
+
+      // Data-buffer blockers: fast paths (do_inference_on_stream) do not
+      // perform host<->device staging on input/output buffers. Any of the
+      // *_on_cuda flags being false demands the canonical path.
+      const bool needs_host_input = !input_on_cuda_.get();
+      const bool needs_host_output = !output_on_cuda_.get();
+      const bool needs_host_transmit = !transmit_on_cuda_.get();
+
+      // Model-dependency blocker: chained models cannot use the multi-model
+      // fast paths — see fast_path_eligibility.hpp for the exact rule.
+      const bool has_chained_models_flag =
+          inference_eligibility::has_chained_models(pre_map, inf_map);
+
+      const bool static_blockers = has_activation || has_temporal || has_off_gpu_dt_assignment ||
+                                   needs_host_input || needs_host_output || needs_host_transmit ||
+                                   has_chained_models_flag;
+
+      // TRT-only gate. If backend_map_ is populated, every entry must be "trt";
+      // otherwise fall back to the scalar backend_ string.
+      const std::string bk = backend_.get();
+      const auto& bmap = backend_map_.get().get_map();
+      bool all_trt = false;
+      if (!bmap.empty()) {
+        all_trt = true;
+        for (const auto& [_, b] : bmap) {
+          if (b != "trt") {
+            all_trt = false;
+            break;
+          }
+        }
+      } else {
+        all_trt = (bk == "trt");
+      }
+
+      const size_t n_models = path_map.size();
+      const bool eligible = all_trt && !static_blockers && n_models >= 1;
+
+      if (!eligible) {
+        dispatch_kind_ = DispatchKind::kStandard;
+      } else if (n_models == 1) {
+        fast_single_model_name_ = path_map.begin()->first;
+        dispatch_kind_ = has_dyn_dims ? DispatchKind::kDynFast : DispatchKind::kFast;
+        HOLOSCAN_LOG_INFO("InferenceOp: fast path auto-selected ({}) for single TRT model '{}'.",
+                          has_dyn_dims ? "kDynFast" : "kFast",
+                          fast_single_model_name_);
+      } else if (has_parallel) {
+        dispatch_kind_ = has_dyn_dims ? DispatchKind::kDynParFast : DispatchKind::kParFast;
+        HOLOSCAN_LOG_INFO("InferenceOp: fast path auto-selected ({}) for {} TRT models (parallel).",
+                          has_dyn_dims ? "kDynParFast" : "kParFast",
+                          n_models);
+      } else {
+        dispatch_kind_ = has_dyn_dims ? DispatchKind::kDynSeqFast : DispatchKind::kSeqFast;
+        HOLOSCAN_LOG_INFO(
+            "InferenceOp: fast path auto-selected ({}) for {} TRT models (sequential).",
+            has_dyn_dims ? "kDynSeqFast" : "kSeqFast",
+            n_models);
+      }
+
+      // Enable the manager-side multi-model fast-path caches whenever a
+      // multi-model fast path was chosen. The internal spec flag is retained;
+      // only the user-facing parameter has been removed.
+      const bool multi_model_fast = dispatch_kind_ == DispatchKind::kSeqFast ||
+                                    dispatch_kind_ == DispatchKind::kParFast ||
+                                    dispatch_kind_ == DispatchKind::kDynSeqFast ||
+                                    dispatch_kind_ == DispatchKind::kDynParFast;
+      inference_specs_->fast_multi_model_ = multi_model_fast;
+    }
     HOLOSCAN_LOG_INFO("Inference Specifications created");
 
     // If a CudaGreenContext resource is present, thread its CUcontext and SM count through
@@ -394,6 +525,11 @@ void InferenceOp::start() {
       HoloInfer::raise_error(module_, "Start, Parameters setup, " + status.get_message());
     }
     HOLOSCAN_LOG_INFO("Inference context setup complete");
+
+    cached_input_on_cuda_ = input_on_cuda_.get();
+    cached_output_on_cuda_ = output_on_cuda_.get();
+    cached_transmit_on_cuda_ = transmit_on_cuda_.get();
+    cached_dynamic_input_dims_ = dynamic_input_dims_.get();
   } catch (const std::bad_alloc& b_) {
     HoloInfer::raise_error(module_, "Start, Memory allocation, Message: " + std::string(b_.what()));
   } catch (const std::runtime_error& rt_) {
@@ -430,29 +566,49 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     }
 
     // Extract relevant data from input GXF Receivers, and update inference specifications
-    // (cuda_stream will be set by get_data_per_model)
+    // (cuda_stream will be set by get_data_per_model).
+    //
+    // Route through the cached variant when the input shape is static. The first
+    // call falls through to the canonical extractor and populates `extract_cache_`; on every
+    // subsequent compute() call the cached helper skips the dtype/storage validation, the dims
+    // rebuild, and the per-tensor data_per_tensor_ map lookup. When dynamic_input_dims_ is true we
+    // call the original extractor unchanged because dims can change between compute() calls.
     cudaStream_t cuda_stream{};
-    gxf_result_t stat = holoscan::utils::get_data_per_model(op_input,
-                                                            model_inputs_,
-                                                            inference_specs_->data_per_tensor_,
-                                                            inference_specs_->dims_per_tensor_,
-                                                            input_on_cuda_.get(),
-                                                            module_,
-                                                            cuda_stream);
+    gxf_result_t stat;
+
+    if (cached_dynamic_input_dims_) {
+      stat = holoscan::utils::get_data_per_model(op_input,
+                                                 model_inputs_,
+                                                 inference_specs_->data_per_tensor_,
+                                                 inference_specs_->dims_per_tensor_,
+                                                 cached_input_on_cuda_,
+                                                 module_,
+                                                 cuda_stream);
+    } else {
+      stat = holoscan::utils::get_data_per_model_cached(op_input,
+                                                        model_inputs_,
+                                                        inference_specs_->data_per_tensor_,
+                                                        inference_specs_->dims_per_tensor_,
+                                                        cached_input_on_cuda_,
+                                                        module_,
+                                                        cuda_stream,
+                                                        extract_cache_);
+    }
 
     if (stat != GXF_SUCCESS) {
-      HoloInfer::raise_error(module_, "Tick, Data extraction");
+      HoloInfer::raise_error(module_, "Compute, Data extraction");
     }
 
     // Transmit this stream on the output port if needed
-    if (cuda_stream != cudaStreamDefault && output_on_cuda_.get()) {
+    if (cuda_stream != cudaStreamDefault && cached_output_on_cuda_ &&
+        cuda_stream != last_set_transmit_stream_) {
       HOLOSCAN_LOG_TRACE("InferenceOp: forwarding CUDA stream from receivers input to output");
       op_output.set_cuda_stream(cuda_stream, "transmitter");
+      last_set_transmit_stream_ = cuda_stream;
     }
 
     // check for tensor validity the first time
-
-    if (validate_tensor_dimensions_ && !dynamic_input_dims_) {
+    if (validate_tensor_dimensions_ && !cached_dynamic_input_dims_) {
       validate_tensor_dimensions_ = false;
       auto model_in_dims_map = holoscan_infer_context_->get_input_dimensions();
 
@@ -475,7 +631,36 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
     if (stat != GXF_SUCCESS) {
       HoloInfer::raise_error(module_, "Compute, Inference activation specification");
     }
-    auto status = holoscan_infer_context_->execute_inference(inference_specs_, cuda_stream);
+    // Dispatch to the streamlined entry point auto-selected in start().
+    HoloInfer::InferStatus status;
+    switch (dispatch_kind_) {
+      case DispatchKind::kFast:
+        status = holoscan_infer_context_->execute_inference_fast(
+            inference_specs_, cuda_stream, fast_single_model_name_);
+        break;
+      case DispatchKind::kSeqFast:
+        status = holoscan_infer_context_->execute_inference_seq_fast(inference_specs_, cuda_stream);
+        break;
+      case DispatchKind::kParFast:
+        status = holoscan_infer_context_->execute_inference_par_fast(inference_specs_, cuda_stream);
+        break;
+      case DispatchKind::kDynFast:
+        status = holoscan_infer_context_->execute_inference_dyn_fast(
+            inference_specs_, cuda_stream, fast_single_model_name_);
+        break;
+      case DispatchKind::kDynSeqFast:
+        status =
+            holoscan_infer_context_->execute_inference_dyn_seq_fast(inference_specs_, cuda_stream);
+        break;
+      case DispatchKind::kDynParFast:
+        status =
+            holoscan_infer_context_->execute_inference_dyn_par_fast(inference_specs_, cuda_stream);
+        break;
+      case DispatchKind::kStandard:
+      default:
+        status = holoscan_infer_context_->execute_inference(inference_specs_, cuda_stream);
+        break;
+    }
     HoloInfer::timer_init(e_time);
     HoloInfer::timer_check(s_time, e_time, "Inference Operator: Inference execution");
 
@@ -483,10 +668,15 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
       status.display_message();
       HoloInfer::raise_error(module_, "Compute, Inference execution, " + status.get_message());
     }
-    HOLOSCAN_LOG_DEBUG(status.get_message());
+    if (holoscan::log_level() <= holoscan::LogLevel::DEBUG) {
+      HOLOSCAN_LOG_DEBUG(status.get_message());
+    }
 
-    // Get output dimensions
-    auto model_out_dims_map = holoscan_infer_context_->get_output_dimensions();
+    if (cached_dynamic_input_dims_ || !cached_output_dims_valid_) {
+      cached_output_dims_ = holoscan_infer_context_->get_output_dimensions();
+      cached_output_dims_valid_ = true;
+    }
+    auto model_out_dims_map = cached_output_dims_;
 
     // Transmit output buffers via a single GXF transmitter.
     stat = holoscan::utils::transmit_data_per_model(cont,
@@ -495,8 +685,8 @@ void InferenceOp::compute(InputContext& op_input, OutputContext& op_output,
                                                     op_output,
                                                     transmit_outputs_,
                                                     model_out_dims_map,
-                                                    output_on_cuda_.get(),
-                                                    transmit_on_cuda_.get(),
+                                                    cached_output_on_cuda_,
+                                                    cached_transmit_on_cuda_,
                                                     allocator.value(),
                                                     module_,
                                                     cuda_stream,

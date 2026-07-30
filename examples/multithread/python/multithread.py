@@ -1,23 +1,15 @@
 """
-SPDX-FileCopyrightText: Copyright (c) 2023-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 SPDX-License-Identifier: Apache-2.0
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
 
 This example demonstrates multithreaded operator execution and uses Python's
 logging module for thread-safe output from operators. Python's logging module
 is thread-safe by default, making it more appropriate than print() statements
 in multithreaded contexts where concurrent output could cause race conditions.
+
+By default this example uses the recommended `EventBasedScheduler`. The legacy
+`MultiThreadScheduler` remains selectable via --multi_thread for comparison, and
+`GreedyScheduler` via --threads 0. See public/docs/components/schedulers.mdx.
 """  # noqa: E501
 
 import logging
@@ -192,7 +184,7 @@ def main(
     num_delays: int,
     delay: float,
     delay_step: float,
-    event_based: bool,
+    multi_thread: bool,
     count: int,
     silent: bool,
     track: bool,
@@ -208,7 +200,9 @@ def main(
         # Explicitly setting GreedyScheduler is not strictly required as it is the default.
         scheduler = GreedyScheduler(app, name="greedy_scheduler")
     else:
-        scheduler_class = EventBasedScheduler if event_based else MultiThreadScheduler
+        # EventBasedScheduler is the recommended multi-threaded scheduler.
+        # The legacy MultiThreadScheduler is selectable via --multi_thread for comparison.
+        scheduler_class = MultiThreadScheduler if multi_thread else EventBasedScheduler
         scheduler = scheduler_class(
             app,
             worker_thread_number=threads,
@@ -267,9 +261,9 @@ if __name__ == "__main__":
         default=-1,
         help=(
             "The number of threads to use for multi-threaded schedulers. Set this to 0 to use "
-            "the default greedy scheduler instead. If set to -1, multiprocessing.cpu_count() "
-            "threads will be used. To use the event-based scheduler instead of the default "
-            "multi-thread scheduler, please specify --event_based."
+            "the single-threaded greedy scheduler instead. If set to -1, "
+            "multiprocessing.cpu_count() threads will be used. EventBasedScheduler is used by "
+            "default; pass --multi_thread to use the legacy MultiThreadScheduler."
         ),
     )
     parser.add_argument(
@@ -301,11 +295,12 @@ if __name__ == "__main__":
         ),
     )
     parser.add_argument(
-        "--event_based",
+        "--multi_thread",
         action="store_true",
         help=(
-            "Sets the application to use the event-based scheduler instead of the default "
-            "multi-thread scheduler when threads > 0."
+            "Use the legacy MultiThreadScheduler (polling-based) instead of the default "
+            "EventBasedScheduler when threads > 0. Retained for backward comparison; new code "
+            "should use the default EventBasedScheduler."
         ),
     )
     parser.add_argument(
@@ -364,7 +359,7 @@ if __name__ == "__main__":
         num_delays=args.num_delay_ops,
         delay=args.delay,
         delay_step=args.delay_step,
-        event_based=args.event_based,
+        multi_thread=args.multi_thread,
         count=args.count,
         silent=args.silent,
         track=args.track,

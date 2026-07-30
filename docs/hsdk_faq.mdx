@@ -30,19 +30,19 @@ A1: There are multiple ways to  install the Holoscan SDK:
   * For **CUDA 13** (x86_64, Jetson Thor)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda13
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda13
   ```
 
   * For **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda12-dgpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda12-dgpu
   ```
 
   * For **CUDA 12 iGPU** (Jetson, IGX Orin iGPU, Clara AGX iGPU)
 
   ```sh
-  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.4.0-cuda12-igpu
+  docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda12-igpu
   ```
   {/*  holoscan-version-sync:end  */}
 
@@ -128,7 +128,7 @@ A2: The prerequisites include:
 | [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) | [Link](https://developer.nvidia.com/igx-orin-developer-kit-user-guide) to User Guide | [IGX Software](https://developer.nvidia.com/igx-downloads) 1.1 Production Release | iGPU **or**\* dGPU |
 | [NVIDIA Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/) | [Link](https://developer.nvidia.com/embedded/learn/jetson-agx-orin-devkit-user-guide/index.html) to User Guide | [JetPack](https://developer.nvidia.com/embedded/jetpack) 6.0 | iGPU |
 
-* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.4{/*  holoscan-version-sync  */} has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
+* If you are installing Holoscan SDK on NVIDIA SuperChips, please note that Holoscan SDK 4.5{/*  holoscan-version-sync  */} has only been tested with the Grace-Hopper SuperChip (GH200) with Ubuntu 22.04. Follow setup instructions [**here**](https://docs.nvidia.com/grace-ubuntu-install-guide.pdf).
 * If you are installing Holoscan SDK on Linux x86_64 workstations, please refer to the details below for supported distributions
 
 | OS | NGC Container | Debian/RPM Package | Python wheel | Build from source |
@@ -151,12 +151,12 @@ A2: The prerequisites include:
 
 A3: Additional setup steps to achieve peak performance may include:
 
-* [Enabling RDMA](setup/additional-setup/enabling-gpudirect-rdma)
-* [Enabling G-SYNC](setup/additional-setup/enable-g-sync)
-* [Disabling Variable Backlight](setup/additional-setup/disable-variable-backlight)
-* [Enabling Exclusive Display Mode](setup/additional-setup/enable-exclusive-display)
-* [Use both Integrated and Discrete GPUs on NVIDIA Developer Kits](setup/additional-setup/use-igpu-with-dgpu)
-* [Deployment Software Stack](setup/additional-setup/deployment-stack)
+* [Enabling RDMA](/holoscan/sdk-user-guide/setup/additional-setup/enabling-gpu-direct-rdma)
+* [Enabling G-SYNC](/holoscan/sdk-user-guide/setup/additional-setup/enable-g-sync)
+* [Disabling Variable Backlight](/holoscan/sdk-user-guide/setup/additional-setup/disable-variable-backlight)
+* [Enabling Exclusive Display Mode](/holoscan/sdk-user-guide/setup/additional-setup/enable-exclusive-display)
+* [Use both Integrated and Discrete GPUs on NVIDIA Developer Kits](/holoscan/sdk-user-guide/setup/additional-setup/use-i-gpu-with-d-gpu)
+* [Deployment Software Stack](/holoscan/sdk-user-guide/setup/additional-setup/deployment-stack)
 
 ## Getting Started
 
@@ -165,7 +165,7 @@ A3: Additional setup steps to achieve peak performance may include:
 A1: To get started:
 
 1. Set up the SDK and your development environment.
-1. Follow the "Getting Started" [guide](using-the-sdk/holoscan-core) and tutorials provided in the SDK documentation.
+1. Follow the "Getting Started" [guide](/holoscan/sdk-user-guide/using-the-sdk/holoscan-core) and tutorials provided in the SDK documentation.
 1. Explore the [example applications](https://github.com/nvidia-holoscan/holohub/tree/main/applications) in Holohub to understand the framework and its capabilities.
 
 **Q2: Are there any pre-trained models available in the SDK?**
@@ -181,7 +181,7 @@ A1: To create a new application:
 1. Define the core concepts such as Operators, Fragments, and their interactions.
 1. Use the provided templates and examples as a starting point.
 
-For more details, please refer to the [Holoscan by Example section](holoscan_by_example.mdx).
+For more details, please refer to the [Holoscan by Example section](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example).
 
 **Q2: What are some example applications provided in the SDK?**
 
@@ -192,7 +192,7 @@ A2: Example applications include:
 * Video Replayer: Shows how to process and display video streams.
 * Medical imaging examples like ultrasound and endoscopy processing
 
-For a list of example applications, please visit the [Holoscan by Example section](holoscan_by_example.mdx).
+For a list of example applications, please visit the [Holoscan by Example section](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example).
 
 **Q3: How can I integrate my own AI models into the Holoscan SDK?**
 
@@ -317,7 +317,7 @@ For example, you can define an operator processing input video (as a tensor).You
 
 **Q11:Can I control where the input and output data is stored (CPU vs GPU memory)?**
 
-A11: Yes, use the `input_on_cuda,` `output_on_cuda`, and `transmit_on_cuda` parameters to control data location.For more information, please refer to the [Parameters section](operators/inference#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
+A11: Yes, use the `input_on_cuda,` `output_on_cuda`, and `transmit_on_cuda` parameters to control data location.For more information, please refer to the [Parameters section](/holoscan/sdk-user-guide/operators/inference#parameters-and-related-features) of the Inference Operator in the Holoscan User Guide.
 
 **Q12: How can I use the Optional flag?**
 
@@ -374,7 +374,7 @@ fragment()->executor().interrupt();
 Please note that  using interrupt() forces to terminate the execution and can cause error messages,
 and the recommendation is using  deadlock-based approach.
 
-As an alternative, you can also use the `CountCondition`.Please refer to the [section](components/conditions#countcondition).
+As an alternative, you can also use the `CountCondition`.Please refer to the [section](/holoscan/sdk-user-guide/components/conditions#countcondition).
 At a high level, this is how attaching a `CountCondition` to an operator works:
 
 The operator starts in a READY state.
@@ -442,7 +442,7 @@ A16: You can follow the Holoviz examples here:
 **Q17 : What is the difference between `setup` vs `initialize` vs `__init__` ?**
 
 A17: Since v0.6 release, Holoscan Operator does "lazy initialization" and Operator instance creation ( `super().__init__(*args, **kwargs)` ) doesn't initialize (calling  Operator.initialize(self) ) the corresponding GXF entity anymore.
-Currently, [setting the class members in Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/ccead5608b6f00d1c5b40465f68904d550c65236/python/holoscan/core/arg.cpp#L68) is done when Operator is [initialized by GXF Executor](https://github.com/nvidia-holoscan/holoscan-sdk/blob/ccead5608b6f00d1c5b40465f68904d550c65236/src/core/executors/gxf/gxf_executor.cpp#L1650).The purpose of setup method is for getting "operator's spec" by providing OperatorSpec object (spec param) to the method. When `__init__`  is called, it calls C++'s `Operator::spec(const std::shared_ptr<OperatorSpec>& spec)` method (and also sets `self.spec` class member), and call `setup` method so that Operator's `spec()` method hold the operator's specification.
+Currently, [setting the class members in Python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/arg.cpp) is done when Operator is [initialized by GXF Executor](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/src/core/executors/gxf/gxf_executor.cpp).The purpose of setup method is for getting "operator's spec" by providing OperatorSpec object (spec param) to the method. When `__init__`  is called, it calls C++'s `Operator::spec(const std::shared_ptr<OperatorSpec>& spec)` method (and also sets `self.spec` class member), and call `setup` method so that Operator's `spec()` method hold the operator's specification.
 Since setup method can be called multiple times with other OperatorSpec object (e.g., to enumerate the description of the operator), in the setup method, user shouldn't initialize something in the Operator object.
 Such initialization needs to be done in initialize method.
 `__init__`  method is for creating Operator object. it can be used for initializing operator object itself by passing miscellaneous arguments, but it doesn't 'initialize' corresponding GXF entity object.
@@ -588,7 +588,7 @@ In this example, the PeriodicCondition is used to ensure that C executes only af
 A24: There are two relevant approaches:
 
 1. WebRTC Implementation: A reference application demonstrating WebRTC-based video streaming is available in the HoloHub repository. You can find this example at: [https://github.com/nvidia-holoscan/holohub/tree/main/applications/webrtc_video_server](https://github.com/nvidia-holoscan/holohub/tree/main/applications/webrtc_video_server) This application showcases how WebRTC can be utilized for inter-computer communication within the Holoscan framework.
-1. Distributed Application Approach: An alternative method involves creating a distributed application with separate fragments running on each node. For more information, please refer to the [section](using-the-sdk/create-a-distributed-application) in the User guide on Creating Distributed applications .
+1. Distributed Application Approach: An alternative method involves creating a distributed application with separate fragments running on each node. For more information, please refer to the [section](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application) in the User guide on Creating Distributed applications .
 
 **Q25: How can I use `run_async()` to launch an application in a separate thread and stop the application?**
 
@@ -604,7 +604,7 @@ A27: The scheduler is responsible for determining when each operator in an appli
 
 **Q28: How many types of schedulers are available in the Holoscan SDK?**
 
-A28: There are three [schedulers](components/schedulers) available: Greedy Scheduler, Multi-Thread Scheduler, and Event-Based Scheduler.
+A28: There are three [schedulers](/holoscan/sdk-user-guide/components/schedulers) available: Greedy Scheduler, Multi-Thread Scheduler, and Event-Based Scheduler.
 
 **Q29:Which scheduler is used by default for non-distributed applications?**
 
@@ -636,7 +636,7 @@ A35:They often have similar runtime performance, but the Event-Based Scheduler t
 
 **Q36: Are there scenarios where using multi-thread schedulers might not be beneficial?**
 
-A36: Yes, for linear inference pipelines or applications with minimal computation per operator, multi-thread schedulers might not provide significant benefits and could even introduce overhead. See [performance_considerations](performance/performance-considerations) for guidance and a reproducible benchmark.
+A36: Yes, for linear inference pipelines or applications with minimal computation per operator, multi-thread schedulers might not provide significant benefits and could even introduce overhead. See [performance_considerations](/holoscan/sdk-user-guide/performance/performance-considerations) for guidance and a reproducible benchmark.
 
 **Q37: How does the number of worker threads affect performance in multi-thread schedulers?**
 
@@ -654,7 +654,7 @@ A1: Holoscan SDK provides several performance tools, including Data Flow Trackin
 
 **Q2: What is Data Flow Tracking in Holoscan SDK?**
 
-A2: Data Flow Tracking is a mechanism to profile applications and analyze fine-grained timing properties and data flow between operators in a fragment's graph.For more detailed information, please refer to the [Data Flow Tracking section](performance/flow-tracking) in the Holoscan User Guide.
+A2: Data Flow Tracking is a mechanism to profile applications and analyze fine-grained timing properties and data flow between operators in a fragment's graph.For more detailed information, please refer to the [Data Flow Tracking section](/holoscan/sdk-user-guide/performance/flow-tracking) in the Holoscan User Guide.
 
 **Q3: How do I enable Data Flow Tracking in my Holoscan application?**
 
@@ -674,7 +674,7 @@ A6:You can enable GXF job statistics by setting the environment variable `HOLOSC
 
 **Q7: Can I save GXF job statistics to a file?**
 
-A7:Yes, you can save GXF job statistics to a JSON file by setting the `HOLOSCAN_GXF_JOB_STATISTICS_PATH` environment variable. For more information on the GXF job statistics, please refer to [this](performance/gxf-job-statistics) section in the User Guide.
+A7:Yes, you can save GXF job statistics to a JSON file by setting the `HOLOSCAN_GXF_JOB_STATISTICS_PATH` environment variable. For more information on the GXF job statistics, please refer to [this](/holoscan/sdk-user-guide/performance/gxf-job-statistics) section in the User Guide.
 
 **Q8: What workload size is appropriate for a Holoscan Operator?**
 
@@ -684,7 +684,7 @@ A8: The scheduling and message-passing overhead in Holoscan is approximately 10�
 * If your computation takes **more than ~100 µs**, splitting into separate operators is generally beneficial for modularity and potential parallelism.
 * For **GPU-resident pipelines**, kernel transition latency is much lower (~0.5–2 µs), allowing finer-grained operators.
 
-You can measure the overhead in your environment using the `scripts/scheduler_overhead_benchmark.py` script. For detailed measurements and guidance, see [performance_considerations](performance/performance-considerations).
+You can measure the overhead in your environment using the `scripts/scheduler_overhead_benchmark.py` script. For detailed measurements and guidance, see [performance_considerations](/holoscan/sdk-user-guide/performance/performance-considerations).
 
 **Q11:How do NVTX markers work in Holoscan SDK?**
 
@@ -730,7 +730,7 @@ A12: The following scheduler mechanisms can potentially impact the performance o
 
 **Q13:How can I improve the performance of VideoStreamRecorderOp by reusing GPU memory?**
 
-A13:The VideoStreamReplayerOp can reuse the CUDA device buffers and avoid alloc/free for each frame by using [BlockMemoryPool](components/resources#blockmemorypool).
+A13:The VideoStreamReplayerOp can reuse the CUDA device buffers and avoid alloc/free for each frame by using [BlockMemoryPool](/holoscan/sdk-user-guide/components/resources#blockmemorypool).
 
 The VideoStreamReplayerOp does not have a parameter (such as allocator) to use a custom allocator, even though the user can specify `entity_serializer`.
 
@@ -833,11 +833,11 @@ For more information, refer to the instructions from `./run vscode -h`.
 
 **Q2: How can I get started with debugging my Holoscan application?**
 
-For debugging applications in Holoscan repo, refer to the [Debugging Section](using-the-sdk/debugging).  For debugging applications in Holohub, refer to HoloHub [tutorials](https://github.com/nvidia-holoscan/holohub/tree/main/tutorials/debugging) for strategies to set up debugging with Visual Studio Code or other tools such as GDB.
+For debugging applications in Holoscan repo, refer to the [Debugging Section](/holoscan/sdk-user-guide/using-the-sdk/debugging).  For debugging applications in Holohub, refer to HoloHub [tutorials](https://github.com/nvidia-holoscan/holohub/tree/main/tutorials/debugging) for strategies to set up debugging with Visual Studio Code or other tools such as GDB.
 
 **Q3: Is it possible to debug both C++ and Python components simultaneously in Holoscan SDK?**
 
-A3:Yes, you can use the Python C++ Debugger extension in VSCode to debug both C++ and Python components simultaneously. For more information, please refer to the Debugging [section](using-the-sdk/debugging) in the Holoscan SDK User Guide.
+A3:Yes, you can use the Python C++ Debugger extension in VSCode to debug both C++ and Python components simultaneously. For more information, please refer to the Debugging [section](/holoscan/sdk-user-guide/using-the-sdk/debugging) in the Holoscan SDK User Guide.
 
 **Q4: How do I analyze a core dump file when my application crashes?**
 
@@ -857,17 +857,17 @@ A5: Enable core dumps by setting
 ulimit -c unlimited
 ```
 
- and configuring the `core_pattern value`. You may need to do this on the host system if working in a Docker container. For more information, please refer to the Debugging section in the [Holoscan User Guide](using-the-sdk/debugging).
+ and configuring the `core_pattern value`. You may need to do this on the host system if working in a Docker container. For more information, please refer to the Debugging section in the [Holoscan User Guide](/holoscan/sdk-user-guide/using-the-sdk/debugging).
 
 **Q6: How can I debug a distributed application using UCX?**
 
-A6: Set the `UCX_HANDLE_ERRORS` environment variable to control UCX's behavior during crashes. Options include printing backtraces, attaching a debugger, or freezing the application. For more information, please refer to the Debugging section in the [Holoscan User Guide](using-the-sdk/debugging).
+A6: Set the `UCX_HANDLE_ERRORS` environment variable to control UCX's behavior during crashes. Options include printing backtraces, attaching a debugger, or freezing the application. For more information, please refer to the Debugging section in the [Holoscan User Guide](/holoscan/sdk-user-guide/using-the-sdk/debugging).
 
 The [`UCX_LOG_LEVEL`](https://openucx.readthedocs.io/en/master/faq.html\#how-can-i-tell-which-protocols-and-transports-are-being-used-for-communication) environment variable can be set to “info” or higher level to see more detailed information about UCX transports used (the default level for UCX logging is “warn”). The full set of available UCX logging levels correspond to the list [here](https://github.com/openucx/ucx/blob/de7d3a10e4b10bbc9ec7e1a567b2d1a7514a3710/src/ucs/debug/log_def.h\#L44-L54).
 
 **Q7:  What tools are available for profiling Python applications in Holoscan?**
 
-A7: You can use tools like pyinstrument, pprofile, yappi, cProfile, or line_profiler. Each has different strengths and may be more suitable depending on your specific needs. For more information , please refer to the [Python debugging section](using-the-sdk/debugging#profiling-a-holoscan-python-application) in the Holoscan User Guide.
+A7: You can use tools like pyinstrument, pprofile, yappi, cProfile, or line_profiler. Each has different strengths and may be more suitable depending on your specific needs. For more information , please refer to the [Python debugging section](/holoscan/sdk-user-guide/using-the-sdk/debugging#profiling-a-holoscan-python-application) in the Holoscan User Guide.
 
 Each profiler has its strengths and is suitable for different debugging scenarios, from high-level overviews to detailed line-by-line analysis.Please find below more details:
 
@@ -911,7 +911,7 @@ A8: You can use
 * run your application with coverage
 * generate reports using commands like coverage report or coverage html
 
-  For more detailed information, please refer to [Measuring Code Coverage](using-the-sdk/debugging#measuring-code-coverage) section in the Holoscan User Guide.
+  For more detailed information, please refer to [Measuring Code Coverage](/holoscan/sdk-user-guide/using-the-sdk/debugging#measuring-code-coverage) section in the Holoscan User Guide.
 
 **Q9: How can I trace function calls in my Python application?**
 

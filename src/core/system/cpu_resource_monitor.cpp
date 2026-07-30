@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 #include <holoscan/core/system/cpu_resource_monitor.hpp>
 
@@ -189,10 +177,12 @@ CPUInfo& CPUResourceMonitor::update(CPUInfo& cpu_info, uint64_t metric_flags) {
 
         uint64_t idle_diff = current_total_stats[3] - last_total_stats_[3];
         total_diff += idle_diff;
-        if (idle_diff > 0 && total_diff > 0) {
-          cpu_info.cpu_usage = static_cast<float>(1.0 - (static_cast<double>(idle_diff) /
-                                                         static_cast<double>(total_diff))) *
-                               100.0F;
+        // Sanitize the denominator: /proc/stat values are tainted, guard against a zero
+        // denominator before dividing (satisfies cpp:S3518)
+        double total_diff_d = static_cast<double>(total_diff);
+        if (idle_diff > 0 && total_diff_d > 0.0) {
+          cpu_info.cpu_usage =
+              static_cast<float>(1.0 - (static_cast<double>(idle_diff) / total_diff_d)) * 100.0F;
         }
 
         // Update the last total stats

@@ -2,12 +2,12 @@
 
 On NVIDIA Jetson developer kits (such as [Jetson AGX Thor](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-thor/) and [Jetson AGX Orin and Orin Nano](https://www.nvidia.com/en-us/autonomous-machines/embedded-systems/jetson-orin/)), the [JetPack](https://developer.nvidia.com/embedded/jetpack) / [Jetson Linux](https://developer.nvidia.com/embedded/jetson-linux) Board Support Package (BSP) is tuned for general-purpose development out of the box. Two adjustments help Holoscan applications achieve lower, more predictable latency:
 
-- [Installing the real-time kernel](setup/additional-setup/optimizing-jetpack#jetpack-rt-kernel) to reduce scheduling jitter for time-critical pipelines.
-- [Running with a minimal, headless BSP](setup/additional-setup/optimizing-jetpack#jetpack-headless-minimal-bsp) so the device's compute and memory are spent on your application rather than a desktop environment.
+- [Installing the real-time kernel](#jetpack-rt-kernel) to reduce scheduling jitter for time-critical pipelines.
+- [Running with a minimal, headless BSP](#jetpack-headless-minimal-bsp) so the device's compute and memory are spent on your application rather than a desktop environment.
 
 <Note>
 
-This guide targets Jetson developer kits running JetPack / Jetson Linux. For production deployments on the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) developer kit, a more aggressively minimized runtime can be built with [OpenEmbedded/Yocto](setup/additional-setup/deployment-stack).
+This guide targets Jetson developer kits running JetPack / Jetson Linux. For production deployments on the [NVIDIA IGX Orin](https://www.nvidia.com/en-us/edge-computing/products/igx/) developer kit, a more aggressively minimized runtime can be built with [OpenEmbedded/Yocto](/holoscan/sdk-user-guide/setup/additional-setup/deployment-stack).
 
 </Note>
 
@@ -15,7 +15,7 @@ This guide targets Jetson developer kits running JetPack / Jetson Linux. For pro
 
 ## Install a Real-Time Kernel
 
-The kernel that ships with JetPack uses voluntary preemption. NVIDIA also distributes a `PREEMPT_RT` (real-time) kernel for Jetson Linux that lets the scheduler preempt lower-priority work more aggressively, lowering worst-case scheduling latency. This pairs well with Holoscan's [Linux real-time scheduling policies](using-the-sdk/create-an-application#configuring-app-thread-pools-realtime) (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`): the SDK only *requests* a policy from the kernel, so a real-time kernel gives those requests the most consistent effect.
+The kernel that ships with JetPack uses voluntary preemption. NVIDIA also distributes a `PREEMPT_RT` (real-time) kernel for Jetson Linux that lets the scheduler preempt lower-priority work more aggressively, lowering worst-case scheduling latency. This pairs well with Holoscan's [Linux real-time scheduling policies](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-app-thread-pools-realtime) (`SCHED_FIFO`, `SCHED_RR`, `SCHED_DEADLINE`): the SDK only *requests* a policy from the kernel, so a real-time kernel gives those requests the most consistent effect.
 
 The real-time kernel installs alongside the standard kernel through an over-the-air (OTA) update, so you can switch between them without reflashing. For the authoritative install procedure and supported platforms, see the **Real-Time Kernel** page (under *Kernel Customization*) of the Jetson Linux Developer Guide — for example, the [R39.2 release](https://docs.nvidia.com/jetson/archives/r39.2/DeveloperGuide/SD/Kernel/RealTimeKernel.html). If that version-specific link has moved, browse to the guide for your release from the [Jetson Software documentation](https://docs.nvidia.com/jetson/index.html) hub. The package set differs slightly between JetPack 6 (Jetson Orin) and JetPack 7 (Jetson Thor), so use the guide that matches the release installed on your device.
 
@@ -27,7 +27,7 @@ NVIDIA provides the Jetson real-time kernel with **Developer-Preview quality**. 
 
 <Tip>
 
-A real-time kernel reduces scheduling *jitter*, but the largest latency gains come from combining it with CPU isolation and real-time scheduling policies in your application. See [Rt Scheduling Prerequisites](components/schedulers#rt-scheduling-prerequisites) for the host-and-container privilege checklist and [Host CPU isolation](performance/performance-considerations#host-cpu-isolation) for boot-time core isolation (`isolcpus`, `nohz_full`, `rcu_nocbs`) and the CPU frequency governor. On Jetson, the kernel command line lives in `/boot/extlinux/extlinux.conf` rather than GRUB.
+A real-time kernel reduces scheduling *jitter*, but the largest latency gains come from combining it with CPU isolation and real-time scheduling policies in your application. See [Rt Scheduling Prerequisites](/holoscan/sdk-user-guide/components/schedulers#rt-scheduling-prerequisites) for the host-and-container privilege checklist and [Host CPU isolation](/holoscan/sdk-user-guide/performance/performance-considerations#host-cpu-isolation) for boot-time core isolation (`isolcpus`, `nohz_full`, `rcu_nocbs`) and the CPU frequency governor. On Jetson, the kernel command line lives in `/boot/extlinux/extlinux.conf` rather than GRUB.
 
 </Tip>
 
@@ -35,7 +35,7 @@ A real-time kernel reduces scheduling *jitter*, but the largest latency gains co
 
 ## Run Headless With a Minimal BSP
 
-Holoscan ships its own runtime dependencies — through the [NGC container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan), the Debian package, the Python wheel, or Conda (see [SDK Installation](setup/sdk-installation)). It does not require the full JetPack SDK component stack (CUDA samples, developer tools, and desktop applications) to be installed on the device. Running just a **minimal BSP plus the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)**, with the desktop disabled, keeps memory and CPU available for your application:
+Holoscan ships its own runtime dependencies — through the [NGC container](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/containers/holoscan), the Debian package, the Python wheel, or Conda (see [SDK Installation](/holoscan/sdk-user-guide/setup/sdk-installation)). It does not require the full JetPack SDK component stack (CUDA samples, developer tools, and desktop applications) to be installed on the device. Running just a **minimal BSP plus the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)**, with the desktop disabled, keeps memory and CPU available for your application:
 
 - Jetson uses **unified memory** shared between the CPU and GPU, so RAM reclaimed from the desktop's display server and compositor is directly available to GPU workloads.
 - Fewer background services and no window manager means less CPU contention and fewer wake-ups competing with time-critical operators.

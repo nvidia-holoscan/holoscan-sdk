@@ -2,18 +2,6 @@
 
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 ############################################################
 # Versions
@@ -26,8 +14,8 @@ ARG NCCL_VERSION=2.29  # match DLFW 26.03 development stack
 ARG LIBCUSPARSELT_CU12_VERSION=0.8  # strict compat to match PyTorch versions
 ARG LIBCUSPARSELT_CU13_VERSION=0.9      # match DLFW 26.03 development stack
 ARG GRPC_VERSION=1.54.2
-ARG GXF_CU12_VERSION=5.7.0_20260515_6a50c8f1a_holoscan-sdk-cu12
-ARG GXF_CU13_VERSION=5.7.0_20260515_6a50c8f1a_holoscan-sdk-cu13
+ARG GXF_CU12_VERSION=5.7.1_20260713_86d402891_holoscan-sdk-cu12
+ARG GXF_CU13_VERSION=5.7.1_20260713_86d402891_holoscan-sdk-cu13
 ARG DOCA_VERSION=3.3.0
 ARG TENSORRT_CU12_VERSION=10.3  # TRT 10.3 is the last version that supports CUDA 12 on sbsa 22.04
 ARG TENSORRT_CU13_VERSION=10.16
@@ -889,7 +877,10 @@ WORKDIR /opt/fastdds-gen/build
 RUN git clone --depth 1 --branch v${FASTDDS_GEN_VERSION} \
     https://github.com/eProsima/Fast-DDS-Gen.git Fast-DDS-Gen
 WORKDIR /opt/fastdds-gen/build/Fast-DDS-Gen
-RUN ./gradlew assemble --no-daemon -Dorg.gradle.parallel=true \
+# Gradle resolves remote Java dependencies at build time. Use a Docker cache mount
+# to reduce network traffic on container rebuilds.
+RUN --mount=type=cache,target=/root/.gradle,sharing=locked,id=holoscan-sdk-gradle-cache-$TARGETARCH \
+    ./gradlew assemble --no-daemon -Dorg.gradle.parallel=true \
     -Dorg.gradle.workers.max=$(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
 RUN mkdir -p "${FAST_DDS_GEN_INSTALL_DIR}/bin" \
     && cp build/libs/fastddsgen.jar "${FAST_DDS_GEN_INSTALL_DIR}/" \

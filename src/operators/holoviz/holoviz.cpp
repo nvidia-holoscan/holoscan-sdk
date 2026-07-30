@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #include <holoscan/operators/holoviz/holoviz.hpp>
@@ -1641,6 +1629,10 @@ void HolovizOp::start() {
     init_flags = viz::InitFlags::HEADLESS;
   }
 
+  if (vsync_) {
+    viz::SetPresentMode(viz::PresentMode::FIFO);
+  }
+
   if (use_exclusive_display_) {
     // In exclusive mode, we don't use Holoviz mutex for initialization.
     viz::Init(
@@ -1663,14 +1655,12 @@ void HolovizOp::start() {
     viz::GetPresentModes(&present_mode_count, nullptr);
     std::vector<viz::PresentMode> present_modes(present_mode_count);
     viz::GetPresentModes(&present_mode_count, present_modes.data());
-    // Use FIFO_LATEST_READY if supported, otherwise use FIFO. FIFO_LATEST_READY has the benefit
-    // of reducing latency compared to FIFO since it drops old frames.
+    // Prefer FIFO_LATEST_READY over FIFO when available: it drops old frames to reduce latency
+    // while still enforcing vsync. FIFO is already set above so no action needed if unsupported.
     if (std::find(present_modes.begin(),
                   present_modes.end(),
                   viz::PresentMode::FIFO_LATEST_READY) != present_modes.end()) {
       viz::SetPresentMode(viz::PresentMode::FIFO_LATEST_READY);
-    } else {
-      viz::SetPresentMode(viz::PresentMode::FIFO);
     }
   }
 

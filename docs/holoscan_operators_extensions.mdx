@@ -1,4 +1,4 @@
-The units of work of Holoscan applications are implemented within Operators, as described in the [core concepts](holoscan_core.mdx) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](relevant_technologies.mdx).
+The units of work of Holoscan applications are implemented within Operators, as described in the [core concepts](/holoscan/sdk-user-guide/using-the-sdk/holoscan-core) of the SDK. The operators included in the SDK provide domain-agnostic functionalities such as IO, machine learning inference, processing, and visualization, optimized for AI streaming pipelines, relying on a set of [Core Technologies](/holoscan/sdk-user-guide/introduction/relevant-technologies).
 
 
 
@@ -16,14 +16,14 @@ If you are new to Holoscan, a common starting pipeline is:
 | Class                 | Typical use                                                                                                                       | API reference                                                                                                 |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | **BayerDemosaicOp**   | Convert Bayer RAW camera input to RGB/BGR style images for downstream processing.                                                 | C++ (`holoscan::ops::BayerDemosaicOp`)/Python (`holoscan.operators.BayerDemosaicOp`)     |
-| **FormatConverterOp** | Convert between tensor/image formats, memory layouts, and data types between operators. See [Byom Example](using-the-sdk/holoscan-by-example/byom#byom-example).                  | C++ (`holoscan::ops::FormatConverterOp`)/Python (`holoscan.operators.FormatConverterOp`) |
-| **HolovizOp**         | Visualize tensors, overlays, geometry, and results for debugging or runtime display. See [visualization](operators/visualization).                    | C++ (`holoscan::ops::HolovizOp`)/Python (`holoscan.operators.HolovizOp`)                 |
+| **FormatConverterOp** | Convert between tensor/image formats, memory layouts, and data types between operators. See [Byom Example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/byom#byom-example).                  | C++ (`holoscan::ops::FormatConverterOp`)/Python (`holoscan.operators.FormatConverterOp`) |
+| **HolovizOp**         | Visualize tensors, overlays, geometry, and results for debugging or runtime display. See [visualization](/holoscan/sdk-user-guide/operators/visualization).                    | C++ (`holoscan::ops::HolovizOp`)/Python (`holoscan.operators.HolovizOp`)                 |
 
 ### Inference and post-processing
 
 | Class                           | Typical use                                                                                                                        | API reference                                                                                                                     |
 | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| **InferenceOp**                 | Run one or more AI models (including dependency-ordered pipelines) in streaming applications. See [Inference](operators/operators-and-extensions#inference).                | C++ (`holoscan::ops::InferenceOp`)/Python (`holoscan.operators.InferenceOp`)                                 |
+| **InferenceOp**                 | Run one or more AI models (including dependency-ordered pipelines) in streaming applications. See [Inference](#inference-and-post-processing).                | C++ (`holoscan::ops::InferenceOp`)/Python (`holoscan.operators.InferenceOp`)                                 |
 | **InferenceProcessorOp**        | Apply model-specific preprocessing/postprocessing around inference outputs.                                                        | C++ (`holoscan::ops::InferenceProcessorOp`)/Python (`holoscan.operators.InferenceProcessorOp`)               |
 | **SegmentationPostprocessorOp** | Convert raw segmentation model outputs into masks/labels suitable for display or downstream logic.                                 | C++ (`holoscan::ops::SegmentationPostprocessorOp`)/Python (`holoscan.operators.SegmentationPostprocessorOp`) |
 
@@ -32,15 +32,15 @@ If you are new to Holoscan, a common starting pipeline is:
 | Class                     | Typical use                                                                                                                            | API reference                                                                                                         |
 | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | **V4L2VideoCaptureOp**    | Capture live video frames from V4L2 devices on Linux systems.                                                                          | C++ (`holoscan::ops::V4L2VideoCaptureOp`)/Python (`holoscan.operators.V4L2VideoCaptureOp`)       |
-| **VideoStreamReplayerOp** | Replay recorded streams for deterministic development, benchmarking, and regression testing. See [Video Replayer Example](using-the-sdk/holoscan-by-example/video-replayer#video-replayer-example).        | C++ (`holoscan::ops::VideoStreamReplayerOp`)/Python (`holoscan.operators.VideoStreamReplayerOp`) |
+| **VideoStreamReplayerOp** | Replay recorded streams for deterministic development, benchmarking, and regression testing. See [Video Replayer Example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer#video-replayer-example).        | C++ (`holoscan::ops::VideoStreamReplayerOp`)/Python (`holoscan.operators.VideoStreamReplayerOp`) |
 | **VideoStreamRecorderOp** | Record tensor streams to disk for offline replay and reproducible experiments.                                                         | C++ (`holoscan::ops::VideoStreamRecorderOp`)/Python (`holoscan.operators.VideoStreamRecorderOp`) |
 
 ### Basic networking
 
 | Class              | Typical use                                                                                                                                                                                                    | API reference                                                                                           |
 | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| **PingTxOp**       | Emit synthetic scalar data to test graph connectivity and scheduling behavior. See [native operator ping example](operators/operators-and-extensions#ping-multi-port-cpp) and [native operator ping example](operators/operators-and-extensions#ping-multi-port-python). | C++ (`holoscan::ops::PingTxOp`)/Python (`holoscan.operators.PingTxOp`)             |
-| **PingRxOp**       | Receive and inspect synthetic scalar data in tutorial or debugging pipelines. See [native operator ping example](operators/operators-and-extensions#ping-multi-port-cpp) and [native operator ping example](operators/operators-and-extensions#ping-multi-port-python).  | C++ (`holoscan::ops::PingRxOp`)/Python (`holoscan.operators.PingRxOp`)             |
+| **PingTxOp**       | Emit synthetic scalar data to test graph connectivity and scheduling behavior. See [native operator ping example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-multi-port#receiving-any-number-of-inputs). | C++ (`holoscan::ops::PingTxOp`)/Python (`holoscan.operators.PingTxOp`)             |
+| **PingRxOp**       | Receive and inspect synthetic scalar data in tutorial or debugging pipelines. See [native operator ping example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-multi-port#receiving-any-number-of-inputs).  | C++ (`holoscan::ops::PingRxOp`)/Python (`holoscan.operators.PingRxOp`)             |
 | **PingTensorTxOp** | Emit synthetic tensor payloads to validate tensor paths and operator interoperability.                                                                                                                         | C++ (`holoscan::ops::PingTensorTxOp`)/Python (`holoscan.operators.PingTensorTxOp`) |
 | **PingTensorRxOp** | Receive synthetic tensor payloads for debugging C++/Python tensor flow behavior.                                                                                                                               | C++ (`holoscan::ops::PingTensorRxOp`)/Python (`holoscan.operators.PingTensorRxOp`) |
 
@@ -78,7 +78,7 @@ The Holoscan SDK uses meta-programming with templating and `std::any` to support
 
 ### Holoscan UCX GXF Extension
 
-The `ucx_holoscan` extension includes `nvidia::holoscan::UcxHoloscanComponentSerializer` which is a `nvidia::gxf::ComponentSerializer` that handles serialization of `holoscan::Message` and `holoscan::Tensor` types for transmission using the Unified Communication X (UCX) library. UCX is the library used by Holoscan SDK to enable communication of data between fragments in distributed applications. For more details see the [Creating Holoscan Distributed Application](using-the-sdk/create-a-distributed-application#creating-holoscan-distributed-application) page.
+The `ucx_holoscan` extension includes `nvidia::holoscan::UcxHoloscanComponentSerializer` which is a `nvidia::gxf::ComponentSerializer` that handles serialization of `holoscan::Message` and `holoscan::Tensor` types for transmission using the Unified Communication X (UCX) library. UCX is the library used by Holoscan SDK to enable communication of data between fragments in distributed applications. For more details see the [Creating Holoscan Distributed Application](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application#creating-holoscan-distributed-application) page.
 
 <Note>
 
@@ -90,4 +90,4 @@ The `UcxHoloscanComponentSerializer` is intended for use in combination with oth
 ### Holohub
 
 Holohub is an open collection of reusable Holoscan operators, applications, workflows, and supporting tools designed to accelerate Holoscan-based development. You can browse the full set of operators directly in the [Holohub repository](https://github.com/nvidia-holoscan/holohub/tree/main/operators) or explore them with detailed documentation and search features on the [Holohub documentation website](https://nvidia-holoscan.github.io/holohub/operators/).
-For a quick overview of Holohub, see the [Holohub Overview](../../holohub/holohub-overview#holohub).
+For a quick overview of Holohub, see the [Holohub Overview](/holoscan/sdk-user-guide/holo-hub/holo-hub-overview#holohub).

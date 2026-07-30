@@ -11,11 +11,9 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
-    git-lfs \
     python3 \
-    && rm -rf /var/lib/apt/lists/* \
-    && git lfs install --system
+    && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g fern-api@5.44.1 pnpm
+RUN npm install -g fern-api@5.82.0 pnpm@9.15.9
 
 WORKDIR /workspace

@@ -26,7 +26,7 @@ This example shows a simple application using only native operators. There are t
   2. increment operators (`increment1` and `increment2`) that increment the received value by a given amount and then transmits that new value
   3. receivers (`rx1` and `rx2`) that print their name and received value
 
-The user can select the scheduler to be used by the application, but because there is more than one parallel path, it is recommended to use one of the multi-threaded schedulers in this scenario. The number of workers is controlled by the `worker_thread_number` parameter in `multi_branch_pipeline.yaml`.
+The user can select the scheduler to be used by the application, but because there is more than one parallel path, it is recommended to use a multi-threaded scheduler in this scenario. `EventBasedScheduler` is the recommended choice and is the default in `multi_branch_pipeline.yaml`; the legacy `MultiThreadScheduler` is also selectable for comparison. The number of workers is controlled by the `worker_thread_number` parameter in `multi_branch_pipeline.yaml`.
 
 The key point of this application is not in the details of the operators involved, but in how their connections are configured so that different branches of the pipeline can execute at different rates. See inline comments in the application code explaining how the output port of `tx` is configured and how the input port of `increment1` and `increment2` are configured.
 
@@ -46,11 +46,11 @@ Then, run:
 ./examples/multi_branch_pipeline/cpp/multi_branch_pipeline
 ```
 
-For the C++ application, the scheduler to be used can be set via the `scheduler` entry in `multi_branch_pipeline.yaml`. It defaults to `event_based` (an event-based multithread scheduler), but can also be set to either `multi_thread` (polling-based) or `greedy` (single thread).
+For the C++ application, the scheduler to be used can be set via the `scheduler` entry in `multi_branch_pipeline.yaml`. It defaults to `event_based` (recommended), and can also be set to `multi_thread` (legacy, polling-based) or `greedy` (single thread).
 
 ## Python API
 
-- `multi_branch_pipeline.py`: This example is the same as described for the C++ application above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default a polling-based multithread scheduler will be used, but if `--event_based` is specified, the event-based multithread scheduler will be used instead.
+- `multi_branch_pipeline.py`: This example is the same as described for the C++ application above. The primary difference is that instead of using a YAML file for the configuration variables, all values are set via the command line. Call the script below with the `--help` option to get a full description of the command line parameters. By default the recommended `EventBasedScheduler` is used; pass `--multi_thread` to use the legacy `MultiThreadScheduler` instead.
 
 ### Build instructions
 

@@ -1,6 +1,6 @@
 <Anchor id="holoscan-create-operators-python-bindings" />
 
-For convenience while maintaining high performance, [operators written in C++](using-the-sdk/create-an-operator#holoscan-defining-operators-cpp) can be wrapped in Python. The general approach uses [Pybind11](https://pybind11.readthedocs.io/en/stable/index.html) to concisely create bindings that provide a familiar, Pythonic experience to application authors.
+For convenience while maintaining high performance, [operators written in C++](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#holoscan-defining-operators-cpp) can be wrapped in Python. The general approach uses [Pybind11](https://pybind11.readthedocs.io/en/stable/index.html) to concisely create bindings that provide a familiar, Pythonic experience to application authors.
 
 <Note>
 
@@ -35,7 +35,7 @@ It is recommended to put any cleanup of resources allocated in the C++ operator'
 
 ### Creating a PyToolTrackingPostprocessorOp trampoline class
 
-In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) in this case), create a subclass of the C++ Operator class to wrap. The general approach taken is to create a Python-specific class that provides a constructor that takes a `std::variant<Fragment*, Subgraph*>`, an explicit list of the operators parameters with default values for any that are optional, and an operator name. This constructor needs to setup the operator as done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/include/holoscan/core/fragment.hpp#L284), so that it is ready for initialization by the GXF executor. We use the convention of prepending "Py" to the C++ class name for this (so, `PyToolTrackingPostprocessorOp` in this case).
+In a C++ file ([tool_tracking_postprocessor.cpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor.cpp) in this case), create a subclass of the C++ Operator class to wrap. The general approach taken is to create a Python-specific class that provides a constructor that takes a `std::variant<Fragment*, Subgraph*>`, an explicit list of the operators parameters with default values for any that are optional, and an operator name. This constructor needs to setup the operator as done in [`Fragment::make_operator`](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/core/fragment.hpp), so that it is ready for initialization by the GXF executor. We use the convention of prepending "Py" to the C++ class name for this (so, `PyToolTrackingPostprocessorOp` in this case).
 
 ```cpp
 #include <holoscan/python/core/component_util.hpp>
@@ -179,7 +179,7 @@ PYBIND11_MODULE(_tool_tracking_postprocessor, m) {
 
 <Note>
 
-- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as [covered below](generated/api-reference/cpp/holoscan/classes/Application.mdx)).
+- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as [covered below](#pybind11-module_name_warning)).
 - If you are implementing the python wrapping in a standalone CMake project,the `<module_name>` passed to `PYBIND_11_MODULE` **must** match the name of the module passed to the [pybind11-add-module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
 
 Using a mismatched name in `PYBIND_11_MODULE` will result in failure to import the module from Python.
@@ -208,7 +208,7 @@ Prepare documentation strings (`const char*`) for your python class and its para
 
 <Note>
 
-Below we use a `PYDOC` macro defined in the [SDK](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/macros.hpp) and available in [HoloHub](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pydoc/macros.hpp) as a utility to remove leading spaces. In this case, the documentation code is located in header file [tool_tracking_post_processor_pydoc.hpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor_pydoc.hpp), under a custom `holoscan::doc::ToolTrackingPostprocessorOp` namespace. None of this is required, you just need to make any documentation strings available for use as an argument to the `py::class_` constructor or method definition calls.
+Below we use a `PYDOC` macro defined in the [SDK](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/macros.hpp) and available in [HoloHub](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pydoc/macros.hpp) as a utility to remove leading spaces. In this case, the documentation code is located in header file [tool_tracking_post_processor_pydoc.hpp](https://github.com/nvidia-holoscan/holohub/blob/main/operators/tool_tracking_postprocessor/python/tool_tracking_postprocessor_pydoc.hpp), under a custom `holoscan::doc::ToolTrackingPostprocessorOp` namespace. None of this is required, you just need to make any documentation strings available for use as an argument to the `py::class_` constructor or method definition calls.
 
 </Note>
 
@@ -481,7 +481,7 @@ where now that `min_prob` and `overlay_img_colors` are optional, they are only c
 
 Sometimes, operators may use a Parameter with an enum type. It is necessary to wrap the C++ enum to be able to use it as a Python type when providing the argument to the operator.
 
-The `holoscan::ops::HolovizOp` bindings include [enum parameters](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/public/python/holoscan/operators/holoviz/holoviz.cpp#L255-L350) such as `ColorSpace` and `InputType`.
+The `holoscan::ops::HolovizOp` bindings include [enum parameters](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/holoviz.cpp) such as `ColorSpace` and `InputType`.
 
 These enums are wrapped for use from Python via `py::enum_` (see the `export_enum` helper in the same file). It is recommended in this case to follow Python's convention of using capitalized names in the enum.
 
@@ -489,9 +489,9 @@ These enums are wrapped for use from Python via `py::enum_` (see the `export_enu
 
 Sometimes it is necessary to accept a custom C++ class type as an argument in the operator's constructor. In this case additional interface code and bindings will likely be necessary to support the type.
 
-A relatively simple example of this is the `holoscan::ops::InferenceProcessorOp::DataVecMap` type used by `holoscan::ops::InferenceProcessorOp`. In that case, the type is a structure that holds an internal `std::map<std::string, std::vector<std::string>>`. The bindings are written to accept a Python dict (`py::dict`) and a [helper function](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/operators/inference_processor/inference_processor.cpp#L52-L58) is used within the constructor to convert that dictionary to the corresponding C++ `DataVecMap`.
+A relatively simple example of this is the `holoscan::ops::InferenceProcessorOp::DataVecMap` type used by `holoscan::ops::InferenceProcessorOp`. In that case, the type is a structure that holds an internal `std::map<std::string, std::vector<std::string>>`. The bindings are written to accept a Python dict (`py::dict`) and a [helper function](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/inference_processor/inference_processor.cpp) is used within the constructor to convert that dictionary to the corresponding C++ `DataVecMap`.
 
-A more complicated case is the use of a `holoscan::ops::HolovizOp::InputSpec` type in the `HolovizOp` bindings. This case involves creating Python bindings for classes `holoscan::ops::HolovizOp::InputSpec` and `holoscan::ops::HolovizOp::InputSpec::View` as well as a couple of enum types. To avoid the user having to build a `list[holoscan.operators.HolovizOp.InputSpec]` directly to pass as the `tensors` argument, an [additional Python wrapper class](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v1.0.3/python/holoscan/operators/holoviz/__init__.py#L100-L182) was defined in the `__init__.py` to allow passing a simple Python dict for the `tensors` argument and any corresponding InputSpec classes are automatically created in its constructor before calling the underlying Python bindings class.
+A more complicated case is the use of a `holoscan::ops::HolovizOp::InputSpec` type in the `HolovizOp` bindings. This case involves creating Python bindings for classes `holoscan::ops::HolovizOp::InputSpec` and `holoscan::ops::HolovizOp::InputSpec::View` as well as a couple of enum types. To avoid the user having to build a `list[holoscan.operators.HolovizOp.InputSpec]` directly to pass as the `tensors` argument, an [additional Python wrapper class](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/__init__.py) was defined in the `__init__.py` to allow passing a simple Python dict for the `tensors` argument and any corresponding InputSpec classes are automatically created in its constructor before calling the underlying Python bindings class.
 
 <Anchor id="customizing-python-emit-receive-of-cpp-types" />
 
@@ -534,7 +534,7 @@ struct emitter_receiver<std::vector<holoscan::ops::HolovizOp::InputSpec>> {
 }
 ```
 
-This `emitter_receiver` class defines a `receive` method that takes a `std::any` message and casts it to the corresponding Python `list[HolovizOp.InputSpec]` object. Here the `pybind11::cast` call works because we have wrapped the `HolovizOp::InputSpec` class [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.0.0/python/holoscan/operators/holoviz/holoviz.cpp#L190-L207).
+This `emitter_receiver` class defines a `receive` method that takes a `std::any` message and casts it to the corresponding Python `list[HolovizOp.InputSpec]` object. Here the `pybind11::cast` call works because we have wrapped the `HolovizOp::InputSpec` class [here](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/holoviz.cpp).
 
 Similarly, the `emit` method takes a `pybind11::object` (of type `list[HolovizOp.InputSpec]`) and casts it to the corresponding C++ type, `std::vector<holoscan::ops::HolovizOp::InputSpec>`. The conversion between `std::vector` and a Python list is one of pybind11's built-in conversions (available as long as "pybind11/stl.h" has been included).
 
@@ -590,9 +590,9 @@ where we chose to import `register_types` with an initial underscore as a common
 
 When creating Python bindings for an Operator on Holohub, the [pybind11_add_holohub_module.cmake](https://github.com/nvidia-holoscan/holohub/blob/main/cmake/pybind11_add_holohub_module.cmake) utility mentioned above will take care of autogenerating the `__init__.py` as shown in step 3, so it will not be necessary to manually create it in that case.
 
-For types for which Pybind11's default casting between C++ and Python is adequate, it is not necessary to explicitly define the `emitter_receiver` class as shown in step 1. This is true because there are a couple of [default implementations](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.1.0/python/holoscan/core/emitter_receiver_registry.hpp) for `emitter_receiver<T>` and `emitter_receiver<std::shared_ptr<T>>` that already cover common cases. The default emitter_receiver works for the `std::vector<HolovizOp::InputSpec>` type shown above, which is why the code shown for illustration there is [not found within the operator's bindings](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/holoviz.cpp). In that case one could immediately implement `register_types` from step 2 without having to explicitly create an `emitter_receiver` class.
+For types for which Pybind11's default casting between C++ and Python is adequate, it is not necessary to explicitly define the `emitter_receiver` class as shown in step 1. This is true because there are a couple of [default implementations](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/emitter_receiver_registry.hpp) for `emitter_receiver<T>` and `emitter_receiver<std::shared_ptr<T>>` that already cover common cases. The default emitter_receiver works for the `std::vector<HolovizOp::InputSpec>` type shown above, which is why the code shown for illustration there is [not found within the operator's bindings](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/operators/holoviz/holoviz.cpp). In that case one could immediately implement `register_types` from step 2 without having to explicitly create an `emitter_receiver` class.
 
-An example where the default `emitter_receiver` would not work is the custom one defined by the SDK for `pybind11::dict`. In this case, to provide convenient emit of multiple tensors via passing a `dict[holoscan::Tensor]` to `op_output.emit` we have special handling of Python dictionaries. The dictionary is inspected and if all keys are strings and all values are tensor-like objects, a single C++ `nvidia::gxf::Entity` containing all of the tensors as an `nvidia::gxf::Tensor` is emitted. If the dictionary is not a tensor map, then it is just emitted as a shared pointer to the Python dict object. The `emitter_receiver` implementations used for the core SDK are defined in [emitter_receivers.hpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/v2.2.0/python/holoscan/core/emitter_receivers.hpp). These can serve as a reference when creating new ones for additional types.
+An example where the default `emitter_receiver` would not work is the custom one defined by the SDK for `pybind11::dict`. In this case, to provide convenient emit of multiple tensors via passing a `dict[holoscan::Tensor]` to `op_output.emit` we have special handling of Python dictionaries. The dictionary is inspected and if all keys are strings and all values are tensor-like objects, a single C++ `nvidia::gxf::Entity` containing all of the tensors as an `nvidia::gxf::Tensor` is emitted. If the dictionary is not a tensor map, then it is just emitted as a shared pointer to the Python dict object. The `emitter_receiver` implementations used for the core SDK are defined in [emitter_receivers.hpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/holoscan/core/emitter_receivers.hpp). These can serve as a reference when creating new ones for additional types.
 
 #### Runtime behavior of emit and receive
 
@@ -622,7 +622,7 @@ Only types registered with the SDK can be specified by name in this third argume
 
 #### Table of types registered by the core SDK
 
-The list of basic types that are registered with the SDK's `EmitterReceiverRegistry` are given in the [C++ vs Python types table here](using-the-sdk/create-an-operator#cpp-python-data-type-interop). In addition to those basic numeric/string/vector types, there is dedicated handling for the following types.
+The list of basic types that are registered with the SDK's `EmitterReceiverRegistry` are given in the [C++ vs Python types table here](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#cpp-python-data-type-interop). In addition to those basic numeric/string/vector types, there is dedicated handling for the following types.
 
 | C++ Type                                            | name in the EmitterReceiverRegistry |
 | ----------------------------------------------------|-------------------------------------|
@@ -650,6 +650,6 @@ print(io_type_registry.registered_types())
 
 <Note>
 
-For more details on emit/receive behavior for tensor-like types see [this dedicated section](using-the-sdk/create-an-operator#cpp-python-tensor-interop).
+For more details on emit/receive behavior for tensor-like types see [this dedicated section](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#cpp-python-tensor-interop).
 
 </Note>

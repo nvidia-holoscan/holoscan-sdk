@@ -1,17 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-# http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 # Get relative folder path for the app
 file(RELATIVE_PATH app_relative_dest_path ${CMAKE_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
@@ -55,7 +43,7 @@ if(HOLOSCAN_BUILD_TESTS)
   #    - EXAMPLE_PYTHON_MULTITHREAD_0_TEST (runs single-threaded GreedyScheduler)
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_TEST
            COMMAND bash -c
-             "${Python3_EXECUTABLE} multithread.py --threads -1 --num_delay_ops 8 --delay 0.25 \
+             "${Python3_EXECUTABLE} multithread.py --threads -1 --multi_thread --num_delay_ops 8 --delay 0.25 \
                --delay_step 0.1 --data_log --name EXAMPLE_PYTHON_MULTITHREAD_TEST \
                --output_file multithread_times 2>&1 | \
              ${Python3_EXECUTABLE} ${Holoscan-examples_SOURCE_DIR}/../scripts/test_pattern_validation.py --strip-quotes \
@@ -73,7 +61,7 @@ if(HOLOSCAN_BUILD_TESTS)
   )
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_4_TEST
-           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 4 --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
+           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 4 --multi_thread --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
                    --name EXAMPLE_PYTHON_MULTITHREAD_4_TEST --output_file multithread_times
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
@@ -82,7 +70,7 @@ if(HOLOSCAN_BUILD_TESTS)
                        DEPENDS EXAMPLE_PYTHON_MULTITHREAD_TEST)
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_1_TEST
-           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 1 --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
+           COMMAND ${Python3_EXECUTABLE} multithread.py --threads 1 --multi_thread --num_delay_ops 8 --delay 0.25 --delay_step 0.1 --data_log
            --name EXAMPLE_PYTHON_MULTITHREAD_1_TEST --output_file multithread_times
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
@@ -119,7 +107,7 @@ if(HOLOSCAN_BUILD_TESTS)
   endif()
 
   add_test(NAME EXAMPLE_PYTHON_MULTITHREAD_EVENT_BASED_TEST
-    COMMAND ${Python3_EXECUTABLE} multithread.py --event_based
+    COMMAND ${Python3_EXECUTABLE} multithread.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
   set_tests_properties(EXAMPLE_PYTHON_MULTITHREAD_EVENT_BASED_TEST PROPERTIES

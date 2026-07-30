@@ -88,7 +88,7 @@ Because CUDA kernels are launched asynchronously, an operator's `compute()` meth
 
 <Warning title="Benchmarking Caveat">
 
-Since `compute()` can return while GPU work is still in progress, timing tools like [Data Flow Tracking](performance/flow-tracking) or [GXF JobStatistics](performance/gxf-job-statistics) may report misleadingly short durations for operators that launch async GPU work. The actual kernel execution time may be attributed to a downstream operator that triggers synchronization (e.g., for a device-to-host copy). For accurate GPU timing, use [Nsight Systems](performance/nsight-profiling). See [Common Pitfalls](using-the-sdk/cuda-stream-handling#cuda-stream-common-pitfalls) at the end of this page for more details.
+Since `compute()` can return while GPU work is still in progress, timing tools like [Data Flow Tracking](/holoscan/sdk-user-guide/performance/flow-tracking) or [GXF JobStatistics](/holoscan/sdk-user-guide/performance/gxf-job-statistics) may report misleadingly short durations for operators that launch async GPU work. The actual kernel execution time may be attributed to a downstream operator that triggers synchronization (e.g., for a device-to-host copy). For accurate GPU timing, use [Nsight Systems](/holoscan/sdk-user-guide/performance/nsight-profiling). See [Common Pitfalls](#cuda-stream-common-pitfalls) at the end of this page for more details.
 
 </Warning>
 
@@ -268,7 +268,7 @@ Using separate CUDA streams *enables* parallel execution but does not *guarantee
 - GPU hardware capabilities (number of SMs, memory bandwidth)
 - Current GPU utilization from other work
 
-For scenarios requiring **guaranteed SM partitioning** between operators, Holoscan provides the `CudaGreenContext` APIs which wrap CUDA's [Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) feature. See [Configuring a Cuda Green Context](using-the-sdk/cuda-stream-handling#configuring-a-cuda-green-context) for details.
+For scenarios requiring **guaranteed SM partitioning** between operators, Holoscan provides the `CudaGreenContext` APIs which wrap CUDA's [Green Contexts](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/green-contexts.html#green-contexts) feature. See [Configuring a Cuda Green Context](#configuring-a-cuda-green-context) for details.
 
 </Note>
 
@@ -600,7 +600,7 @@ Application authors do not need to interact with `CudaStream` or `CudaStreamId` 
 
 ## Detailed `receive_cuda_stream` API Reference
 
-As covered in the [Quick Start section](using-the-sdk/cuda-stream-handling#holoscan-cuda-stream-handling), `receive_cuda_stream` (C++ (`holoscan::InputContext::receive_cuda_stream`)/Python (`holoscan.core.InputContext.receive_cuda_stream`)) is the recommended method for stream handling. This section provides additional details on its parameters and edge cases.
+As covered in the [Quick Start section](#holoscan-cuda-stream-handling), `receive_cuda_stream` (C++ (`holoscan::InputContext::receive_cuda_stream`)/Python (`holoscan.core.InputContext.receive_cuda_stream`)) is the recommended method for stream handling. This section provides additional details on its parameters and edge cases.
 
 <Warning title="Attention">
 
@@ -674,7 +674,7 @@ The second boolean argument to `receive_cuda_stream` defaults to true and indica
 
 There is also an optional third argument to `receive_cuda_stream` which is a boolean specifying whether synchronization of the input streams (and internal stream) to CUDA's default stream should also be performed. This option is `false` by default.
 
-The above description of `receive_cuda_stream` is accurate when a `CudaStreamPool` has been passed to the operator in one of the ways [described above](using-the-sdk/cuda-stream-handling#configuring-a-cuda-stream-pool). See the note below for additional detail on how this method operates if the operator is unable to allocate an internal stream because a `CudaStreamPool` was unavailable.
+The above description of `receive_cuda_stream` is accurate when a `CudaStreamPool` has been passed to the operator in one of the ways [described above](#configuring-a-cuda-stream-pool). See the note below for additional detail on how this method operates if the operator is unable to allocate an internal stream because a `CudaStreamPool` was unavailable.
 
 ### Avoiding additional synchronization from Python's CUDA Array Interface
 
@@ -793,7 +793,7 @@ The `device_from_stream` (C++ (`holoscan::ExecutionContext::device_from_stream`)
 
 ### `set_cuda_stream` (OutputContext)
 
-The `set_cuda_stream` (C++ (`holoscan::OutputContext::set_cuda_stream`)/Python (`holoscan.core.OutputContext.set_cuda_stream`)) method configures a specific stream to be emitted on an output port. Not needed when using `receive_cuda_stream` (which auto-configures output ports), but required when using `allocate_cuda_stream` or manual stream handling. See the [allocate_cuda_stream example](using-the-sdk/cuda-stream-handling#execution-context-stream-methods) above.
+The `set_cuda_stream` (C++ (`holoscan::OutputContext::set_cuda_stream`)/Python (`holoscan.core.OutputContext.set_cuda_stream`)) method configures a specific stream to be emitted on an output port. Not needed when using `receive_cuda_stream` (which auto-configures output ports), but required when using `allocate_cuda_stream` or manual stream handling. See the [allocate_cuda_stream example](#execution-context-stream-methods) above.
 
 <Note title="Single Stream Per Output Port">
 
@@ -885,9 +885,9 @@ Since CUDA kernels launch asynchronously, `compute()` may exit before GPU work c
 
 <Tip>
 
-Tools like the built-in [Data Flow Tracking](performance/flow-tracking) or [GXF JobStatistics](performance/gxf-job-statistics) measure the time spent in the `compute` method for operators. This can be misleadingly short when the actual GPU kernels complete at some later time after the `compute` call has ended. A concrete example is when an upstream operator launches a CUDA kernel asynchronously and then a downstream operator needs to do a device->host transfer (which requires synchronization). In that scenario the downstream operator will need to wait for the kernel launched by the upstream operator to complete, so the time for that upstream kernel would be reflected in the downstream operator's `compute` duration (assuming no `CudaStreamCondition` was used to force the upstream kernel to have completed before the downstream `compute` method was called).
+Tools like the built-in [Data Flow Tracking](/holoscan/sdk-user-guide/performance/flow-tracking) or [GXF JobStatistics](/holoscan/sdk-user-guide/performance/gxf-job-statistics) measure the time spent in the `compute` method for operators. This can be misleadingly short when the actual GPU kernels complete at some later time after the `compute` call has ended. A concrete example is when an upstream operator launches a CUDA kernel asynchronously and then a downstream operator needs to do a device->host transfer (which requires synchronization). In that scenario the downstream operator will need to wait for the kernel launched by the upstream operator to complete, so the time for that upstream kernel would be reflected in the downstream operator's `compute` duration (assuming no `CudaStreamCondition` was used to force the upstream kernel to have completed before the downstream `compute` method was called).
 
-In such scenarios it is recommended to perform profiling with [Nsight Systems](performance/nsight-profiling) to get a more detailed view of the application timing. The Nsight Systems UI will have per-stream traces of CUDA calls as well as separate traces for any scheduler worker threads that show the durations of Operator `compute` calls.
+In such scenarios it is recommended to perform profiling with [Nsight Systems](/holoscan/sdk-user-guide/performance/nsight-profiling) to get a more detailed view of the application timing. The Nsight Systems UI will have per-stream traces of CUDA calls as well as separate traces for any scheduler worker threads that show the durations of Operator `compute` calls.
 
 </Tip>
 

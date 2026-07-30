@@ -52,8 +52,8 @@ The measurements above were obtained using the following configuration:
 
 - **Rule of thumb**: If your operator's computation takes less than ~20 µs, the scheduling and message-passing overhead may dominate the total execution time. Consider combining such operations into a single operator.
 - **Event-based scheduler latency tuning**: For latency-sensitive Linux workloads using `EventBasedScheduler`, you can isolate the scheduler's dispatcher thread with `GXF_EBS_DISPATCHER_CPU_CORE=<core-id>`. This is separate from the scheduler `pin_cores` parameter, which only affects worker threads, and can reduce jitter when the dispatcher competes with time-critical work.
-- **GPU-resident pipelines**: When using [GPU-resident operators](gpu_resident.mdx) within a CUDA Graph, kernel transition latency is significantly lower (~0.5–2 µs), allowing for finer-grained operator decomposition.
-- **Profiling is essential**: Use [NSight Systems traces](performance/nsight-profiling) and [data flow tracking](performance/flow-tracking)
+- **GPU-resident pipelines**: When using [GPU-resident operators](/holoscan/sdk-user-guide/using-the-sdk/gpu-resident-execution) within a CUDA Graph, kernel transition latency is significantly lower (~0.5–2 µs), allowing for finer-grained operator decomposition.
+- **Profiling is essential**: Use [NSight Systems traces](/holoscan/sdk-user-guide/performance/nsight-profiling) and [data flow tracking](/holoscan/sdk-user-guide/performance/flow-tracking)
  to measure actual overhead in your specific application.
   Note: OS scheduling, CPU affinity (thread pinning), and Python version can materially impact these thresholds; validate on your target system.
 
@@ -126,7 +126,7 @@ sudo cpupower -c 1-6 frequency-set -g performance
 
 ### Worked Example
 
-The [Scheduler Recipe Multi Branch Low Latency](components/schedulers#scheduler-recipe-multi-branch-low-latency) recipe pins the dispatcher to core `1`, the priority branch worker to core `2`, the other branch workers to cores `3` and `4`, and the default pool to cores `5` and `6`. Isolate the full set of cores the recipe uses by adding the following to the kernel command line:
+The [Scheduler Recipe Multi Branch Low Latency](/holoscan/sdk-user-guide/components/schedulers#scheduler-recipe-multi-branch-low-latency) recipe pins the dispatcher to core `1`, the priority branch worker to core `2`, the other branch workers to cores `3` and `4`, and the default pool to cores `5` and `6`. Isolate the full set of cores the recipe uses by adding the following to the kernel command line:
 
 ```text
 isolcpus=1-6 nohz_full=1-6 rcu_nocbs=1-6
@@ -176,7 +176,7 @@ taskset -c -p <pid>
 
 ## See Also
 
-- [holoscan-flow-tracking](performance/flow-tracking)
-- [gxf-job-statistics](performance/gxf-job-statistics)
-- [nsight-profiling](performance/nsight-profiling)
-- [Rt Scheduling Prerequisites](components/schedulers#rt-scheduling-prerequisites)
+- [holoscan-flow-tracking](/holoscan/sdk-user-guide/performance/flow-tracking)
+- [gxf-job-statistics](/holoscan/sdk-user-guide/performance/gxf-job-statistics)
+- [nsight-profiling](/holoscan/sdk-user-guide/performance/nsight-profiling)
+- [Rt Scheduling Prerequisites](/holoscan/sdk-user-guide/components/schedulers#rt-scheduling-prerequisites)

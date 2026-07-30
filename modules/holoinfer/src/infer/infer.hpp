@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 #ifndef _HOLOSCAN_INFER_CORE_H
 #define _HOLOSCAN_INFER_CORE_H
@@ -53,6 +41,28 @@ class InferBase {
                                    std::vector<std::shared_ptr<DataBuffer>>& output_buffer,
                                    cudaEvent_t cuda_event_data, cudaEvent_t* cuda_event_inference) {
     return InferStatus();
+  }
+
+  /**
+   * @brief Stream-Shared Sequential Dispatch
+   * @param input_data Input DataBuffer(s)
+   * @param output_buffer Output DataBuffer(s) (populated in-place)
+   * @param stream The CUDA stream to enqueue inference work on.
+   * @return InferStatus
+   */
+  virtual InferStatus do_inference_on_stream(
+      const std::vector<std::shared_ptr<DataBuffer>>& input_data,
+      std::vector<std::shared_ptr<DataBuffer>>& output_buffer, cudaStream_t stream) {
+    (void)stream;  // Default: delegate to event-based path. Subclasses override.
+    cudaEvent_t inference_event = nullptr;
+    cudaEvent_t data_event = nullptr;
+    cudaEventCreateWithFlags(&data_event, cudaEventDisableTiming);
+    cudaEventRecord(data_event, stream);
+    auto rc = do_inference(input_data, output_buffer, data_event, &inference_event);
+    if (inference_event)
+      cudaStreamWaitEvent(stream, inference_event);
+    cudaEventDestroy(data_event);
+    return rc;
   }
 
   /**

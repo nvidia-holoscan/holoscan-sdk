@@ -1,18 +1,6 @@
 /*
  * SPDX-FileCopyrightText: Copyright (c) 2023-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
  */
 
 #ifndef HOLOSCAN_UTILS_HOLOINFER_UTILS_HPP
@@ -45,7 +33,7 @@ namespace holoscan::utils {
  *   3. Same dims as last frame: fast path, no tensor mutation at all.
  */
 struct TensorTransmitCache {
-  /// Persistent output entity. Invalid (falsy) until the first call to transmit_data_per_model.
+  /// Persistent output entity. Invalid until the first call to transmit_data_per_model.
   nvidia::gxf::Expected<nvidia::gxf::Entity> out_message{
       nvidia::gxf::Unexpected{GXF_UNINITIALIZED_VALUE}};
   /// Maximum element count that has been allocated for each output tensor.
@@ -53,6 +41,39 @@ struct TensorTransmitCache {
   /// Dimension vector from the most recent frame for each output tensor, used to detect shape
   /// changes that require a wrapMemory call even when the element count has not grown.
   std::map<std::string, std::vector<int64_t>> last_dims;
+  struct ResolvedOutput {
+    std::string key_name;                          // model key in tensor_out_dims_map
+    unsigned int tensor_index = 0;                 // index into model_to_tensor_map[key_name]
+    HoloInfer::DataBuffer* data_buffer = nullptr;  // direct pointer; aliases input_data_map entry
+    HoloInfer::holoinfer_datatype dtype = HoloInfer::holoinfer_datatype::h_Float32;
+  };
+  std::vector<ResolvedOutput> resolved_outputs;
+  /// True once `resolved_outputs` has been populated by the first call and matches `out_tensors`.
+  /// Reset implicitly when `out_tensors` size changes.
+  bool resolved_valid = false;
+};
+
+/**
+ * Persistent cache for the input-side counterpart of TensorTransmitCache.
+ */
+struct TensorExtractCache {
+  /// Becomes true after the first successful get_data_per_model() call has populated the
+  /// per-input-tensor metadata below.
+  bool valid = false;
+
+  /// For each entry in `in_tensors` (same order as the operator's `model_inputs_` vector),
+  /// the index of the GXF message that produced that tensor on the first compute() call. On
+  /// subsequent compute() calls we look in this message FIRST before falling back to a full search.
+  std::vector<size_t> message_index;
+
+  /// Cached HoloInfer datatype per input tensor
+  std::vector<int> dtype_code;
+
+  /// Cached dims per input tensor name.
+  std::map<std::string, std::vector<int>> dims_per_tensor;
+
+  /// Resolved DataBuffer pointer per input tensor
+  std::vector<HoloInfer::DataBuffer*> data_buffer_ptrs;
 };
 
 /**
@@ -127,6 +148,27 @@ gxf_result_t get_data_per_model(InputContext& op_input, const std::vector<std::s
                                 std::map<std::string, std::vector<int>>& dims_per_tensor,
                                 bool cuda_buffer_out, const std::string& module,
                                 cudaStream_t& cuda_stream_out);
+
+/**
+ * Cached variant of get_data_per_model.
+ *
+ * @param op_input Input context
+ * @param in_tensors Input tensor names
+ * @param data_per_input_tensor Map is updated with output tensor name as key mapped to data
+ * buffer
+ * @param dims_per_tensor Map is updated with tensor name as key mapped to dimension of input tensor
+ * @param cuda_buffer_out Flag defining the location of output memory (Device or Host)
+ * @param module Module that called for data extraction
+ * @param cuda_stream_out Any stream used from the input port will be stored here.
+ * @param cache Cache for the input-side counterpart of TensorTransmitCache.
+ * @return GXF result code
+ */
+gxf_result_t get_data_per_model_cached(InputContext& op_input,
+                                       const std::vector<std::string>& in_tensors,
+                                       HoloInfer::DataMap& data_per_input_tensor,
+                                       std::map<std::string, std::vector<int>>& dims_per_tensor,
+                                       bool cuda_buffer_out, const std::string& module,
+                                       cudaStream_t& cuda_stream_out, TensorExtractCache& cache);
 
 /**
  * Transmits multiple buffers via GXF Transmitters.

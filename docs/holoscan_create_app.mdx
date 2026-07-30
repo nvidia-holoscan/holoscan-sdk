@@ -2,14 +2,14 @@
 
 In this section, we'll address:
 
-- How to [define an Application class](using-the-sdk/create-an-application#defining-an-application-class).
-- How to [configure an Application](using-the-sdk/create-an-application#configuring-an-application).
-- How to [define different types of workflows](using-the-sdk/create-an-application#application-workflows).
-- How to [build and run your application](using-the-sdk/create-an-application#building-and-running-your-application).
+- How to [define an Application class](#defining-an-application-class).
+- How to [configure an Application](#configuring-an-application).
+- How to [define different types of workflows](#application-workflows).
+- How to [build and run your application](#building-and-running-your-application).
 
 <Note>
 
-This section covers basics of applications running as a single fragment. For multi-fragment applications, refer to the [distributed application documentation](holoscan_create_distributed_app.mdx).
+This section covers basics of applications running as a single fragment. For multi-fragment applications, refer to the [distributed application documentation](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application).
 
 </Note>
 
@@ -83,7 +83,7 @@ The following code snippet shows an example Application code skeleton:
 
 <Tip>
 
-This is also illustrated in the [hello_world](examples/hello_world.mdx) example.
+This is also illustrated in the [hello_world](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/hello-world) example.
 
 </Tip>
 
@@ -138,10 +138,10 @@ This is also illustrated in the [ping_simple_run_async](https://github.com/nvidi
 
 An application can be configured at different levels:
 
-1. [providing the GXF extensions that need to be loaded](using-the-sdk/create-an-application#loading-gxf-extensions) (when using [GXF operators](using-the-sdk/create-an-operator)).
+1. [providing the GXF extensions that need to be loaded](#loading-gxf-extensions) (when using [GXF operators](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator)).
 2. configuring parameters for your application, including for:
-   a. [the operators](using-the-sdk/create-an-application#configuring-app-operators) in the workflow.
-   b. [the scheduler](using-the-sdk/create-an-application#configuring-app-scheduler) of your application.
+   a. [the operators](#configuring-app-operators) in the workflow.
+   b. [the scheduler](#configuring-app-scheduler) of your application.
 
 The sections below will describe how to configure each of them, starting with a native support for YAML-based configuration for convenience.
 
@@ -266,7 +266,7 @@ Ingesting these parameters can be done using the two methods below:
 
 <Tip>
 
-This is also illustrated in the [video_replayer](examples/video_replayer.mdx) example.
+This is also illustrated in the [video_replayer](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer) example.
 
 </Tip>
 
@@ -282,9 +282,9 @@ With both `from_config` and `kwargs`, the returned `ArgList`/dictionary will inc
 
 ### Loading GXF extensions
 
-If you use operators that depend on GXF extensions for their implementations (known as [GXF operators](using-the-sdk/create-an-operator)), the shared libraries (`.so`) of these extensions need to be dynamically loaded as plugins at runtime.
+If you use operators that depend on GXF extensions for their implementations (known as [GXF operators](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator)), the shared libraries (`.so`) of these extensions need to be dynamically loaded as plugins at runtime.
 
-The SDK already automatically handles loading the required extensions for the [built-in operators](holoscan_operators_extensions.mdx) in both C++ and Python, as well as common extensions (listed here). To load additional extensions for your own operators, you can use one of the following approach:
+The SDK already automatically handles loading the required extensions for the [built-in operators](/holoscan/sdk-user-guide/operators/operators-and-extensions) in both C++ and Python, as well as common extensions (listed here). To load additional extensions for your own operators, you can use one of the following approach:
 
 <Tabs>
 
@@ -345,7 +345,7 @@ Operators have three type of fields which can be configured: parameters, conditi
 
 #### Configuring operator parameters
 
-Operators could have parameters defined in their `setup` method to better control their behavior (see details when [creating your own operators](holoscan_create_operator.mdx)). The snippet below would be the implementation of this method for a minimal operator named `MyOp`, that takes a string and a boolean as parameters; we'll ignore any extra details for the sake of this example:
+Operators could have parameters defined in their `setup` method to better control their behavior (see details when [creating your own operators](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator)). The snippet below would be the implementation of this method for a minimal operator named `MyOp`, that takes a string and a boolean as parameters; we'll ignore any extra details for the sake of this example:
 
 <Tabs>
 
@@ -448,7 +448,7 @@ We can configure an instance of the `MyOp` operator in the application's `compos
 
 <Tip>
 
-This is also illustrated in the [ping_custom_op](examples/ping_custom_op.mdx) example.
+This is also illustrated in the [ping_custom_op](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-custom-op) example.
 
 </Tip>
 
@@ -508,9 +508,9 @@ If multiple `ArgList` are provided with duplicate keys, the latest one overrides
 
 #### Configuring operator conditions
 
-By default, operators with no input ports will continuously run, while operators with input ports will run as long as they receive inputs (as they're configured with the [`MessageAvailableCondition`](components/conditions.mdx#messageavailablecondition)).
+By default, operators with no input ports will continuously run, while operators with input ports will run as long as they receive inputs (as they're configured with the [`MessageAvailableCondition`](/holoscan/sdk-user-guide/components/conditions#messageavailablecondition)).
 
-To change that behavior, one or more other [conditions](components/conditions.mdx)' classes can be passed to the constructor of an operator to define when it should execute.
+To change that behavior, one or more other [conditions](/holoscan/sdk-user-guide/components/conditions)' classes can be passed to the constructor of an operator to define when it should execute.
 
 For example, we set three conditions on this operator `my_op`:
 
@@ -577,7 +577,7 @@ You'll need to specify a unique name for the conditions if there are multiple co
 
 #### Configuring operator resources
 
-Some [resources](components/resources.mdx) can be passed to the operator's constructor, typically an [allocator](components/resources.mdx#allocator) passed as a regular parameter.
+Some [resources](/holoscan/sdk-user-guide/components/resources) can be passed to the operator's constructor, typically an [allocator](/holoscan/sdk-user-guide/components/resources#allocator) passed as a regular parameter.
 
 For example:
 
@@ -772,18 +772,18 @@ There is a minimal example of native resource use in the [examples](https://gith
 
 ### Configuring the scheduler
 
-The [scheduler](components/schedulers.mdx) controls how the application schedules the execution of the operators that make up its [workflow](#application-workflows).
+The [scheduler](/holoscan/sdk-user-guide/components/schedulers) controls how the application schedules the execution of the operators that make up its [workflow](#application-workflows).
 
-The default scheduler is a single-threaded [`GreedyScheduler`](components/schedulers.mdx#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` (C++ (`holoscan::Scheduler`)/Python (`holoscan.core.Scheduler`)) or change the parameters from the default scheduler, using the `scheduler()` function (C++ (`holoscan::Fragment::scheduler`)/Python (`holoscan.core.Fragment.scheduler`)).
+The default scheduler is a single-threaded [`GreedyScheduler`](/holoscan/sdk-user-guide/components/schedulers#greedy-scheduler). An application can be configured to use a different scheduler `Scheduler` (C++ (`holoscan::Scheduler`)/Python (`holoscan.core.Scheduler`)) or change the parameters from the default scheduler, using the `scheduler()` function (C++ (`holoscan::Fragment::scheduler`)/Python (`holoscan.core.Fragment.scheduler`)).
 
 <Tip>
 
-This page documents the scheduler-related APIs (signatures, parameters, minimal snippets). For guidance on **which** scheduler to choose, end-to-end tuning recipes, and common pitfalls, see [Choosing a Scheduler](components/schedulers#choosing-a-scheduler), [Scheduler Recipe Multi Branch Low Latency](components/schedulers#scheduler-recipe-multi-branch-low-latency), and [Scheduler Pitfalls](components/schedulers#scheduler-pitfalls).
+This page documents the scheduler-related APIs (signatures, parameters, minimal snippets). For guidance on **which** scheduler to choose, end-to-end tuning recipes, and common pitfalls, see [Choosing a Scheduler](/holoscan/sdk-user-guide/components/schedulers#choosing-a-scheduler), [Scheduler Recipe Multi Branch Low Latency](/holoscan/sdk-user-guide/components/schedulers#scheduler-recipe-multi-branch-low-latency), and [Scheduler Pitfalls](/holoscan/sdk-user-guide/components/schedulers#scheduler-pitfalls).
 
 </Tip>
 
 
-For example, if an application needs to run multiple operators in parallel, the [`MultiThreadScheduler`](components/schedulers.mdx#multithread-scheduler) or [`EventBasedScheduler`](components/schedulers.mdx#event-based-scheduler) can instead be used. The difference between the two is that the MultiThreadScheduler is based on actively polling operators to determine if they are ready to execute, while the EventBasedScheduler will instead wait for an event indicating that an operator is ready to execute. Additionally, the EventBasedScheduler also offers options for running time-critical operators under real-time scheduling policies supported by Linux kernel (see [Real-time scheduling with thread pools](using-the-sdk/create-an-application#configuring-app-thread-pools-realtime)).
+For applications that need to run multiple operators in parallel, use the [`EventBasedScheduler`](/holoscan/sdk-user-guide/components/schedulers#event-based-scheduler) (recommended). The [`MultiThreadScheduler`](/holoscan/sdk-user-guide/components/schedulers#multithread-scheduler) is retained as a legacy polling-based alternative and is not recommended for new code. The `EventBasedScheduler` waits for an event indicating that an operator is ready to execute (lower CPU overhead than polling) and offers options for running time-critical operators under real-time scheduling policies supported by the Linux kernel (see [Real-time scheduling with thread pools](#configuring-app-thread-pools-realtime)).
 
 The code snippet below shows how to set and configure a non-default scheduler:
 
@@ -791,7 +791,7 @@ The code snippet below shows how to set and configure a non-default scheduler:
 
   <Tab title="C++" language="cpp">
 
-  - We create an instance of a [holoscan::Scheduler](generated/api-reference/cpp/holoscan/classes/Scheduler.mdx) derived class by using the `holoscan::Fragment::make_scheduler` function. Like operators, parameters can come from explicit `holoscan::Arg`s or `holoscan::ArgList`, or from a YAML configuration.
+  - We create an instance of a [holoscan::Scheduler](/holoscan/sdk-user-guide/api-reference/holoscan/classes/scheduler) derived class by using the `holoscan::Fragment::make_scheduler` function. Like operators, parameters can come from explicit `holoscan::Arg`s or `holoscan::ArgList`, or from a YAML configuration.
   - The `holoscan::Fragment::scheduler` method assigns the scheduler to be used by the application.
 
   ```cpp
@@ -861,12 +861,12 @@ This is also illustrated in the [multithread](https://github.com/nvidia-holoscan
 
 <Warning title="CPU Core Pinning with EventBasedScheduler Only">
 
-The `pin_cores` parameter for CPU core affinity is only supported with `EventBasedScheduler`. The `MultiThreadScheduler` does not support core pinning for either the default or user-defined thread pools. The ways to set CPU affinity are as follows:
+The `pin_cores` parameter for CPU core affinity is only supported with `EventBasedScheduler`. The legacy `MultiThreadScheduler` does not support core pinning for either the default or user-defined thread pools. The ways to set CPU affinity are as follows:
 
 - For the default thread pool (size determined by `worker_thread_number`): Use the scheduler's `pin_cores` parameter.
 - For user-defined thread pools: Use the `pin_cores` parameter via `ThreadPool`'s `add()` or `add_realtime()` method.
 
-See [Configuring worker thread pools](using-the-sdk/create-an-application#configuring-app-thread-pools) below for details.
+See [Configuring worker thread pools](#configuring-app-thread-pools) below for details.
 
 </Warning>
 
@@ -889,7 +889,7 @@ GXF_EBS_DISPATCHER_SCHED_PRIORITY=99 \
 ./my_app
 ```
 
-For guidance on choosing dispatcher vs. worker priorities (e.g. `dispatcher=99`, `worker=80`) and a worked multi-branch example, see [Scheduler Recipe Multi Branch Low Latency](components/schedulers#scheduler-recipe-multi-branch-low-latency).
+For guidance on choosing dispatcher vs. worker priorities (e.g. `dispatcher=99`, `worker=80`) and a worked multi-branch example, see [Scheduler Recipe Multi Branch Low Latency](/holoscan/sdk-user-guide/components/schedulers#scheduler-recipe-multi-branch-low-latency).
 
 </Note>
 
@@ -898,7 +898,7 @@ For guidance on choosing dispatcher vs. worker priorities (e.g. `dispatcher=99`,
 
 ### Configuring worker thread pools
 
-Both the `MultiThreadScheduler` and `EventBasedScheduler` discussed in the previous section automatically create an internal **default thread pool** with a number of worker threads determined by the `worker_thread_number` parameter. In some scenarios, it may be desirable for users to assign operators to specific **user-defined thread pools**.
+The `EventBasedScheduler` (and the legacy `MultiThreadScheduler`) discussed in the previous section automatically creates an internal **default thread pool** with a number of worker threads determined by the `worker_thread_number` parameter. In some scenarios, it may be desirable for users to assign operators to specific **user-defined thread pools**.
 
 #### Understanding default and user-defined thread pools
 
@@ -955,7 +955,7 @@ Assume I have three operators, `op1`, `op2` and `op3`, that I want to assign to 
 
   <Note>
 
-  CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. If using MultiThreadScheduler, the `pin_cores` parameter will be ignored.
+  CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. The legacy `MultiThreadScheduler` ignores this parameter.
 
   </Note>
 
@@ -994,7 +994,7 @@ Assume I have three operators, `op1`, `op2` and `op3`, that I want to assign to 
 
   <Note>
 
-  CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. If using MultiThreadScheduler, the `pin_cores` parameter will be ignored.
+  CPU core pinning for user-defined thread pools (via `pin_cores` parameter in `add()` or `add_realtime()`) is **only supported when using EventBasedScheduler**. The legacy `MultiThreadScheduler` ignores this parameter.
 
   </Note>
 
@@ -1021,9 +1021,9 @@ A concrete example of a simple application with two pairs of operators in separa
 
 Note that any given operator can only belong to a single thread pool. Assigning the same operator to multiple thread pools may result in errors being logged at application startup time.
 
-There is also a related boolean parameter, `strict_thread_pinning` that can be passed as a `holoscan::Arg` to the `MultiThreadScheduler` constructor. When this argument is set to `false` and an operator is pinned to a specific thread, it is allowed for other operators to also run on that same thread whenever the pinned operator is not ready to execute. When `strict_thread_pinning` is `true`, the thread can ONLY be used by the operator that was pinned to the thread. For the `EventBasedScheduler`, it is always in strict pinning mode and there is no such parameter.
+There is also a related boolean parameter, `strict_thread_pinning` that can be passed as a `holoscan::Arg` to the legacy `MultiThreadScheduler` constructor (MultiThreadScheduler-only; legacy). When this argument is set to `false` and an operator is pinned to a specific thread, it is allowed for other operators to also run on that same thread whenever the pinned operator is not ready to execute. When `strict_thread_pinning` is `true`, the thread can ONLY be used by the operator that was pinned to the thread. The `EventBasedScheduler` always pins strictly and exposes no such parameter.
 
-If a thread pool is configured by the single-thread `GreedyScheduler` is used a warning will be logged indicating that the user-defined thread pools would be ignored. Only `MultiThreadScheduler` and `EventBasedScheduler` can make use of the thread pools.
+If a thread pool is configured by the single-thread `GreedyScheduler` is used a warning will be logged indicating that the user-defined thread pools would be ignored. Only `EventBasedScheduler` (and the legacy `MultiThreadScheduler`) can make use of the thread pools.
 
 <Anchor id="configuring-app-thread-pools-realtime" />
 
@@ -1061,7 +1061,7 @@ Using real-time scheduling policies requires appropriate Linux kernel configurat
 - **SCHED_DEADLINE**: Requires root privileges and `--cap-add=CAP_SYS_NICE` when running in a container
 - **SCHED_FIFO/SCHED_RR**: May require `--ulimit rtprio=99` when running in a container (can replace 99 with the highest value actually used for the `sched_priority` argument to `add_realtime()`)
 
-See [Rt Scheduling Prerequisites](components/schedulers#rt-scheduling-prerequisites) for the full host-and-container setup checklist, including host CPU isolation.
+See [Rt Scheduling Prerequisites](/holoscan/sdk-user-guide/components/schedulers#rt-scheduling-prerequisites) for the full host-and-container setup checklist, including host CPU isolation.
 
 </Note>
 
@@ -1156,7 +1156,7 @@ The simplest form of a workflow would be a single operator.
 The graph above shows an **Operator** (C++ (`holoscan::Operator`)/Python (`holoscan.core.Operator`)) (named `MyOp`) that has neither inputs nor output ports.
 
 - Such an operator may accept input data from the outside (e.g., from a file) and produce output data (e.g., to a file) so that it acts as both the source and the sink operator.
-- Arguments to the operator (e.g., input/output file paths) can be passed as parameters as described in the [section above](using-the-sdk/create-an-application#configuring-an-application).
+- Arguments to the operator (e.g., input/output file paths) can be passed as parameters as described in the [section above](#configuring-an-application).
 
 We can add an operator to the workflow by calling `add_operator` (C++ (`holoscan::Fragment::add_operator`)/Python (`holoscan.core.Fragment.add_operator`)) method in the `compose()` method.
 
@@ -1504,7 +1504,7 @@ It is not supported to define an input interface port with the same name as an o
 
 #### Instantiating and Connecting Subgraphs
 
-Once defined, subgraphs are instantiated from a `Fragment` or `Application` using `make_subgraph` (C++) or the `Subgraph` constructor (Python) and connected like regular operators using `add_flow`. For cases where the concrete subgraph type is determined at runtime (e.g., via a factory), `add_subgraph` can be used instead—see [Factory Pattern with add_subgraph](using-the-sdk/create-an-application#factory-pattern-with-add_subgraph) below.
+Once defined, subgraphs are instantiated from a `Fragment` or `Application` using `make_subgraph` (C++) or the `Subgraph` constructor (Python) and connected like regular operators using `add_flow`. For cases where the concrete subgraph type is determined at runtime (e.g., via a factory), `add_subgraph` can be used instead—see [Factory Pattern with add_subgraph](#factory-pattern-with-add_subgraph) below.
 
 <Tabs>
 
@@ -1571,7 +1571,7 @@ For example, if `PingTxSubgraph` contains a `"transmitter"` operator:
 
 This naming scheme extends to nested subgraphs, creating hierarchical names like `"parent_child_operator"`.
 
-Note that it is the qualified name that will show up in tools such as [NSight Systems traces](performance/nsight-profiling), [data flow tracking](performance/flow-tracking) output, [GXF JobStatistics](performance/gxf-job-statistics) reports, and [DataLogger](using-the-sdk/data-logging) topic names. This ensures that it is possible to uniquely distinguish which instance of an operator any given log message or measurement corresponds to.
+Note that it is the qualified name that will show up in tools such as [NSight Systems traces](/holoscan/sdk-user-guide/performance/nsight-profiling), [data flow tracking](/holoscan/sdk-user-guide/performance/flow-tracking) output, [GXF JobStatistics](/holoscan/sdk-user-guide/performance/gxf-job-statistics) reports, and [DataLogger](/holoscan/sdk-user-guide/using-the-sdk/data-logging) topic names. This ensures that it is possible to uniquely distinguish which instance of an operator any given log message or measurement corresponds to.
 
 <Warning>
 
@@ -2091,7 +2091,7 @@ Subgraphs expose `add_data_logger` and `register_service` methods as shortcuts t
 </Tabs>
 
 
-See the [Data Logging](using-the-sdk/data-logging) section for details on configuring data loggers. For service registration, see Fragment::register_service (`holoscan::Fragment::register_service`) (C++) or Fragment.register_service (`holoscan.core.Fragment.register_service`) (Python).
+See the [Data Logging](/holoscan/sdk-user-guide/using-the-sdk/data-logging) section for details on configuring data loggers. For service registration, see Fragment::register_service (`holoscan::Fragment::register_service`) (C++) or Fragment.register_service (`holoscan.core.Fragment.register_service`) (Python).
 
 ### Dynamic Flow Control for Complex Workflows
 
@@ -2104,7 +2104,7 @@ Key features include:
 - Dynamic flow modification using `set_dynamic_flows()` (C++ (`holoscan::Fragment::set_dynamic_flows`)/Python (`holoscan.core.Application.set_dynamic_flows`)) and `add_dynamic_flow()` (C++ (`holoscan::Operator::add_dynamic_flow`)/Python (`holoscan.core.Operator.add_dynamic_flow`)) methods
 - Flow information management via the `FlowInfo` (C++ (`holoscan::Operator::FlowInfo`)/Python (`holoscan.core.FlowInfo`)) class
 
-For details, please refer to the [Dynamic Flow Control](using-the-sdk/dynamic-flow-control#holoscan-dynamic-flow-control) section of the user guide.
+For details, please refer to the [Dynamic Flow Control](/holoscan/sdk-user-guide/using-the-sdk/dynamic-flow-control#holoscan-dynamic-flow-control) section of the user guide.
 
 ### Application Execution Control APIs
 
@@ -2362,7 +2362,7 @@ With this approach, the service can be instantiated and registered in Python, an
   You can build your C++ application using CMake, by calling `find_package(holoscan)` in your `CMakeLists.txt` to load the SDK libraries. Your executable will need to link against:
   - `holoscan::core`
   - any operator defined outside your `main.cpp` which you wish to use in your app workflow, such as:
-  - SDK [built-in operators](holoscan_operators_extensions.mdx#operators) under the `holoscan::ops` namespace.
+  - SDK [built-in operators](/holoscan/sdk-user-guide/operators/operators-and-extensions#operators) under the `holoscan::ops` namespace.
   - operators created separately in your project with `add_library`.
   - operators imported externally using with `find_library` or `find_package`.
 
@@ -2416,7 +2416,7 @@ With this approach, the service can be instantiated and registered in Python, an
 
   <Note>
 
-  While Python applications do not need to be built, they might depend on operators that wrap C++ operators. All Python operators built-in in the SDK already ship with the Python bindings pre-built. Follow [this section](using-the-sdk/create-an-operator#python-wrapped-operators) if you are wrapping C++ operators yourself to use in your Python application.
+  While Python applications do not need to be built, they might depend on operators that wrap C++ operators. All Python operators built-in in the SDK already ship with the Python bindings pre-built. Follow [this section](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#python-wrapped-operators) if you are wrapping C++ operators yourself to use in your Python application.
 
   </Note>
 
@@ -2753,8 +2753,8 @@ The policy applied as in the example above only applies to the operator on which
 
 Sending metadata between two fragments of a distributed application is supported, but there are a couple of aspects to be aware of.
 
-1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on [object serialization](using-the-sdk/create-a-distributed-application#object-serialization)). The only exception is that `holoscan::Tensor` and `holoscan::TensorMap` values cannot be sent as metadata values between fragments (this restriction also applies to tensor-like Python objects). Any [custom codecs](using-the-sdk/create-a-distributed-application#object-serialization) registered for the SDK will automatically also be available for serialization of metadata values.
-2. The UCX serialization buffer defaults to 127 KiB for the entire serialized entity (including metadata and other non-tensor data content). Tensor data buffers are sent separately and do not count against this limit. **If the serialized entity exceeds this buffer size, serialization will fail** and an error will be logged. To accommodate larger metadata, increase the buffer size via the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` [environment variable](using-the-sdk/create-a-distributed-application#holoscan-distributed-env). When using TCP transport, setting `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` will automatically configure `UCX_TCP_TX_SEG_SIZE` and `UCX_TCP_RX_SEG_SIZE` accordingly (unless those variables were explicitly set by the user).
+1. Sending metadata over the network requires serialization and deserialization of the metadata keys and values. The value types supported for this are the same as for data emitted over output ports (see the table in the section on [object serialization](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application#object-serialization)). The only exception is that `holoscan::Tensor` and `holoscan::TensorMap` values cannot be sent as metadata values between fragments (this restriction also applies to tensor-like Python objects). Any [custom codecs](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application#object-serialization) registered for the SDK will automatically also be available for serialization of metadata values.
+2. The UCX serialization buffer defaults to 127 KiB for the entire serialized entity (including metadata and other non-tensor data content). Tensor data buffers are sent separately and do not count against this limit. **If the serialized entity exceeds this buffer size, serialization will fail** and an error will be logged. To accommodate larger metadata, increase the buffer size via the `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` [environment variable](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application#holoscan-distributed-env). When using TCP transport, setting `HOLOSCAN_UCX_SERIALIZATION_BUFFER_SIZE` will automatically configure `UCX_TCP_TX_SEG_SIZE` and `UCX_TCP_RX_SEG_SIZE` accordingly (unless those variables were explicitly set by the user).
 
 The above restrictions only apply to metadata sent **between** fragments. Within a fragment there is no size limit on metadata (aside from system memory limits) and no serialization or deserialization step is needed.
 
@@ -2784,4 +2784,4 @@ If metadata is not appearing as expected in downstream operators, check the foll
 
 ## CUDA Stream Handling APIs
 
-Please see the dedicated [Holoscan CUDA stream handling](using-the-sdk/cuda-stream-handling#holoscan-cuda-stream-handling) page for details on how Holoscan applications using non-default CUDA streams can be written.
+Please see the dedicated [Holoscan CUDA stream handling](/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling#holoscan-cuda-stream-handling) page for details on how Holoscan applications using non-default CUDA streams can be written.

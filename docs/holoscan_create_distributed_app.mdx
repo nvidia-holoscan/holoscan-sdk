@@ -4,8 +4,8 @@ Distributed applications refer to those where the workflow is divided into multi
 
 In this section we'll describe:
 
-- How to [define a distributed application](using-the-sdk/create-a-distributed-application#defining-a-distributed-application-class).
-- How to [build and run a distributed application](using-the-sdk/create-a-distributed-application#building-and-running-a-distributed-application).
+- How to [define a distributed application](#defining-a-distributed-application-class).
+- How to [build and run a distributed application](#building-and-running-a-distributed-application).
 
 <Anchor id="defining-a-distributed-application-class" />
 
@@ -13,7 +13,7 @@ In this section we'll describe:
 
 <Tip>
 
-Defining distributed applications is also illustrated in the [video_replayer_distributed](examples/video_replayer_distributed.mdx) and [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) examples. The `ping_distributed` examples also illustrate how to update C++ or Python applications to parse user-defined arguments in a way that works without disrupting support for distributed application command line arguments (e.g., `--driver`, `--worker`).
+Defining distributed applications is also illustrated in the [video_replayer_distributed](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer-distributed) and [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) examples. The `ping_distributed` examples also illustrate how to update C++ or Python applications to parse user-defined arguments in a way that works without disrupting support for distributed application command line arguments (e.g., `--driver`, `--worker`).
 
 </Tip>
 
@@ -122,7 +122,7 @@ The application will then be defined by initializing fragments within the applic
 
 ### Serialization of Custom Data Types for Distributed Applications
 
-Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.org/) library. In order to transmit data, it must be serialized into a binary form suitable for transmission over a network. For Tensors (C++ (`holoscan::Tensor`)/Python (`holoscan.core.Tensor`)), strings and various scalar and vector numeric types, serialization is already built in. For more details on concrete examples of how to extend the data serialization support to additional user-defined classes, see the separate page on [serialization](using-the-sdk/create-a-distributed-application#object-serialization).
+Transmission of data between fragments of a multi-fragment application is done via the [Unified Communications X (UCX)](https://openucx.org/) library. In order to transmit data, it must be serialized into a binary form suitable for transmission over a network. For Tensors (C++ (`holoscan::Tensor`)/Python (`holoscan.core.Tensor`)), strings and various scalar and vector numeric types, serialization is already built in. For more details on concrete examples of how to extend the data serialization support to additional user-defined classes, see the separate page on [serialization](#object-serialization).
 
 <Anchor id="building-and-running-a-distributed-application" />
 
@@ -132,12 +132,12 @@ Transmission of data between fragments of a multi-fragment application is done v
 
   <Tab title="C++" language="cpp">
 
-  Building a distributed application works in the same way as for a non-distributed one. See [Building and Running Your Application](using-the-sdk/create-an-application#building-and-running-your-application)
+  Building a distributed application works in the same way as for a non-distributed one. See [Building and Running Your Application](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#building-and-running-your-application)
 
 </Tab>
 <Tab title="Python" language="python">
 
-  Python applications do not require building. See [Building and Running Your Application](using-the-sdk/create-an-application#building-and-running-your-application).
+  Python applications do not require building. See [Building and Running Your Application](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#building-and-running-your-application).
 
 </Tab>
 </Tabs>
@@ -152,7 +152,7 @@ The address of the driver node must be specified for each process (both the driv
 - The port is always optional (default: `57777`). It can be set without the IP (e.g., `--address :10000`).
 
 The worker node's address can be defined using the `--worker-address` command-line option (`[<IPv4/IPv6 address or hostname>][:<port>]`). If it's not specified, the application worker will default to the host address (`0.0.0.0`) with a randomly chosen port number between `10000` and `32767` that is not currently in use.
-This argument automatically sets the `HOLOSCAN_UCX_SOURCE_ADDRESS` environment variable if the worker address is a local IP address. Refer to [this section](using-the-sdk/create-a-distributed-application#creating-holoscan-distributed-application-env-vars) for details.
+This argument automatically sets the `HOLOSCAN_UCX_SOURCE_ADDRESS` environment variable if the worker address is a local IP address. Refer to [this section](#creating-holoscan-distributed-application-env-vars) for details.
 
 The `--fragments` command-line option is used in combination with `--worker` to specify a comma-separated list of fragment names to be run by a worker. If not specified, the application driver will assign a single fragment to the worker. To indicate that a worker should run all fragments, you can specify `--fragments all`.
 
@@ -242,7 +242,7 @@ Holoscan's distributed application feature makes use of the GXF UCX Extension. I
 </Note>
 
 
-(#creating-holoscan-distributed-application-env-vars)=
+<Anchor id="creating-holoscan-distributed-application-env-vars" />
 
 ### Environment Variables for Distributed Applications
 
@@ -289,6 +289,7 @@ Transmission of data between fragments of a multi-fragment application is done v
 - The [`UCX_LOG_LEVEL`](https://openucx.readthedocs.io/en/master/faq.html#how-can-i-tell-which-protocols-and-transports-are-being-used-for-communication) environment variable can be used to control the logging level of UCX. The default is setting is WARN, but changing to a lower level such as INFO will provide more verbose output on which transports and devices are being used.
 - By default, Holoscan SDK will automatically set `UCX_PROTO_ENABLE=y` upon application launch to enable the newer "v2" UCX protocols. If for some reason, the older v1 protocols are needed, one can set `UCX_PROTO_ENABLE=n` in the environment to override this setting. When the v2 protocols are enabled, one can optionally set `UCX_PROTO_INFO=y` to enable detailed logging of what protocols are being used at runtime.
 - By default, Holoscan SDK will automatically set `UCX_MEMTYPE_CACHE=no` before application launch to disable the UCX memory type cache (See [UCX documentation](https://openucx.readthedocs.io/en/master/faq.html#i-m-running-ucx-with-gpu-memory-and-geting-a-segfault-why) for more information. It can cause about [0.2 microseconds of pointer type checking overhead with the cudacudaPointerGetAttributes() CUDA API](https://github.com/openucx/ucx/wiki/NVIDIA-GPU-Support#known-issues)). The known issue was resolved in UCX >= 1.12.1, but because Holoscan does not control how users allocate memory in custom operators or resources, it was deemed safest to keep this optimization disabled by default to prevent any potential bugs due to stale cache information across dynamic memory address reuse. To override the default and attempt to use the caching mechanism, the user can export `UCX_MEMTYPE_CACHE=try` in their environment.
+- Holoscan SDK sets `UCX_KEEPALIVE_INTERVAL=20s` by default at application startup. This restores UCX's documented default and guards against a stochastic initialization failure (`UCX ERROR UCX_KEEPALIVE_INTERVAL value must be greater than 0`) observed with UCX 1.20 when child processes inherit partially-initialized config state across `fork()`. If a different keepalive interval is required, export `UCX_KEEPALIVE_INTERVAL` to a positive, non-zero duration (e.g., `20s`) before launching; UCX requires a positive, non-zero value.
 - By default, the Holoscan SDK will automatically set `UCX_CM_USE_ALL_DEVICES=n` at application startup to disable consideration of all devices for data transfer. If for some reason the opposite behavior is desired, one can set `UCX_CM_USE_ALL_DEVICES=y` in the environment to override this setting. Setting `UCX_CM_USE_ALL_DEVICES=n` can be used to workaround an issue where UCX sometimes defaults to a device that might not be the most suitable for data transfer based on the host's available devices. On a host with address 10.111.66.60, UCX, for instance, might opt for the `br-80572179a31d` (192.168.49.1) device due to its superior bandwidth as compared to `eno2` (10.111.66.60). With `UCX_CM_USE_ALL_DEVICES=n`, UCX will ensure consistency by using the same device for data transfer that was initially used to establish the connection. This ensures more predictable behavior and can avoid potential issues stemming from device mismatches during the data transfer process.
 - Setting `UCX_TCP_PORT_RANGE=<start>-<end>` can be used to define a specific range of ports that UCX should utilize for data transfer. This is particularly useful in environments where ports need to be predetermined, such as in a Kubernetes setup. In such contexts, Pods often have ports that need to be exposed, and these ports must be specified ahead of time. Moreover, in scenarios where firewall configurations are stringent and only allow specified ports, having a predetermined range ensures that the UCX communication does not get blocked. This complements the `HOLOSCAN_UCX_SOURCE_ADDRESS`, which specifies the local IP address for the UCX connection, by giving further control over which ports on that specified address should be used. By setting a port range, users can ensure that UCX operates within the boundaries of the network and security policies of their infrastructure.
 
@@ -476,7 +477,7 @@ op_output.emit(42, "output", emitter_name="int32_t")
 op_output.emit([1.0, 2.0, 3.0], "output", emitter_name="std::vector<float>")
 ```
 
-For the complete list of supported C++ types and their corresponding `emitter_name` strings, see the [C++ and Python type interoperability table](using-the-sdk/create-an-operator#cpp-python-data-type-interop).
+For the complete list of supported C++ types and their corresponding `emitter_name` strings, see the [C++ and Python type interoperability table](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#cpp-python-data-type-interop).
 
 ### C++
 
@@ -578,7 +579,7 @@ CLI arguments (such as `--driver`, `--worker` ,`--fragments`)  are parsed by the
 
   <Tab title="C++" language="cpp">
 
-  A concrete example of using `app->argv()` in the [ping_distributed.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed/cpp/ping_distributed.cpp#:~:text=int%20main) example is covered in the section on [user-defined command line arguments](using-the-sdk/create-a-distributed-application#adding-user-defined-cli-arguments).
+  A concrete example of using `app->argv()` in the [ping_distributed.cpp](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed/cpp/ping_distributed.cpp#:~:text=int%20main) example is covered in the section on [user-defined command line arguments](#adding-user-defined-cli-arguments).
 
   If you want to get access to the arguments before creating the C++ (`holoscan::Application`) instance, you can access them through `holoscan::Application().argv()`.
 
@@ -624,7 +625,7 @@ CLI arguments (such as `--driver`, `--worker` ,`--fragments`)  are parsed by the
 </Tab>
 <Tab title="Python" language="python">
 
-  A concrete example of usage of `app.argv` in the [ping_distributed.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed/python/ping_distributed.py#:~:text=__main__) example is covered in the section on [user-defined command line arguments](using-the-sdk/create-a-distributed-application#adding-user-defined-cli-arguments).
+  A concrete example of usage of `app.argv` in the [ping_distributed.py](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed/python/ping_distributed.py#:~:text=__main__) example is covered in the section on [user-defined command line arguments](#adding-user-defined-cli-arguments).
 
   If you want to get access to the arguments before creating the Python (`holoscan.core.Application`) instance, you can access them through `Application().argv`.
 
@@ -689,7 +690,7 @@ CLI arguments (such as `--driver`, `--worker` ,`--fragments`)  are parsed by the
 
 ### Adding user-defined command line arguments
 
-When adding user-defined command line arguments to an application, one should avoid the use of any of the default command line argument names as `--help`, `--version`, `--config`, `--driver`, `--worker`, `--address`, `--worker-address`, `--fragments` as covered in the section on [running a distributed application](using-the-sdk/create-a-distributed-application#building-and-running-a-distributed-application). It is recommended to parse user-defined arguments from the `argv` ((C++ (`holoscan::Application::argv`)/Python (`holoscan.core.Application.argv`))) method/property of the application as covered in the note above, instead of using C++ `char* argv[]` or Python `sys.argv` directly. This way, only the new, user-defined arguments will need to be parsed.
+When adding user-defined command line arguments to an application, one should avoid the use of any of the default command line argument names as `--help`, `--version`, `--config`, `--driver`, `--worker`, `--address`, `--worker-address`, `--fragments` as covered in the section on [running a distributed application](#building-and-running-a-distributed-application). It is recommended to parse user-defined arguments from the `argv` ((C++ (`holoscan::Application::argv`)/Python (`holoscan.core.Application.argv`))) method/property of the application as covered in the note above, instead of using C++ `char* argv[]` or Python `sys.argv` directly. This way, only the new, user-defined arguments will need to be parsed.
 
 A concrete example of this for both C++ and Python can be seen in the existing [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) example where an application-defined boolean argument (`--gpu`) is specified in addition to the default set of application arguments.
 
