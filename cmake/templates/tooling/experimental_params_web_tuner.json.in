@@ -1,0 +1,1 @@
+{"schema":"holoscan.tooling-component/v1","component":"holoscan-experimental-params-web-tuner","target":"holoscan::experimental_params_web_tuner","version":"@PROJECT_VERSION@","direct_holoscan_dependencies":["holoscan::params"],"features":{"protocol_version":1,"transport":["http","websocket"],"loopback_only":true},"experimental":true}

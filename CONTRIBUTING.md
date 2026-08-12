@@ -63,6 +63,20 @@ to communicate our release planning. We will add community issues and pull reque
 milestone when we expect to pursue that development. Issues that we mark as "needs triage" are not part of a milestone
 and will be revisited once each month to determine our priorities.
 
+## Header Guards and ABI Exports
+
+Contributors changing Holoscan Core or SDK-owned C++ libraries should follow the
+ABI/export policy in [`docs/abi_and_exports.md`](./docs/abi_and_exports.md).
+Headers use `#pragma once`, public DSO ABI uses generated export headers, and
+`detail/` paths are internal.
+
+HoloMQ is a core-linked component of the Holoscan SDK for 5.x EA1: build from the
+SDK root with `./run build` and link `holomq::holomq` / `libholomq.so` when using
+HoloMQ APIs directly. HoloMQ-specific ABI, export, and interim standalone workflow
+docs live in
+[`modules/holomq/docs/abi_and_exports.md`](./modules/holomq/docs/abi_and_exports.md)
+and [`modules/holomq/CONTRIBUTING.md`](./modules/holomq/CONTRIBUTING.md).
+
 ## Additional Information
 
 Please refer to the project [README](/README.md) document for additional developer information. Happy coding!

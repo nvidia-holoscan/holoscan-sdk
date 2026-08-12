@@ -1,0 +1,171 @@
+Every typed port in a Holoscan graph — `Output<T>` on the producer, `Input<T>` on the
+consumer — carries exactly one payload type `T`, and only a closed set of type families is
+admitted. This page is the single canonical reference for what `T` may be. The rules are
+checked at compile time wherever possible: a port declared with an inadmissible type fails
+to compile at the declaration site, not at runtime in the field.
+
+The same rules apply whether the connection stays inside one process or crosses a process
+boundary over an interprocess topic. If a type is admitted here, the runtime picks the
+right carriage for it automatically when you `compile()` the graph — you never write
+serialization or "channel" code on the pipeline path.
+
+**Complete C++ examples:** `public/examples/flatbuffer_schemas/custom_schema/cpp`,
+`public/examples/schema_payloads/cpp`, and `public/examples/tensors_101/cpp`
+
+<Note title="You will learn">
+  - The primary payload families: fixed-width scalars, generated schema types, and `Tensor`
+  - Why `std::int32_t` is allowed but `int` and `long` are not
+  - Where the experimental raw-POD escape hatch fits
+  - How payload identity is pinned between producer and consumer, and what happens on a
+    mismatch
+</Note>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+## The payload families at a glance
+
+| Family | Example `T` | Declaration required | Details |
+|---|---|---|---|
+| Fixed-width scalar | `std::int32_t`, `float`, `bool` | None | This page, below |
+| Generated schema type | your generated `CustomControlT`, or SDK `schema::TimeT` | `.fbs` generation for application-owned types; none for SDK types | [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas) |
+| Tensor | `holoscan::Tensor` | None | [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) |
+| Experimental raw POD | your `ControlPod` | Manual identity and exact layout traits | [Experimental Raw POD Payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads) |
+
+Everything outside these families is rejected at the port declaration: references,
+cv-qualified types, pointers, arbitrary classes, `std::string` and string views, backend
+handles, and raw memory buffers do not satisfy the port's payload concept.
+
+## Fixed-width scalars
+
+The scalar catalog is closed and exact:
+
+| Category | Admitted types |
+|---|---|
+| Boolean | `bool` |
+| Signed integers | `std::int8_t`, `std::int16_t`, `std::int32_t`, `std::int64_t` |
+| Unsigned integers | `std::uint8_t`, `std::uint16_t`, `std::uint32_t`, `std::uint64_t` |
+| Floating point | `float` (IEEE 754 binary32), `double` (IEEE 754 binary64) |
+
+<Warning>
+  **Never declare a port with `int`, `long`, `size_t`, or any other platform-dependent
+  alias.** Their width varies by platform and ABI, so the samples they describe are not
+  portable — the payload catalog admits only the fixed-width spellings. Write
+  `holoscan::Output<std::int32_t>`, not `holoscan::Output<int>`, even on platforms where
+  the two happen to be the same type. The same rule applies to local `enum` types: give
+  the port the fixed-width underlying type and convert at the edge of `compute()`.
+</Warning>
+
+Scalars need no declaration of any kind — declare the port and emit:
+
+```cpp
+holoscan::Output<std::int32_t> output;   // fixed-width: portable
+holoscan::Input<std::int32_t> input;
+```
+
+## Generated schema types
+
+FlatBuffers-backed owning types are the recommended path for structured messages.
+Application-owned `.fbs` files generate the port traits and codecs at build time; the SDK
+also ships several ready-to-use types with no generation step:
+
+| Type | Carries |
+|---|---|
+| `holoscan::schema::TimeT` | A timestamp pair (`time_ns`, `acqtime_ns`) |
+| `holoscan::schema::StringT` | A variable-length string (`data`) |
+| `holoscan::schema::ImuT` | An IMU sample with a stamped header |
+
+```cpp
+holoscan::Output<holoscan::schema::TimeT> out;
+// ...
+return out.emit(holoscan::schema::TimeT{.time_ns = t, .acqtime_ns = a});
+```
+
+A received schema value arrives as an owning native value with its fields populated; the
+runtime verifies the encoded payload before your `compute()` ever sees it. Schema payloads
+have a bounded serialized size — an oversized value (for example, a very long
+`schema::StringT`) fails with `kResourceExhausted` rather than allocating without bound.
+See [Schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads) for
+the built-in types and capacity sizing, or
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+to define your own message.
+
+## Experimental raw POD escape hatch
+
+Raw POD remains available for expert applications that explicitly need no schema compiler,
+no generated code, and a small fixed-layout scalar aggregate. It is not the default
+application-defined message path. The type must be padding-free, standard-layout,
+trivially copyable, copy constructible, and manually described by exact identity and field
+traits. It cannot contain pointers, strings, nested objects, Tensors, or other ownership.
+For a small process-local control message, its inline typed carriage avoids schema serialization;
+measure the complete graph before choosing raw POD for latency alone, because cross-process raw
+POD still uses canonical field-wise encoding.
+
+The SDK provides focused compile-time diagnostics for invalid declarations, but binary
+compatibility, semantic versioning, and coordinated producer/consumer rollout remain the
+application's responsibility. See
+[Experimental Raw POD Payloads](/holoscan/sdk-user-guide/advanced/experimental-pod-payloads)
+for the constraints and example.
+
+## Tensor
+
+`holoscan::Tensor` is the payload for bulk, device-backed data: images, point clouds,
+feature maps. A `Tensor` port needs no declaration, but tensors follow a distinct
+lifecycle — `allocate_tensor()` borrows a slot from a preallocated pool, and a received
+`Tensor` is already ordered on your compute stream. Start with
+[Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) and see
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth) for the
+pool and stream-ordering rules.
+
+## Identity is pinned exactly
+
+<Warning>
+  **Developer preview: no type negotiation or version evolution yet.** Payload identity is
+  matched exactly between producer and consumer — there is no negotiation protocol, no
+  field-evolution policy, and no cross-version compatibility layer in this release. A
+  schema registry and versioned evolution are planned for a later release, and the
+  identity-matching API may evolve in upcoming releases.
+</Warning>
+
+Every payload type has an identity, and the producer's identity must equal the consumer's
+identity exactly:
+
+| Family | Identity that must match |
+|---|---|
+| Fixed-width scalar | The exact scalar type |
+| Experimental raw POD | Manually authored canonical name + version, plus the field layout |
+| Schema type | Canonical name + version + schema hash + stable 128-bit schema id (generated from the schema package) |
+| Tensor | The `Tensor` type itself; element type and geometry are carried per sample |
+
+Inside one process this is largely enforced by the C++ type system: `add_flow()` connects
+an `Output<T>` to an `Input<T>` of the same `T`. The identity rules matter most at process
+boundaries, where the type system cannot reach: an interprocess frame whose identity does
+not match the receiving port is rejected with a typed `kIncompatible` error and never
+reaches `compute()`. Experimental raw-POD users must bump the manually authored version
+whenever layout or semantics change and roll out producer and consumer together.
+
+Malformed external frames are handled the same way: verification happens before delivery,
+so your operator only ever receives payloads that match its declared type exactly. See
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels) for the
+transport side and
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+for feeding a graph from an external process.
+
+## Recap
+
+- Use a generated schema type for ordinary application-defined messages; SDK schema types
+  (`schema::TimeT`/`StringT`/`ImuT`) need no generation step.
+- Always spell scalars fixed-width: `std::int32_t`, never `int` or `long`.
+- Raw POD is an experimental expert escape hatch with manual identity, layout,
+  compatibility, and rollout responsibilities.
+- Identity is pinned exactly between producer and consumer; mismatches fail with
+  `kIncompatible`. There is no negotiation or version evolution in this release.
+
+Next: [Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+walks through defining and generating an application-owned message.

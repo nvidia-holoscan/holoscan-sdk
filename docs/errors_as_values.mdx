@@ -1,0 +1,262 @@
+In Holoscan SDK 5.0, a function that can fail says so in its return type. Fallible
+APIs return `holoscan::expected<T, Error>` — a value that holds *either* a `T` on
+success *or* a `holoscan::Error` on failure — and you handle the error explicitly
+at the call site. Exceptions are reserved for a small number of genuine boundaries.
+
+This page teaches the vocabulary the rest of the guide builds on: almost every API
+you meet later — receiving and emitting data, compiling a graph, reading clocks,
+lifecycle callbacks — speaks `expected`.
+
+**Complete C++ example:** [`examples/errors_as_values/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/errors_as_values/cpp)
+
+<Note title="You will learn">
+  - Why the SDK returns errors as values instead of throwing exceptions
+  - How to produce results with `make_unexpected` and consume them safely
+  - How `Error` pairs an `ErrorCode` with an optional message — and why you
+    branch on the code, never the message
+  - How the `HOLOSCAN_TRY` family collapses propagation boilerplate
+  - When (and how) to bridge to `holoscan::RuntimeError` at exception boundaries
+  - How `holoscan::expected` relates to C++23's `std::expected`
+</Note>
+
+## Why errors as values
+
+Four properties motivate the choice:
+
+- **Failure is visible in the signature.** A declaration like
+  `expected<Frame, Error> receive()` announces at every call site that the call
+  can fail — and you must open the result to get the value, so you cannot forget.
+  With exceptions, fallibility is invisible and a failure can travel silently
+  through many stack frames.
+- **Deterministic, bounded cost.** Returning an error is an ordinary value
+  return. Throwing triggers stack unwinding whose cost is large and hard to
+  bound — unacceptable on latency-sensitive paths. Value-channel errors keep
+  hot paths predictable.
+- **Works with exceptions disabled.** Some deployment profiles build with C++
+  exceptions off. `expected` is pure value handling; code written against it
+  does not change.
+- **The common failure allocates nothing.** A code-only `Error` (say, returning
+  `kNotReady` from a polling path) carries no message and performs no
+  allocation. A thrown exception heap-copies its message and carries RTTI.
+
+The guiding principle: **ordinary, expected failures are values; exceptions are
+for the exceptional.** A queue momentarily full, an input not yet ready, a
+bounded pool exhausted, an invalid argument — these are normal outcomes your
+code reasons about, so they are `Error` values.
+
+## Producing and consuming results
+
+Include `<holoscan/core/expected.hpp>` for the `expected` machinery and
+`<holoscan/core/errors.hpp>` for `Error`, `ErrorCode`, and `RuntimeError`.
+Return a value on success and `make_unexpected(...)` on failure:
+
+```cpp
+holoscan::expected<std::uint32_t, holoscan::Error> parse_port(std::string_view text) {
+  if (text.empty()) {
+    return holoscan::make_unexpected(
+        holoscan::Error{holoscan::ErrorCode::kInvalidArgument, "empty port string"});
+  }
+  return to_u32(text);  // an ordinary T converts to a success result implicitly
+}
+```
+
+Consume a result by checking before touching the value. `operator bool` (or
+`has_value()`) is true on success; `*result` (or `result.value()`) is the value;
+`result.error()` is the `Error`:
+
+```cpp
+auto result = parse_port(text);
+if (!result) {
+  log(holoscan::runtime_error_message(result.error()));
+  return;
+}
+const std::uint32_t port = *result;
+```
+
+A function that succeeds without producing a value returns
+`expected<void, Error>` — write `return {};` for success:
+
+```cpp
+holoscan::expected<void, holoscan::Error> validate(const Config& config) {
+  if (!config.ok()) {
+    return holoscan::make_unexpected(
+        holoscan::Error{holoscan::ErrorCode::kInvalidArgument});
+  }
+  return {};  // success, no value
+}
+```
+
+Because `expected` exposes the standard interface, the monadic helpers
+(`and_then`, `map`, `or_else`, `value_or`) are available when they read more
+clearly than an `if`:
+
+```cpp
+const std::uint32_t port = parse_port(text).value_or(kDefaultPort);
+```
+
+<Warning>
+  **Never dereference an error result.** Like `std::optional`, reading
+  `*result` or `result.value()` when the result holds an error is a bug
+  (`.value()` throws `bad_expected_access`). Always check `if (!result)` first —
+  or use one of the propagation macros below.
+</Warning>
+
+### Discarded results are compiler warnings
+
+The SDK's fallible accessors and `make_unexpected` are marked `[[nodiscard]]`,
+so dropping a result without inspecting it produces a compiler warning — there
+is no accidental "swallowed error." Follow the same discipline in your own
+code: mark fallible functions `[[nodiscard]]`, as every operator `compute()`
+override in the shipped examples does.
+
+## `Error` and `ErrorCode`
+
+A `holoscan::Error` is a lightweight struct: an `ErrorCode` plus an optional
+`message` string. It allocates only when the message is non-empty:
+
+```cpp
+holoscan::Error{holoscan::ErrorCode::kResourceExhausted};             // code only, allocation-free
+holoscan::Error{holoscan::ErrorCode::kInvalidArgument, "bad shape"};  // with human context
+```
+
+`ErrorCode` is a stable, append-only enum of failure categories: `kSuccess`,
+`kFailure` (the generic fallback), `kInvalidArgument`, `kNotFound`,
+`kNotReady`, `kBackpressured`, `kResourceExhausted`, `kTimeout`, `kClosed`,
+and more. `kResourceExhausted` is the signature failure of the SDK's
+bounded-by-construction design — a preallocated pool or bounded queue with no
+capacity left.
+
+**Choose the code callers will branch on; the message is human context, not
+identity.** Code-only errors are allocation-free and ideal on hot paths. For
+logs, `holoscan::runtime_error_message(error)` renders
+`"<code name>: <message>"` (just the code name when the message is empty), and
+`holoscan::error_code_name(code)` gives the enumerator spelling.
+
+<Warning>
+  **Branch on codes, never on message text.** Messages exist for humans and may
+  change between releases; codes are the stable contract. Comparing or parsing
+  `error.message` is a bug waiting to happen.
+</Warning>
+
+```cpp
+if (auto r = out.emit(x); !r && r.error().code == holoscan::ErrorCode::kBackpressured) {
+  // retry later; the channel is momentarily full
+}
+```
+
+In `ea1_camera_imu_control`, the bounded Channel client treats a successful
+publication result as delivered. It retries only pre-submit `kNotReady` or
+`kBackpressured`; partial and indeterminate publication outcomes are terminal,
+while other errors propagate for code-specific handling. The graph-side control
+output follows a separate policy: it drops `kNotReady` for that activation and
+propagates every other error.
+
+## Propagating errors concisely
+
+Re-returning a failure whose value type differs from your own will not compile
+as a bare `return other.error();`. Use `holoscan::forward_error`:
+
+```cpp
+holoscan::expected<Frame, holoscan::Error> load() {
+  auto raw = read_bytes();                        // expected<std::vector<std::byte>, Error>
+  if (!raw) return holoscan::forward_error(raw);  // propagate the error into our T = Frame
+  return decode(*raw);
+}
+```
+
+Checking every result by hand gets verbose, so the SDK ships propagation
+macros (from `<holoscan/core/expected_macros.hpp>`, included automatically by
+`<holoscan/core/expected.hpp>`). Inside a function that itself returns a
+compatible `expected`, they collapse check-and-return to one line:
+
+- `HOLOSCAN_RETURN_IF_ERROR(expression)` — for `expected<void, E>`
+  expressions: on failure, return the error; on success, continue.
+- `HOLOSCAN_ASSIGN_OR_RETURN(lhs, expression)` — for non-void
+  `expected<T, E>`: on success, assign the value to `lhs` (an existing
+  variable or a new declaration); on failure, return the error.
+- `HOLOSCAN_TRY(...)` — the recommended spelling; with one argument it is
+  `HOLOSCAN_RETURN_IF_ERROR`, with two it is `HOLOSCAN_ASSIGN_OR_RETURN`.
+
+```cpp
+holoscan::expected<Frame, holoscan::Error> load() {
+  HOLOSCAN_TRY(auto raw, read_bytes());  // assign the value, or return its error
+  return decode(raw);
+}
+```
+
+Each macro evaluates its expression exactly once, and a declaration made in the
+first argument stays visible in the surrounding scope.
+
+<Tip>
+  If the assignment target contains a comma — a `std::pair<int, int>`
+  declaration or a structured binding — parenthesize it:
+  `HOLOSCAN_TRY((auto [left, right]), split(input));`
+</Tip>
+
+## Bridging to exceptions — only at genuine boundaries
+
+Some places genuinely need to throw: a constructor that cannot signal failure
+through a return value, or an API boundary whose callers expect exceptions.
+For those, `holoscan::RuntimeError` is the SDK's exception type, and it bridges
+from an `Error` as a one-liner while preserving the code:
+
+```cpp
+auto r = do_work();
+if (!r) throw holoscan::RuntimeError(r.error());
+```
+
+`RuntimeError::code()` recovers the `ErrorCode` on the catching side, and
+`holoscan::make_error(runtime_error)` converts back to an `Error` — the two
+round-trip without duplicating the rendered message prefix. Use `make_error`
+when you catch an exception at a boundary and want to return to the value
+channel.
+
+You will also see authoring APIs throw `RuntimeError` by design — graph
+composition rejects mistakes by throwing, because authoring runs at development
+time where a loud, immediate failure is the right ergonomics. That is a
+deliberate boundary choice, not a contradiction: in the compose → compile → run
+model, authoring throws, `compile()` returns rejected plans as values, and the
+running graph fails closed. [Core Concepts](/holoscan/sdk-user-guide/getting-started/core-concepts)
+covers that three-phase split.
+
+## Relationship to `std::expected`
+
+C++ standardized this vocabulary type as `std::expected` in C++23, but
+Holoscan 5.0 compiles as C++20, which does not have it. The SDK therefore
+exposes `holoscan::expected` as an alias over a mature implementation of the
+same standard interface:
+
+```cpp
+namespace holoscan {
+  template <class T, class E> using expected = tl::expected<T, E>;
+  template <class E>          using unexpected = tl::unexpected<E>;
+}
+```
+
+Two practical consequences:
+
+- **Spell it `holoscan::expected`, not `std::expected`.** Even on a toolchain
+  that offers `std::expected`, the SDK's APIs are typed in terms of the alias
+  and the two are not interchangeable today.
+- **What you learn transfers.** Stay within the standard interface subset
+  (`has_value()` / `operator bool`, `*r` / `.value()`, `.error()`, and the
+  monadic `and_then` / `map` / `or_else` / `value_or`) and the eventual
+  re-pointing of the alias to `std::expected` requires no change to your code.
+
+## Recap
+
+- Fallible SDK functions return `holoscan::expected<T, Error>`; check
+  `if (!result)` before dereferencing, ever.
+- Build failures with `make_unexpected(Error{code, message})`; code-only errors
+  are allocation-free and right for hot paths.
+- Branch on `error().code` (`ErrorCode`), never on message text.
+- Mark your own fallible functions `[[nodiscard]]` and propagate with
+  `HOLOSCAN_TRY` / `HOLOSCAN_RETURN_IF_ERROR` / `HOLOSCAN_ASSIGN_OR_RETURN`
+  (or `forward_error` across differing value types).
+- Throw `holoscan::RuntimeError(error)` only at genuine exception boundaries;
+  `make_error` brings you back to the value channel.
+- `holoscan::expected` is a C++20 alias exposing the `std::expected` interface;
+  the future migration is mechanical if you stay within the standard subset.
+
+Next: how the runtime represents and reads time —
+[Time and Clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).

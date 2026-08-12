@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_restart_control LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(restart_control restart_control.cpp)
+target_link_libraries(restart_control PRIVATE holoscan::core)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-015
+    add_test(NAME EXAMPLE_CPP_RESTART_CONTROL_TEST COMMAND restart_control)
+    set_tests_properties(EXAMPLE_CPP_RESTART_CONTROL_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "restart_control: restarts published \\(1 self, 1 external\\); unauthorized target rejected \\(kLifecycleRestartUnauthorized\\); sink received 9 samples across 3 epochs termination=stopped"
+            LABELS "examples;lifecycle;experimental"
+            TIMEOUT 30)
+endif()

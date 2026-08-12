@@ -1,0 +1,407 @@
+<Warning>
+  **Beta.** The tensor stream/pool model, declared memory-kind awareness, and
+  bounded staging described on this page ship today, and the API may still
+  evolve in upcoming releases. Exact EA1 limits: every tensor obligation of
+  one operator must resolve to a single device, the runtime never inserts
+  cross-device copies, managed memory (`MemoryKind::kCudaManaged`) does not
+  cross process boundaries, and unpooled pass-through emits skip memory-kind
+  validation at receive. See [EA1 limitations](#ea1-limitations)
+  below. GPU-resident execution and automatic host↔device converter insertion
+  remain deferred to a later release — the Beta label does not claim them.
+</Warning>
+
+[Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) covered the
+authoring surface: `allocate_tensor()` borrows a slot from a preallocated pool,
+you fill it on your compute stream, `commit()` orders your writes, and `emit()`
+publishes. This page explains the machinery underneath — the two stream roles
+that order every device tensor, why a received tensor is already safe to read
+on your stream, how the backing memory is pooled and recycled, and exactly
+where the deliberate blocking points are.
+
+If you take away one thing, make it this: the runtime owns stream ordering.
+You write, commit, and emit; the framework records producer readiness and
+inserts the consumer-side wait. **Never call `cudaStreamSynchronize` on the hot
+path** — the design goes out of its way to make that unnecessary.
+
+**Complete C++ example:** [`examples/tensors_in_depth/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/tensors_in_depth/cpp)
+
+<Note title="You will learn">
+  - The two stream roles every device tensor carries: the **readiness stream**
+    and per-consumer **deallocation (release) streams**
+  - Why a received tensor arrives pre-ordered on your compute stream, with no
+    host blocking anywhere on the device path
+  - How the one-stream-per-process-group-and-device model compares with the
+    per-operator streams of Holoscan 4.x
+  - When the compiler proves a linear chain and elides the fences entirely
+  - The rules for foreign DLPack tensors and for explicit host access
+  - How pools bound memory: cold materialization, `kResourceExhausted`, and
+    fanout release-stream caps
+</Note>
+
+## Two stream roles order every device tensor
+
+A device `Tensor` carries a stream contract with exactly two named roles, and
+they answer two different questions:
+
+- The **readiness stream** answers *"when are the producer's writes safe to
+  read?"* When the producer's write guard commits, the runtime records a
+  timing-disabled CUDA event on the producer's compute stream. That is the
+  entire cost — one `cudaEventRecord`, no host block, no synchronization.
+- The **deallocation streams** (also called release streams) answer *"when may
+  the backing storage be returned to the pool?"* There is one per consumer:
+  as each consumer is handed the tensor, the runtime registers that consumer's
+  compute stream on the backing via `set_deallocation_stream()`. The slot is
+  recycled only after **every** consumer's release-stream event has completed
+  *and* every read lease has retired — checked with asynchronous
+  `cudaEventQuery` polling, never a host wait.
+
+The two roles are intentionally distinct. Readiness is recorded once by the
+producer; release is tracked once per consumer. A single emitted tensor fanned
+out to three consumers has one readiness event and up to three release
+streams, and its slot returns to the pool only after all three retire.
+
+<svg viewBox="0 0 760 300" role="img" aria-labelledby="two-stream-timeline-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="two-stream-timeline-title">Two-stream contract timeline: the producer records a readiness event at commit, the consumer waits on it before reading and records a release event, and the pool slot is recycled only after all release events and leases retire</title>
+  <defs>
+    <marker id="two-stream-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#76B900"/>
+    </marker>
+    <marker id="two-stream-axis-arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  <text x="180" y="32" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">time</text>
+  <line x1="216" y1="28" x2="730" y2="28" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#two-stream-axis-arrow)"/>
+  <text x="160" y="88" textAnchor="end" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">Producer</text>
+  <text x="160" y="103" textAnchor="end" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">compute stream</text>
+  <line x1="180" y1="90" x2="730" y2="90" stroke="currentColor" strokeWidth="1.5" opacity="0.25"/>
+  <rect x="200" y="78" width="180" height="24" rx="6" fill="#76B900" opacity="0.25"/>
+  <text x="290" y="94" textAnchor="middle" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">write</text>
+  <text x="400" y="62" textAnchor="middle" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">readiness event</text>
+  <circle cx="400" cy="90" r="7" fill="#76B900"/>
+  <path d="M403,98 L438,158" stroke="#76B900" strokeWidth="2" fill="none" markerEnd="url(#two-stream-arrow)"/>
+  <text x="398" y="136" textAnchor="end" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">wait on event</text>
+  <text x="160" y="168" textAnchor="end" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">Consumer</text>
+  <text x="160" y="183" textAnchor="end" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">compute stream</text>
+  <line x1="180" y1="170" x2="730" y2="170" stroke="currentColor" strokeWidth="1.5" opacity="0.25"/>
+  <rect x="450" y="158" width="170" height="24" rx="6" fill="currentColor" opacity="0.06"/>
+  <rect x="450" y="158" width="170" height="24" rx="6" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="535" y="174" textAnchor="middle" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">read</text>
+  <circle cx="632" cy="170" r="6" fill="currentColor"/>
+  <text x="644" y="174" textAnchor="start" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">release event</text>
+  <line x1="632" y1="180" x2="632" y2="242" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 4" opacity="0.4"/>
+  <text x="160" y="254" textAnchor="end" fontSize="14" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">Pool</text>
+  <line x1="180" y1="250" x2="730" y2="250" stroke="currentColor" strokeWidth="1.5" opacity="0.25"/>
+  <line x1="200" y1="238" x2="200" y2="262" stroke="currentColor" strokeWidth="2"/>
+  <line x1="200" y1="250" x2="656" y2="250" stroke="currentColor" strokeWidth="2" strokeDasharray="6 5"/>
+  <circle cx="660" cy="250" r="5" fill="#76B900"/>
+  <text x="420" y="238" textAnchor="middle" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">slot held</text>
+  <text x="420" y="278" textAnchor="middle" fontSize="11" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor" opacity="0.55">recycled only after all consumers finish</text>
+</svg>
+
+### Emit: commit records readiness
+
+The producer lifecycle is `allocate_tensor()` → `write(stream)` → fill →
+`commit()` → `emit()`. The device write phase is started with
+`TensorOutputLoan::write(context.cuda_stream())`; the runtime requires the
+loan's write stream to be the operator's runtime-assigned compute stream and
+rejects any other stream with `kNotSupported`. Committing the guard records
+the readiness event on that stream and nothing else — it does not flush, it
+does not block, and adding your own `cudaStreamSynchronize` before `emit()`
+only wastes latency.
+
+The following device-memory pattern is taken from the shipping
+`tensors_in_depth` example; the camera source uses the analogous host-pool
+path.
+
+```cpp
+constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
+constexpr std::size_t kFrameBytes = 256U;
+constexpr holoscan::TensorPortLayout kDeviceByteFrame{
+    .memory_kind = holoscan::MemoryKind::kCudaDevice, .dtype = kByteDtype, .rank = 1U};
+constexpr std::array<std::int64_t, 1U> kFrameShape{
+    static_cast<std::int64_t>(kFrameBytes)};
+
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.output(frame, "frame")
+      .produces_tensor(kDeviceByteFrame)
+      .tensor_allocation(
+          holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = kFrameBytes});
+}
+
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& context) override {
+  auto loan = frame.allocate_tensor(
+      holoscan::TensorLoanRequest{.shape = kFrameShape, .dtype = kByteDtype});
+  if (!loan) { return holoscan::make_unexpected(std::move(loan).error()); }
+
+  auto writer = loan->write(context.cuda_stream());  // device write phase, runtime stream only
+  if (!writer) { return holoscan::make_unexpected(std::move(writer).error()); }
+  cudaMemsetAsync(writer->data_as<std::uint8_t>(), 0x2A, writer->byte_size(),
+                  context.cuda_stream().get());
+
+  auto committed = std::move(*writer).commit();      // records readiness — never synchronizes
+  if (!committed) { return holoscan::make_unexpected(std::move(committed).error()); }
+
+  return frame.emit(std::move(*loan),
+                    holoscan::EmitOptions{.capture_time = context.activation_time()});
+}
+```
+
+Every step consumes the previous object, and an early return abandons the
+loan or guard safely — nothing leaks and nothing half-publishes.
+
+### Receive: the tensor arrives pre-ordered
+
+On the consumer side you do nothing. Before your `compute()` runs, the runtime
+walks the selected device tensors and enqueues a `cudaStreamWaitEvent` on
+*your* compute stream against each producer's readiness event, then registers
+your stream as a deallocation stream. Both operations are asynchronous — no
+host thread blocks. By the time you touch `sample->data`, the tensor is
+already ordered on `context.cuda_stream()`: kernels you launch there simply
+queue behind the producer's writes.
+
+A received tensor is read-only. `Tensor::data()` is `const`, and
+`mutable_data()` returns `kPermissionDenied` on a consumed sample — write
+authority stayed with the producer's guard and was spent at commit.
+
+<Warning>
+  **Do not synchronize to "be safe."** A received device tensor needs no wait
+  before device work on your compute stream — the runtime already inserted the
+  event wait. A blocking sync in `compute()` serializes the pipeline and buys
+  no additional correctness.
+</Warning>
+
+## One stream per process group and device
+
+Holoscan 5.0 materializes **one non-blocking CUDA stream per (process group,
+device) pair**. Every operator in that group computing on that device resolves
+to the same stream, exposed in `compute()` as `ExecutionContext::cuda_stream()`
+(a typed `cuda::stream_ref`). The runtime owns that stream's lifetime: it
+prepares your tensor inputs on it, records your output readiness on it, and
+keeps it alive through release ordering and teardown. Do not destroy it and do
+not retain it beyond the activation. An operator that deliberately uses its
+own stream — or a standalone client with no `ExecutionContext` — takes on the
+opposite duty: keep that external stream alive and use the explicit
+synchronization and deallocation APIs yourself.
+
+This is a deliberate change from Holoscan 4.x:
+
+| | Holoscan 4.x | Holoscan 5.0 |
+|---|---|---|
+| Stream assignment | One unique internal stream per operator | One shared stream per process group + device |
+| How `compute()` gets it | `receive_cuda_stream(port)` on the input context | `ExecutionContext::cuda_stream()` |
+| Producer/consumer ordering | Event record + stream wait on every hop | Same event model, but compiler-proven same-stream chains skip the fence entirely |
+| Release streams per buffer | One (the buffer abstraction was not stream-aware) | One per fanout consumer, bounded and tracked per slot |
+| Stream lifetime | Operator-managed | Runtime-owned; borrow, never destroy or retain |
+
+Fewer streams means fewer cross-stream fences: in 4.x a linear chain of three
+operators paid an event record and wait at every hop just to bridge three
+private streams. In 5.0 those operators usually share one stream — and the
+compiler can prove it, as the next section explains.
+
+## When the fences disappear: proven linear chains
+
+A cold compiler pass looks for strict linear device-tensor chains: the
+producer has **exactly one accepted successor in total**, the edge is
+process-local, and both endpoints resolve to the same process-group + device
+stream. For every edge it can prove, the plan carries fusion evidence that the
+runtime re-validates and then acts on:
+
+- `commit()` skips recording the readiness event — same-stream ordering is
+  already implied by stream serialization;
+- receive skips the redundant self-wait;
+- the sole same-stream consumer skips release-event registration, recording,
+  and polling. Logical handle retirement still gates slot reuse, so safety
+  does not regress.
+
+The elision is conservative and fails safe. If anything unexpected happens —
+an explicit host access, a request from a stream the plan did not prove — the
+retained event is recorded lazily and the full fence contract resumes. Mixed
+fanout gets no fusion authority at all: a producer with one local consumer
+*plus* one cross-process or catalog subscriber keeps ordinary fences on every
+edge. You never opt in or out; the proof is part of compilation.
+
+## Foreign tensors imported through DLPack
+
+Tensors created outside the runtime — wrapped from another library via
+DLPack — live under stricter rules, because the framework did not observe
+their allocation or their writes:
+
+- `set_readiness_stream()` is the **only** author-facing hook for producer
+  ordering. If the foreign producer has pending device writes, record the
+  stream they were issued on so consumers can be fenced behind them.
+- Until you do, the import reports `has_readiness_stream_contract() == false`.
+  A tensor without a readiness contract cannot be ordered, and stream-aware
+  consumers should treat it as unusable for device work (fail closed rather
+  than guess).
+- Imports are **permanently read-only**. Imported ownership never establishes
+  a local writer claim, so `mutable_data()` fails with `kPermissionDenied`
+  forever — mutation forces a copy into storage you allocate.
+
+```cpp
+auto imported = holoscan::make_tensor_from_dlpack(dl_managed_tensor);
+if (!imported) { return holoscan::make_unexpected(std::move(imported).error()); }
+
+// The ONLY author hook: fence consumers behind the foreign producer's writes.
+imported->set_readiness_stream(producer_stream);
+```
+
+A foreign import also cannot join the pool's stream-ordered deallocation the
+way a pool slot does; its DLPack deleter runs when the last reference drops.
+For sustained pipelines, prefer producing into a runtime pool over wrapping
+foreign allocations per frame.
+
+## Host access: the only blocking calls
+
+Host access is explicit, and it is where the only sanctioned blocking lives:
+
+- `synchronize_for_host()` blocks the calling thread until the readiness event
+  completes, after which host reads of host-accessible storage are safe.
+- `copy_to_host(dst, bytes, stream)` enqueues the copy and then blocks until
+  the stream finishes.
+- `copy_to_host_async(dst, bytes, stream)` enqueues the copy and returns; you
+  own the completion wait on your own stream.
+
+These three are the *entire* blocking surface of the tensor data path. Native
+device emit and receive never block a host thread: emit is an event record,
+receive is an event wait, retirement is event polling. If a profile shows a
+host stall inside tensor handling, look for one of these calls (or a foreign
+staging copy at a catalog boundary) — not the runtime's fences.
+
+<Warning>
+  Budget host access off the per-frame path. `synchronize_for_host()` and the
+  blocking `copy_to_host()` stall the pipeline for the full depth of pending
+  device work. When you must inspect data every frame, use
+  `copy_to_host_async()` on your own stream and overlap the wait.
+</Warning>
+
+## Crossing process boundaries: the generation fence
+
+CUDA events are process-local, so a cross-process boundary cannot reuse the
+in-process readiness event. Instead, the transport records a **generation
+fence** on the producer's stream at commit, before the sample's descriptor is
+armed for delivery. The importing process waits on that fence *on its own
+consumer stream* before the tensor is exposed to typed code — implemented with
+stream-level operations, so the device path crosses the process boundary
+without ever blocking a host thread. Release follows the same discipline: the
+exporting side's slot is not recycled until every importer's claim retires.
+
+One exception is worth knowing: publishing a *foreign* device tensor through a
+boundary whose frozen contract requires host memory performs one blocking
+device-to-host materialization. That copy happens once and the result is
+shared across all attached subscribers, but it is a real host sync — keep
+foreign device tensors away from host-contract boundaries on latency-critical
+paths. A device-contract boundary instead enqueues one same-device copy plus
+the generation fence on the producer stream, with no host block.
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+For declaring the boundaries themselves, see
+[external topics](/holoscan/sdk-user-guide/composing-applications/external-topics) and
+[interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels);
+for the client side, see
+[standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
+
+## Pool mechanics: bounded by construction
+
+### Sized cold, borrowed hot
+
+A tensor pool exists only where you declared it: `produces_tensor(layout)`
+plus `tensor_allocation(bounds)` on the output. The bounds are hard
+compile-time caps — and a **zero** `max_rank` or `max_byte_span` means
+*reject allocation*, not "unbounded." The compiler sizes the slot count from
+your declared bounds together with the graph's queue, fanout, cache, and
+history capacities, so the pool can cover every claim the plan admits.
+
+Physical allocation happens exactly once, on the cold path: the runtime
+materializes every pool's backing, per-slot metadata, and CUDA event inventory
+during startup, **before the graph is armed** and before any `compute()` can
+run. A pool that cannot be materialized fails startup closed — no callback
+ever observes a half-built pool. After that, the hot-path `allocate_tensor()`
+call only *borrows* a preallocated slot: no `cudaMalloc`, no growth, no
+fallback allocation, ever. (See
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+for where cold materialization sits in the operator lifecycle.)
+
+### Exhaustion fails fast — by design
+
+A producer that outruns its consumers gets an immediate `kResourceExhausted`
+from `allocate_tensor()`. There is **no blocking-loan variant** — no option to
+wait for a free slot. That is the correct default for a real-time graph: a
+blocked producer hides backpressure that should instead surface as an
+explicit, typed error you can branch on
+([errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)).
+Handle it by dropping, degrading, or resizing the declared bounds — not by
+retry-spinning in `compute()`.
+
+### Fanout release-stream caps
+
+Release tracking is bounded like everything else. The direct-output pool
+preallocates its release-event capacity at cold setup — one shared stream plus
+one per potential subscriber — and registering a consumer stream beyond that
+frozen capacity fails closed rather than growing. The same-process buffer path
+enforces `MemoryBuffer::kMaximumFanoutReleaseStreams` (8 by default,
+configurable per buffer via
+`MemoryBuffer::Options{.max_fanout_release_streams = ...}`): the consumer
+stream past the cap is rejected, not silently serialized. Duplicate
+registrations of the same stream are deduplicated and do not consume capacity.
+
+<Anchor id="preview-limitations" />
+
+## EA1 limitations
+
+The current release draws four hard lines you should plan around:
+
+- **One device per operator.** Every tensor input, output, and boundary
+  obligation of a single operator must resolve to one device, because
+  `ExecutionContext` exposes exactly one compute stream. A conflicting
+  placement rejects at compile time, and CUDA-backed pools require an explicit
+  device binding — the compiler never silently infers device zero.
+- **No cross-device copy.** The runtime does not insert device-to-device
+  transfers between operators placed on different GPUs, and DLPack
+  import/export refuses a request that would require copying to another
+  device. Move the data yourself before wrapping or emitting it.
+- **Managed memory does not cross processes.** `MemoryKind::kCudaManaged`
+  pools work within a process, but there is no cross-process transport
+  representation for managed storage — a plan that would need one fails closed
+  at compile rather than degrading to a hidden copy.
+- **Unpooled pass-through emits skip memory-kind validation.** An output that
+  calls `emit(Tensor)` without `tensor_allocation()` owns no pool and declares
+  no physical layout, so the receive side performs **no host/device check at
+  all** — whatever was emitted is handed over. (Explicitly declared,
+  conflicting producer/consumer layouts still reject at authoring time, and a
+  *pooled* producer's frozen memory kind is enforced on every receive, failing
+  with `kProtocolError` on mismatch.) Prefer pooled outputs wherever a
+  consumer declares `expects_tensor()` expectations. See
+  [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
+  for the full validation matrix.
+
+## Recap
+
+- Every device tensor carries two stream roles: a **readiness stream**
+  (recorded at `commit()` as a timing-disabled event — no host block) and one
+  **deallocation stream per consumer**; the slot recycles only after all
+  consumer events and read leases retire.
+- Received tensors arrive **pre-ordered** on `ExecutionContext::cuda_stream()`
+  — one runtime-owned stream per process group + device. Never add a hot-path
+  `cudaStreamSynchronize`.
+- The compiler proves strict linear same-stream chains and elides readiness
+  and release events entirely, with a lazy fallback for host or cross-stream
+  access.
+- Foreign DLPack imports are permanently read-only; `set_readiness_stream()`
+  is your only ordering hook, and without it the tensor has no readiness
+  contract.
+- Blocking lives only in `synchronize_for_host()` / `copy_to_host*()`; catalog
+  boundaries use a generation fence with no host block on the device path.
+- Pools materialize cold before arming and fail fast: `allocate_tensor()`
+  borrows or returns `kResourceExhausted` — no hidden waits, no growth, and
+  bounded fanout release-stream caps that fail closed.
+
+Next: [Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications).

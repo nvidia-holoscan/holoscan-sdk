@@ -5,9 +5,14 @@
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
 set(fmt_VERSION 12.1.0)
+# fmt is a PUBLIC dependency of holoscan::logger (logger.hpp exposes fmt in its logging macros), so it
+# is registered in the holoscan export sets: the installed holoscan-dependencies.cmake calls
+# find_dependency(fmt) before holoscan-targets.cmake. (core still links fmt PRIVATELY for its .cpp
+# implementation.)
 rapids_cpm_find(fmt "${fmt_VERSION}"
     GLOBAL_TARGETS fmt fmt-header-only
     BUILD_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
+    INSTALL_EXPORT_SET ${HOLOSCAN_PACKAGE_NAME}-exports
     CPM_ARGS
 
     GITHUB_REPOSITORY fmtlib/fmt
@@ -23,6 +28,15 @@ if(fmt_ADDED)
     # Install the headers needed for development with the SDK
     install(DIRECTORY ${fmt_SOURCE_DIR}/include/fmt
         DESTINATION "include"
+        COMPONENT "holoscan-dependencies"
+        )
+    # EXCLUDE_FROM_ALL suppresses fmt's own install rules, so install a minimal find-package config
+    # that defines the fmt::fmt-header-only INTERFACE target against the installed headers, so the
+    # installed find_dependency(fmt) resolves.
+    install(FILES
+            "${CMAKE_CURRENT_LIST_DIR}/configs/fmt-config.cmake"
+            "${CMAKE_CURRENT_LIST_DIR}/configs/fmt-config-version.cmake"
+        DESTINATION "${HOLOSCAN_INSTALL_LIB_DIR}/cmake/fmt"
         COMPONENT "holoscan-dependencies"
         )
 endif()

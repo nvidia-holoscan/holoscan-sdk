@@ -1,0 +1,18 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+namespace holoscan.tests.channel;
+
+// Test-only application schema used to validate custom FlatBuffer schema traits.
+table CustomControl {
+  // Monotonic control sequence.
+  sequence: ulong (id: 0);
+
+  // Small scalar control gain.
+  gain: float (id: 1);
+
+  // User-defined label.
+  label: string (id: 2);
+}
+
+root_type CustomControl;

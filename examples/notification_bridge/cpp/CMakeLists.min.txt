@@ -1,0 +1,67 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_notification_bridge LANGUAGES CXX)
+
+include(CTest)
+
+find_package(Threads REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(notification_bridge notification_bridge.cpp)
+target_compile_features(notification_bridge PRIVATE cxx_std_20)
+target_link_libraries(notification_bridge PRIVATE holoscan::core Threads::Threads)
+
+add_executable(notification_bridge_unsupported notification_bridge.cpp)
+target_compile_features(notification_bridge_unsupported PRIVATE cxx_std_20)
+target_compile_definitions(notification_bridge_unsupported
+    PRIVATE HOLOSCAN_NOTIFICATION_BRIDGE_FORCE_UNSUPPORTED=1)
+target_link_libraries(notification_bridge_unsupported PRIVATE holoscan::core Threads::Threads)
+
+if(BUILD_TESTING)
+    # REQ: LIFECYCLE-005
+    # REQ: RUNTIME-025
+    # REQ: SYSTEM-018
+    add_test(NAME EXAMPLE_CPP_NOTIFICATION_BRIDGE_TEST COMMAND notification_bridge)
+    set_tests_properties(EXAMPLE_CPP_NOTIFICATION_BRIDGE_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "notification_bridge: eventfd bridged 4 notifications; lifecycle-owned worker joined; termination=stopped"
+            SKIP_RETURN_CODE 77
+            LABELS "examples;readiness;lifecycle;linux"
+            TIMEOUT 30
+    )
+
+    # REQ: LIFECYCLE-005
+    # REQ: RUNTIME-004
+    # REQ: RUNTIME-025
+    # REQ: SYSTEM-018
+    add_test(NAME EXAMPLE_CPP_NOTIFICATION_BRIDGE_FAILURE_TEST
+        COMMAND notification_bridge --simulate-worker-failure)
+    set_tests_properties(EXAMPLE_CPP_NOTIFICATION_BRIDGE_FAILURE_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION
+                "RUNTIME_OPERATOR_CALLBACK_FAILED; lifecycle-owned worker joined"
+            SKIP_RETURN_CODE 77
+            LABELS "examples;readiness;lifecycle;failure;linux"
+            TIMEOUT 30
+    )
+
+    # REQ: SYSTEM-018
+    add_test(NAME EXAMPLE_CPP_NOTIFICATION_BRIDGE_UNSUPPORTED_TEST
+        COMMAND "${CMAKE_COMMAND}"
+            "-DHOLOSCAN_NOTIFICATION_BRIDGE_UNSUPPORTED_EXECUTABLE=$<TARGET_FILE:notification_bridge_unsupported>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/run_unsupported.cmake")
+    set_tests_properties(EXAMPLE_CPP_NOTIFICATION_BRIDGE_UNSUPPORTED_TEST
+        PROPERTIES
+            LABELS "examples;readiness;lifecycle;portability"
+            TIMEOUT 30
+    )
+endif()

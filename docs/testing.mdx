@@ -1,283 +1,267 @@
-## Overview
+Because Holoscan separates *what your pipeline is* (the composed graph), *whether
+it is valid* (the compiled plan), and *what your operators do* (the `compute()`
+bodies), you can test each layer with ordinary tools — a C++ test framework such
+as GoogleTest and your existing CI — without any Holoscan-specific harness.
+Three techniques cover most of what teams need today: running a whole graph
+deterministically under a simulated clock, compiling the graph in CI and
+diffing the resulting plan against a baseline, and unit-testing the logic
+inside `compute()` with constructed inputs.
 
-Holoscan provides a test harness interface for testing Holoscan operators with:
+This page shows all three, in that order. It closes with an honest note on
+what is *not* here yet: a dedicated harness for running a single operator
+without the full runtime is planned for a future release.
 
-- **Input/Output Port Management**: Easy setup of test data and validation
-- **Condition Support**: Add execution conditions like CountCondition, PeriodicCondition
-- **Validation Framework**: Built-in validators for exact equality, floating-point comparison, and custom validation
-- **Fluent API**: Chainable method calls for clean, readable test setup
+**Complete C++ examples:** [`examples/compile_and_check/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/compile_and_check/cpp)
+and [`examples/time_and_clocks/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/time_and_clocks/cpp)
 
-## Concepts
+<Note title="You will learn">
+  - How to swap the graph's default clock for a `ManualClock` or
+    `SyntheticClock` so a whole-graph test runs deterministically.
+  - When to pick `ManualClock` versus `SyntheticClock`.
+  - How to compile a graph inside a test, assert `plan.ok()`, and diff
+    `plan.digest()` / `plan.json()` against a checked-in baseline.
+  - How to structure operators so `compute()` logic is testable with
+    constructed inputs — no runtime required.
+  - What operator-level test tooling is planned but not yet available.
+</Note>
 
-### Test Harness
+## Deterministic whole-graph tests with a simulated clock
 
-The `OperatorTestHarness` is a specialized Holoscan application designed to test individual operators in isolation. It automates the setup of a test pipeline by creating source operators to provide input data and sink operators to collect and validate output data.
+The runtime never reads the OS clock directly: every trigger, temporal
+selection, and timestamp goes through the graph's `Clock` abstraction. In
+production the default clock tracks real time; in a test you substitute a
+clock whose time *you* drive, and the same operators and wiring run unchanged
+in simulated time. This is the foundation laid out in
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks) —
+here we use it for testing.
 
-**Main Components:**
+Two test clocks ship with the SDK:
 
-1. **`OperatorTestHarness<OperatorType, Args...>`**: The main test harness class that orchestrates the test
-   - Creates and manages source operators for each input port
-   - Creates and manages sink operators for each output port
-   - Connects all operators in the test pipeline
-   - Provides a fluent API for configuration
+- **`ManualClock`** (`<holoscan/time/manual_clock.hpp>`) — time is a plain
+  value you set. Sleeps modeled through the clock move it forward immediately
+  to the wake-up point instead of blocking. Best for single-threaded stepping
+  and for unit tests of time math.
+- **`SyntheticClock`** (`<holoscan/time/synthetic_clock.hpp>`) — sleeping
+  threads genuinely *block* until another thread advances the clock past their
+  target time with `advance_to()` / `advance_by()`. That releases workers in
+  lock-step as synthesized time moves forward, which is what you want when a
+  live graph with clock-driven triggers is running while the test drives time.
 
-2. **`TestHarnessSourceOp<T>`**: A specialized operator that emits predetermined test data
-   - Emits one value per compute cycle from a provided vector
-   - Automatically manages iteration through test data
-   - Used internally by the test harness for each input port
-
-3. **`TestHarnessSinkOp<T>`**: A specialized operator that collects and validates outputs
-   - Receives data from the operator under test
-   - Applies validation functions to each received value
-   - Tracks received data count for verification
-   - Used internally by the test harness for each output port
-
-4. **`OperatorTestBase`**:
-   - A base test fixture class designed for use with Google Test (`gtest`).
-   - Just a skeleton fixture, does not currently extend `SetUp` or `TearDown` methods.
-
-**How It Works:**
-
-When you create a test harness with `create_operator_test<YourOp>()`:
-
-1. The harness creates a Holoscan application with your operator in the middle
-2. For each `add_input_port()` call, it creates a `TestHarnessSourceOp` that feeds test data
-3. For each `add_output_port()` call, it creates a `TestHarnessSinkOp` that collects and validates output
-4. When you call `run_test()`, the entire pipeline executes and validations are performed automatically
-
-The test harness ensures that:
-
-- All input ports receive the same number of data elements
-- Data flows correctly from sources through your operator to sinks
-- Conditions (like `CountCondition`) control execution properly
-- Validation failures are reported via Google Test assertions
-
-### Validator Functions
-
-Validator functions are callable objects that verify operator outputs during test execution. They follow the signature `void(const T&)` where `T` is the output data type. Validators are called automatically by `TestHarnessSinkOp` for each value received from the operator under test.
-
-**Built-in Validators:**
-
-Holoscan provides three types of built-in validators:
-
-1. **`create_exact_equality_validator<T>(expected_values)`**
-   - Compares each output against expected values using `operator==`
-   - Best for: integers, strings, and other types with well-defined equality
-   - Automatically tracks which output index is being validated
-
-   ```cpp
-   std::vector<int> expected = {2, 4, 6};
-   auto validator = create_exact_equality_validator(expected);
-   ```
-
-2. **`create_float_equality_validator<T>(expected_values, tolerance = T{})`**
-   - Compares floating-point values with approximate equality
-   - Uses Google Test's `EXPECT_FLOAT_EQ` (default) or `EXPECT_NEAR` (with tolerance)
-   - Best for: float, double, and other floating-point types
-
-   ```cpp
-   std::vector<float> expected = {1.5f, 2.7f, 3.1f};
-   auto validator = create_float_equality_validator(expected, 0.01f);
-   ```
-
-3. **`create_transform_equality_validator<InputT, OutputT>(expected_values, transform_func)`**
-   - Applies a transformation before comparing
-   - Best for: complex types where you want to validate a specific property
-
-   ```cpp
-   auto validator = create_transform_equality_validator&lt;MyStruct, int&gt;(
-     {10, 20, 30},
-     [](const MyStruct& s) { return s.field; }
-   );
-   ```
-
-**Using Multiple Validators:**
-
-You can apply multiple validators to a single output port using the `validators<T>()` helper:
+To put a graph on a test clock, bind a live clock instance you keep a handle
+to, and make it the default:
 
 ```cpp
-test->add_output_port<float>("output", validators<float>(
-  create_float_equality_validator(expected_values),
-  custom_range_validator,
-  custom_format_validator
-));
-```
+#include <gtest/gtest.h>
 
-**Custom Validators:**
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/graph.hpp>
+#include <holoscan/core/run.hpp>
+#include <holoscan/time/synthetic_clock.hpp>
 
-Create custom validators by providing any callable that matches `void(const T&)`:
+TEST(FusionPipeline, TenFramesOfSimulatedTime) {
+  // Keep the shared_ptr: it is the handle the test uses to drive time.
+  auto test_clock = std::make_shared<holoscan::SyntheticClock>(0);
 
-```cpp
-auto custom_validator = [](const int& value) {
-  EXPECT_GT(value, 0) << "Value must be positive";
-  EXPECT_LT(value, 100) << "Value must be less than 100";
-};
+  holoscan::Graph graph{"fusion-under-test"};
+  auto camera = graph.op<FakeCamera>("camera");     // test double for the sensor
+  auto fusion = graph.op<SensorFusion>("fusion");
+  auto sink   = graph.op<RecordingSink>("sink");    // appends results for assertions
+  graph.add_flow(camera->frame, fusion->frames);    // ports are declared operator members
+  graph.add_flow(fusion->control, sink->in);
 
-test->add_output_port<int>("output", validators<int>(custom_validator));
-```
+  const holoscan::ClockKey key = graph.bind_shared_clock("test", test_clock);
+  graph.set_default_clock(key);
 
-Custom validators can perform any verification logic and use any Google Test assertion macros (`EXPECT_*`, `ASSERT_*`). Validation failures will cause the test to fail with descriptive error messages.
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+  ASSERT_TRUE(plan.ok());
 
-## Basic Test Structure
+  holoscan::RunSession session = holoscan::run_async(plan);
 
-Suppose we have an operator (`DoublerOp`) that has a single input and single output port, both `int`. The operator simply doubles the input value and emits that.
+  // Drive ten camera frames of simulated time (~60 Hz).
+  for (int frame = 0; frame < 10; ++frame) {
+    test_clock->advance_by(std::chrono::nanoseconds{16'666'667});
+  }
 
-There are **two ways** to set up tests:
-
-### Approach 1: Fluent API
-
-*Fluent* is a design pattern that enables code to be written in a way that flows naturally, often by chaining method calls together. This style improves readability and expressiveness, making it easier to set up complex objects or configurations in a concise and intuitive manner. The term "fluent API" refers to this general programming approach and is not specific to Holoscan.
-
-```cpp
-#include <holoscan/test/test_harness.h>
-#include <holoscan/test/validation_functions.h>
-
-using namespace holoscan::test {
-
-TEST_F(OperatorTestBase, BasicFluentTest) {
-  // Test data
-  std::vector<int> input_data = {1, 2, 3};
-  std::vector<int> expected_output = {2, 4, 6};
-
-  // Create and configure test with fluent API - everything in one chain
-  auto test_harness = create_operator_test<DoublerOp>()
-    ->add_input_port<int>("input", input_data)
-    ->add_output_port<int>("output", holoscan::test::validators<int>(
-      create_exact_equality_validator(expected_output)))
-    ->add_condition<holoscan::CountCondition>("count", input_data.size());
-
-  test_harness->run_test();
-
-  // Additional verification if needed
-  auto sink = test_harness->get_sink<int>("output");
-  EXPECT_EQ(sink->get_received_count(), expected_output.size());
+  session.request_stop();
+  session.wait();
+  EXPECT_EQ(session.termination(), holoscan::RunTermination::kStopped);
+  EXPECT_EQ(recorded_controls().size(), 10u);  // state captured by RecordingSink
 }
-
-}  // namespace holoscan::test
 ```
 
-### Approach 2: Step-by-Step Setup
+The pattern in words: **bind → default → compile → `run_async` → advance →
+stop → assert**. Because `bind_shared_clock()` retains your live instance
+(unlike `add_clock<ClockT>()`, which replays a factory into a runtime-owned
+clock), the `advance_by()` calls in the test move the exact clock every
+`OnClock` trigger and temporal selector in the graph reads.
+
+Assertions belong *after* `session.wait()` returns, and results are easiest to
+capture with a small test-only sink operator that appends what it receives to
+state the test can inspect — the `RecordingSink` above. Operators themselves
+need no changes: `compute()` reads time through `ctx.clock()` and cannot tell
+a synthetic time base from a real one, which is precisely the point.
+
+<Warning>
+  **Drive time from one controlling thread.** `ManualClock`'s individual reads
+  and advances are race-free, but compound operations are not serialized
+  against concurrent advances — the supported pattern is a single test thread
+  stepping time. `SyntheticClock` is fully synchronized, but interleaving
+  multiple advancing threads still makes the *test* nondeterministic. One
+  driver thread, always.
+</Warning>
+
+<Warning>
+  **Advancing time is not a barrier.** `advance_by()` releases work; it does
+  not wait for that work to finish. Do not assert on outputs between
+  advances unless you have your own synchronization — assert after
+  `session.wait()`, or have the recording sink expose a counter the test can
+  poll.
+</Warning>
+
+For replaying recorded timelines and the broader determinism story (logical
+order, `TagTime`, reproducible runs), see
+[Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay).
+
+## Compile-plan checks in CI
+
+`compile()` is a pure, cold transform: it never runs `compute()`, creates
+endpoints, or touches your thread's scheduling. That makes it cheap and safe
+to call inside a unit test — and it turns your CI into a graph-validity gate
+that catches wiring, admission, and contract errors long before hardware is
+involved.
+
+The baseline check is two lines plus diagnostics on failure:
 
 ```cpp
-#include <holoscan/test/test_harness.h>
-#include <holoscan/test/validation_functions.h>
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_plan.hpp>
 
-using namespace holoscan::test {
+TEST(FusionPipeline, PlanIsAdmitted) {
+  holoscan::Graph graph = make_production_graph();  // your app's real composition
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
 
-TEST_F(OperatorTestBase, BasicStepByStepTest) {
-  // Test data
-  std::vector<int> input_data = {1, 2, 3};
-  std::vector<int> expected_output = {2, 4, 6};
-
-  // Create test harness first
-  auto test_harness = create_operator_test<DoublerOp>();
-
-  // Add components step by step (allows for conditional logic)
-  test_harness->add_input_port<int>("input", input_data);
-  test_harness->add_output_port<int>("output", holoscan::test::validators<int>(
-    create_exact_equality_validator(expected_output)));
-  test_harness->add_condition<holoscan::CountCondition>("count", input_data.size());
-
-  test_harness->run_test();
-
-  // Additional verification
-  auto sink = test_harness->get_sink<int>("output");
-  EXPECT_EQ(sink->get_received_count(), expected_output.size());
+  for (const holoscan::Diagnostic& d : plan.diagnostics()) {
+    // d.token is a stable registry token, not log prose — grep-able in CI logs.
+    std::cerr << (d.severity == holoscan::DiagnosticSeverity::kError ? "error: " : "warning: ")
+              << d.token << '\n';
+  }
+  ASSERT_TRUE(plan.ok());
 }
-
-}  // namespace holoscan::test
 ```
 
-## API Reference
+Remember the failure model: admission failure is a **rejected plan, not an
+exception**, so the test inspects `ok()` and `diagnostics()` rather than
+wrapping `compile()` in a try/catch (see
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)).
 
-### Creating Test Harness
+The second, stronger check catches *unintended* plan changes. An admitted plan
+serializes deterministically — `plan.json()` is canonical JSON and
+`plan.digest()` is a 256-bit semantic digest (`holoscan::PlanDigest`, an
+`std::array<std::byte, 32>` comparable with `==`) covering normalized plan
+semantics. Check the digest of your known-good plan into the repository and
+diff against it:
 
 ```cpp
-// Without parameters
-auto test = create_operator_test<DoublerOp>();
+TEST(FusionPipeline, PlanMatchesBaseline) {
+  holoscan::Graph graph = make_production_graph();
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+  ASSERT_TRUE(plan.ok());
 
-// With parameters
-auto test = create_operator_test<DoublerOp>(
-  holoscan::Arg("param1") = value1,
-  holoscan::Arg("param2") = value2
-);
+  const holoscan::PlanDigest baseline = load_baseline_digest();  // checked-in bytes
+  EXPECT_EQ(plan.digest(), baseline)
+      << "Execution plan changed. Review the canonical JSON diff, then refresh "
+         "the baseline if the change is intentional:\n"
+      << plan.json();
+}
 ```
 
-### Adding Input Ports
+The division of labor: **diff with `digest()`, read with `json()`**. Digest
+equality tells you *whether* the plan changed without parsing anything; when
+it fails, checking the canonical JSON into the repo alongside the digest gives
+reviewers a human-readable diff of *what* changed — partitioning, channel
+capacities, temporal triggers, clock catalog, and the rest. A refactor that
+was supposed to be behavior-neutral but silently altered an endpoint name or a
+queue capacity shows up as a red CI job instead of a runtime surprise.
 
-The values that are passed to the operator's input ports are defined and added via the `add_input_port` function. This function takes a `std::vector<DataType>` object, the elements of which will be passed to the operator one-by-one.
+For plan-inspection tooling beyond assert-and-diff — record accessors,
+artifact bundles, and working with plans outside tests — see
+[Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+<Tip>
+  Compile-plan tests need no GPU and no runtime bindings, so run them in the
+  cheapest CI tier on every commit. Reserve simulated-clock graph tests for
+  the same tier where possible, and hardware-in-the-loop runs for merge gates.
+</Tip>
+
+## Testing `compute()` logic with constructed inputs
+
+An operator is three declarations — `setup()` for structure, `contract()` for
+time, `compute()` for work — and `compute()` is intentionally oblivious to
+temporal concerns. Exploit that: keep the *work* in plain functions that take
+constructed values, and let `compute()` be a thin shell that receives, calls,
+and emits. The plain functions then test like any other C++ code.
 
 ```cpp
-test->add_input_port<DataType>("port_name", test_data_vector);
+// fusion_math.hpp — pure logic, no runtime types.
+Control fuse(const Frame& frame, const ImuSample& imu);
+
+// fusion_math_test.cpp — ordinary GoogleTest, no graph, no clock, no runtime.
+TEST(FuseLogic, LargeTiltCommandsCorrection) {
+  const Frame frame = make_test_frame(/* ... */);
+  const ImuSample imu{.tilt_rad = 0.4};
+  const Control control = fuse(frame, imu);
+  EXPECT_GT(control.correction, 0.0);
+}
 ```
 
-### Adding Output Ports
+Inside the operator, `compute()` reduces to plumbing — receive inputs, call
+`fuse()`, emit the result — so the part that carries your domain risk has
+direct, fast, deterministic coverage, and the plumbing is exercised by the
+simulated-clock graph tests above.
 
-The output ports of the operator are added to the test harness using the `add_output_port` function. This function can be used in two ways: without a validator, to simply collect the output data, or with a validator function to automatically check that the output matches expected results.
+What you *cannot* do today is instantiate an operator and invoke its
+`compute()` directly: the `holoscan::ExecutionContext` handed to `compute()`
+is constructed by the runtime for each activation and is not something user
+code can build by hand. The runtime boundary is therefore the seam — put logic
+you want to unit-test on the far side of it.
 
-```cpp
-// Without validation
-test->add_output_port<DataType>("port_name");
+<Note>
+  **Planned: an operator unit-testing harness.** A dedicated harness for
+  running a single operator without the full runtime — feeding its input
+  ports constructed values, collecting and validating its outputs, and
+  stepping activations — is planned for a future release. Until it lands, the
+  factor-out-pure-logic pattern above plus simulated-clock graph tests are the
+  supported approach.
+</Note>
 
-// With validation
-test->add_output_port<DataType>("port_name",
-  holoscan::test::validators<DataType>(validator_function));
-```
+## Choosing the right layer
 
-### Adding Conditions
+| You want to verify… | Use | Cost |
+|---|---|---|
+| Numeric/domain logic is correct | Pure-function unit tests with constructed inputs | Milliseconds, no runtime |
+| The graph is valid and unchanged | Compile in a test: `ok()` + digest/JSON baseline | Milliseconds, no runtime |
+| Operators interact correctly over time | Whole-graph run under `SyntheticClock` | Seconds, full runtime, no hardware |
+| Real sensors and drivers behave | Hardware-in-the-loop run | Minutes, real devices |
 
-```cpp
-test->add_condition<holoscan::CountCondition>("name", count);
-test->add_condition<holoscan::PeriodicCondition>("name",
-  holoscan::Arg("recess_period") = std::string("100ms"));
-```
+Work down the table only as far as the property under test requires; each row
+down costs more and diagnoses less precisely. When a graph-level test fails,
+the failure taxonomy in
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures)
+tells you which phase — authoring, compile, or run — to look at first.
 
-### Running Tests
+## Recap
 
-```cpp
-test->run_test();
-```
+- The whole runtime reads one swappable `Clock`: bind a `SyntheticClock` with
+  `bind_shared_clock()` + `set_default_clock()` and drive `advance_by()` from
+  a single test thread for deterministic whole-graph tests.
+- `ManualClock` steps time as a plain value; `SyntheticClock` blocks sleepers
+  until time is advanced — use the latter for live graph runs.
+- Compile the graph in CI: assert `plan.ok()`, log `Diagnostic` tokens on
+  failure, and diff `plan.digest()` / `plan.json()` against a checked-in
+  baseline to catch unintended plan changes.
+- Keep `compute()` a thin shell over pure functions and unit-test those with
+  constructed inputs; user code cannot build an `ExecutionContext` by hand.
+- A dedicated operator unit-testing harness (running operators without the
+  full runtime) is planned for a future release.
 
-## Testing Patterns
-
-### Source Operators
-
-Operators with output ports, but no input ports.
-
-```cpp
-auto test = create_operator_test<SourceOp>(params)
-  ->add_condition<CountCondition>("count", iterations)
-  ->add_output_port<T>("output", validators);
-
-test->run_test();
-
-// Verify internal state (optional)
-auto src_op = test->get_operator_under_test();
-// Check src_op internal state...
-```
-
-### Sink Operators
-
-Operators with input ports, but no input ports.
-
-```cpp
-auto test = create_operator_test<SinkOp>()
-  ->add_input_port<T>("input", test_data);
-
-test->run_test();
-
-// Verify internal state (optional)
-auto sink_op = test->get_operator_under_test();
-// Check sink_op internal state...
-```
-
-### Transform Operators
-
-Operators with both input and output ports
-
-```cpp
-auto test = create_operator_test<TransformOp>(params)
-  ->add_input_port<InputT>("input", input_data)
-  ->add_output_port<OutputT>("output", output_validators)
-  ->add_condition<CountCondition>("count", data_size);
-```
+Next: [The performance model](/holoscan/sdk-user-guide/performance/performance-model).

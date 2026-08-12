@@ -1,0 +1,224 @@
+An operator is Holoscan's unit of computation: the class where your algorithm
+lives. You express your logic as an operator, connect its typed ports to other
+operators to form a graph, and the runtime *activates* it — running its
+`compute()` method each time the runtime decides the operator should act and
+moving typed samples between ports along the graph edges. Everything else —
+how data travels, when you run, how concurrency is managed — is the runtime's
+job, driven by what your operator declares.
+
+This page introduces the mental model you will use for every operator you
+write: one class, three declarations. You will write your first operator with
+just two of them, then add the third as the camera/IMU running example starts
+to take shape.
+
+**Complete C++ example:** [`examples/first_operator/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_operator/cpp)
+
+<Note title="You will learn">
+  - The three-declaration model: `setup()` is structure, `contract()` is time,
+    `compute()` is work.
+  - How to bind typed `Input<T>`/`Output<T>` members in `setup()`.
+  - How to write a `compute()` body with `HOLOSCAN_TRY` and a checked `emit()`.
+  - Why simple operators skip `contract()` entirely (the `OnAnyInput` default).
+  - How a minimal contract declares a trigger, input selection, and a
+    missing-data policy.
+  - Why the steady-state data path performs no per-frame heap allocation.
+</Note>
+
+## One class, three declarations
+
+You define an operator by deriving from `holoscan::Operator<>` (or
+`Operator<Params>` when it takes [typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)),
+declaring `Input<T>`/`Output<T>` data members, and overriding up to three
+methods. Each method answers a different question, and the runtime consults
+them at different times:
+
+| Declaration | Question it answers | What you declare |
+|---|---|---|
+| `setup()` | **Structure** — what does this operator look like? | Bind your typed `Input<T>`/`Output<T>` members to the spec; declare parameters and lifecycle behavior. Runs once, at authoring time. |
+| `contract()` | **Time** — when should it run, on which data? | The temporal contract the runtime must satisfy *before* invoking `compute()`: the trigger, per-input sample selection, and the missing-data policy. Optional. |
+| `compute()` | **Work** — what does it do? | The per-activation body: read inputs, transform, write outputs. Returns `expected<void, Error>`. |
+
+The division of labor is deliberate. By the time `compute()` runs, all
+temporal questions have already been answered: the runtime has decided
+*whether* to activate you, *which* samples each input sees, and *how* any
+missing data was handled. `compute()` is intentionally temporally oblivious —
+it just reads the inputs it was given and does the work.
+
+When an operator needs setup or teardown work around steady state, it can also
+override the simple `start()`/`stop()` virtuals — they run at the lifecycle
+start/stop boundary; see
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).
+
+<Note title="Why is it called a contract?">
+  `contract()` declares obligations, not code. It states what the runtime must
+  guarantee **before** it invokes `compute()`: the **trigger** (what causes an
+  activation), the **input selection** (which samples participate in that
+  activation), and the **missing-data policy** (what happens when an input is
+  absent or stale). The runtime's temporal engine reads this declaration and
+  enforces it — so when `compute()` finally runs, the contract has already
+  been fulfilled, and your work code never needs to check clocks, poll queues,
+  or reason about arrival races.
+</Note>
+
+## A first operator — no contract required
+
+If you do not override `contract()`, you get the default trigger,
+`OnAnyInput`: the operator activates whenever any connected input accepts a
+sample. For a simple single-input, single-rate operator that is exactly what
+you want, so your first operator needs only two declarations — structure and
+work:
+
+```cpp
+#include <holoscan/holoscan.hpp>
+
+class Doubler final : public holoscan::Operator<> {
+ public:
+  holoscan::Input<std::uint32_t>  in{"in"};
+  holoscan::Output<std::uint32_t> out{"out"};
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(in);      // bind the typed members declared above
+    spec.output(out);
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    HOLOSCAN_TRY(auto value, in.receive_data());  // the sample the runtime selected
+    return out.emit(value * 2U);                  // returning the result checks it
+  }
+};
+```
+
+Walk through what each piece does:
+
+- **Ports are typed member declarations.** `Input<std::uint32_t>` and
+  `Output<std::uint32_t>` are stable data members, named at construction and
+  *bound* in `setup()` with `spec.input(...)`/`spec.output(...)`. Because you
+  reference the member itself in `compute()`, a misspelled port name or a
+  payload-type mismatch is a compile-time error, not a runtime surprise.
+- **`receive_data()` hands you the value.** It returns
+  `expected<std::uint32_t, Error>` — the payload of the sample the runtime
+  selected for this activation. (A metadata-carrying `receive()` variant
+  exists; see [operator anatomy](/holoscan/sdk-user-guide/building-operators/operator-anatomy).)
+- **`HOLOSCAN_TRY` keeps the body short.** Every accessor returns
+  `expected<T, Error>`; the macro unwraps the success value or returns the
+  error from `compute()` in one line. See
+  [errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+  for the full pattern.
+- **`emit()` must be checked.** Every `emit` overload is
+  `[[nodiscard]] expected<void, Error>` — publishing can fail. When emitting
+  is the last step, return its result directly, as above; otherwise wrap it:
+  `HOLOSCAN_TRY(out.emit(...))`.
+
+<Warning>
+  Never write a bare `out.emit(value);` statement. `emit()` is
+  `[[nodiscard]]`, so dropping its result is a compiler warning — and an
+  unchecked emit silently loses the failure (for example `kNotReady` on an
+  unbound port). Either return the result or wrap the call in `HOLOSCAN_TRY`.
+</Warning>
+
+Notice what is *absent*: no queue management, no thread code, no timing logic.
+Wiring `Doubler`'s ports to other operators happens in the graph, not in the
+operator — that is the subject of
+[composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).
+
+## Adding time — a minimal contract
+
+Now the running example. A fusion operator consumes a 60 Hz camera and a much
+faster IMU, and produces a pose. "Activate on any input" is wrong here: you
+want one activation *per camera frame*, with the freshest IMU sample that
+matches it — and a sensible answer when a fresh IMU sample is not available.
+That timing intent is exactly what `contract()` declares:
+
+```cpp
+class SensorFusion final : public holoscan::Operator<> {
+ public:
+  holoscan::Input<Frame> camera{"camera"};  // Frame, Imu, Pose: your payload types
+  holoscan::Input<Imu>   imu{"imu"};
+  holoscan::Output<Pose> pose{"pose"};
+
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(camera);
+    spec.input(imu);
+    spec.output(pose);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    using namespace std::chrono_literals;
+    holoscan::Contract c;
+    c.trigger(holoscan::OnEach{camera})                       // when: once per camera frame
+     .input(imu, holoscan::LatestWithin{.max_age = 5ms})      // which: freshest IMU within 5 ms
+     .on_missing(imu, holoscan::ReuseLast{.max_age = 20ms});  // if absent: reuse the last one
+    return c;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    // The contract already guaranteed a camera frame and a fresh-or-reused
+    // IMU sample: read them and fuse. No clocks, no queues, no races.
+    HOLOSCAN_TRY(auto frame, camera.receive_data());
+    HOLOSCAN_TRY(auto motion, imu.receive_data());
+    return pose.emit(fuse(frame, motion));
+  }
+};
+```
+
+The contract is built from a small vocabulary of typed value objects — no
+policy strings to misspell:
+
+- **Trigger** (`OnEach{camera}`): activate once for every accepted camera
+  frame. The camera is the anchor; the IMU merely feeds the activation.
+- **Selectors** (`LatestWithin{.max_age = 5ms}`): per non-driver input, which
+  sample participates. The `OnEach` driver is selected implicitly — do not add
+  an `Exact` selector for it. The IMU input gets the newest sample no older
+  than 5 ms.
+- **Missing-data policy** (`ReuseLast{.max_age = 20ms}`): if no fresh IMU
+  sample exists, reuse the last admitted one, up to 20 ms old — after that,
+  the input is simply absent for the activation.
+
+Note that `compute()` did not change shape at all. It still reads inputs and
+emits an output; the contract moved every temporal decision out of the work
+code and into a declaration the runtime enforces. Declaring a contract is
+cheap and unvalidated at the call site — semantic conflicts are caught when
+you compile the graph, where `compile()` returns a rejected plan rather than
+throwing.
+
+This is only the entry-level vocabulary. Clock triggers, aligned multi-input
+joins, batch selectors, deadlines, and violation policies are covered in
+[temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+This exact scalar teaching contract ships in `first_operator`;
+`ea1_slow_fast_fusion` demonstrates the `Skip` variant, while
+`ea1_camera_imu_control` demonstrates windowed fusion. See
+[camera/IMU control](/holoscan/sdk-user-guide/examples/camera-imu-control) and
+[slow/fast fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion).
+
+## No per-frame heap allocation
+
+One philosophy runs through everything an operator touches: the steady-state
+data path is **bounded by construction**. Output buffers, queues, and tensor
+storage are preallocated into pools sized when the plan is compiled, and
+"allocating" an output means *borrowing* an already-reserved slot from a pool
+— never calling into the heap per frame. If a pool has no free slot, you get a
+`kResourceExhausted` error value instead of a hidden allocation or an
+unbounded queue. You will meet the borrowing API (allocation requests and
+move-only loans) when you emit your first tensor in
+[tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+## Recap
+
+- An operator is one class with **three declarations**: `setup()` (structure),
+  `contract()` (time), `compute()` (work).
+- `setup()` binds typed `Input<T>`/`Output<T>` members; type and name errors
+  surface at compile time.
+- `contract()` states what the runtime must satisfy *before* `compute()` runs:
+  trigger, input selection, missing-data policy. `compute()` stays temporally
+  oblivious.
+- Simple operators skip `contract()` — the default `OnAnyInput` trigger
+  activates on any connected input.
+- Always check `emit()`: it is `[[nodiscard]]`, and `HOLOSCAN_TRY` keeps the
+  checks to one line each.
+- The data path does no per-frame heap allocation: pools are preallocated,
+  and exhaustion is a `kResourceExhausted` error value.
+
+Next: give your operator configuration with
+[typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters).

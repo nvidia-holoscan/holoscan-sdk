@@ -1,0 +1,278 @@
+You met parameter structs and `HOLOSCAN_PARAM_SCHEMA` in
+[Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters).
+This page goes deeper: the complete `field<>` policy taxonomy, where each
+policy takes effect — bind-time checks, live updates, snapshots and
+persistence, or external tuning — and how a schema's identity and version make
+your parameters a stable contract rather than an incidental struct layout.
+
+Everything here builds on the same authoring shape: a plain aggregate `struct`
+with default member initializers, one `HOLOSCAN_PARAM_SCHEMA` declaration beside
+it (same namespace, so argument-dependent lookup finds it), and an O(1),
+allocation-free read via `context.params<T>()` inside `compute()`.
+
+**Complete C++ example:** [`examples/parameter_schemas/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/parameter_schemas/cpp)
+
+<Note title="You will learn">
+  - The full set of `field<>` policies — mutability, constraints, string and
+    container bounds, custom validators, nesting, visibility, persistence, and
+    documentation metadata.
+  - Where each policy marker takes effect — bind-time constraint checks, live
+    generation updates, snapshot/persistence projections, or the external
+    tuning catalog — and which explicit opt-in gates each engine.
+  - How `param_schema(id, version)` gives a parameter aggregate a stable
+    identity independent of its C++ layout.
+  - How parameter **generations** fit in, and where to read about live updates.
+</Note>
+
+## The policy taxonomy
+
+Every parameter is declared with one `field<&Params::member>("name")` clause,
+followed by a fluent chain of policies. Policies compose freely within a chain;
+each one records intent, adds a constraint, or attaches metadata.
+
+```cpp
+holoscan::field<&DetectorParams::threshold>("threshold")
+    .runtime_mutable()
+    .range(1U, 8U)
+    .description("Detection score cutoff")
+```
+
+The member pointer is checked at compile time: `field<&T::m>` must name a real
+member of a supported parameter type, and invalid policy combinations fail at
+compile time rather than at run time.
+
+### Mutability
+
+| Policy | Meaning |
+|---|---|
+| `.compile_time()` | The value is fixed when the plan is compiled (this is the default). |
+| `.runtime_mutable()` | The value may change between activations at run time, via a new parameter generation — live once the plan explicitly admits runtime updates (see below). |
+| `.recompile_required()` | Changing the value requires recompiling the plan. |
+| `.lifecycle_mutable(stage)` | The value may change at a specific lifecycle stage boundary: a run-time patch triggers a [lifecycle restart transaction](/holoscan/sdk-user-guide/advanced/restart-control) re-entering at `stage`. |
+
+Mutability markers are **last-one-wins** within a chain: the final marker in
+the chain is the declared policy.
+
+### Value constraints
+
+| Policy | Applies to | Meaning |
+|---|---|---|
+| `.range(min, max)` | Numeric and duration fields | Inclusive bounds. For `std::chrono` fields, compatible units are accepted — you can bound a `std::chrono::microseconds` field with `100us` and `2ms`. |
+| `.allowed_values({...})` | Scalar fields | A fixed, closed set of admissible values. Literals must match the declared field type **exactly**; a convertible-but-different literal is a compile error. |
+
+### String and container bounds
+
+| Policy | Applies to | Meaning |
+|---|---|---|
+| `.encoding(holoscan::ParamStringEncoding::kUtf8)` | `std::string` | Require valid UTF-8. |
+| `.max_utf8_bytes(n)` | UTF-8 strings | Positive byte-length bound; requires the UTF-8 encoding policy. |
+| `.element_encoding(...)` | Containers of strings | Encoding policy for each element. |
+| `.max_elements(n)` | `std::vector` fields | Positive element-count bound. |
+
+<Warning>
+  **`.max_utf8_bytes(n)` is a byte bound, not a character bound.** A 64-byte
+  limit admits 64 ASCII characters but as few as 16 four-byte code points.
+  Size your bounds for the encoded byte length of realistic values, and pair
+  the bound with `.encoding(kUtf8)` — a byte bound on a string without the
+  UTF-8 encoding policy is rejected when the schema is lowered.
+</Warning>
+
+### Custom validation
+
+`.validator<fn>("stable.id")` attaches a process-local predicate — a
+`noexcept` callable returning `bool` for a `const Field&` — plus a **stable
+string identity**. The identity travels with the schema even where the callable
+cannot (across processes and tooling), so external consumers can tell *that*
+a named validation applies without being able to run it.
+
+```cpp
+constexpr bool odd_only(const std::uint32_t& v) noexcept { return (v % 2U) == 1U; }
+
+holoscan::field<&DetectorParams::window>("window")
+    .range(1U, 31U)
+    .validator<odd_only>("com.example.odd_only")
+```
+
+The callable must return exactly `bool` and be `noexcept`; both are enforced
+with compile-time checks. Keep validators side-effect-free — they exist to
+answer "is this value admissible?", nothing more.
+
+### Nesting
+
+`.nested<NestedParams>()` folds another declared parameter aggregate's schema
+into the parent field. The nested type must match the field type exactly and
+must itself have a `HOLOSCAN_PARAM_SCHEMA` declaration; both are
+`static_assert`-checked. The nested schema's ID, version, and hashes
+participate in the parent's identity, so a nested aggregate stays a stable,
+versioned unit rather than dissolving into loose fields.
+
+```cpp
+struct FilterParams { float cutoff_hz{30.0F}; };
+HOLOSCAN_PARAM_SCHEMA(FilterParams, holoscan::param_schema("com.example.FilterParams", 1),
+                      holoscan::field<&FilterParams::cutoff_hz>("cutoff_hz").range(0.1F, 500.0F));
+
+struct ControllerParams { FilterParams filter{}; float gain{1.0F}; };
+HOLOSCAN_PARAM_SCHEMA(ControllerParams, holoscan::param_schema("com.example.ControllerParams", 1),
+                      holoscan::field<&ControllerParams::filter>("filter").nested<FilterParams>(),
+                      holoscan::field<&ControllerParams::gain>("gain").range(0.0F, 10.0F));
+```
+
+### Visibility and persistence
+
+| Policy | Meaning |
+|---|---|
+| `.sensitive()` | The value is redacted from snapshots, projections, and external views — sensitive records retain no value in saved archives. |
+| `.persisted()` | The value is *eligible* for saved configuration — which is already the default for ordinary fields. Saving itself is always the explicit cold `params::save(snapshot, path)` call; nothing is saved automatically. Conflicts with `.transient()` — declaring both fails schema lowering. |
+| `.transient()` | The value must **not** be saved to configuration; this is the opt-out from the default persistence eligibility. |
+| `.internal()` | The field is not part of the external surface and is omitted from external projections. Internality does **not** imply sensitivity — mark secrets `.sensitive()` explicitly. |
+| `.external_read_only()` | External tools may observe the value but not change it; the field appears read-only in the external catalog. |
+| `.external_tuning()` | External tools may propose new values (live tuning). A tuning field is writable only when it is also runtime-mutable, public, and non-sensitive, and the plan admits updates; other catalog fields stay read-only. |
+
+### Documentation and migration
+
+| Policy | Meaning |
+|---|---|
+| `.description(text)` | Human-facing description; static UTF-8 text. |
+| `.unit(text)` | A unit label (`"ms"`, `"pixels"`, `"dB"`) for tooling and docs. |
+| `.alias(prior_name)` | A **prior** canonical name accepted on input for migration. The alias never becomes the output identity — the canonical name in `field<>("name")` does. |
+
+## Where each policy takes effect
+
+Every policy above is authored the same way, but they act at different points
+of the pipeline: at bind time when a value is admitted into a generation, in
+the live-update engines, in snapshot/persistence projections, or in the
+external tuning catalog. All of those engines ship today; the update engines
+sit behind explicit plan opt-ins.
+
+| Policy | Where it acts | Notes |
+|---|---|---|
+| `.range(min, max)` | **Bind time** | A value outside the bounds is rejected. |
+| `.allowed_values({...})` | **Bind time** | A value outside the set is rejected. |
+| `.encoding(kUtf8)` / `.max_utf8_bytes(n)` | **Bind time** | Invalid UTF-8 or an oversize string is rejected. |
+| `.element_encoding(...)` / `.max_elements(n)` | **Bind time** | Container element checks. |
+| `.validator<fn>("id")` | **Bind time** (in-process) | The callable runs in the declaring process; only the stable ID travels externally. |
+| `.nested<T>()` | **Bind time** | Nested schema identity and constraints participate fully. |
+| `.description(...)` / `.unit(...)` / `.alias(...)` | **Live metadata** | Available to introspection and tooling. |
+| `.runtime_mutable()` | **Live updates** | Scalar generation swaps at the target's next compute boundary once the plan enables `CompileOptions.parameters.runtime_updates` under the Standard/Research profiles. See [runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates). |
+| `.lifecycle_mutable(stage)` | **Live updates via restart** | A run-time patch triggers a lifecycle restart transaction re-entering at `stage`; requires `CompileOptions::lifecycle_transactions`, and active mutation is admitted only under the Standard/Research profiles. Without the lifecycle opt-in, submissions report `kRequiresLifecycleBarrier`; an unsupported profile fails compilation before submission. |
+| `.external_tuning()` / `.external_read_only()` | **External catalog** | Included in the policy-filtered external catalog; a tuning field is writable only when it is also runtime-mutable, public, and non-sensitive, and the plan admits updates. Other included fields stay read-only, and hidden or projection-limited fields carry no effective value. |
+| `.persisted()` / `.transient()` | **Snapshots and persistence** | Persistence *eligibility*: ordinary fields default to eligible, `.transient()` opts out, and declaring both fails schema lowering. Saving is always the explicit cold `params::save(snapshot, path)` operation; nothing saves automatically. |
+| `.sensitive()` | **Snapshots and projections** | Sensitive records are redacted — snapshots and archives retain no value. |
+| `.internal()` | **Projections** | Omitted from external projections. |
+
+The projection outcome for a field follows a fixed precedence:
+**transient → sensitive → internal → profile → codec**. A transient field is
+dropped before sensitivity is considered, a sensitive field is redacted before
+internality, and profile and codec rules apply last.
+
+<Warning>
+  **`.sensitive()` is redaction, not security.** Snapshot, archive, and
+  projection redaction keeps a marked value out of saved and external
+  surfaces, but the value still lives in process memory and remains reachable
+  from your own code. Do not treat `.sensitive()` as protection for secrets at
+  rest or in transit.
+</Warning>
+
+The engines behind these markers ship with distinct availability:
+
+- **Runtime updates** are compiled into Core, but
+  `CompileOptions.parameters.runtime_updates` resolves its default
+  (`kProfileDefault`) to *disabled* — a plan must opt in explicitly, and only
+  the Standard and Research profiles admit active mutation.
+- **Lifecycle-mutable updates** are gated by
+  `CompileOptions::lifecycle_transactions` (the restart machinery), not by the
+  runtime-updates policy.
+- **Snapshot capture and projection/redaction** are Core facilities, exposed
+  by `RunSession::capture_params()` and `ParamControlHandle::capture()`; they
+  do not depend on optional parameter-persistence tooling.
+- **Archive persistence** through `params::save`/`params::load` belongs to the
+  optional `params_io` component, which is enabled by default.
+- **The web tuner** is a separate *experimental* build component: Linux-only,
+  loopback-only, and built by default only when parameter tooling is enabled.
+  It writes only admitted, adapter-eligible tuning fields.
+
+A practical consequence: declare intent honestly. A `.runtime_mutable()` field
+becomes live-tunable when its plan opts in, while a `.sensitive()` field is
+redacted by Core snapshot/projection paths. `params_io` is needed only to save
+or load archives.
+
+## Schema identity and versioning
+
+The first clause of every `HOLOSCAN_PARAM_SCHEMA` is
+`holoscan::param_schema(stable_id, version)`:
+
+```cpp
+HOLOSCAN_PARAM_SCHEMA(
+    DetectorParams,
+    holoscan::param_schema("com.example.DetectorParams", 1),
+    holoscan::field<&DetectorParams::threshold>("threshold").runtime_mutable().range(1U, 8U),
+    holoscan::field<&DetectorParams::gain>("gain").runtime_mutable().range(0.0F, 10.0F));
+```
+
+- **`stable_id`** is a globally unique, reverse-DNS-style string that names
+  the schema independently of the C++ type name, namespace, or library it
+  lives in. Renaming or moving the struct does not change the schema's
+  identity — only editing the ID does.
+- **`version`** is your declared compatibility counter. Bump it when the
+  schema's meaning changes: a field added or removed, a constraint tightened,
+  a semantic shift in what a field means.
+
+On top of the declared pair, the framework derives structural and contract
+hashes from the field layout and policies, so drift between "what the ID/version
+claim" and "what the fields actually are" is detectable. Nested schemas
+contribute their own ID, version, and hashes to the parent's identity.
+
+Two rules of thumb:
+
+- **Never reuse a `(stable_id, version)` pair for a different shape.** Tooling
+  and configuration keyed by that pair will misinterpret values.
+- **Use `.alias("old_name")` for field renames within a version's migration
+  window** — the old name stays accepted on input while the new canonical name
+  is the identity going forward.
+
+<Warning>
+  **The silent-opaque footgun applies here too.** If `HOLOSCAN_PARAM_SCHEMA` is
+  missing or placed in the wrong namespace, the type silently degrades to
+  *opaque* mode — no declared schema, no identity, no validation — instead of
+  failing to compile. You can check at compile time:
+  `holoscan::param_schema_availability<T>()` reports `kOpaqueLocal` for a type
+  with no declared schema. Keep the macro immediately beside the struct.
+</Warning>
+
+## Generations, briefly
+
+Every activation reads its parameters from one immutable **generation**.
+`context.params<T>()` returns a `const T&` pinned to that generation for the
+entire callback, and `context.params_generation()` returns its identity.
+Generation 0 is the plan's compile-resolved initial aggregate: defaults,
+optionally replaced by an explicit typed `OperatorHandle::set_params()`
+baseline, then sparsely patched by admitted target-bound compile/config
+overrides. It stays the only generation until an admitted update publishes; a
+new value always arrives as a *new* generation observed by a *later*
+activation — never as a mid-callback mutation. The full model — update seams,
+lifecycle-mutable publication, observing generation changes, and ordering
+guarantees — is covered in
+[Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+
+## Recap
+
+- `field<>` policies fall into seven groups: mutability, value constraints,
+  string/container bounds, custom validators, nesting, visibility/persistence,
+  and documentation/migration metadata.
+- Constraints (`range`, `allowed_values`, encodings, validators, nesting) are
+  **enforced at bind time**; mutability, tuning, persistence, and sensitivity
+  markers are **enforced by their shipped engines** — live updates behind the
+  explicit runtime-updates or lifecycle-transactions plan opt-in; snapshot
+  capture and projection/redaction in Core; archive save/load through the
+  default-on optional `params_io` component.
+- `param_schema(stable_id, version)` decouples a schema's identity from its
+  C++ spelling; bump the version on meaning changes and use `.alias()` for
+  field renames.
+- A missing or misplaced `HOLOSCAN_PARAM_SCHEMA` silently yields an *opaque*
+  type; verify with `param_schema_availability<T>()`.
+- Parameters are read per-activation from one immutable generation; updates
+  arrive as future generations — through the next compute boundary for
+  `.runtime_mutable()` fields or a lifecycle restart transaction for
+  `.lifecycle_mutable(stage)` fields — never as mid-callback mutations.
+
+Next: [Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).

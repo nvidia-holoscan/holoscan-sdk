@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="448" viewBox="0 0 960 448" role="img" aria-labelledby="title desc">
+  <title id="title">holomq GPU deferred ref-count release</title>
+  <desc id="desc">export_handle arms defer; release_ref runs on stream host function after stream completes.</desc>
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+  </defs>
+  <style>
+    .t { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #333; }
+    .c { font-family: Consolas, Menlo, monospace; font-size: 14px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .p { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #5a8f00; }
+    .r { font-family: Consolas, Menlo, monospace; font-size: 14px; font-weight: 600; fill: #b45309; }
+    .z { font-family: Consolas, Menlo, monospace; font-size: 14px; font-weight: 600; fill: #2e7d32; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="224" y="32" text-anchor="middle" class="p">Bound publisher stream</text>
+  <text x="736" y="32" text-anchor="middle" class="t">SHM ref_count (slot)</text>
+
+  <rect x="24" y="44" width="400" height="48" rx="4" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="44" y="74" class="c">1. GPU work on stream</text>
+  <rect x="656" y="52" width="160" height="32" rx="16" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="736" y="74" text-anchor="middle" class="r">ref_count = 1</text>
+  <line x1="424" y1="68" x2="654" y2="68" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  <line x1="224" y1="92" x2="224" y2="108" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="24" y="108" width="400" height="64" rx="4" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="44" y="136" class="c">2. export_handle(stream)</text>
+  <text x="44" y="158" class="d">arms deferred release on this stream</text>
+  <rect x="656" y="124" width="160" height="32" rx="16" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="736" y="146" text-anchor="middle" class="r">ref_count = 1</text>
+  <line x1="424" y1="140" x2="654" y2="140" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  <line x1="224" y1="172" x2="224" y2="188" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="24" y="188" width="400" height="56" rx="4" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="44" y="214" class="c">3. ~Buffer (object destroyed)</text>
+  <text x="44" y="234" class="d">lease ended locally; ref_count drop deferred</text>
+  <rect x="656" y="200" width="160" height="32" rx="16" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="736" y="222" text-anchor="middle" class="r">still 1</text>
+  <line x1="424" y1="216" x2="654" y2="216" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  <line x1="224" y1="244" x2="224" y2="260" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="24" y="260" width="400" height="48" rx="4" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="44" y="290" class="c">4. stream completes queued work</text>
+  <rect x="656" y="268" width="160" height="32" rx="16" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="736" y="290" text-anchor="middle" class="r">still 1</text>
+  <line x1="424" y1="284" x2="654" y2="284" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+  <line x1="224" y1="308" x2="224" y2="324" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="24" y="324" width="400" height="56" rx="4" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="44" y="350" class="c">5. cuLaunchHostFunc -&gt; release_ref</text>
+  <text x="44" y="370" class="d">acquire() may reuse slot when count hits 0</text>
+  <rect x="656" y="336" width="160" height="32" rx="16" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="736" y="358" text-anchor="middle" class="z">ref_count = 0</text>
+  <line x1="424" y1="352" x2="654" y2="352" stroke="#76b900" stroke-width="1.5"/>
+
+  <text x="24" y="400" class="d">Avoid (no defer): step 3 calls release_ref immediately while GPU work may still be in flight on the stream.</text>
+</svg>

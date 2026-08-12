@@ -1,0 +1,24 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+table FrameHeader {
+  source: string (id: 0);
+  frame_id: ulong (id: 1);
+}
+
+// Declaration order deliberately differs from field-id order.
+table MultiDescriptorFrame {
+  third: holoscan.schema.Tensor (id: 5);
+  sequence: ulong (id: 0);
+  first: holoscan.schema.Tensor (id: 1);
+  label: string (id: 2);
+  second: holoscan.schema.Tensor (id: 3);
+  exposure: float = 1.0 (id: 4);
+  header: FrameHeader (id: 6);
+}
+
+root_type MultiDescriptorFrame;

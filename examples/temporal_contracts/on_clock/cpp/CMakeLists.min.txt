@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_contract_on_clock LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(contract_on_clock contract_on_clock.cpp)
+target_link_libraries(contract_on_clock PRIVATE holoscan::core)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-013
+    add_test(NAME EXAMPLE_CPP_CONTRACT_ON_CLOCK_TEST COMMAND contract_on_clock)
+    set_tests_properties(EXAMPLE_CPP_CONTRACT_ON_CLOCK_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "on_clock example complete: fixed-rate activation verified"
+            LABELS "examples;temporal-contract"
+            TIMEOUT 30)
+endif()

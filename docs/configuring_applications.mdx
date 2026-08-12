@@ -1,0 +1,336 @@
+Every value your pipeline needs — a detection threshold, a camera gain, a
+deadline — is declared once as a typed parameter and resolved **before** the
+run starts. Holoscan SDK 5.0 deliberately has no runtime configuration file:
+you load a YAML or JSON document, convert it into typed parameter overrides
+validated against each operator's declared schema, hand those overrides to
+`compile()`, and run the resulting immutable plan. Once a plan exists, its
+configuration is part of its identity.
+
+This page covers the full path from a configuration file to a running
+application: loading documents, binding document values to typed `Params`,
+choosing a profile, declaring deployment bindings, and why the
+compile-then-freeze model is a feature rather than a limitation.
+
+**Complete C++ example:** [`examples/essential/config_file/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/essential/config_file/cpp)
+
+<Note>
+  **EA1 packaging boundary.** Source builds enable the optional
+  `config_io`/`params`/`params_io` libraries by default. Installed consumers
+  should request `find_package(holoscan REQUIRED CONFIG COMPONENTS params_io)`,
+  which imports the complete `core`/`config`/`config_io`/`params`/`params_io`
+  target closure. An unqualified aggregate find exposes every optional target
+  present in that installed package variant; component-qualified discovery is
+  the precise, portable spelling when an application depends on optional
+  tooling. A package built with any required optional component disabled
+  intentionally fails the component request instead of silently falling back
+  to a Core-only build.
+</Note>
+
+<Note title="You will learn">
+  - How to load a YAML or JSON file into an immutable `config::Document`
+  - How `params::bind()` and `decode_overrides()` turn document values into
+    schema-validated typed overrides
+  - Where overrides, profiles, and deployment bindings plug into
+    `CompileOptions`
+  - What the five profiles mean and when to choose one
+  - How partition bindings request placement without applying it
+  - Why configuration is immutable after `compile()` — and how regulated
+    deployments benefit
+</Note>
+
+## Where configuration fits in compose → compile → run
+
+Configuration joins the three-phase model at the **compile** step. Composition
+describes the graph structure; the configuration document supplies concrete
+parameter values; `compile()` validates everything together and freezes the
+result into an `ExecutionPlan`. The runtime then executes exactly what the plan
+records — it never re-reads a file.
+
+```text
+config.yaml ──> Document ──> ParamOverrideSet ──┐
+                                                ├──> compile() ──> ExecutionPlan ──> run()
+Graph (op<>() / add_flow / set_params) ─────────┘
+```
+
+Three consequences follow from this shape:
+
+- **Validation happens once, up front.** A typo'd key, an out-of-range value,
+  or a type mismatch is rejected while you still have a stack to debug on —
+  not mid-inference.
+- **The plan is self-contained.** Serializing the plan (its canonical JSON and
+  semantic digest) captures the configuration that will run, byte for byte.
+- **Defaults always exist.** Each parameter struct carries default member
+  initializers; a configuration file only *patches* what it explicitly names.
+
+This page assumes your operators already declare typed parameters with
+`HOLOSCAN_PARAM_SCHEMA`. If they do not, start with
+[typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
+and the full [parameter schema reference](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+## Loading a configuration file
+
+`holoscan::config_io::load()` reads a file into an immutable
+`config::Document`. You name the format explicitly — the loader never infers
+it from a file extension or by sniffing content:
+
+```cpp
+#include <holoscan/config/io.hpp>
+
+auto doc = holoscan::config_io::load("app_config.yaml",
+                                     holoscan::config_io::Format::kYaml);
+if (!doc) {
+  log_error(doc.error().token());   // e.g. CONFIG_PARSE_ERROR, CONFIG_DUPLICATE_KEY
+  return 1;
+}
+```
+
+Loading follows the errors-as-values style used across the SDK: the result is
+a `ConfigResult<Document>` (an `expected`), and failures carry a stable
+`CONFIG_*` token plus bounded diagnostic context (path, source excerpt, and
+the stage that failed) rather than free-form log prose.
+
+The parser is **fail-closed by design**. Duplicate keys are errors, not
+last-one-wins. YAML is an admitted semantic subset: ordinary acyclic anchors
+and aliases are supported, and each alias occurrence materializes as an
+independent owning value. Merge keys (`<<:`), native or custom tags,
+directives, and multi-document streams are rejected.
+JSON is strict. Input size, nesting depth, node count, and string lengths are
+all bounded — a malformed or hostile configuration file cannot exhaust your
+process. If you already hold the bytes, `config_io::parse()` accepts a
+`std::string_view` with the same contract.
+
+Quote strings that look numeric. A plain scalar beginning with a digit or `-`
+must be a valid JSON number; otherwise loading fails with
+`CONFIG_UNSUPPORTED_VALUE`. Values such as `"1.2.3"`, `"192.168.1.10"`,
+`"30s"`, `"0755"`, and `"--verbose"` therefore need quotes.
+
+Lossless mode can replay unchanged alias-bearing YAML byte for byte, but only
+back to YAML. Cross-format serialization and every edit to that document fail
+closed. Parse with `Preservation::kSemanticOnly` when you need to edit an
+alias-bearing document or serialize it in another format.
+
+A `Document` is an immutable value: copies share state, reads are
+thread-safe, and you can address values directly with JSON Pointer paths
+(`doc->at("/camera/gain")`) when you need ad-hoc access. For application
+configuration, though, you rarely read values by hand — you bind whole
+objects to typed parameters, as follows.
+
+<Warning>
+  **Paths are JSON Pointers, not dotted names.** Everywhere the configuration
+  API takes a path — `Document::at()`, `params::bind()` — it is an RFC 6901
+  pointer like `"/camera/gain"`. A dotted spelling like `"camera.gain"` is a
+  single key named `camera.gain`, and the lookup will fail with
+  `CONFIG_PATH_NOT_FOUND`. Bindings never interpret dots as separators or
+  guess an operator name from a document key.
+</Warning>
+
+## Binding document values to typed parameters
+
+The bridge between an untyped document and your typed `Params` structs is a
+pair of functions from `<holoscan/params/config.hpp>`: `params::bind()`
+associates one operator handle with one document path, and
+`params::decode_overrides()` converts all bindings into a single validated
+`ParamOverrideSet`.
+
+Take the camera + IMU fusion pipeline as the running example. The detector
+operator declares its parameters and schema in the usual way:
+
+```cpp
+struct DetectorParams {
+  std::uint32_t threshold{4};
+  float gain{1.0F};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    DetectorParams, holoscan::param_schema("com.example.DetectorParams", 1),
+    holoscan::field<&DetectorParams::threshold>("threshold").range(1U, 8U),
+    holoscan::field<&DetectorParams::gain>("gain").range(0.0F, 10.0F));
+```
+
+A YAML file supplies deployment-specific values under a key of your choosing:
+
+```yaml
+detector:
+  threshold: 6
+  gain: 2.5
+```
+
+Bind the operator's handle to that path and decode:
+
+```cpp
+#include <holoscan/params/config.hpp>
+
+holoscan::Graph graph{"pipeline"};
+auto detector = graph.op<Detector>("detector");
+detector.set_params(DetectorParams{.threshold = 5});   // authored baseline (optional)
+
+auto overrides = holoscan::params::decode_overrides(
+    *doc, {holoscan::params::bind(detector, "/detector")});
+if (!overrides) {
+  log_error(overrides.error().token());
+  return 1;
+}
+```
+
+`decode_overrides()` is where the schema earns its keep. Every value in the
+bound object is checked against the operator's declared schema — field names
+(including declared aliases), exact types, ranges, allowed values, string
+encoding and length bounds. The conversion is **all-or-nothing**: one invalid
+field, one unknown key, or one duplicate target rejects the entire call with a
+typed error and no partial result. Numeric conversion is lossless by default;
+you opt into checked lossy conversion via `ParamConfigDecodeOptions` only if
+you mean it.
+
+The contribution model is a **sparse patch**: fields present in the document
+override the baseline; fields absent from it preserve the value you authored
+with `set_params()` (or the struct's default member initializers if you
+authored nothing). You never have to repeat every field in every file.
+
+The decoded `ParamOverrideSet` slots straight into compilation:
+
+```cpp
+holoscan::CompileOptions options;
+options.parameter_overrides = std::move(*overrides);
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
+if (!plan.ok()) { /* inspect plan.diagnostics() */ }
+```
+
+From here the usual rules apply: check `plan.ok()`, read `plan.diagnostics()`
+on rejection, and pass the accepted plan to `holoscan::run()`. See
+[compiling and checking a plan](/holoscan/sdk-user-guide/getting-started/compile-and-check)
+for the full result model.
+
+<Tip>
+  Keep one document per deployment (bench, lab, production) rather than one
+  per operator. A single file with one top-level object per operator, each
+  wired with one `bind()` call, keeps the mapping between file and graph
+  explicit and reviewable.
+</Tip>
+
+## Profiles: naming your deployment posture
+
+`CompileOptions::profile` requests one of five closed profiles. A profile is a
+capability and diagnostics policy the compiler applies when admitting your
+graph — stricter profiles turn advisory warnings into rejections and demand
+more explicit evidence in the plan.
+
+| Profile | Intent |
+|---|---|
+| `Profile::kStandard` | General-purpose default. |
+| `Profile::kRobotics` | Robotics-oriented capability and diagnostic policy. |
+| `Profile::kRealTime` | Bounded real-time capability policy. |
+| `Profile::kRegulated` | Regulated-domain capability and evidence policy. |
+| `Profile::kResearch` | Research-oriented capability policy. |
+
+`kStandard` is the default and the right choice while you are developing.
+Constrained profiles change what the compiler will accept — for example, a
+compiler-generated endpoint name that is merely a warning under `kStandard`
+becomes a hard rejection under a constrained profile. Treat a profile switch
+like a compiler warning-level bump: run it early so admission surprises show
+up in CI, not at deployment. Profile admission results are recorded in the
+plan, so you can inspect exactly what policy was applied.
+
+```cpp
+options.profile = holoscan::Profile::kRegulated;
+```
+
+Profiles are compile-time admission policy, not runtime switches. This EA guide
+documents generated-endpoint behavior only; inspect `profile_manifest()` for
+the resolved plan and consult the release notes for additional
+profile-specific policy.
+
+{/* TODO(verify): Owner: profile-policy owner. Durable target: the published
+    profile policy matrix. Unblock condition: document additional per-profile
+    admission differences only after that matrix is published and reconciled
+    with profile_manifest(). */}
+
+## Deployment bindings: requesting placement at compile time
+
+`CompileOptions::deployment` carries a `DeploymentBinding` — a fluent, owned
+value that records *where* authored execution partitions should run:
+
+- **Partition placement** maps the exact name passed to `Graph::partition()`
+  to a `ThreadPlacement`: an optional CPU affinity set, a scheduling request
+  (`SchedulingPolicy::kOther`, `kFIFO`, `kRoundRobin`, or `kDeadline` with its
+  nanosecond parameters), a wake mode, and IRQ-isolation evidence
+  requirements.
+
+```cpp
+options.deployment
+    .bind_thread_placement("fusion",
+                           holoscan::ThreadPlacement{
+                               .affinity = holoscan::CPUAffinity{{2, 3}},
+                               .scheduling = {.policy = holoscan::SchedulingPolicy::kFIFO,
+                                              .priority = 40}});
+```
+
+The essential thing to understand at this stage: **bindings are requests, not
+actions.** Compilation validates exact partition names, placement shape, and
+duplicates, runs read-only host capability probes, and freezes both the
+request and the probe evidence into the plan. It never changes your calling
+thread's affinity or scheduling policy. The runtime applies the accepted
+placement when it executes the plan. If a probe cannot prove a request, the
+default policy records an explicit fallback in the plan; set
+`ProbeFailurePolicy::kFailAdmission` to reject instead.
+
+This is orientation-level coverage — full placement guidance and the host
+capability requirements live in the
+[deployment stack](/holoscan/sdk-user-guide/configuration/deployment-stack)
+page.
+
+## Compiled configuration is immutable — on purpose
+
+Once `compile()` returns an accepted plan, the configuration inside it does
+not change. There is no runtime configuration file reloading, no file watcher,
+no "SIGHUP to reload" convention. This is a deliberate design position, not a
+missing feature:
+
+- **What you validated is what runs.** The plan's canonical JSON and 256-bit
+  semantic digest cover the resolved parameter values. If the digest matches
+  the one you qualified, the configuration matches — there is no window where
+  a file edit silently changes behavior after validation.
+- **Regulated deployments get evidence for free.** In medical and other
+  regulated domains, the deployed configuration must be exactly the reviewed
+  configuration. A plan digest recorded at qualification time plus
+  `emit_artifacts()` publishing an atomic, manifest-committed bundle gives you
+  a verifiable chain from review to runtime with no "someone edited the YAML
+  on the device" failure mode.
+- **Failure surfaces move to the cold path.** Every class of configuration
+  error — parse, type, range, unknown key, invalid placement — is impossible
+  at runtime because it was rejected at compile time. The hot path never pays
+  for validation and never encounters a half-applied configuration.
+
+Different configurations are therefore different plans: load a different
+document, compile again, and you get a new plan with a new digest you can
+diff, review, and deploy through
+[plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+<Note>
+  **Immutable files, not frozen values.** Fields whose schema declares
+  `.runtime_mutable()` can still be updated during a run — through the typed,
+  generation-tracked runtime update API, never by re-reading a file. Each
+  update is validated against the same schema constraints and becomes a new
+  observable parameter generation. See
+  [runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+</Note>
+
+## Recap
+
+- `config_io::load()` parses YAML/JSON fail-closed into an immutable
+  `config::Document`; formats are explicit and errors are typed `CONFIG_*`
+  values.
+- `params::bind()` plus `params::decode_overrides()` convert document objects
+  into a schema-validated `ParamOverrideSet` — sparse patch over your authored
+  baseline, all-or-nothing on any error.
+- Overrides, a `Profile`, and `DeploymentBinding` requests all enter through
+  `CompileOptions`; `compile()` validates and freezes them into the plan.
+- Deployment bindings are recorded requests with probe evidence; the runtime,
+  not the compiler, applies placement.
+- Configuration is resolved before the run and immutable after `compile()` —
+  the plan digest is your proof of what runs, which is exactly what regulated
+  deployments need.
+- Live tuning of `.runtime_mutable()` fields goes through the runtime update
+  API, not file reloading.
+
+Next: [Deployment Stack](/holoscan/sdk-user-guide/configuration/deployment-stack).

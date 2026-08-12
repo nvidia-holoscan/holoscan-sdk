@@ -1,0 +1,6 @@
+{
+  "detector": {
+    "threshold": 9,
+    "gain": 2.5
+  }
+}

@@ -1,180 +1,117 @@
-<Anchor id="hello-world-example" />
+Every SDK needs a smoke test, and this is Holoscan's: the smallest possible
+program that proves the SDK headers, the `holoscan::core` library, and your
+build configuration all work together. There are no operators, no graph, and
+no runtime here — just one function call. If this example builds and prints
+its greeting, your toolchain is ready for everything else in
+[Holoscan by Example](/holoscan/sdk-user-guide/examples/holoscan-by-example).
 
-For our first example, we look at how to create a Hello World example using the Holoscan SDK.
-
-In this example we'll cover:
-
-- How to define your application class.
-- How to define a one-operator workflow.
-- How to use a `CountCondition` to limit the number of times an operator is executed.
-
-<Note>
-
-The example source code and run instructions can be found in the [examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) directory on GitHub, or under `/opt/nvidia/holoscan/examples` in the NGC container and the Debian package, alongside their executables.
-
+<Note title="You will learn">
+- What the `hello_world` example does and why it exists.
+- The minimal SDK availability check: `holoscan::hello()`.
+- The smallest `CMakeLists.txt` that links against `holoscan::core`.
+- How to build and run the example, and what success looks like.
 </Note>
 
+## The entire program
 
-## Defining the HelloWorldApp class
+The example lives at `public/examples/hello_world/` in the SDK tree. The source is
+one file, `hello_world.cpp`:
 
-_For more details, see the [Defining an Application Class](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#defining-an-application-class) section._
+```cpp
+#include <holoscan/holoscan.hpp>
 
-We define the `HelloWorldApp` class that inherits from holoscan's `Application` base class. An instance of the application is created in `main`. The `run()` method will then start the application.
-
-<Tabs>
-
-  <Tab title="C++" language="cpp">
-
-  ```cpp
-    class HelloWorldApp : public holoscan::Application {
-     public:
-      void compose() override {
-        using namespace holoscan;
-
-        // Define the operators, allowing the hello operator to execute once
-        auto hello = make_operator&lt;ops::HelloWorldOp&gt;("hello", make_condition<CountCondition>(1));
-
-        // Define the workflow by adding operator into the graph
-        add_operator(hello);
-      }
-    };
-
-    int main(int argc, char** argv) {
-      auto app = holoscan::make_application<HelloWorldApp>();
-      app->run();
-
-      return 0;
-    }
-  ```
-
-</Tab>
-<Tab title="Python" language="python">
-
-  ```python
-    class HelloWorldApp(Application):
-        def compose(self):
-            # Define the operators
-            hello = HelloWorldOp(self, CountCondition(self, 1), name="hello")
-
-            # Define the one-operator workflow
-            self.add_operator(hello)
-
-    def main():
-        app = HelloWorldApp()
-        app.run()
-
-    if __name__ == "__main__":
-        main()
-  ```
-
-</Tab>
-</Tabs>
-
-
-## Defining the HelloWorldApp workflow
-
-_For more details, see the [Application Workflows](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#application-workflows) section._
-
-When defining your application class, the primary task is to define the operators used in your application, and the interconnectivity between them to define the application workflow. The `HelloWorldApp` uses the simplest form of a workflow which consists of a single operator: `HelloWorldOp`.
-
-For the sake of this first example, we will ignore the details of defining a custom operator to focus on the highlighted information below: when this operator runs (`compute`), it will print out `Hello World!` to the standard output:
-
-<Tabs>
-
-  <Tab title="C++" language="cpp">
-
-  ```cpp
-    class HelloWorldOp : public Operator {
-     public:
-      HOLOSCAN_OPERATOR_FORWARD_ARGS(HelloWorldOp)
-
-      HelloWorldOp() = default;
-
-      void setup(OperatorSpec& spec) override {
-      }
-
-      void compute(InputContext& op_input, OutputContext& op_output,
-                   ExecutionContext& context) override {
-        std::cout << std::endl;
-        std::cout << "Hello World!" << std::endl;
-        std::cout << std::endl;
-      }
-    };
-  ```
-
-</Tab>
-<Tab title="Python" language="python">
-
-  ```python
-    class HelloWorldOp(Operator):
-        """Simple hello world operator.
-
-        This operator has no ports.
-
-        On each tick, this operator prints out hello world.
-        """
-
-        def setup(self, spec: OperatorSpec):
-            pass
-
-        def compute(self, op_input, op_output, context):
-            print("")
-            print("Hello World!")
-            print("")
-  ```
-
-</Tab>
-</Tabs>
-
-
-Defining the application workflow occurs within the application's `compose()` method. In there, we first create an instance of the `HelloWorldOp` operator defined above, then add it to our simple workflow using `add_operator()`.
-
-<Tabs>
-
-  <Tab title="C++" language="cpp">
-
-  ```cpp
-    class HelloWorldApp : public holoscan::Application {
-     public:
-      void compose() override {
-        using namespace holoscan;
-
-        // Define the operators, allowing the hello operator to execute once
-        auto hello = make_operator&lt;ops::HelloWorldOp&gt;("hello", make_condition<CountCondition>(1));
-
-        // Define the workflow by adding operator into the graph
-        add_operator(hello);
-      }
-    };
-  ```
-
-</Tab>
-<Tab title="Python" language="python">
-
-  ```python
-    class HelloWorldApp(Application):
-        def compose(self):
-            # Define the operators
-            hello = HelloWorldOp(self, CountCondition(self, 1), name="hello")
-
-            # Define the one-operator workflow
-            self.add_operator(hello)
-  ```
-
-</Tab>
-</Tabs>
-
-
-Holoscan applications deal with streaming data, so an operator's `compute()` method will be called continuously until some situation arises that causes the operator to stop. For our Hello World example, we want to execute the operator only once. We can impose such a condition by passing a `CountCondition` object as an argument to the operator's constructor.
-
-_For more details, see the [Configuring App Operator Conditions](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-app-operator-conditions) section._
-
-## Running the Application
-
-Running the application should give you the following output in your terminal:
-
-```
-Hello World!
+int main() {
+  holoscan::hello();
+  return 0;
+}
 ```
 
-Congratulations! You have successfully run your first Holoscan SDK application!
+That is the whole application. Two things are being exercised:
+
+- **Headers resolve.** `<holoscan/holoscan.hpp>` is the SDK's umbrella
+  header — it pulls in the full core API surface (operators, graphs, time,
+  parameters, payloads). If this include compiles, your include paths and
+  compiler configuration are correct.
+- **The library links and runs.** `holoscan::hello()` is a tiny exported
+  function in the `holoscan::core` library that prints a greeting to standard
+  output. If the call links and executes, your linker setup and runtime
+  library loading are correct too.
+
+`holoscan::hello()` exists purely as this availability check — it has no role
+in real applications. Think of it as the SDK's `ping`.
+
+## The build file
+
+The standalone `CMakeLists.txt` shows the minimal recipe for building any
+application against an installed SDK:
+
+```cmake
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_hello_world LANGUAGES CXX)
+
+find_package(holoscan REQUIRED CONFIG
+    PATHS "/opt/nvidia/holoscan")
+
+add_executable(hello_world hello_world.cpp)
+target_link_libraries(hello_world PRIVATE holoscan::core)
+```
+
+Three lines carry the weight:
+
+- `find_package(holoscan REQUIRED CONFIG ...)` locates the SDK's CMake
+  package configuration. `/opt/nvidia/holoscan` is the default install
+  location; point `PATHS` (or `CMAKE_PREFIX_PATH`) at your own install
+  prefix if the SDK lives elsewhere.
+- `target_link_libraries(... holoscan::core)` links the core runtime. This
+  one imported target brings the include directories, compile features, and
+  library dependencies with it — no manual `-I`/`-L` flags.
+
+This same pattern — `find_package(holoscan)` plus `holoscan::core` — is the
+starting point for every application you build outside the SDK tree.
+
+<Warning>
+  If `find_package(holoscan ...)` fails with a "could not find a package
+  configuration file" error, the SDK is not installed where CMake is looking.
+  Verify your installation prefix and pass it explicitly, for example
+  `cmake -DCMAKE_PREFIX_PATH=/path/to/holoscan/install ..`. See
+  [SDK Installation](/holoscan/sdk-user-guide/setup/sdk-installation).
+</Warning>
+
+## Build and run
+
+From the example directory, configure, build, and run with standard CMake:
+
+```bash
+cd examples/hello_world
+cmake -B build -S .
+cmake --build build
+./build/hello_world
+```
+
+## What success looks like
+
+The program prints one line and exits with status `0`:
+
+```text
+Hello Holoscan!
+```
+
+That single line confirms the full chain: headers found, library linked,
+binary runs. The SDK's own test suite checks exactly this — the example's
+CTest entry passes when the output matches `Hello Holoscan!`.
+
+If you got the greeting, your environment is ready. The next example
+introduces the real programming model: operators, graphs, and the
+compose → compile → run flow.
+
+## Recap
+
+- `hello_world` is the SDK availability check: one call to
+  `holoscan::hello()`, no operators, no graph.
+- `<holoscan/holoscan.hpp>` is the umbrella header for the entire core API.
+- The minimal build recipe is `find_package(holoscan REQUIRED CONFIG)` plus
+  linking `holoscan::core`.
+- Success is the single line `Hello Holoscan!` and a zero exit status.
+- Next: [Hello Tour](/holoscan/sdk-user-guide/examples/hello-tour) — a guided
+  walk through the `hello_*` examples that introduce each core concept.

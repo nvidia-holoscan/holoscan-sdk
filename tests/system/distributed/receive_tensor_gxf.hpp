@@ -1,1 +1,0 @@
-../../../examples/import_gxf_components/cpp/receive_tensor_gxf.hpp

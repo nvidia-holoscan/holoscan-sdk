@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="400" viewBox="0 0 960 400" role="img" aria-labelledby="title desc">
+  <title id="title">holomq stream-associated export fence</title>
+  <desc id="desc">Signal before wait: WriteValue then send then receive then WaitValue.</desc>
+
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+  </defs>
+  <style>
+    .h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 700; fill: #1a1a1a; }
+    .c { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 14px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .p { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #5a8f00; }
+    .s { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #0b5394; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="224" y="32" text-anchor="middle" class="p">Publisher stream</text>
+  <text x="736" y="32" text-anchor="middle" class="s">Subscriber stream</text>
+
+  <rect x="24" y="44" width="400" height="48" rx="4" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="44" y="74" class="c">1. GPU work on stream</text>
+
+  <line x1="224" y1="92" x2="224" y2="108" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="24" y="108" width="400" height="64" rx="4" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="44" y="136" class="c">2. export_handle(stream)</text>
+  <text x="44" y="158" class="d">WriteValue(G) at slot generation word</text>
+
+  <line x1="224" y1="172" x2="224" y2="188" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="24" y="188" width="400" height="48" rx="4" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="44" y="218" class="c">3. send(Payload with ready_generation=G)</text>
+
+  <line x1="424" y1="212" x2="536" y2="212" stroke="#76b900" stroke-width="2" marker-end="url(#ar)"/>
+  <text x="480" y="202" text-anchor="middle" class="d">transport</text>
+
+  <rect x="536" y="188" width="400" height="48" rx="4" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="556" y="218" class="c">4. wait_and_take() / try_take()</text>
+
+  <line x1="736" y1="236" x2="736" y2="252" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+  <rect x="536" y="252" width="400" height="64" rx="4" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="556" y="280" class="c">5. import_buffer(h, stream)</text>
+  <text x="556" y="302" class="d">WaitValue(at least G) only after receive</text>
+
+  <line x1="736" y1="316" x2="736" y2="328" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+  <text x="736" y="348" text-anchor="middle" class="d">6. safe GPU reads on subscriber stream</text>
+
+  <rect x="24" y="260" width="400" height="48" rx="6" fill="#fffdf5" stroke="#e6b84d" stroke-width="1.5"/>
+  <text x="44" y="282" class="h">Avoid</text>
+  <text x="44" y="300" class="d">Enqueue WaitValue before publisher WriteValue</text>
+
+  <rect x="536" y="332" width="400" height="56" rx="6" fill="#f5faff" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="556" y="356" class="h">Pinned G in handle</text>
+  <text x="556" y="376" class="d">Subscriber waits for ≥ G from handle — safe on slot reuse</text>
+</svg>

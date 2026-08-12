@@ -106,11 +106,17 @@ def _strip_code(text: str) -> list[str]:
     for line in text.split("\n"):
         marker = _FENCE_RE.match(line)
         if fence is None and marker:
-            fence = marker.group(1)[0] * 3
+            fence = marker.group(1)
             lines.append("")
         elif fence is not None:
-            if marker and marker.group(1)[0] * 3 == fence:
-                fence = None
+            if marker:
+                candidate = marker.group(1)
+                if (
+                    candidate[0] == fence[0]
+                    and len(candidate) >= len(fence)
+                    and not line[marker.end() :].strip()
+                ):
+                    fence = None
             lines.append("")
         else:
             lines.append(line)

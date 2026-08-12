@@ -3,16 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef HOLOSCAN_LOGGER_LOGGER_HPP
-#define HOLOSCAN_LOGGER_LOGGER_HPP
+#pragma once
+
+// The holoscan logger keeps the HOLOSCAN_LOG_* macro surface and spdlog-based behavior, but does
+// not depend on GXF (`gxf/logger/logger.hpp`); its backend (holoscan::logger::SpdlogLogger) is a
+// standalone unit. The implementation may later be swapped for a faster backend without changing
+// this interface.
 
 #include <fmt/format.h>
 #include <fmt/ranges.h>  // allows fmt to format std::array, std::vector, etc.
 
 #include <memory>
+#include <source_location>
 #include <string>
 #include <string_view>
 #include <utility>
+
+#include <holoscan/holoscan_logger_export.h>
 
 #define HOLOSCAN_LOG_LEVEL_TRACE 0
 #define HOLOSCAN_LOG_LEVEL_DEBUG 1
@@ -22,34 +29,21 @@
 #define HOLOSCAN_LOG_LEVEL_CRITICAL 5
 #define HOLOSCAN_LOG_LEVEL_OFF 6
 
-// Please define (or call CMake's `target_compile_definitions` with) HOLOSCAN_LOG_ACTIVE_LEVEL
-// before including <holoscan/holoscan.h> to one of the above levels if you want to skip logging at
-// a certain level at compile time.
-//
-// E.g.,
-//     #define HOLOSCAN_LOG_ACTIVE_LEVEL 3
-//     #include <holoscan/holoscan.h>
-//     ...
-//
-// Then, it will only log at the WARN(3)/ERROR(4)/CRITICAL(5) levels.
-//
-// You can define GXF_LOG_ACTIVE_LEVEL in your build system. For instance, in CMake, use:
-//
-//     target_compile_definitions(my_target PRIVATE HOLOSCAN_LOG_ACTIVE_LEVEL=3)
-//
-// This sets the active logging level to WARN(3) for the target `my_target`.
-//
-// Alternatively, define HOLOSCAN_LOG_ACTIVE_LEVEL at compile time by passing
-// `-DHOLOSCAN_LOG_ACTIVE_LEVEL=3` directly to the compiler.
+// Define (or pass via CMake's `target_compile_definitions`) HOLOSCAN_LOG_ACTIVE_LEVEL to one of
+// the levels above to skip logging below that level at compile time. If it is left undefined, all
+// levels are compiled in.
+#ifndef HOLOSCAN_LOG_ACTIVE_LEVEL
+#define HOLOSCAN_LOG_ACTIVE_LEVEL HOLOSCAN_LOG_LEVEL_TRACE
+#endif
 
 // Workaround for zero-arguments
 // (https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2016/p0306r2.html)
-// If __VA_OPT__ is supported (since C++20), we could use it to use compile-time format string check
-// : FMT_STRING(format)
-// (https://fmt.dev/latest/api.html#compile-time-format-string-checks)
-#define HOLOSCAN_LOG_CALL(level, ...) \
-  ::holoscan::Logger::log(            \
-      __FILE__, __LINE__, static_cast<const char*>(__FUNCTION__), level, __VA_ARGS__)
+#define HOLOSCAN_LOG_CALL(level, ...)                                               \
+  ::holoscan::Logger::log(std::source_location::current().file_name(),              \
+                          static_cast<int>(std::source_location::current().line()), \
+                          std::source_location::current().function_name(),          \
+                          level,                                                    \
+                          __VA_ARGS__)
 
 // clang-format off
 #if HOLOSCAN_LOG_ACTIVE_LEVEL <= HOLOSCAN_LOG_LEVEL_TRACE
@@ -135,25 +129,26 @@ enum class LogLevel {
 /**
  * @brief A logger class that wraps spdlog.
  *
- * Please see the [spdlog documentation](https://spdlog.docsforge.com/v1.x/api/spdlog/) for more
- * details of the API.
+ * GXF-independent logger backed by holoscan::logger::SpdlogLogger. See the
+ * [spdlog documentation](https://spdlog.docsforge.com/v1.x/api/spdlog/) for more details of the
+ * underlying API.
  */
-class Logger {
+class HOLOSCAN_LOGGER_EXPORT Logger {
  public:
   static void set_level(LogLevel level, bool* is_overridden_by_env = nullptr);
-  static LogLevel level();
+  [[nodiscard]] static LogLevel level();
 
   static void set_pattern(std::string pattern = "", bool* is_overridden_by_env = nullptr);
-  static std::string& pattern();
+  [[nodiscard]] static std::string& pattern();
 
+  // fmt v11+ make_format_args requires lvalue refs, so this wrapper intentionally keeps args as
+  // lvalues instead of forwarding them.
+  // NOLINTBEGIN(cppcoreguidelines-missing-std-forward)
   template <typename FormatT, typename... ArgsT>
   static void log(const char* file, int line, const char* function_name, LogLevel level,
                   const FormatT& format, ArgsT&&... args) {
 // Version number of the fmt library represented as (major * 10000 + minor * 100 + patch)
 #if FMT_VERSION >= 110000
-    // Note: fmt v11's make_format_args requires lvalue references (T&...), so we cannot use
-    // std::forward here. The args are always lvalues within this function body anyway.
-
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     log_message(file, line, function_name, level, format, fmt::make_format_args(args...));
 #else
@@ -165,13 +160,14 @@ class Logger {
                 fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT> > >(args...));
 #endif
   }
+  // NOLINTEND(cppcoreguidelines-missing-std-forward)
 
+  // fmt v11+ make_format_args requires lvalue refs, so this wrapper intentionally keeps args as
+  // lvalues instead of forwarding them.
+  // NOLINTBEGIN(cppcoreguidelines-missing-std-forward)
   template <typename FormatT, typename... ArgsT>
   static void log(LogLevel level, const FormatT& format, ArgsT&&... args) {
 #if FMT_VERSION >= 110000
-    // Note: fmt v11's make_format_args requires lvalue references (T&...), so we cannot use
-    // std::forward here. The args are always lvalues within this function body anyway.
-
     // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-array-to-pointer-decay,hicpp-no-array-decay)
     log_message(level, format, fmt::make_format_args(args...));
 #else
@@ -179,6 +175,7 @@ class Logger {
         level, format, fmt::make_format_args<fmt::buffer_context<fmt::char_t<FormatT> > >(args...));
 #endif
   }
+  // NOLINTEND(cppcoreguidelines-missing-std-forward)
 
   /**
    * @brief Flag to indicate if the log pattern was set by the user.
@@ -187,10 +184,6 @@ class Logger {
 
   /**
    * @brief Flag to indicate if the log level was set by the user.
-   *
-   * This is used to set the default log level (INFO) in Application::Application() if the user has
-   * not set the log level explicitly before Application::Application() is called and no environment
-   * variable (HOLOSCAN_LOG_LEVEL) is set.
    */
   static bool log_level_set_by_user;
 
@@ -204,32 +197,18 @@ class Logger {
  * @brief Set global logging level.
  *
  * If the environment variable `HOLOSCAN_LOG_LEVEL` is set, the log level will be overridden by the
- * value of the environment variable.
- *
- * `HOLOSCAN_LOG_LEVEL` can be set to one of the following values:
- *
- * - TRACE
- * - DEBUG
- * - INFO
- * - WARN
- * - ERROR
- * - CRITICAL
- * - OFF
- *
- * ```bash
- * export HOLOSCAN_LOG_LEVEL=TRACE
- * ```
+ * value of the environment variable (one of TRACE, DEBUG, INFO, WARN, ERROR, CRITICAL, OFF).
  *
  * @param level The new log level.
  */
-void set_log_level(LogLevel level);
+HOLOSCAN_LOGGER_EXPORT void set_log_level(LogLevel level);
 
 /**
  * @brief Get global logging level.
  *
  * @return The current log level.
  */
-inline LogLevel log_level() {
+[[nodiscard]] inline LogLevel log_level() {
   return Logger::level();
 }
 
@@ -237,26 +216,12 @@ inline LogLevel log_level() {
  * @brief Set global log format string.
  *
  * If the environment variable `HOLOSCAN_LOG_FORMAT` is set, the log pattern will be overridden by
- * the value of the environment variable.
- *
- * If the user has not set the log pattern explicitly before Application::Application() is called
- * and no environment variable (HOLOSCAN_LOG_FORMAT) is set, the default log pattern will be used.
- *
- * `HOLOSCAN_LOG_FORMAT` can be set to one of the following values:
- *
- * - SHORT: prints message severity level, and message
- * - DEFAULT: prints message severity level, filename:linenumber, and message
- * - LONG: prints timestamp, application, message severity level, filename:linenumber, and message
- * - FULL: prints timestamp, thread id, application, message severity level, filename:linenumber,
- * and message
- *
- * Or, a custom format string can be specified. Please refer to the [spdlog
- * documentation](https://spdlog.docsforge.com/v1.x/3.custom-formatting/#customizing-format-using-set_pattern)
- * for the format string syntax.
+ * the value of the environment variable. `HOLOSCAN_LOG_FORMAT` accepts the presets SHORT, DEFAULT,
+ * LONG, FULL, or a custom spdlog pattern string.
  *
  * @param pattern The format string.
  */
-void set_log_pattern(std::string pattern = "");
+HOLOSCAN_LOGGER_EXPORT void set_log_pattern(std::string pattern = "");
 
 /**
  * @brief Print a trace message to the log.
@@ -330,5 +295,3 @@ inline void log_message(const char* file, int line, const char* function_name, L
 }
 
 }  // namespace holoscan
-
-#endif /* HOLOSCAN_LOGGER_LOGGER_HPP */

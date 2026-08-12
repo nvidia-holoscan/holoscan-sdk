@@ -1,0 +1,318 @@
+Most operators get by with the temporal vocabulary from
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts):
+one trigger (`OnEach`, `OnClock`, `OnAligned`, `OnWindow`), one selector per
+input (`Exact`, `LatestWithin`, `DrainAll`), and a missing-data policy. This
+page covers the advanced tier for pipelines where that vocabulary is not
+enough: predicate-driven activation with `OnPredicate`, all-or-nothing batch
+selection with `BracketedWindow`, and composition recipes for multi-rate
+graphs where different inputs arrive at very different cadences.
+
+<Warning>
+  **Preview surface.** The patterns on this page — `OnPredicate`,
+  `BracketedWindow`, and the multi-rate composition recipes — are the most
+  recently promoted parts of the temporal contract API. They are functional
+  today, but field names, admission rules, and diagnostics may evolve in
+  upcoming releases. Prefer the basic trigger/selector vocabulary wherever it
+  expresses your intent; reach for this tier only when it does not.
+</Warning>
+
+**Complete C++ examples:** [`examples/temporal_contracts/on_predicate/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_predicate/cpp)
+and [`examples/temporal_contracts/on_window/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/temporal_contracts/on_window/cpp)
+
+<Note title="You will learn">
+  - When `OnPredicate` is the right trigger, and why its callables must be
+    bounded and nonthrowing
+  - How predicate identity, firing rules, and evaluation sources fit together
+  - How `BracketedWindow` selects an all-or-nothing bracket of samples around
+    an anchor, and what happens when the bound is exceeded
+  - Recipes for composing multi-rate pipelines: fast-anchor fusion, symmetric
+    alignment, windowed integration, and clock-paced batch drains
+</Note>
+
+## When the basics run out
+
+The core trigger vocabulary answers "activate on a sample", "activate on a
+schedule", or "activate when heads align". Two situations fall outside it:
+
+- **Data-dependent activation.** You want to run `compute()` only when the
+  *content* of the inputs satisfies a condition — a threshold crossing, a
+  state-machine edge, a match between two streams — not merely when a sample
+  arrives.
+- **Neighborhood selection.** One activation needs a *bracket* of samples from
+  a fast input around a slow anchor — the readings just before and just after
+  a camera frame — rather than a single freshest sample or the whole queue.
+
+`OnPredicate` addresses the first; `BracketedWindow` the second. Both lower to
+explicit records in the compiled plan, so they stay inspectable with the same
+[plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling) as everything
+else, and both keep the runtime's bounded-by-construction guarantees.
+
+## OnPredicate: data-dependent activation
+
+`OnPredicate` evaluates a typed callable — the *predicate* — and creates a
+compute candidate when it returns `true`. The trigger has three parts:
+
+```cpp
+holoscan::Contract contract() const override {
+  auto evaluator = holoscan::predicate(
+      "pressure-threshold",
+      [](const holoscan::PredicateEvaluationContext&,
+         const holoscan::PredicateInputView<Reading>& driver_view) noexcept {
+        return driver_view.sample().data.pressure > 90.0F;
+      });
+
+  holoscan::Contract c;
+  c.trigger(holoscan::OnPredicate{
+       .evaluate_on = holoscan::OnInputUpdate{sensor},
+       .predicate = std::move(evaluator),
+       .firing = holoscan::PredicateFiring::kOnFalseToTrue,
+   })
+   .input(sensor, holoscan::Exact{});
+  return c;
+}
+```
+
+- **`evaluate_on`** names when the predicate runs. There are exactly two
+  sources: `OnInputUpdate{port}` evaluates once for every accepted sample on a
+  driver input, and `OnClock{.period = ...}` evaluates on a periodic
+  schedule. The driver's sample is pinned as the first typed view the
+  evaluator sees.
+- **`predicate`** is a binding built with `holoscan::predicate(...)`. The
+  factory copies your callable into a cold descriptor — the contract owns its
+  own deep copy, so no authoring address ever enters a plan or a run session.
+- **`firing`** decides when a `true` result becomes an activation.
+  `PredicateFiring::kOnFalseToTrue` (the default) fires only on the edge —
+  the remembered result must change from false to true. Use
+  `PredicateFiring::kOnEveryTrueEvaluation` when every satisfied evaluation
+  should activate.
+
+To evaluate over more than the driver, declare additional scalar inputs with
+`holoscan::predicate_inputs(...)`; the evaluator then receives one frozen
+`PredicateInputView<T>` per declared input, in declaration order, after the
+driver view:
+
+```cpp
+auto evaluator = holoscan::predicate(
+    "match-condition",
+    holoscan::predicate_inputs(reference),
+    [](const holoscan::PredicateEvaluationContext&,
+       const holoscan::PredicateInputView<Reading>& driver_view,
+       const holoscan::PredicateInputView<Reading>& reference_view) noexcept {
+      return driver_view.sample().data.id == reference_view.sample().data.id;
+    });
+```
+
+Selector and missing-policy semantics for predicate inputs are still declared
+through the ordinary `.input(...)` / `.on_missing(...)` calls on the contract;
+the predicate only reads what the contract selected.
+
+### Bounded, nonthrowing callables
+
+A predicate runs inside the scheduler's hot decision path, so the API is
+designed to keep evaluation cheap and safe:
+
+- **Return `bool` (or `expected<bool, Error>`), take `noexcept` seriously.**
+  Evaluators return `true`/`false`; a fallible evaluator returns
+  `holoscan::expected<bool, holoscan::Error>` and its errors follow the
+  ordinary failure path — there is no throwing escape hatch from evaluation.
+- **State is transactional.** If your predicate carries mutable state (for
+  edge detection across evaluations, say), declare it as a type parameter.
+  The runtime evaluates against a candidate copy and commits or discards it
+  atomically, so a failed evaluation never corrupts the committed state. The
+  state type must be default-initializable with nothrow copy, swap, and
+  destruction — the compiler enforces this as a concept, so an unsuitable
+  type fails at the `predicate(...)` call site.
+- **Callable form is classified for admission.** The factory records what
+  kind of callable you supplied — a free function, a noncapturing lambda, a
+  fixed-size inspectable functor, or an opaque capturing closure. Constrained
+  deployment profiles admit only the forms whose cost and behavior they can
+  bound; an opaque closure that is fine in a development profile may be
+  rejected when the plan is compiled for a constrained one. Prefer
+  noncapturing lambdas or small trivially copyable functors, and move any
+  tunable values into the explicit `config` argument of `predicate(...)` —
+  configuration is copied, immutable, and identity-hashed for the plan.
+- **Identity is part of the contract.** The first argument to
+  `predicate(...)` is a stable name. For predicates whose decisions must be
+  attributable across runs and replays, use a qualified
+  `holoscan::PredicateKey{.qualified_name = "...", .semantic_version = {1, 0, 0}}`
+  instead of a bare string; the version is recorded as replay evidence. See
+  [Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay)
+  for how that evidence is used.
+
+<Warning>
+  **Do not hide work in a predicate.** The evaluator is invoked on the
+  scheduler's path for every driver sample or clock tick, before any
+  activation exists. Heavy computation, allocation, or blocking inside it
+  degrades the whole graph, not just your operator. If the condition needs
+  real work to decide, activate unconditionally and make the cheap early-exit
+  the first line of `compute()` instead.
+</Warning>
+
+## BracketedWindow: all-or-nothing neighborhoods
+
+`BracketedWindow` is a batch selector: instead of one sample, the activation
+receives the samples that *bracket* an anchor in event time — a positive
+count of nearest strict predecessors, the earliest strict successors, and
+everything in the closed interval between consecutive anchors:
+
+```cpp
+holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result
+      .trigger(holoscan::OnWindow{.anchor = camera, .max_wait = 20ms, .max_pending_windows = 2U})
+      .input(camera, holoscan::Exact{})
+      .input(imu, holoscan::BracketedWindow{.lookbehind = 1U, .lookahead = 1U, .max_samples = 16U})
+      .on_missing(imu, holoscan::SafeDefault{});
+  return result;
+}
+```
+
+This is the shape used by the `ea1_camera_imu_control` example: each camera
+frame opens a bounded window, and the activation delivers the IMU sample just
+before the frame, every sample during it, and the sample just after — enough
+to interpolate motion across the exposure. See the
+[camera + IMU walkthrough](/holoscan/sdk-user-guide/examples/camera-imu-control)
+for the full pipeline.
+Three properties distinguish it from `DrainAll`:
+
+- **Non-destructive snapshot.** The selector freezes an event-time-ordered
+  view of the input's cache; nothing is consumed, so consecutive windows may
+  legitimately share boundary samples. `DrainAll`, by contrast, advances the
+  consumer — its accepted batches never overlap.
+- **Explicit, authored bound.** `max_samples` is required and positive, and
+  it counts *everything*: both strict brackets plus all samples in the closed
+  interval. `DrainAll` is fieldless because its bound is derived from queue
+  geometry at compile time; a bracketed window's bound is a design decision
+  you make.
+- **All-or-nothing delivery.** If the window would exceed `max_samples`, you
+  get *no* samples — not a truncated prefix. The runtime records the outcome
+  as `SelectionReason::kWindowSampleLimit` and hands control to your
+  missing-data policy.
+
+<Warning>
+  **Size `max_samples` for the worst case, and pick a compatible missing
+  policy.** With a 1 kHz input bracketing a 60 Hz anchor, a window spans
+  roughly 17 interval samples plus the brackets — a `max_samples` of 16 will
+  overflow on real data and every overflow delivers nothing. When it does:
+  `Skip{}` suppresses the activation entirely, `SafeDefault{}` runs your
+  degraded path with no partial batch, and `ReuseLast{}` is invalid for batch
+  selectors and is rejected when the plan is compiled.
+</Warning>
+
+Inside `compute()`, read the batch with `selected_batch()` (or
+`for_each_selected(...)`) — never `receive()`, which is scalar-only and
+returns a cardinality-mismatch error for batch-selected inputs:
+
+```cpp
+if (imu.selection().state == holoscan::InputState::kSelected) {
+  auto batch = imu.selected_batch();
+  if (!batch) {
+    return holoscan::make_unexpected(std::move(batch).error());
+  }
+  for (const auto& sample : *batch) {
+    integrate(sample.data);
+  }
+}
+```
+
+The returned view is immutable, valid only for the current activation, sized
+and indexable, and safe to iterate multiple times. It is not contiguous
+storage — there is no `data()` pointer or span conversion — so treat it as a
+range, not a buffer.
+
+## Multi-rate composition recipes
+
+The building blocks above compose into a small set of recurring shapes for
+graphs whose inputs run at different rates. Each recipe lowers to explicit
+plan records — read sets, sample bounds, timing — so `compile()` can check it
+and the tooling can show it.
+
+### Fast anchor, slow context
+
+One input owns the cadence; the others contribute their freshest value.
+Trigger on the fast input, select the slow ones with `LatestWithin`, and
+decide staleness policy explicitly:
+
+```cpp
+c.trigger(holoscan::OnEach{fast})
+ .input(slow, holoscan::LatestWithin{.max_age = 100ms})
+ .on_missing(slow, holoscan::ReuseLast{.max_age = 200ms});
+```
+
+This is the workhorse pattern — the
+[slow/fast fusion example](/holoscan/sdk-user-guide/examples/slow-fast-fusion)
+is built on it. `OnEach` pins the fast driver implicitly; only the side input
+needs an explicit selector. Use this pattern whenever one stream is clearly
+the beat-keeper.
+
+### Symmetric alignment
+
+When no input owns the cadence and you need samples that *belong together*,
+use `OnAligned` over a closed port set with an inclusive head-spread window,
+selecting every member with `Exact`:
+
+```cpp
+c.trigger(holoscan::OnAligned{.ports = holoscan::ports(camera, imu), .window = 2ms})
+ .input(camera, holoscan::Exact{})
+ .input(imu, holoscan::Exact{});
+```
+
+Alignment consumes deterministically from the FIFO heads; members not
+selected with `Exact` are rejected when the plan is compiled, not at the
+`.trigger(...)` call site.
+
+### Windowed integration
+
+When each slow anchor needs the *neighborhood* of a fast stream rather than
+one aligned sample, combine `OnWindow` with `BracketedWindow` as shown in the
+previous section. Activation happens when the window closes — bounded by
+`max_wait` on the wait clock — never by blocking a callback. `max_pending_windows`
+bounds how many anchors may have open windows at once; it is a real capacity
+that the plan accounts for, not a hint.
+
+### Clock-paced batch drain
+
+For consumers that should run at their own rate and absorb everything that
+arrived since the last activation — statistics, logging, batch upload — pair
+a periodic trigger with a consume-all batch:
+
+```cpp
+c.trigger(holoscan::OnClock{.period = 33ms})
+ .input(events, holoscan::DrainAll{});
+```
+
+Late ticks coalesce (only the most recent due tick fires, preserving phase),
+and the batch bound is derived from the queue geometry at compile time. Read
+the result with `selected_batch()`; a valid empty batch is an empty view, not
+an error. For clock selection and time domains, see
+[Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+### Derived and divided rates
+
+To run an operator at a fraction of an input's rate, prefer making the rate
+relationship a declared parameter of your operator and let the contract
+express it with the vocabulary above (for example, an `OnClock` period derived
+from a typed parameter) rather than counting samples imperatively inside
+`compute()`. A declared rate lands in the plan where tooling can see it; a
+hidden counter does not.
+
+## Recap
+
+- `OnPredicate` activates on a data-dependent condition: pick an evaluation
+  source (`OnInputUpdate` or `OnClock`), a firing rule (edge-triggered
+  `kOnFalseToTrue` by default), and keep the callable cheap, nonthrowing,
+  and admission-friendly — noncapturing or small and trivially copyable.
+- Predicate state is transactional and constrained to nothrow operations;
+  configuration is immutable and identity-hashed; qualified `PredicateKey`
+  identities feed replay evidence.
+- `BracketedWindow` delivers an all-or-nothing, non-destructive,
+  event-time-ordered bracket around an anchor; size `max_samples` for the
+  worst case, because overflow delivers nothing and reports
+  `kWindowSampleLimit`.
+- Batch-selected inputs are read with `selected_batch()` /
+  `for_each_selected(...)`, never `receive()`.
+- Four recipes cover most multi-rate graphs: fast anchor + `LatestWithin`,
+  `OnAligned` + `Exact`, `OnWindow` + `BracketedWindow`, and `OnClock` +
+  `DrainAll`.
+
+Next: [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).

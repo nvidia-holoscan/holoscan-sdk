@@ -1,0 +1,406 @@
+This is the page where everything comes together. You have written a single
+operator, composed a graph, compiled it, and learned how a run starts and
+stops — each in isolation. Now you will assemble those pieces into one
+complete program: a pipeline that streams integers from a clock-driven
+source, transforms them in flight, prints them from a sink, and shuts down
+cleanly on request.
+
+The walkthrough builds the pipeline step by step; the full compilable
+program appears at the end. Every step follows the three-phase model you
+already know — **compose → compile → run** — with its three failure styles:
+authoring mistakes throw, `compile()` returns a rejected plan you can
+inspect, and anything the runtime cannot satisfy at startup fails closed.
+
+**Complete C++ example:** [`examples/first_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
+
+<Note title="You will learn">
+  - Choosing payload types the runtime will carry: fixed-width scalars like
+    `std::int32_t` — never `int`
+  - Bounding every port with `queue_depth` and `max_emits_per_compute`
+  - Writing a minimal `contract()` — trigger, selector, missing-input policy
+  - Declaring a clock with `add_clock` + `set_default_clock`
+  - `compile()` and the `ok()` check, then `run_async()`,
+    `request_stop()` / `wait()` / `termination()`
+</Note>
+
+## What you are about to build
+
+Three operators, two connections, one clock:
+
+```text
+CounterSource ──▶ DoubleIt ──▶ PrintSink
+ (OnClock,         (OnAnyInput,   (OnAnyInput,
+  every 100 ms)     doubles it)    prints it)
+```
+
+Small as it is, this pipeline exercises the same machinery as a production
+application: typed ports, bounded queues, contracts, a clock, a compiled
+plan, and a cooperatively stopped run session.
+
+## 1. Choose payload types the runtime can carry
+
+Ports are typed — `holoscan::Output<T>` on the producer,
+`holoscan::Input<T>` on the consumer, and the two `T`s must match. For
+in-process scalar pipelines, `T` must come from the closed catalog of
+fixed-width scalars: `bool`, the `std::uint8_t` … `std::int64_t` family,
+`float`, and `double`. This tutorial uses `std::int32_t` throughout.
+
+<Note title="Payload type rules">
+  Write `std::int32_t`, never `int`. Platform-dependent aliases like `int`
+  and `size_t` are not in the payload catalog — it is defined in terms of
+  fixed-width types so acceptance semantics are exact and portable. Structs,
+  enums, generated schemas, and `Tensor` payloads have their own rules; the
+  complete catalog lives in
+  [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+</Note>
+
+## 2. Declare ports with bounded queue geometry
+
+Every port declares its geometry in `setup()`, and every bound is finite —
+queues are bounded by construction, so the compiler can reserve capacity up
+front and reject over-subscription at admission.
+
+```cpp
+void setup(holoscan::OperatorSpec& spec) override {
+  spec.input(input, "input").queue_depth(4U);               // retain up to 4 samples
+  spec.output(output, "output").max_emits_per_compute(1U);  // at most 1 emit per activation
+}
+```
+
+Two knobs matter here, and both default to 1:
+
+- **`queue_depth`** (inputs) — how many retained samples the runtime keeps;
+  selectors that look back in time need enough depth to find what they select.
+- **`max_emits_per_compute`** (outputs) — the largest burst one `compute()`
+  activation may emit; the compiler uses it to size downstream capacity.
+
+## 3. Give each operator a minimal contract
+
+An operator is three declarations: `setup()` is structure, `contract()` is
+time, `compute()` is work. The `contract()` tells the runtime what must be
+true **before** it invokes `compute()`; it has three parts — a **trigger**
+(what causes an activation), an **input selector** per input (which retained
+samples participate), and an **`on_missing` policy** per input (what happens
+when nothing satisfies the selector).
+
+The source has no inputs, so its contract is a single clock trigger:
+`result.trigger(holoscan::OnClock{.period = 100ms})`. `DoubleIt` and
+`PrintSink` each fire when a sample arrives, select exactly the triggering
+sample, and skip the activation if it is absent:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result.trigger(holoscan::OnAnyInput{})            // fire when any input is ready
+      .input(input, holoscan::Exact{})              // select the triggering sample
+      .on_missing(input, holoscan::Skip{});         // no sample? skip this activation
+  return result;
+}
+```
+
+This trigger + selector + policy trio is the smallest useful contract; the
+full selector vocabulary is covered in
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+## 4. Do the work in compute()
+
+`compute()` receives, transforms, and emits. `input.receive()` returns
+`expected<Sample<std::int32_t>, Error>` — your value in `sample->data` plus
+capture metadata — and `output.emit(value)` also returns an `expected`. You
+branch on both results rather than catching exceptions, propagating failures
+with `holoscan::make_unexpected`, exactly as introduced in
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+<Tip>
+  If you only want the value, `input.receive_data()` returns
+  `expected<T, Error>` directly; going the other way, `output.emit(Sample<T>)`
+  forwards a value together with its capture metadata.
+</Tip>
+
+<Warning>
+  `receive()` and `emit()` results are `[[nodiscard]]` for a reason: an
+  ignored error is a dropped sample you will never hear about. Always branch
+  on the result, even in a sink that "cannot fail."
+</Warning>
+
+## 5. Compose the graph and wire the flows
+
+Instantiate operators with `graph.op<T>(name)` and connect ports with
+`add_flow`; per-edge `ConnectionOptions` carries the queue depth. You never
+write transport code — the runtime materializes each connection for you:
+
+```cpp
+holoscan::Graph graph{"first-pipeline"};
+const auto source = graph.op<CounterSource>("source");
+const auto doubler = graph.op<DoubleIt>("doubler");
+const auto sink = graph.op<PrintSink>("sink");
+
+graph.add_flow(source->output, doubler->input,
+               holoscan::ConnectionOptions{.queue_depth = 4U});
+graph.add_flow(doubler->output, sink->input,
+               holoscan::ConnectionOptions{.queue_depth = 4U});
+```
+
+Authoring errors — a name collision, a type mismatch across an edge, a
+dangling port — throw here, as described in
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).
+
+## 6. Add a clock — then make it the default
+
+A clock is a two-step opt-in: `add_clock` declares a named graph-owned
+clock, and `set_default_clock` selects the default that drives `OnClock`
+triggers and timestamps. One line covers both:
+
+```cpp
+graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
+```
+
+<Warning>
+  Forgetting the clock — or adding one without setting it as the default —
+  is not a compile-time error: the run **fails closed at startup** with a
+  `RUNTIME_CLOCK_BINDING_UNAVAILABLE` diagnostic rather than running on an
+  implicit wall clock you never chose. If your session reports `kFailed`
+  immediately, check the clock lines first; clock kinds are covered in
+  [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+</Warning>
+
+## 7. Compile the plan and check ok()
+
+`compile()` never throws for design problems — it returns an
+`ExecutionPlan` that is either accepted or rejected, and a rejected plan
+tells you why:
+
+```cpp
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) {
+  std::cerr << plan.json() << '\n';  // structural diagnostics, machine-readable
+  return 1;
+}
+```
+
+Check `ok()` unconditionally: passing a rejected plan to `run_async()` is a
+programming error, not a recoverable state. Reading diagnostics is covered
+in [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+
+## 8. Run, stop, wait, verify
+
+`run_async()` starts the pipeline on runtime-owned threads and returns a
+`RunSession` — an RAII handle that owns everything the run started:
+
+```cpp
+holoscan::RunSession session = holoscan::run_async(plan);
+std::this_thread::sleep_for(2s);  // let the source tick ~20 times
+
+session.request_stop();  // nonblocking, idempotent: ask everyone to wind down
+session.wait();          // join all run-owned work
+
+if (session.termination() != holoscan::RunTermination::kStopped) {
+  return 1;
+}
+```
+
+The shutdown handshake has three parts: `request_stop()` asks for a
+cooperative stop and returns immediately; `wait()` joins every run-owned
+activity; `termination()` then reports the stable outcome — `kStopped` for
+a cooperative stop, `kCompleted` when an admitted plan has no work left (for
+example, a compiler-accepted empty graph), and `kFailed` if startup or execution
+failed. This recurring nonempty pipeline never infers a natural completion
+point, so it requests a stop explicitly. The fixed sleep here is tutorial
+simplicity; real applications block on their own completion signal, as shown in
+[Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+## The complete program
+
+Here is the whole pipeline in one file, following the same authoring pattern
+as richer SDK sample applications such as `ea1_slow_fast_fusion`.
+This listing is the readable tutorial variant. The shipped `first_pipeline`
+uses the same graph and contracts with a shorter period and a
+condition-variable completion signal so its smoke test finishes quickly.
+
+```cpp
+// first_pipeline.cpp — your first complete Holoscan pipeline.
+#include <chrono>
+#include <cstdint>
+#include <iostream>
+#include <thread>
+
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_context.hpp>
+#include <holoscan/core/graph.hpp>
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/operator_spec.hpp>
+#include <holoscan/core/run.hpp>
+#include <holoscan/core/temporal_contract.hpp>
+#include <holoscan/time/realtime_clock.hpp>
+
+using namespace std::chrono_literals;
+
+// Emits 1, 2, 3, ... ten times per second, driven by the graph clock.
+class CounterSource final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = 100ms});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return output.emit(++next_);
+  }
+
+  holoscan::Output<std::int32_t> output;
+
+ private:
+  std::int32_t next_{};
+};
+
+// Doubles every value it receives.
+class DoubleIt final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(input, "input").queue_depth(4U);
+    spec.output(output, "output").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnAnyInput{})
+        .input(input, holoscan::Exact{})
+        .on_missing(input, holoscan::Skip{});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return holoscan::make_unexpected(std::move(sample).error());
+    }
+    return output.emit(sample->data * 2);
+  }
+
+  holoscan::Input<std::int32_t> input;
+  holoscan::Output<std::int32_t> output;
+};
+
+// Prints every value that reaches it.
+class PrintSink final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(input, "input").queue_depth(4U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnAnyInput{})
+        .input(input, holoscan::Exact{})
+        .on_missing(input, holoscan::Skip{});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = input.receive();
+    if (!sample) {
+      return holoscan::make_unexpected(std::move(sample).error());
+    }
+    std::cout << "tick " << sample->data << '\n';
+    return {};
+  }
+
+  holoscan::Input<std::int32_t> input;
+};
+
+int main() {
+  // Compose.
+  holoscan::Graph graph{"first-pipeline"};
+  const auto source = graph.op<CounterSource>("source");
+  const auto doubler = graph.op<DoubleIt>("doubler");
+  const auto sink = graph.op<PrintSink>("sink");
+
+  graph.add_flow(source->output, doubler->input,
+                 holoscan::ConnectionOptions{.queue_depth = 4U});
+  graph.add_flow(doubler->output, sink->input,
+                 holoscan::ConnectionOptions{.queue_depth = 4U});
+
+  graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
+
+  // Compile.
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+  if (!plan.ok()) {
+    std::cerr << plan.json() << '\n';
+    return 1;
+  }
+
+  // Run.
+  holoscan::RunSession session = holoscan::run_async(plan);
+  std::this_thread::sleep_for(2s);
+  session.request_stop();
+  session.wait();
+
+  if (session.termination() != holoscan::RunTermination::kStopped) {
+    return 1;
+  }
+  std::cout << "pipeline stopped cleanly\n";
+  return 0;
+}
+```
+
+Build it against your SDK install (see
+[SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation)), run
+it, and watch your first pipeline stream:
+
+```text
+tick 2
+tick 4
+tick 6
+...        (roughly twenty ticks over the two-second run)
+pipeline stopped cleanly
+```
+
+Doubled values arriving on schedule, then a clean cooperative stop. That is
+the whole lifecycle — compose, compile, run — in about a hundred lines.
+
+## The opt-in checklist
+
+Several runtime behaviors are deliberate multi-part opt-ins, and half an
+opt-in is the most common source of first-pipeline confusion — the failure
+is either silent degradation or a fail-closed startup, not a compile error:
+
+<Note title="Every opt-in has all of its parts">
+  - **Temporal selection is three parts**: a `trigger(...)`, an
+    `.input(port, Selector)` per input, and an `.on_missing(port, Strategy)`
+    per input. Leave one out and the operator may fire with defaults you did
+    not choose, or never fire at all — silently.
+  - **The clock is two parts**: `add_clock<...>(name)` **and**
+    `set_default_clock(key)`. Forget either and startup fails closed with
+    `RUNTIME_CLOCK_BINDING_UNAVAILABLE`.
+  - **Queue geometry is declared, not discovered**: a selector that looks
+    back in time needs a `queue_depth` deep enough to hold what it selects —
+    depth 1 degrades a windowed selector to whatever single sample remains.
+</Note>
+
+When something behaves unexpectedly, walk this checklist first — then see
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+## Recap
+
+- Ports carry **fixed-width scalars** (`std::int32_t`, never `int`) — see
+  [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+- Every queue is **bounded by construction**: `queue_depth` on inputs,
+  `max_emits_per_compute` on outputs, `ConnectionOptions{.queue_depth}` on edges.
+- A minimal contract is **trigger + selector + `on_missing`**; the source
+  needs only a trigger.
+- A clock is a **two-step opt-in**: `add_clock` + `set_default_clock`, or
+  startup fails closed.
+- `compile()` returns a plan — **check `ok()`** before running; a rejected
+  plan explains itself through its diagnostics.
+- Shutdown is a **three-call handshake**: `request_stop()`, `wait()`, then
+  verify `termination()` is `RunTermination::kStopped`.
+
+Next: [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) — your pipeline carries scalars; time to move real data.

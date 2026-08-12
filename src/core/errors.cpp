@@ -7,48 +7,51 @@
 #include <holoscan/core/errors.hpp>
 
 #include <string>
+#include <string_view>
 
 namespace holoscan {
 
-const char* RuntimeError::ErrorStrings[] = {
-    "Success",                       // 0
-    "Failure",                       // 1
-    "InputContext receive() Error",  // 2
-    "codec (de)serialize() Error",   // 3
-    "Invalid argument",              // 4
-    "Not found",                     // 5
-    "Duplicate name",                // 6
-    "Not Implemented",               // 7
-};
-
-RuntimeError::RuntimeError(holoscan::ErrorCode error_code)
-    : std::runtime_error(error_string(error_code)) {}
-
-RuntimeError::RuntimeError(holoscan::ErrorCode error_code, const std::string& what_arg)
-    : std::runtime_error(construct_error_message(error_code, what_arg.c_str())) {}
-
-RuntimeError::RuntimeError(holoscan::ErrorCode error_code, const char* what_arg)
-    : std::runtime_error(construct_error_message(error_code, what_arg)) {}
-
-const char* RuntimeError::error_string(const holoscan::ErrorCode error_code) {
-  static_assert(sizeof(ErrorStrings) / sizeof(ErrorStrings[0]) ==
-                    static_cast<size_t>(holoscan::ErrorCode::kErrorCodeCount),
-                "ErrorStrings array size must match ErrorCode::kErrorCodeCount");
-  if (static_cast<int>(error_code) < 0 ||
-      static_cast<int>(error_code) >= static_cast<int>(holoscan::ErrorCode::kErrorCodeCount)) {
-    return "Unknown error code";
+Error make_publication_partial_error(const std::uint32_t delivered_recipient_count,
+                                     const std::uint32_t expected_recipient_count) noexcept {
+  try {
+    return Error{ErrorCode::kPublicationPartial,
+                 fmt::format("PUBLICATION_PARTIAL delivered={} expected={}",
+                             delivered_recipient_count,
+                             expected_recipient_count)};
+  } catch (...) {
+    return Error{ErrorCode::kPublicationPartial};
   }
-  // NOLINTNEXTLINE(cppcoreguidelines-pro-bounds-constant-array-index) bounds checked above
-  return ErrorStrings[static_cast<int>(error_code)];
 }
 
-std::string RuntimeError::construct_error_message(const holoscan::ErrorCode error_code,
+RuntimeError::RuntimeError(holoscan::ErrorCode error_code)
+    : std::runtime_error(std::string(error_code_name(error_code))), code_(error_code) {}
+
+RuntimeError::RuntimeError(holoscan::ErrorCode error_code, const std::string& what_arg)
+    : std::runtime_error(construct_error_message(error_code, std::string_view{what_arg})),
+      code_(error_code) {}
+
+RuntimeError::RuntimeError(holoscan::ErrorCode error_code, std::string_view what_arg)
+    : std::runtime_error(construct_error_message(error_code, what_arg)), code_(error_code) {}
+
+RuntimeError::RuntimeError(holoscan::ErrorCode error_code, const char* what_arg)
+    : std::runtime_error(construct_error_message(error_code, what_arg)), code_(error_code) {}
+
+RuntimeError::RuntimeError(const Error& error)
+    : std::runtime_error(construct_error_message(
+          error.code, error.message.empty() ? nullptr : error.message.c_str())),
+      code_(error.code) {}
+
+std::string RuntimeError::construct_error_message(holoscan::ErrorCode error_code,
                                                   const char* what_arg) {
   if (what_arg == nullptr) {
-    return error_string(error_code);
-  } else {
-    return fmt::format("{}: {}", error_string(error_code), what_arg);
+    return std::string(error_code_name(error_code));
   }
+  return construct_error_message(error_code, std::string_view{what_arg});
+}
+
+std::string RuntimeError::construct_error_message(holoscan::ErrorCode error_code,
+                                                  std::string_view what_arg) {
+  return fmt::format("{}: {}", error_code_name(error_code), what_arg);
 }
 
 }  // namespace holoscan

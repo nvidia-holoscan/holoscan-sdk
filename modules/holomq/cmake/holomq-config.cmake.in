@@ -1,0 +1,32 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(CUDAToolkit)
+find_dependency(tl-expected)
+find_dependency(magic_enum)
+find_dependency(iceoryx2-cxx @HOLOMQ_ICEORYX2_CXX_VERSION@ CONFIG)
+
+# CUDA ships the CCCL (and CUB/Thrust/libcudacxx) CMake package configs in a
+# layout-dependent location: the per-target directory (<target>/lib/cmake/cccl),
+# the toolkit root lib dir (<root>/lib64/cmake/cccl), or the detected library
+# dir. CMake does not auto-search lib64 when CMAKE_LIBRARY_ARCHITECTURE is set,
+# so prepend the cmake directory that actually contains cccl/ directly. This lets
+# installed HoloMQ consumers resolve CCCLConfig.cmake regardless of the CUDA
+# toolkit on-disk layout.
+foreach(_holomq_cccl_cmake_dir
+    "${CUDAToolkit_TARGET_DIR}/lib/cmake"
+    "${CUDAToolkit_TARGET_DIR}/lib64/cmake"
+    "${CUDAToolkit_LIBRARY_DIR}/cmake"
+    "${CUDAToolkit_LIBRARY_ROOT}/lib64/cmake"
+    "${CUDAToolkit_LIBRARY_ROOT}/lib/cmake"
+    "/usr/local/cuda/lib64/cmake")
+    if(IS_DIRECTORY "${_holomq_cccl_cmake_dir}/cccl"
+       AND NOT _holomq_cccl_cmake_dir IN_LIST CMAKE_PREFIX_PATH)
+        list(PREPEND CMAKE_PREFIX_PATH "${_holomq_cccl_cmake_dir}")
+    endif()
+endforeach()
+unset(_holomq_cccl_cmake_dir)
+
+include("${CMAKE_CURRENT_LIST_DIR}/holomq-targets.cmake")
+
+check_required_components(holomq)

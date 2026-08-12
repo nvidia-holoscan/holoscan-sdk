@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 3.30.4)
+
+project(holoscan_ea1_sensor_daemon LANGUAGES CXX)
+
+find_package(Threads REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(ea1_sensor_daemon sensor_daemon.cpp)
+target_compile_features(ea1_sensor_daemon PRIVATE cxx_std_20)
+target_link_libraries(ea1_sensor_daemon PRIVATE holoscan::core Threads::Threads)

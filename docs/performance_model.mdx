@@ -1,0 +1,301 @@
+Holoscan 5.x is built for pipelines with hard latency budgets — sensor to
+actuator, glass to glass. Its performance story is not a list of
+optimizations applied after the fact; it is a set of structural decisions
+that make the hot path fast *and predictable* by construction. This page
+explains those decisions, then shows how the SDK measures itself: the
+in-tree benchmark suites, the provenance every published number must carry,
+and how to reproduce results on your own hardware.
+
+<Note title="You will learn">
+  - Why the 5.x hot path is fast by construction: zero-copy channels, no heap
+    allocation, preallocated pools, automatic stream ordering, bounded queues
+  - Why "predictable latency" is a different goal from "high throughput"
+  - Where the in-tree benchmark suites live and what each one covers
+  - The credibility envelope every published Holoscan number carries
+  - The difference between saturated-throughput and idle-latency measurements
+  - How to run the benchmark suites yourself with `./run bench` or CTest
+</Note>
+
+## Fast by construction
+
+Most frameworks make the common case fast and hope the worst case is rare.
+Holoscan 5.x inverts that: the runtime is designed so that the worst case is
+*bounded*, and the common case is fast as a consequence. Five structural
+decisions carry most of the weight.
+
+### Zero-copy shared-memory channels
+
+When two operators exchange a payload, no bytes move. The producer writes
+directly into a shared-memory buffer; the consumer reads the same buffer.
+This holds within a process and across processes: interprocess channels use
+the same shared-memory transport, so splitting a graph across processes does
+not introduce a serialization step for pooled payloads. Fan-out to multiple
+consumers shares the same buffer too — the runtime copies only when a
+writer would otherwise race a reader.
+
+The payoff is that channel cost is roughly independent of payload size for
+pooled payloads: transporting a large tensor costs about the same as
+transporting a small one, because what travels is a descriptor, not the
+data. See [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
+for which payload categories get this treatment.
+
+### No hot-path heap allocation
+
+Nothing on the steady-state path calls `malloc`, `new`, or any other
+general-purpose allocator. Heap allocation is the classic source of latency
+spikes: an allocation that usually takes nanoseconds can occasionally take
+milliseconds when the allocator takes a lock, walks a free list, or faults
+in a page. By banning it from the hot path entirely, 5.x removes that tail
+risk rather than trying to average it away.
+
+All allocation happens during **compose** and **compile**, before the graph
+starts running. This is also why the model suits regulated deployments:
+bounded static memory is dramatically easier to qualify than dynamic
+allocation.
+
+### Preallocated pools
+
+Tensors and other pooled payloads come from pools sized at compile time.
+`allocate_tensor()` on an output port **borrows** a slot from a
+preallocated pool — it never allocates memory. When the pool is exhausted,
+the call fails fast with `ErrorCode::kResourceExhausted` instead of
+blocking or growing:
+
+```cpp
+// Inside compute(): borrow a pool slot, fill it, commit.
+auto loan = output.allocate_tensor(request);
+if (!loan) {
+  // Pool exhausted: kResourceExhausted. Handle it — never block.
+  return loan.error();
+}
+```
+
+Exhaustion is a *signal you can act on* — drop, degrade, or report — rather
+than an invisible stall. See
+[errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+for the handling patterns.
+
+### Automatic stream ordering, no host syncs
+
+GPU work is ordered by CUDA streams, not by host synchronization.
+Committing a tensor loan records its readiness on the producing stream; a
+received tensor is already ordered on your compute stream by the time
+`compute()` runs. You never wait on the host for the device to catch up.
+
+<Warning>
+  **Never call `cudaStreamSynchronize` on the hot path.** A host sync stalls
+  the CPU thread until all prior GPU work drains, serializing the pipeline
+  and destroying tail latency. The runtime's stream-ordering guarantees make
+  it unnecessary: if you received a tensor, it is already safe to consume on
+  your stream. Host access to device data is a deliberate, explicit
+  operation — see [tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+</Warning>
+
+### Bounded queues
+
+Every channel queue has a fixed depth computed at compile time from the
+graph's declared rates and temporal contracts. When a consumer falls
+behind, the queue does not grow — the configured drop policy applies and
+the producer keeps running. Publish and consume never block on each other.
+
+This is the decision that turns "fast" into "predictable": an unbounded
+queue converts a transient slowdown into unbounded memory growth *and*
+unbounded latency, because every enqueued sample ages while it waits.
+Bounded queues put a ceiling on how stale any delivered sample can be. The
+system degrades by dropping — visibly, by policy you chose — rather than
+by silently drifting seconds behind the sensor.
+
+<Note>
+  **Latency, not just throughput.** These five decisions optimize a specific
+  target: the time from sensor sample to actuator command, at the tail, not
+  the average. A framework can post excellent throughput numbers while
+  hiding terrible p99 latency behind deep buffers. Holoscan's bounded
+  design refuses that trade: what you gain is a hard relationship between
+  queue depth, rate, and worst-case sample age — one the compiler checks
+  against your temporal contracts at `compile()` time.
+</Note>
+
+## How the SDK measures itself
+
+Performance claims decay: compilers change, kernels change, hardware
+changes. Holoscan treats benchmarks as maintained code, not one-off
+marketing runs.
+
+### In-tree benchmark suites
+
+The suites live in the `benchmark/` directory of the SDK repository,
+alongside the code they measure. Adding a feature means adding benchmark
+coverage next to its correctness tests. The current suites:
+
+| Suite | What it measures |
+|---|---|
+| `channel_pod` | Fixed-size POD payload publish/consume on the channel hot path |
+| `channel_tensor` | Tensor transport: pool loans, descriptor emit/receive, device and host storage |
+| `channel_schema` | Schema-backed (serialized) payload transport |
+| `channel_interprocess` | Role-aware cross-process and cross-thread channel matrix, including fan-out |
+| `runtime` | Runtime dispatch, channel integration, and payload handling inside a running graph |
+| `ea1_runtime` | System-level runtime scenarios for the current release wave |
+| `graph` | Graph composition and compile costs |
+| `temporal_contract` | Temporal contract evaluation overhead |
+| `time` | Clock and timestamp primitives |
+| `endpoint_catalog` | Endpoint catalog lookup costs |
+| `core_hello` | Minimal template — the pattern to copy for new suites |
+| `tensor_python_as_tensor` | Python tensor interop conversion costs |
+
+Most suites are standard Google Benchmark binaries. The interprocess
+domain-comparison suite is the deliberate exception: it uses standalone
+publisher/subscriber roles plus a runner script, because the measured path
+spans separate processes and role orchestration must stay outside the timed
+loop.
+
+Every benchmark binary is also registered with CTest under the
+`benchmark` label, so `ctest -L benchmark` runs the whole set with short
+default runtimes suitable for CI smoke coverage.
+
+### The credibility envelope
+
+Every performance number the project publishes must ship inside a
+credibility envelope. A number missing any of these fields is an anecdote,
+not a result:
+
+- **Hardware, OS, and toolchain** — CPU model and core topology (including
+  whether SMT was enabled), GPU if relevant, kernel version, CUDA version,
+  and build type. A Release-build number and a Debug-build number are not
+  comparable; neither are numbers from different core-pinning layouts.
+- **Scenario definition** — payload type and size, queue depth, sample and
+  warmup counts, publisher pacing, CPU pinning, subscriber count. "Channel
+  latency" means nothing without these.
+- **p50 AND tail percentiles** — a median alone hides exactly the behavior
+  a real-time system cares about. Published latency results carry p50 plus
+  tail percentiles (p99, p99.9), computed as nearest-rank percentiles over
+  individual post-warmup samples — not batch averages dressed up as
+  percentiles.
+- **Reproduction command** — the exact invocation, including benchmark
+  filters and repetition counts, so anyone can rerun it.
+- **Date and commit stamp** — the measurement date and the SDK commit the
+  binaries were built from. A number without a commit is a number you
+  cannot re-verify.
+
+You will see this envelope applied throughout the
+[channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks) and
+[core runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks)
+pages. Hold your own measurements — and anyone else's — to the same
+standard.
+
+### Saturated throughput vs. idle latency
+
+Benchmark scenarios come in two fundamentally different flavors, and
+conflating them is the single most common way to misread a result:
+
+- **Idle-latency runs** measure a single operation on an otherwise quiet
+  system — for example, a serialized ping where each sample completes
+  before the next begins. They answer: *how fast is one traversal when
+  nothing is queued?*
+- **Saturated-throughput runs** drive the system as fast as it will go,
+  with many samples in flight. Their end-to-end percentiles include queue
+  residence and scheduling time, not just transport cost. They answer:
+  *what does latency look like under full load?*
+
+Two consequences follow. First, a saturated end-to-end latency is *not* an
+idle-system latency — it is dominated by time spent waiting in queues.
+Second, because producer and consumer stages overlap under saturation,
+completion throughput can exceed the reciprocal of the end-to-end latency;
+`1 / latency` is not a throughput bound in a pipelined system.
+
+<Warning>
+  **Do not compare numbers across execution models.** A serialized
+  (one-at-a-time) benchmark and a concurrent saturated benchmark measure
+  different things, even when they exercise the same channel with the same
+  payload. Compare their qualitative cost structure if you like — never
+  their absolute medians. The same applies to your own measurements: pick
+  the execution model that matches your deployment question, and stay in it.
+</Warning>
+
+## Running the suites yourself
+
+The repository provides a `./run bench` wrapper that builds and executes
+benchmarks inside the SDK's standard build container, using a Release build
+by default.
+
+List everything that is registered:
+
+```bash
+./run bench --list
+```
+
+Run the full set, or select one suite by its short alias (the full CTest
+name, such as `BENCHMARK_CORE_HELLO`, works too, as do shell-style
+wildcards):
+
+```bash
+./run bench
+./run bench --name core_hello
+./run bench --name 'channel_*'
+```
+
+Pass Google Benchmark arguments through for longer, statistically sturdier
+runs, and export JSON when you want to keep the raw artifact:
+
+```bash
+./run bench --name channel_tensor \
+  --benchmark-args "--benchmark_min_time=1s --benchmark_repetitions=10 --benchmark_report_aggregates_only=true" \
+  --output-json results.json
+```
+
+For CI-style aggregation, route through CTest instead — this is the same
+`benchmark` label the suites register at build time:
+
+```bash
+./run bench --ctest --name core_hello
+# or directly, from a configured build tree:
+ctest -L benchmark
+```
+
+### Reducing measurement noise
+
+Google Benchmark will warn if CPU frequency scaling or address-space
+randomization is enabled on the host — both add run-to-run variance.
+Check the host first, then opt into a stabilized run:
+
+```bash
+./run bench --check-system
+./run bench --stable-system --name core_hello
+```
+
+`--stable-system` temporarily sets the CPU governor to `performance` and
+disables address-space randomization for the duration of the run, restoring
+the host settings afterward (it needs cached `sudo` credentials — run
+`sudo -v` first).
+
+<Warning>
+  A stabilized run is more *reproducible*, not inherently *faster*. The
+  `performance` governor does not pin maximum turbo frequency, and layout
+  changes from disabling randomization can cut either way on a small
+  benchmark. When comparing two configurations, use longer runtimes and
+  multiple repetitions, and compare medians and dispersion — a small delta
+  from single unstabilized runs is noise until repeated isolated runs say
+  otherwise.
+</Warning>
+
+Finally, apply the credibility envelope to yourself: record the hardware,
+OS, build type, exact command, date, and commit alongside any number you
+intend to act on. Six months later, that envelope is the difference between
+a regression you can bisect and a mystery.
+
+## Recap
+
+- 5.x is fast by construction: zero-copy shared-memory channels,
+  no hot-path heap allocation, preallocated pools with
+  `kResourceExhausted` on exhaustion, automatic stream ordering with no
+  host syncs, and bounded queues.
+- Bounded queues buy *predictable latency*: a compile-time ceiling on
+  sample age, with visible drops instead of silent drift.
+- The in-tree suites live under `benchmark/` and register with CTest under
+  the `benchmark` label; `./run bench` is the front door.
+- Every published number carries a credibility envelope: hardware + OS +
+  toolchain, scenario definition, p50 and tail percentiles, repro command,
+  date + commit.
+- Saturated-throughput and idle-latency runs answer different questions —
+  never compare absolute numbers across execution models.
+
+Next: [Channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks).

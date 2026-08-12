@@ -1,0 +1,76 @@
+{/* Intentionally omitted from Fern navigation until an owner-approved
+    application-level result set is available. Transport-through-Graph rows
+    belong on the Core Runtime Benchmarks page and must not be presented as
+    sensor-to-actuation evidence. */}
+
+This page will collect end-to-end results for complete applications built on the
+SDK's example apps — as opposed to the microbenchmarks on the
+[channel benchmarks](/holoscan/sdk-user-guide/performance/channel-benchmarks) and
+[core runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks)
+pages, which isolate individual primitives. End-to-end numbers measure what an
+application actually experiences: sensor-to-actuation latency through a full
+graph, jitter under sustained load, and throughput across process boundaries.
+
+<Note title="Results pending">
+  Measurements for this page arrive together with the refreshed example
+  applications. The table shells below define the metrics that will be
+  reported; no figures are published yet. Do not extrapolate end-to-end
+  numbers from the microbenchmark pages.
+</Note>
+
+## Camera + IMU control pipeline
+
+Based on the `ea1_camera_imu_control` example
+([walkthrough](/holoscan/sdk-user-guide/examples/camera-imu-control)): a 60 Hz
+camera and a high-rate IMU fused into a control output. The headline metric is
+**sensor-to-actuation latency** — the time from a sensor sample entering the
+graph to the corresponding control command leaving it — plus the jitter of
+that path under steady state.
+
+| Metric | p50 | p99 | max | Jitter (stddev) | Throughput |
+|---|---|---|---|---|---|
+| Sensor-to-actuation latency | — | — | — | — | — |
+| Camera-path latency | — | — | — | — | — |
+| IMU-path latency | — | — | — | — | — |
+
+## Multi-rate fusion scenario
+
+Based on the `ea1_slow_fast_fusion` example
+([walkthrough](/holoscan/sdk-user-guide/examples/slow-fast-fusion)): a slow
+producer and a fast producer feeding one fusion operator, exercising the
+temporal-contract machinery (trigger, input selection, missing-data policy)
+under mismatched rates.
+
+| Metric | p50 | p99 | max | Jitter (stddev) | Throughput |
+|---|---|---|---|---|---|
+| End-to-end fusion latency | — | — | — | — | — |
+| Fast-path activation latency | — | — | — | — | — |
+| Slow-sample staleness at fusion | — | — | — | — | — |
+
+## Cross-process pipeline
+
+Based on the `ea1_external_clients` example
+([walkthrough](/holoscan/sdk-user-guide/examples/external-clients)): a graph
+exchanging payloads with standalone processes over
+[interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels),
+measuring the added cost of the process boundary relative to the in-process
+paths above.
+
+| Metric | p50 | p99 | max | Jitter (stddev) | Throughput |
+|---|---|---|---|---|---|
+| Cross-process round trip | — | — | — | — | — |
+| Graph-to-client one-way latency | — | — | — | — | — |
+| Client-to-graph one-way latency | — | — | — | — | — |
+
+## Methodology (to be published with results)
+
+Each result will ship with the hardware and software configuration it was
+measured on, the load pattern, the warm-up policy, and the number of samples
+behind each percentile. Until then, treat every cell above as unmeasured.
+
+<Note>
+  For guidance on interpreting latency percentiles and jitter in these tables,
+  see the [performance model](/holoscan/sdk-user-guide/performance/performance-model)
+  and [performance considerations](/holoscan/sdk-user-guide/performance/performance-considerations)
+  pages.
+</Note>

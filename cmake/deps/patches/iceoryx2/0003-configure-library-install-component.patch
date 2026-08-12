@@ -1,0 +1,168 @@
+diff --git a/iceoryx2-c/cmake/rust-ffi-c-byproduct-definitions.cmake b/iceoryx2-c/cmake/rust-ffi-c-byproduct-definitions.cmake
+index 0876971c4..009dad55b 100644
+--- a/iceoryx2-c/cmake/rust-ffi-c-byproduct-definitions.cmake
++++ b/iceoryx2-c/cmake/rust-ffi-c-byproduct-definitions.cmake
+@@ -12,7 +12,7 @@
+
+ set(ICEORYX2_C_INCLUDE_DIR ${RUST_BUILD_ARTIFACT_PATH}/iceoryx2-ffi-c-cbindgen/include)
+
+-set(ICEORYX2_C_LIB iceoryx2_ffi_c)
++set(ICEORYX2_C_LIB holomq_iceoryx2_ffi_c)
+ set(ICEORYX2_C_STATIC_LIB_LINK_NAME lib${ICEORYX2_C_LIB}.a)
+ set(ICEORYX2_C_SHARED_LIB_LINK_NAME lib${ICEORYX2_C_LIB}.so)
+ if(WIN32 AND MINGW)
+diff --git a/iceoryx2-c/cmake/install.cmake b/iceoryx2-c/cmake/install.cmake
+index 20284b814..08a24bdd4 100644
+--- a/iceoryx2-c/cmake/install.cmake
++++ b/iceoryx2-c/cmake/install.cmake
+@@ -51,17 +51,28 @@ configure_package_config_file(
+     INSTALL_DESTINATION ${DESTINATION_CONFIGDIR}
+ )
+
++set(HOLOMQ_ICEORYX2_LIBRARY_COMPONENT
++    "holomq-iceoryx2-libraries"
++    CACHE STRING "Install component for HoloMQ's iceoryx2 library artifacts"
++)
++
+ #
+ ########## export library ##########
+ #
+
++if(BUILD_SHARED_LIBS)
++    set(_holomq_iceoryx2_c_install_targets includes-only shared-lib)
++else()
++    set(_holomq_iceoryx2_c_install_targets includes-only static-lib)
++endif()
++
+ # target directories
+ install(
+-    TARGETS includes-only static-lib shared-lib
++    TARGETS ${_holomq_iceoryx2_c_install_targets}
+     EXPORT ${TARGETS_EXPORT_NAME}
+     RUNTIME DESTINATION ${DESTINATION_BINDIR} COMPONENT bin
+-    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
+-    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
++    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT ${HOLOMQ_ICEORYX2_LIBRARY_COMPONENT}
++    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT ${HOLOMQ_ICEORYX2_LIBRARY_COMPONENT}
+ )
+
+ # header
+@@ -73,10 +84,20 @@ install(
+ )
+
+ # lib
++# Build configuration controls the exported C target and its Rust FFI artifact.
++if(BUILD_SHARED_LIBS)
++    set(_holomq_iceoryx2_c_install_artifacts ${ICEORYX2_C_SHARED_LIB_LINK_FILE})
++    if(ICEORYX2_C_SHARED_LIB_DLL_FILE)
++        list(APPEND _holomq_iceoryx2_c_install_artifacts ${ICEORYX2_C_SHARED_LIB_DLL_FILE})
++    endif()
++else()
++    set(_holomq_iceoryx2_c_install_artifacts ${ICEORYX2_C_STATIC_LIB_LINK_FILE})
++endif()
++
+ install(
+-    FILES ${ICEORYX2_C_LIB_ARTIFACTS}
++    FILES ${_holomq_iceoryx2_c_install_artifacts}
+     DESTINATION ${DESTINATION_LIBDIR}
+-    COMPONENT lib
++    COMPONENT ${HOLOMQ_ICEORYX2_LIBRARY_COMPONENT}
+ )
+
+ # license
+diff --git a/iceoryx2-cxx/CMakeLists.txt b/iceoryx2-cxx/CMakeLists.txt
+index 9c2524a86..045a7a772 100644
+--- a/iceoryx2-cxx/CMakeLists.txt
++++ b/iceoryx2-cxx/CMakeLists.txt
+@@ -123,7 +123,7 @@ target_compile_features(static-lib-cxx PUBLIC ${ICEORYX2_CXX_STD})
+ set_target_properties(static-lib-cxx
+     PROPERTIES
+     POSITION_INDEPENDENT_CODE ON
+-    OUTPUT_NAME "iceoryx2_cxx"
++    OUTPUT_NAME "holomq_iceoryx2_cxx"
+ )
+
+ target_link_libraries(static-lib-cxx
+@@ -142,7 +142,7 @@ target_compile_features(shared-lib-cxx PUBLIC ${ICEORYX2_CXX_STD})
+ set_target_properties(shared-lib-cxx
+     PROPERTIES
+     POSITION_INDEPENDENT_CODE ON
+-    OUTPUT_NAME "iceoryx2_cxx"
++    OUTPUT_NAME "holomq_iceoryx2_cxx"
+ )
+
+ target_link_libraries(shared-lib-cxx
+diff --git a/iceoryx2-cxx/cmake/install.cmake b/iceoryx2-cxx/cmake/install.cmake
+index 37ecf269c..8d967742e 100644
+--- a/iceoryx2-cxx/cmake/install.cmake
++++ b/iceoryx2-cxx/cmake/install.cmake
+@@ -51,17 +51,28 @@ configure_package_config_file(
+     INSTALL_DESTINATION ${DESTINATION_CONFIGDIR}
+ )
+
++set(HOLOMQ_ICEORYX2_LIBRARY_COMPONENT
++    "holomq-iceoryx2-libraries"
++    CACHE STRING "Install component for HoloMQ's iceoryx2 library artifacts"
++)
++
+ #
+ ########## export library ##########
+ #
+
++if(BUILD_SHARED_LIBS)
++    set(_holomq_iceoryx2_cxx_install_targets includes-only-cxx shared-lib-cxx)
++else()
++    set(_holomq_iceoryx2_cxx_install_targets includes-only-cxx static-lib-cxx)
++endif()
++
+ # target directories
+ install(
+-    TARGETS includes-only-cxx static-lib-cxx shared-lib-cxx
++    TARGETS ${_holomq_iceoryx2_cxx_install_targets}
+     EXPORT ${TARGETS_EXPORT_NAME}
+     RUNTIME DESTINATION ${DESTINATION_BINDIR} COMPONENT bin
+-    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
+-    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT lib
++    LIBRARY DESTINATION ${DESTINATION_LIBDIR} COMPONENT ${HOLOMQ_ICEORYX2_LIBRARY_COMPONENT}
++    ARCHIVE DESTINATION ${DESTINATION_LIBDIR} COMPONENT ${HOLOMQ_ICEORYX2_LIBRARY_COMPONENT}
+ )
+
+ # header
+diff --git a/iceoryx2-cxx/cmake/Config.cmake.in b/iceoryx2-cxx/cmake/Config.cmake.in
+index bd5098eb0..5b27f8d5e 100644
+--- a/iceoryx2-cxx/cmake/Config.cmake.in
++++ b/iceoryx2-cxx/cmake/Config.cmake.in
+@@ -13,6 +13,8 @@
+
+ @PACKAGE_INIT@
+
++set(HOLOMQ_ICEORYX2_PACKAGE_VARIANT "holomq-private-libraries-v1")
++
+ include(CMakeFindDependencyMacro)
+
+ find_dependency(iceoryx2-bb-cxx)
+diff --git a/iceoryx2-ffi/c/Cargo.toml b/iceoryx2-ffi/c/Cargo.toml
+index 9133538b7..e9a67d07f 100644
+--- a/iceoryx2-ffi/c/Cargo.toml
++++ b/iceoryx2-ffi/c/Cargo.toml
+@@ -15,6 +15,7 @@ build = "build.rs"
+ # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+ [lib]
++name = "holomq_iceoryx2_ffi_c"
+ path = "src/lib.rs"
+ crate-type = ["rlib", "cdylib", "staticlib"] # without "rlib" the doc examples are not run
+
+diff --git a/iceoryx2-ffi/c/src/api/mod.rs b/iceoryx2-ffi/c/src/api/mod.rs
+index 27260c35a..383f3a340 100644
+--- a/iceoryx2-ffi/c/src/api/mod.rs
++++ b/iceoryx2-ffi/c/src/api/mod.rs
+@@ -259,7 +259,7 @@ pub use waitset_guard::*;
+ /// # Example
+ ///
+ /// ```no_run
+ /// use core::ffi::c_int;
+-/// use iceoryx2_ffi_c::IOX2_OK;
++/// use holomq_iceoryx2_ffi_c::IOX2_OK;
+ ///
+ /// trait IntoCInt {

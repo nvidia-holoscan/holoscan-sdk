@@ -1,0 +1,219 @@
+Holoscan does not run operators on a fixed wall-clock loop; it *activates* them
+when events occur — a sample arrives, a timer fires, a readiness signal trips.
+Almost every one of those decisions involves time: a periodic trigger fires on a
+schedule, a temporal contract decides whether an input is fresh enough, and each
+sample can carry a capture time for downstream freshness checks and tracing. A
+**clock** is the single, well-defined time base the runtime reads to make all of
+those decisions and to interpret the timestamps that travel with your data.
+
+This page covers the *read side* of time: what your operator sees inside
+`compute()` and how to stamp the samples it emits. Authoring clocks on a graph —
+declaring named clocks, choosing the default, wiring conversions — is a separate,
+one-time concern covered in
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).
+
+**Complete C++ example:** [`examples/time_and_clocks/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/time_and_clocks/cpp)
+
+<Note title="You will learn">
+  - How to get a read-only clock reference inside `compute()` with `ctx.clock()`
+  - When to call `now()` (measures, can fail) versus `at_ns()` (labels, cannot fail)
+  - What a `TimePoint` is and why it carries a clock domain
+  - How to stamp emitted samples with `EmitOptions::capture_time`
+  - What a `Tag` is and why it is an identity, not a time
+</Note>
+
+## Where the clock comes from
+
+Usually you configure **nothing**. Every graph runs against a *default clock*,
+which in production tracks real (steady) time; when the application runs, the
+runtime constructs the concrete clock instance for you. The default must be
+established when the graph is authored — Holoscan provides a real-time default,
+and `set_default_clock()` overrides it — but that is graph-composition work, not
+operator work. See
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+when you need more than the default.
+
+Crucially, the clock is **swappable**. Because triggers, temporal selection, and
+timestamps all read the same clock abstraction, the *same* operator code runs
+unchanged against real time in production or against a `ManualClock` that a test
+harness advances step by step — which is how you get deterministic, repeatable
+tests. See [Testing](/holoscan/sdk-user-guide/debugging-and-testing/testing) for
+the manual-clock pattern.
+
+## Reading the clock from `compute()`
+
+Inside `compute()`, the `ExecutionContext` hands you a borrowed, read-only clock
+reference for this activation's clock:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  const holoscan::ClockRef clock = ctx.clock();  // borrowed; valid for this callback only
+  // ... use clock.now() / clock.at_ns(...) ...
+  return {};
+}
+```
+
+`ClockRef` is deliberately minimal: you can read the current time (`now()`),
+label an existing nanosecond value with this clock's domain (`at_ns()`), and
+query its identity and capabilities (`id()`, `capabilities()`). That is all.
+
+<Warning>
+  **A callback observes time; it never drives it.** `ClockRef` has no sleep and
+  no advance operations, on purpose. Waiting is the scheduler's job, expressed
+  through your operator's temporal contract — sleeping inside `compute()` would
+  stall your execution lane and everything sharing it. And if an operator could
+  advance the clock, it would perturb the single time base every trigger and
+  timestamp depends on. If you feel the need to wait or step time from
+  `compute()`, reshape the trigger in `contract()` instead.
+</Warning>
+
+### `now()` — "what time is it right now?"
+
+`now()` reads the live clock and returns the current instant as a `TimePoint`.
+It is **fallible**: it returns `expected<TimePoint, Error>`, because a clock that
+was not admitted for reads, or a reference that has gone stale, returns an error
+instead of a bogus timestamp. Check the result — or use `HOLOSCAN_TRY` to make
+it one line (see
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)):
+
+```cpp
+HOLOSCAN_TRY(auto t_now, clock.now());
+const std::int64_t ns = t_now.timestamp_ns;  // current time in this clock's domain
+```
+
+Reach for `now()` when you need the clock's *current* value:
+
+- measuring how long processing took, or how much latency you added,
+- checking a deadline or timeout,
+- recording the time at which this operator handled a sample.
+
+### `at_ns()` — "label this nanosecond value as mine"
+
+`at_ns(timestamp_ns)` does **not** read the clock. It takes a nanosecond count
+you *already have* — typically a hardware acquisition timestamp from a camera or
+IMU driver — and stamps it with this clock's domain, producing a comparable
+`TimePoint`. It never fails and never allocates:
+
+```cpp
+const std::int64_t sensor_hw_ns = /* acquisition timestamp from the sensor driver */;
+const holoscan::TimePoint capture = clock.at_ns(sensor_hw_ns);  // does not read the clock
+```
+
+### At a glance
+
+| | `clock.now()` | `clock.at_ns(ts)` |
+|---|---|---|
+| Reads the live clock? | **Yes** | **No** |
+| Returns | `expected<TimePoint, Error>` (fallible) | `TimePoint` (never fails) |
+| Answers | "What time is it *now*?" | "Tag *this* known instant with my domain." |
+| Typical use | latency, deadlines, processing time | capture time from a hardware timestamp |
+
+Rule of thumb: **`now()` measures, `at_ns()` labels.** If you are asking the
+clock a question, use `now()`; if you already have the number and only need the
+domain, use `at_ns()`.
+
+## `TimePoint` basics
+
+A `TimePoint` is a signed `int64` nanosecond coordinate **plus a `ClockId`**
+naming the clock domain it belongs to. The domain matters: two clocks can run at
+different rates or offsets, so a raw nanosecond count is meaningless until you
+know which clock produced it. `now()`, `at_ns()`, `ctx.activation_time()`, and a
+received sample's `metadata.capture_time()` all give you `TimePoint`s.
+
+<Warning>
+  **Compare `TimePoint`s only within one clock domain.** `TimePoint` deliberately
+  has no `<` operator — subtract or compare `timestamp_ns` fields only after
+  confirming both values share the same `clock_id`. Comparing times from two
+  unrelated clocks is a bug the compiler cannot catch for you.
+</Warning>
+
+<Warning>
+  **Absent time is a zero `ClockId`, not the epoch.** A default-constructed
+  `TimePoint` (or a sample with no capture time) means "no time recorded."
+  Check `.valid()` before using one; timestamp zero in a *valid* domain is a
+  real coordinate.
+</Warning>
+
+## Stamping emitted samples with capture time
+
+The most common reason to touch the clock is to preserve a sample's *true
+acquisition instant* when you emit it. `EmitOptions::capture_time` carries an
+optional `TimePoint` alongside the payload, so downstream operators can measure
+end-to-end freshness against the original capture rather than against whenever
+your operator happened to run:
+
+```cpp
+holoscan::EmitOptions options;
+options.capture_time = clock.at_ns(sensor_hw_ns);  // preserve the true acquisition instant
+HOLOSCAN_TRY(out.emit(std::move(frame), options));
+```
+
+Two common variants:
+
+- **Source operator with a hardware timestamp** — use `clock.at_ns(hw_ns)` as
+  above.
+- **Source operator without one** — the `ea1_camera_imu_control` example's
+  camera source stamps `context.activation_time()` as the capture time, using
+  the activation instant as the best available approximation.
+- **Pass-through or fusion operator** — forward the *input's* capture time
+  (`frame.metadata.capture_time()`) so the chain still measures from the
+  original acquisition, not from your stage.
+
+A downstream operator can then compute a sample's age:
+
+```cpp
+const holoscan::TimePoint captured = frame.metadata.capture_time();
+if (captured.valid()) {
+  HOLOSCAN_TRY(auto t_now, clock.now());
+  const std::int64_t age_ns = t_now.timestamp_ns - captured.timestamp_ns;  // same domain
+  // ... drop or degrade if age_ns exceeds a budget ...
+}
+```
+
+## `Tag`: identifying an activation
+
+Alongside physical time, each `compute()` callback has an **identity**:
+`ctx.tag()` returns a `Tag`, a small value naming *this specific activation* (a
+`sequence` number within an execution `generation`). A `Tag` supports equality
+and hashing but **not ordering** — it answers "which activation is this?", never
+"when did it happen?". Use it to correlate: label a debug record, key
+per-activation state, or let a downstream consumer match a fused result back to
+the activation that produced it.
+
+```cpp
+const holoscan::Tag id = ctx.tag();  // identity: {sequence, generation}
+record_debug(id, /* ... */);
+```
+
+<Note>
+  There is a third time-flavored type, `TagTime` (`ctx.tag_time()`): the
+  activation's *deterministic logical position* in the run's timeline, totally
+  ordered and reproducible across replays even when the wall clock jitters. You
+  will not need it until you care about reproducible ordering — see
+  [Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay)
+  for the deep dive.
+</Note>
+
+One mnemonic for all three: `TimePoint` is the wall clock in the lab, `TagTime`
+is the frame number on a deterministic simulation timeline, and `Tag` is the
+serial number stamped on this one run of the operator. Do not sort by `Tag`; do
+not read `TagTime` as real nanoseconds; do not compare `TimePoint`s across
+domains.
+
+## Recap
+
+- `ctx.clock()` hands `compute()` a borrowed, read-only `ClockRef` — you can
+  observe time, never sleep on it or advance it.
+- **`now()` measures, `at_ns()` labels**: `now()` reads the live clock and is
+  fallible; `at_ns()` stamps a nanosecond value you already have and cannot fail.
+- A `TimePoint` is nanoseconds *plus* a `ClockId`; compare only within one
+  domain, and check `.valid()` — absent time is a zero `ClockId`, not the epoch.
+- Stamp emitted samples with `EmitOptions::capture_time` so downstream stages
+  measure freshness from the true acquisition instant.
+- `Tag` is an activation identity for correlation — equality and hashing only,
+  never ordering.
+- Every graph needs a default clock; production defaults to real time, tests
+  swap in a manual clock, and your `compute()` code is unchanged either way.
+
+Next: write your first operator in
+[First operator](/holoscan/sdk-user-guide/getting-started/first-operator).

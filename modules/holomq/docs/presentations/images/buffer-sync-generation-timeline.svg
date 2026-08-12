@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+  <title id="title">holomq generation sync producer and consumer streams</title>
+  <desc id="desc">Per-lease generation G: WriteValue on publisher stream before WaitValue on subscriber stream.</desc>
+
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+    <marker id="ar-green" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#5a8f00"/>
+    </marker>
+    <marker id="ar-gold" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#b8860b"/>
+    </marker>
+  </defs>
+  <style>
+    .col-h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 700; fill: #1a1a1a; }
+    .col-sub { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; fill: #666; }
+    .c { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 13px; fill: #1a1a1a; }
+    .c-sm { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 12px; fill: #444; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; fill: #666; }
+    .note { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 11px; fill: #555; font-style: italic; }
+    .lane { fill: none; stroke: #e2e8ef; stroke-width: 1.5; stroke-dasharray: 6 4; }
+  </style>
+
+  <rect x="0" y="0" width="960" height="560" fill="#ffffff"/>
+
+  <!-- Column headers -->
+  <text x="232" y="36" text-anchor="middle" class="col-h">Producer stream</text>
+  <text x="232" y="54" text-anchor="middle" class="col-sub">pub_stream</text>
+  <text x="728" y="36" text-anchor="middle" class="col-h">Consumer stream</text>
+  <text x="728" y="54" text-anchor="middle" class="col-sub">sub_stream</text>
+
+  <!-- Swim lanes -->
+  <line x1="232" y1="68" x2="232" y2="522" class="lane"/>
+  <line x1="728" y1="68" x2="728" y2="522" class="lane"/>
+
+  <!-- Publisher: kernel -->
+  <rect x="24" y="80" width="416" height="56" rx="6" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="44" y="104" class="c">myKernel&lt;&lt;&lt;grid, block, 0, stream&gt;&gt;&gt;(buf.ptr(), ...)</text>
+  <text x="44" y="124" class="d">GPU work on publisher stream</text>
+
+  <line x1="232" y1="136" x2="232" y2="168" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Publisher: export_handle -->
+  <rect x="24" y="168" width="416" height="84" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="44" y="188" class="c">export_handle(stream)</text>
+  <text x="44" y="206" class="c-sm">increment lease export G</text>
+  <text x="44" y="222" class="c-sm">cuStreamWriteValue64(G)</text>
+  <text x="44" y="238" class="d">ordered on pub_stream</text>
+
+  <line x1="232" y1="252" x2="232" y2="284" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Publisher: send -->
+  <rect x="24" y="284" width="416" height="52" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="44" y="316" class="c">Publisher::send { ready_generation = G }</text>
+
+  <!-- Transport arrow -->
+  <line x1="440" y1="310" x2="520" y2="310" stroke="#76b900" stroke-width="2" marker-end="url(#ar-green)"/>
+  <text x="480" y="298" text-anchor="middle" class="d">transport</text>
+
+  <!-- Consumer: try_take -->
+  <rect x="520" y="284" width="416" height="52" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="540" y="316" class="c">wait_and_take() / try_take()</text>
+
+  <line x1="728" y1="336" x2="728" y2="368" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Consumer: import -->
+  <rect x="520" y="368" width="416" height="84" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="540" y="392" class="c">Context::import_buffer(h, stream)</text>
+  <text x="540" y="414" class="c-sm">map VMM slot; returns ConstBuffer</text>
+  <text x="540" y="436" class="c-sm">cuStreamWaitValue64(&gt;= G)</text>
+
+  <line x1="728" y1="452" x2="728" y2="484" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <!-- Consumer: safe reads -->
+  <rect x="520" y="484" width="416" height="36" rx="6" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="540" y="506" class="c-sm">ConstBuffer::ptr() on sub_stream</text>
+
+  <!-- Unblocks note -->
+  <text x="728" y="548" text-anchor="middle" class="d">subscriber work unblocks after matching WriteValue(G)</text>
+
+  <!-- Cross-stream dependency: WriteValue -> WaitValue (S-curve; draw last) -->
+  <path d="M 214 222 L 440 222 C 505 222, 505 310, 472 340 C 439 370, 530 436, 568 436" fill="none" stroke="#b8860b" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar-gold)"/>
+  <text x="505" y="348" text-anchor="middle" class="note">WriteValue must precede WaitValue</text>
+</svg>

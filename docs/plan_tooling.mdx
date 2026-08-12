@@ -1,0 +1,292 @@
+<Warning>
+  **Developer preview.** The plan-tooling surface described here — record
+  accessors, canonical JSON, digests, and artifact emission — is functional but
+  still evolving. Accessor names, the JSON schema version, and the artifact
+  bundle layout may change in upcoming releases. Pin your SDK version in CI
+  jobs that depend on plan digests or bundle contents.
+</Warning>
+
+When `compile()` accepts your graph, it returns more than a green light: the
+`ExecutionPlan` is an immutable, deep-owning snapshot of every decision the
+compiler made — partitioning, scheduling, endpoint identities, tensor pool
+sizing, temporal triggers, and dozens more. This page covers the tooling side
+of that plan: how to inspect its records programmatically, how to serialize
+and diff it in CI, and how to publish a deployment bundle to disk.
+
+If you have not yet compiled a graph and checked `plan.ok()`, start with
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check);
+this page assumes an admitted plan in hand.
+
+**Complete C++ example:** [`examples/experimental/plan_artifacts/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/plan_artifacts/cpp)
+
+<Note>
+  **You will learn**
+  - How to survey a plan with its read-only record accessors
+    (`execution_partitions()`, `endpoint_catalog()`, `tensor_allocations()`, ...)
+  - How `plan.json()` gives you canonical, deterministic JSON for tooling
+  - How to diff plans in CI with the 256-bit `PlanDigest`
+  - How `emit_artifacts()` publishes an atomic, manifest-last deployment bundle
+  - Why generated endpoint names must be pinned before they can be published
+  - Why plan records use canonical IDs, not the authoring IDs you composed with
+</Note>
+
+## Surveying plan records
+
+Public plan records are exposed through read-only accessors on
+`ExecutionPlan`. Accessors return either immutable spans of plan-owned record
+structs or lightweight views; nothing is computed on demand, and nothing you
+read can mutate the plan. The most commonly inspected record is the accepted
+partition cover:
+
+```cpp
+#include <cstdint>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_plan.hpp>
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+plan.require_no_errors();
+
+for (const holoscan::ExecutionPartitionRecord& part : plan.execution_partitions()) {
+  // part.id              — dense final partition identity
+  // part.members         — canonically ordered executable VertexIds
+  // part.execution_lane  — dense serial lane index, starting at zero
+}
+```
+
+The accessor set spans the public compiled-plan contract. A practical map,
+grouped by concern:
+
+| Concern | Representative accessors |
+|---|---|
+| Partitioning and scheduling | `partition_decisions()`, `execution_partitions()`, `schedule_edges()`, `scheduler_plan()`, `execution_lanes()` |
+| Profile admission | `profile_manifest()` |
+| Deployment and placement | `partition_placements()`, `placement_probes()`, `channel_locality()` |
+| Endpoints and clocks | `endpoint_catalog()`, `clock_catalog()`, `clock_conversions()`, `readiness()` |
+| Physical resources | `channel_services()`, `tensor_allocations()`, `tensor_transfer_plans()` |
+| Temporal contracts | `temporal_triggers()`, `clock_triggers()`, `deadlines()`, `window_triggers()`, `bracketed_windows()`, `input_selections()` |
+| Parameters | `operator_parameters()`, `parameter_fields()` |
+
+Most applications only ever call `ok()`, `diagnostics()`, and perhaps
+`execution_partitions()`. The rest exist for inspection and validation
+tooling: a CI job that asserts a pipeline still fits in one serial execution
+partition, a dashboard that renders the partition graph, or a pre-deployment
+check that the tensor pool budget matches the target device. Because every
+accessor is cheap and side-effect-free, you can build such tools without
+touching the runtime.
+
+For example, `tensor_allocations()` lets you audit the preallocated pool plan
+before anything runs — useful when a graph must fit a known memory budget:
+
+```cpp
+std::uint64_t total = 0;
+for (const auto& alloc : plan.tensor_allocations()) {
+  if (alloc.aggregate_byte_capacity >
+      std::numeric_limits<std::uint64_t>::max() - total) {
+    throw std::overflow_error("tensor allocation byte total overflow");
+  }
+  total += alloc.aggregate_byte_capacity;
+  std::cout << alloc.pool_id << ": slots=" << alloc.slot_count
+            << " bytes=" << alloc.aggregate_byte_capacity << '\n';
+}
+std::cout << "total tensor pool bytes=" << total << '\n';
+```
+
+The guard keeps accumulation checked when a production budget tool may receive
+capacities large enough to overflow `std::uint64_t`.
+
+## Canonical plan IDs vs authoring IDs
+
+<Warning>
+  **Plan records never use your authoring handles.** While composing, vertices
+  and ports carry mutable authoring IDs that reflect insertion order and edits.
+  The compiler renumbers everything into dense canonical IDs, and every plan
+  record — partition members, endpoint entries, tensor plans — speaks that
+  canonical vocabulary. Resolve any `VertexId`, port, or partition you read
+  from a record against `plan.graph()` (the plan's own frozen graph view),
+  never against the `Graph` object you composed. Matching plan records to
+  pre-compile handles produces silently wrong lookups.
+</Warning>
+
+`plan.graph()` returns an execution graph view whose `vertices()`, `ports()`,
+`edges()`, and related spans are the authoritative name table for everything
+else in the plan. Treat it as the join key: record → canonical ID →
+`plan.graph()` → human-readable name.
+
+## Canonical JSON with `plan.json()`
+
+An admitted plan serializes deterministically:
+
+```cpp
+const std::string_view json = plan.json();  // canonical, schema-versioned JSON
+```
+
+`json()` returns plan-owned bytes — no allocation on your side, valid as long
+as the plan (or any copy sharing its state) is alive, and empty for an empty
+handle. The output is canonical: the same plan semantics always produce the
+same bytes, so the JSON is safe to archive, diff textually, or feed to
+external tooling. Use it when a human or a generic tool needs to *read* the
+plan; use the digest (next section) when you only need to know whether the
+plan *changed*.
+
+## CI diffing with `PlanDigest`
+
+`plan.digest()` returns a `PlanDigest` — a 256-bit semantic digest
+(`std::array<std::byte, 32>`) over the versioned, normalized plan semantics:
+
+```cpp
+const holoscan::PlanDigest digest = plan.digest();
+
+if (digest == baseline_digest) {
+  // Semantically identical plan — the compiler made the same decisions.
+}
+```
+
+Two properties make this the right CI primitive:
+
+- **Semantic, not textual.** The digest covers normalized plan semantics, so
+  it is stable across equivalent representations — you compare with `==`
+  instead of diffing JSON text.
+- **Deterministic across runs.** Recompiling the same graph with the same
+  options on the same SDK yields the same digest, so a stored baseline digest
+  is a meaningful regression gate.
+
+A typical CI job compiles the pipeline, compares `plan.digest()` against a
+committed baseline, and fails (with `plan.json()` attached for the human
+reviewing the diff) when they differ. That turns "an innocent refactor changed
+the compiled plan" from a runtime surprise into a reviewable pull-request
+event.
+
+<Note>
+  The digest is a change detector, not a security primitive: it is distinct
+  from the graph authoring hash and makes no cryptographic-authenticity claim.
+</Note>
+
+## Publishing a deployment bundle with `emit_artifacts()`
+
+Serializing in memory is separate from publishing to disk.
+`holoscan::emit_artifacts()` is an explicit cold operation that writes an
+**accepted** plan's canonical deployment artifacts — the endpoint catalog plus
+a commit-marker manifest — under a root directory of your choosing:
+
+```cpp
+holoscan::ArtifactEmitOptions emit{.root = "/var/lib/holoscan/plans",
+                                   .deployment_id = "camera-pipeline"};
+
+const holoscan::expected<holoscan::ArtifactEmitResult, holoscan::Error> published =
+    holoscan::emit_artifacts(plan, emit);
+if (!published) {
+  log_error(holoscan::runtime_error_message(published.error()));
+  return;
+}
+// published->changed        — whether any artifact content changed
+// published->catalog_path   — final endpoint-catalog path
+// published->manifest_path  — final commit-marker manifest path
+// published->catalog_digest — canonical "sha256:" catalog digest
+```
+
+Consistent with the errors-as-values model used across the SDK,
+`emit_artifacts()` never lets an I/O failure escape as an exception: filesystem
+problems come back as a typed `Error` (`kInvalidArgument`,
+`kPermissionDenied`, or `kFailure`) inside the `expected`. Branch on the
+result like any other fallible value.
+
+Three behaviors matter operationally:
+
+- **Atomic, manifest-last commit.** Changed content is written through
+  verified temporary siblings, and the manifest is committed *last* as the
+  sole completeness marker. A reader that sees the manifest sees a complete
+  bundle — there is no window in which a consumer can observe a half-written
+  catalog.
+- **Idempotent.** Publishing an identical bundle rewrites nothing and reports
+  `published->changed == false`, so a redeploy pipeline can call it
+  unconditionally.
+- **Contained to the root.** Publication traverses and creates the
+  root/digest/deployment directories through no-follow directory handles and
+  returns a typed failure if any path component is a symlink (or Windows
+  reparse point), rather than following redirected ancestry outside the root.
+
+The `deployment_id` must be a portable single-component identity: 1–128 ASCII
+characters, starting with an alphanumeric character, containing only
+alphanumerics, period, hyphen, or underscore, with no trailing period and no
+Windows reserved-device basename. These rules keep the bundle valid below the
+artifact root on every supported filesystem.
+
+<Warning>
+  **Never write or read the catalog and manifest files by hand.** The atomic
+  manifest-last protocol is the only completeness contract consumers get; a
+  hand-edited or partially copied bundle breaks it silently. Publish with
+  `emit_artifacts()` and let clients discover endpoints through the emitted
+  catalog.
+</Warning>
+
+See the shipping `plan_artifacts` example for
+compile/check/digest/emit idempotence. `ea1_camera_imu_control` also supports
+an artifact-only mode that compiles the pipeline and emits its bundle without
+running anything. Standalone processes that consume
+the published catalog are covered in
+[Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+and the [external clients example](/holoscan/sdk-user-guide/examples/external-clients).
+
+## Pinning generated endpoint names
+
+When you export or import a boundary topic without authoring an explicit
+endpoint name, the compiler synthesizes one from the topic's structural
+position — its encoded graph path plus declaration ordinal, via the
+`holoscan.auto_endpoint_name` algorithm. That synthesized string becomes the
+identity external clients use to look the endpoint up.
+
+The problem: a structure-derived name silently changes under an innocent
+refactor — renaming a subgraph, reordering declarations, moving the topic — or
+under a future algorithm version. So the compiler refuses to expose an
+*unacknowledged* generated name. To publish one, you pin the exact identity
+you expect in the compile options:
+
+```cpp
+holoscan::CompileOptions options;
+options.deployment.allow_generated_endpoint_name(
+    holoscan::GeneratedEndpointNamePin{.final_name = "sensor.out"});
+// Pin fields: .final_name, .algorithm (defaults to "holoscan.auto_endpoint_name"),
+//             .version (defaults to 1). Matching is exact on all three.
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
+```
+
+Matching is by exact name, algorithm, and version — no wildcard, prefix, or
+future-version authority. An unpinned generated name rejects the plan under a
+constrained profile and warns under an ordinary one, and `emit_artifacts()`
+returns `kPermissionDenied` when generated names lack exact artifact
+authority.
+
+The exactness is the point: the pin doubles as a compile-time tripwire. If a
+refactor would change what clients look up, the stale pin stops matching and
+the drift surfaces as a compile failure in CI — instead of a client failing to
+attach in production.
+
+<Tip>
+  Author explicit endpoint names on your exported topics and you never need a
+  pin. Pins are the escape hatch for graphs that lean on generated names; see
+  [External topics](/holoscan/sdk-user-guide/composing-applications/external-topics)
+  for authoring explicit names in the first place.
+</Tip>
+
+## Recap
+
+- The plan exposes read-only record accessors — `execution_partitions()`,
+  `endpoint_catalog()`, `tensor_allocations()`, and friends — for building
+  inspection and validation tooling with zero runtime involvement.
+- Plan records use dense canonical IDs; always resolve them against
+  `plan.graph()`, never against your pre-compile authoring handles.
+- `plan.json()` yields canonical, schema-versioned JSON for humans and generic
+  tools; `plan.digest()` yields a 256-bit semantic `PlanDigest` you compare
+  with `==` to gate plan changes in CI.
+- `emit_artifacts()` publishes an accepted plan's deployment bundle
+  atomically — manifest committed last, idempotent, contained to the root —
+  and reports I/O failures as typed `Error` values, never exceptions.
+- Generated endpoint names must be pinned exactly (name, algorithm, version)
+  before publication; explicit endpoint names need no pins.
+- Next: [Restart control](/holoscan/sdk-user-guide/advanced/restart-control)
+  covers how a running application uses lifecycle records from the same plan.

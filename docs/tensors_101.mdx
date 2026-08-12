@@ -1,0 +1,294 @@
+So far the running example has moved small values between operators: IMU readings,
+control scalars. Camera frames are different — kilobytes to megabytes per sample,
+often living in GPU memory, produced at a fixed rate. `holoscan::Tensor` is the
+payload type built for exactly this: a cheap handle over runtime-owned, pool-backed
+storage, with CUDA stream ordering handled for you.
+
+This page covers the basics you need for the
+[first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline): declaring
+tensor ports, the producer hot path, why a received tensor "just works" on the GPU
+without any synchronization on your part, and how to reach the data from the host
+when you genuinely need to. The deeper machinery — pool sizing, the two-stream
+lifetime contract, foreign DLPack tensors, fanout — waits in
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+**Complete C++ example:** [`examples/tensors_101/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/tensors_101/cpp)
+
+<Note title="You will learn">
+  - How to declare tensor ports with `produces_tensor()`, `tensor_allocation()`,
+    and `expects_tensor()`
+  - The producer lifecycle: `allocate_tensor()` → `write()` → fill → `commit()` →
+    `emit()`
+  - Why stream ordering is automatic — and why you must never call
+    `cudaStreamSynchronize` on the hot path
+  - Why `allocate_tensor()` borrows from a pool instead of allocating, and what
+    `kResourceExhausted` means
+  - How to copy `Tensor` handles cheaply and access data from the host explicitly
+</Note>
+
+## Declaring tensor ports
+
+Tensor ports follow the same three-declaration model as every operator: structure
+belongs in `setup()`. Two things are declared per port:
+
+- **Layout** — a `TensorPortLayout` value with three *optional* fields:
+  `memory_kind`, `dtype`, and `rank`. An absent field means "not constrained here."
+  Outputs declare it with `produces_tensor(layout)`, inputs with
+  `expects_tensor(layout)`.
+- **Allocation bounds** (producer only) — `tensor_allocation(bounds)` opts the
+  output into a runtime-owned tensor pool. `max_rank` and `max_byte_span` are hard
+  caps the compiler uses to size that pool.
+
+Here is the camera source and fusion consumer from the running example
+(`ea1_camera_imu_control`):
+
+```cpp
+constexpr DLDataType kByteDtype{kDLUInt, 8U, 1U};
+constexpr holoscan::TensorPortLayout kHostByteFrame{
+    .memory_kind = holoscan::MemoryKind::kHost,
+    .dtype = kByteDtype,
+    .rank = 1U,
+};
+
+// CameraSource::setup() — the producer side
+spec.output(frame, "frame")
+    .max_emits_per_compute(1U)
+    .produces_tensor(kHostByteFrame)
+    .tensor_allocation(
+        holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U});
+
+// WindowFusion::setup() — the consumer side
+spec.input(camera, "camera").queue_depth(4U).expects_tensor(kHostByteFrame);
+```
+
+When both endpoints of an edge explicitly constrain the same layout field with
+incompatible values, `compile()` rejects the plan — one more check that runs
+[before anything executes](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+
+<Warning>
+  A **zero** allocation bound means *reject allocation*, not "unbounded." If you
+  want a pool, both `max_rank` and `max_byte_span` must be nonzero.
+</Warning>
+
+## Producing a tensor: the hot path
+
+Production is an explicit four-step lifecycle, and each step consumes the previous
+object. Every step returns `holoscan::expected`, so failures follow the same
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+pattern as the rest of the SDK:
+
+```cpp
+[[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+    holoscan::ExecutionContext& ctx) override {
+  // 1. Borrow a slot from the compiled pool.
+  auto loan = frame.allocate_tensor(holoscan::TensorLoanRequest{
+      .shape = kFrameShape, .dtype = kByteDtype});
+  if (!loan) { return holoscan::make_unexpected(std::move(loan).error()); }
+
+  // 2. Open a write phase on your compute stream (write_host() for host pools).
+  auto writer = loan->write(ctx.cuda_stream());
+  if (!writer) { return holoscan::make_unexpected(std::move(writer).error()); }
+
+  // 3. Fill asynchronously on that same stream.
+  cudaMemsetAsync(writer->data(), 0, writer->byte_size(), ctx.cuda_stream().get());
+
+  // 4. Commit readiness, then publish.
+  auto committed = std::move(*writer).commit();
+  if (!committed) { return holoscan::make_unexpected(std::move(committed).error()); }
+
+  return frame.emit(std::move(*loan),
+                    holoscan::EmitOptions{.capture_time = ctx.activation_time()});
+}
+```
+
+This device-pool form is demonstrated by the shipping `tensors_in_depth`
+example; `tensors_101` and the camera example intentionally use host storage.
+
+<svg viewBox="0 0 760 310" role="img" aria-labelledby="tensor-loan-lifecycle-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="tensor-loan-lifecycle-title">Producer tensor loan lifecycle: borrow a pool slot, write on the stream, commit readiness, emit to the consumer</title>
+  <defs>
+    <marker id="tensor-loan-lifecycle-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">
+    {/* Pool box with fixed slots */}
+    <rect x="24" y="24" width="220" height="100" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="24" y="24" width="220" height="100" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="134" y="48" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">Tensor pool</text>
+    <text x="134" y="65" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">fixed slots, sized at compile()</text>
+    <rect x="42" y="78" width="40" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" />
+    <text x="62" y="96" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">out</text>
+    <rect x="90" y="78" width="40" height="28" rx="4" fill="currentColor" opacity="0.06" />
+    <rect x="90" y="78" width="40" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="138" y="78" width="40" height="28" rx="4" fill="currentColor" opacity="0.06" />
+    <rect x="138" y="78" width="40" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <rect x="186" y="78" width="40" height="28" rx="4" fill="currentColor" opacity="0.06" />
+    <rect x="186" y="78" width="40" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    {/* Borrow arrow from pool down to allocate_tensor() */}
+    <line x1="62" y1="124" x2="62" y2="182" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#tensor-loan-lifecycle-arrow)" />
+    <text x="74" y="156" fontSize="11" fill="currentColor" opacity="0.55">borrow, no malloc</text>
+    {/* Step 1: allocate_tensor() */}
+    <rect x="24" y="190" width="140" height="56" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="24" y="190" width="140" height="56" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="94" y="215" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">allocate_tensor()</text>
+    <text x="94" y="233" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">loan</text>
+    <line x1="166" y1="218" x2="188" y2="218" stroke="currentColor" strokeWidth="2" markerEnd="url(#tensor-loan-lifecycle-arrow)" />
+    {/* Step 2: write(stream) */}
+    <rect x="192" y="190" width="120" height="56" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="192" y="190" width="120" height="56" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="252" y="215" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">write(stream)</text>
+    <text x="252" y="233" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">guard, fill async</text>
+    <line x1="314" y1="218" x2="336" y2="218" stroke="currentColor" strokeWidth="2" markerEnd="url(#tensor-loan-lifecycle-arrow)" />
+    {/* Step 3: commit() — the accent */}
+    <rect x="340" y="190" width="112" height="56" rx="8" fill="#76B900" />
+    <text x="396" y="222" textAnchor="middle" fontSize="14" fontWeight="600" fill="#000000">commit()</text>
+    <text x="396" y="266" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">records readiness</text>
+    <text x="396" y="281" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">no host sync</text>
+    <line x1="454" y1="218" x2="476" y2="218" stroke="currentColor" strokeWidth="2" markerEnd="url(#tensor-loan-lifecycle-arrow)" />
+    {/* Step 4: emit(loan) */}
+    <rect x="480" y="190" width="112" height="56" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="480" y="190" width="112" height="56" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="536" y="215" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">emit(loan)</text>
+    <text x="536" y="233" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">publish</text>
+    <line x1="594" y1="218" x2="616" y2="218" stroke="currentColor" strokeWidth="2" markerEnd="url(#tensor-loan-lifecycle-arrow)" />
+    {/* Consumer */}
+    <rect x="620" y="182" width="120" height="72" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="680" y="208" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor">Consumer</text>
+    <text x="680" y="226" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">receive(): already</text>
+    <text x="680" y="241" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">stream-ordered</text>
+  </g>
+</svg>
+
+The move-only types enforce the order for you: the write guard must be committed
+(or destroyed) before the loan can be emitted, and every path consumes the loan
+exactly once. If you return early on an error, the loan and guard destructors
+abandon the allocation safely — nothing leaks, nothing half-publishes.
+
+For the common "one callback fills the whole tensor" case, the fused helpers
+`loan->write_and_commit(ctx.cuda_stream(), fill)` and
+`loan->write_host_and_commit(fill)` collapse steps 2–4 into one call: the callback
+receives a `const TensorOutputWriteGuard&` to fill through, and commit happens on
+successful return. `emit()` stays a separate, explicit publication step.
+<Note title="Why is it called allocate_tensor()?">
+  Despite the name, `allocate_tensor()` never allocates memory on the hot path.
+  The pool behind your output is fully materialized before the graph starts
+  running, sized from your declared bounds and the graph's queue and fanout
+  capacities. The call **borrows** one preallocated slot and hands you a
+  `TensorOutputLoan`. If every slot is checked out, it returns
+  `ErrorCode::kResourceExhausted` immediately — it never falls back to `malloc`,
+  never grows the pool, and never waits. That is the SDK's *bounded by
+  construction* principle applied to bulk data: memory use is fixed at compile
+  time, and exhaustion is a typed value you can branch on, not a stall.
+</Note>
+
+## The headline: stream ordering is automatic
+
+This is the one fact to take away from this page. On the in-process data path, CUDA
+stream ordering between producer and consumer is the **runtime's job, not yours**:
+
+- **On the producer side**, `commit()` records your writes' readiness on your
+  compute stream. That is an asynchronous CUDA event record — it does **not** block
+  the host, and it does not wait for your kernels to finish.
+- **On the consumer side**, before `compute()` is invoked, the runtime enqueues an
+  asynchronous wait on *your* compute stream for the producer's readiness event. A
+  received `Tensor` therefore arrives **already ordered on your compute stream**:
+  any kernel you launch on `ctx.cuda_stream()` will observe the producer's writes,
+  even though neither of you ever synchronized.
+
+You write, commit, and emit; the consumer receives and launches kernels. The GPU
+pipeline stays full end to end because nothing on the path ever blocks the host.
+
+<Warning>
+  **Never call `cudaStreamSynchronize` on the hot path.** `commit()` records
+  readiness; it is not a synchronize, and it does not need one. Adding a blocking
+  sync "just to be safe" serializes the CPU against the GPU, collapses the
+  pipelining the runtime built for you, and buys no additional correctness. The
+  only blocking calls in the tensor API are the explicit host-access methods
+  described below — and those do not belong in a steady-state `compute()` either.
+</Warning>
+
+## Receiving a tensor
+
+A consumer declares `expects_tensor(layout)` and receives an ordinary sample:
+
+```cpp
+auto frame = camera.receive();  // expected<Sample<Tensor>, Error>
+if (!frame) { return holoscan::make_unexpected(std::move(frame).error()); }
+
+const holoscan::Tensor& t = frame->data;
+// Allocation-free metadata: t.shape_span(), t.dtype(), t.nbytes(), t.device().
+// t is already ordered on this operator's compute stream — launch kernels on
+// ctx.cuda_stream() that read t.data() directly.
+```
+
+The runtime keeps the backing storage alive and read-only for your whole
+activation; you do not manage leases or release anything. A received tensor is
+read-only by construction: `data()` is `const`, and `mutable_data()` returns
+`ErrorCode::kPermissionDenied` because you do not hold write authority.
+
+## A Tensor is a cheap handle
+
+Copying a `holoscan::Tensor` copies a *handle*, not data: the copy retains one more
+claim on the same shared backing allocation, and zero payload bytes move. This is
+what makes tensors safe to pass around by value, stash in a small struct, or emit
+to several downstream operators — every recipient sees the same storage, and the
+pool recycles the slot only after the last claim retires. Treat a `Tensor` like a
+`shared_ptr` with tensor metadata attached, because that is essentially what it is.
+
+## Host access is explicit — and blocking
+
+Everything above stays on the GPU. When you genuinely need bytes on the CPU — a
+verification tap, a file writer at the end of the pipeline — the tensor API makes
+you say so:
+
+- `t.synchronize_for_host()` blocks the calling thread until the producer's writes
+  are observable from the host, then you may read `t.data()` directly (host-visible
+  memory only).
+- `t.copy_to_host(dst, dst_bytes, stream)` copies and blocks until the copy
+  completes.
+- `t.copy_to_host_async(dst, dst_bytes, stream)` enqueues the copy on your stream;
+  you own the completion (for example, synchronize that stream in a sink operator
+  that has nothing downstream).
+
+Blocking is the honest cost of moving data to the host, so the API confines it to
+these clearly named calls. Keep them at the edges of your graph — never in a
+steady-state producer or a mid-pipeline transform.
+
+## The running example: camera frames as tensors
+
+With this page, the camera leg of the
+[camera + IMU pipeline](/holoscan/sdk-user-guide/examples/camera-imu-control)
+becomes real: `CameraSource` borrows a frame-sized slot each activation, fills it,
+commits, and emits it with a capture timestamp; `WindowFusion` anchors its temporal
+window on the camera input, brackets the high-rate IMU samples around each frame,
+and reads frame metadata (`frame->data.nbytes()`) without ever copying the payload.
+The complete program is the `ea1_camera_imu_control` example application.
+
+## Going deeper
+
+This page deliberately stopped at the in-process basics. When you need more,
+[Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)
+covers the two-stream lifetime contract (readiness versus deallocation streams),
+how the compiler sizes pools, importing foreign DLPack tensors from libraries like
+CuPy or PyTorch (and why they need an explicit readiness stream), and
+multi-consumer fanout limits.
+
+## Recap
+
+- Declare tensor structure in `setup()`: `produces_tensor(layout)` plus
+  `tensor_allocation(bounds)` on outputs, `expects_tensor(layout)` on inputs.
+- Produce with `allocate_tensor()` → `write(ctx.cuda_stream())` → fill →
+  `commit()` → `emit()`; the fused `write_and_commit()` covers the single-fill
+  case.
+- `allocate_tensor()` borrows a preallocated pool slot; exhaustion returns
+  `kResourceExhausted` immediately — bounded by construction, no hidden `malloc`.
+- Stream ordering is automatic: `commit()` records readiness without blocking, and
+  a received tensor arrives already ordered on your compute stream. Never call
+  `cudaStreamSynchronize` on the hot path.
+- A `Tensor` is a cheap refcounted handle; copies share one backing, zero-copy.
+- Host access is explicit and blocking (`synchronize_for_host()`,
+  `copy_to_host*`) — keep it at the edges of the graph.
+
+Next: with data flowing, step back and look at the full shape of an operator in
+[Operator anatomy](/holoscan/sdk-user-guide/building-operators/operator-anatomy).

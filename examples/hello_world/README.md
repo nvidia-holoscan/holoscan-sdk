@@ -1,56 +1,31 @@
-# Hello World
+# hello_world
 
-This example demonstrates a hello world application using the holoscan SDK.
+> **User guide:** [Hello World](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/hello-world) —
+> this install-smoke example verifies the smallest supported application.
 
-*Visit the [SDK User Guide](https://docs.nvidia.com/holoscan/sdk-user-guide/examples/hello_world.html) for step-by-step documentation of this example.*
+Smallest possible installation smoke test: verifies that an installed Holoscan SDK can be found by CMake, linked against `holoscan::core`, and run by calling `holoscan::hello()`. This is not a tutorial — it only confirms your install works.
 
-## C++ Run instructions
+## Build
 
-* **using deb package install or NGC container**:
+From the `cpp/` folder:
 
-  ```bash
-  /opt/nvidia/holoscan/examples/hello_world/cpp/hello_world
-  ```
+```bash
+cmake -B build -S . -Dholoscan_DIR=/opt/nvidia/holoscan/lib/cmake/holoscan
+cmake --build build
+```
 
-* **source (dev container)**:
+## Run
 
-  ```bash
-  ./run launch # optional: append `install` for install tree
-  ./examples/hello_world/cpp/hello_world
-  ```
+```bash
+./build/hello_world
+```
 
-* **source (local env)**:
+## Expected output
 
-  ```bash
-  ${BUILD_OR_INSTALL_DIR}/examples/hello_world/cpp/hello_world
-  ```
+```text
+Hello Holoscan!
+```
 
-## Python Run instructions
+## What's next
 
-* **using python wheel**:
-
-  ```bash
-  # [Prerequisite] Download example .py file below to `APP_DIR`
-  # [Optional] Start the virtualenv where holoscan is installed
-  python3 <APP_DIR>/hello_world.py
-  ```
-
-* **from NGC container**:
-
-  ```bash
-  python3 /opt/nvidia/holoscan/examples/hello_world/python/hello_world.py
-  ```
-
-* **source (dev container)**:
-
-  ```bash
-  ./run launch # optional: append `install` for install tree
-  python3 ./examples/hello_world/python/hello_world.py
-  ```
-
-* **source (local env)**:
-
-  ```bash
-  export PYTHONPATH=${BUILD_OR_INSTALL_DIR}/python/lib
-  python3 ${BUILD_OR_INSTALL_DIR}/examples/hello_world/python/hello_world.py
-  ```
+Ready to actually build something? Start the guided series at [../first_pipeline](../first_pipeline/README.md).

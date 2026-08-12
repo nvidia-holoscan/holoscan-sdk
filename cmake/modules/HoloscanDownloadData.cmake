@@ -9,8 +9,8 @@ function(holoscan_download_data dataname)
     return()
   endif()
 
-  cmake_parse_arguments(DATA "GENERATE_GXF_ENTITIES;ALL"
-                             "URL;URL_MD5;DOWNLOAD_DIR;GXF_ENTITIES_WIDTH;GXF_ENTITIES_HEIGHT;GXF_ENTITIES_CHANNELS;GXF_ENTITIES_FRAMERATE"
+  cmake_parse_arguments(DATA "ALL"
+                             "URL;URL_MD5;DOWNLOAD_DIR"
                              "BYPRODUCTS" ${ARGN})
 
   if(NOT DATA_URL)
@@ -23,26 +23,6 @@ function(holoscan_download_data dataname)
 
   if(DATA_URL_MD5)
     list(APPEND extra_data_options --md5 ${DATA_URL_MD5})
-  endif()
-
-  if(DATA_GENERATE_GXF_ENTITIES)
-     list(APPEND extra_data_options --generate_gxf_entities)
-  endif()
-
-  if(DATA_GXF_ENTITIES_WIDTH)
-    list(APPEND extra_data_options --gxf_entities_width ${DATA_GXF_ENTITIES_WIDTH})
-  endif()
-
-  if(DATA_GXF_ENTITIES_HEIGHT)
-    list(APPEND extra_data_options --gxf_entities_height ${DATA_GXF_ENTITIES_HEIGHT})
-  endif()
-
-  if(DATA_GXF_ENTITIES_CHANNELS)
-    list(APPEND extra_data_options --gxf_entities_channels ${DATA_GXF_ENTITIES_CHANNELS})
-  endif()
-
-  if(DATA_GXF_ENTITIES_FRAMERATE)
-    list(APPEND extra_data_options --gxf_entities_framerate ${DATA_GXF_ENTITIES_FRAMERATE})
   endif()
 
   # Find the download_ngc_data script

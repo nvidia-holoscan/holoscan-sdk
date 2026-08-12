@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace stereo;
+
+table FrameHeader {
+  sequence: ulong (id: 0);
+  source: string (id: 1);
+}
+
+table StereoFrame {
+  header: FrameHeader (id: 0);
+  left: holoscan.schema.Tensor (id: 1);
+  right: holoscan.schema.Tensor (id: 2);
+  calibration: holoscan.schema.Tensor (id: 3);
+  exposure_us: uint (id: 4);
+}
+
+root_type StereoFrame;

@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+project(holoscan_first_operator LANGUAGES CXX)
+
+include(CTest)
+
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(first_operator first_operator.cpp)
+target_link_libraries(first_operator PRIVATE holoscan::core)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-013
+    add_test(NAME EXAMPLE_CPP_FIRST_OPERATOR_TEST COMMAND first_operator)
+    set_tests_properties(EXAMPLE_CPP_FIRST_OPERATOR_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "first_operator complete: doubled=[1-9][0-9]* fused_fresh=[1-9][0-9]* fused_reused=[1-9][0-9]* fused_missing=[0-9]+"
+            LABELS "examples;authoring"
+            TIMEOUT 30)
+endif()

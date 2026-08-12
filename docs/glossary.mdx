@@ -1,0 +1,234 @@
+This glossary defines the core vocabulary of Holoscan SDK 5.x. Each entry gives
+a short working definition and links to the page that owns the concept in
+depth. Terms are alphabetical; C++ spellings match the public headers under
+`include/holoscan/`.
+
+If you are new to the SDK, start with
+[Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts) — this
+page is a lookup reference, not a tutorial.
+
+## A
+
+**activation**
+One invocation of an operator's `compute()` callback, produced when the
+operator's temporal contract is satisfied. The runtime records why it fired
+and which inputs participated (`ActivationReason`, `InputSelection`).
+See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+**admission**
+The compile-time gate that decides whether a composed graph becomes a runnable
+execution plan. Admission never throws: `compile()` returns a plan whose
+disposition may be rejected, with evidence attached.
+See [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+
+## C
+
+**catalog**
+A plan-derived, read-only index of addressable entities. The parameter catalog
+(`ParameterCatalogView`) lists every parameter field an external client may
+update; the channel endpoint catalog lists the endpoints a standalone process
+may attach to.
+See [Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates)
+and [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).
+
+**channel**
+The bounded, typed transport the runtime materializes for each connection in a
+compiled plan. Inside a graph you never create channels directly — you wire
+ports; the `ChannelRuntime` client API exists only for standalone processes.
+See [Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).
+
+**compute stream**
+The CUDA stream the runtime assigns to an activation, available as
+`ctx.cuda_stream()` inside `compute()`. Received tensors are already ordered
+on this stream, so hot-path work needs no manual synchronization.
+See [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+**contract**
+Shorthand for the temporal contract an operator declares in `contract()`: the
+trigger, input selection, and missing-data policy the runtime must satisfy
+before invoking `compute()`. See *temporal contract* below and
+[Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+## D
+
+**deadline**
+A scheduling property attached to an execution lane (`DeadlineScheduling`)
+that asks the OS for deadline-class scheduling; if the host cannot honor it,
+the plan can be configured to fail admission rather than run degraded.
+See [Performance considerations](/holoscan/sdk-user-guide/performance/performance-considerations).
+
+**diagnostics token**
+The stable, machine-matchable string carried by a `Diagnostic` record (its
+`token` field). Tokens come from a registry spelling, not free-form log prose,
+so tests and tooling can match failures exactly.
+See [Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+**dispatcher**
+The runtime component that evaluates temporal contracts against arriving
+samples and clock ticks, and schedules activations onto execution lanes. You
+never call it directly, but several APIs forbid use from Dispatcher callbacks.
+See [Performance model](/holoscan/sdk-user-guide/performance/performance-model).
+
+## E
+
+**execution plan**
+The immutable artifact returned by `holoscan::compile(graph)`
+(`ExecutionPlan`). It freezes topology, contracts, pools, and policies, and is
+the only thing `run()` accepts. Plans carry their own admission disposition
+and evidence.
+See [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+
+## G
+
+**generation (parameters)**
+A monotonically numbered, atomically published snapshot of an operator's
+parameter values (`ParamGeneration`). Each activation pins exactly one
+generation; updates create a new generation rather than mutating in place.
+See [Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+
+**graph**
+The composable description of operators and their port-to-port connections
+(`Graph`), built with `add_flow()` during the compose phase. A graph is inert
+data until it is compiled into an execution plan.
+See [Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).
+
+## L
+
+**lifecycle restart**
+A bounded, permissioned transaction that rewinds an operator — together with
+its compiler-frozen lifecycle-dependency *closure* — to a forward stage and
+drives it back to `kStart`. Operators outside the closure are not restarted and
+receive no lifecycle callbacks; they may continue computing, but scheduler,
+partition, and safe-point effects do not guarantee uninterrupted progress. The
+requested stage may *widen* toward `kConfigure`, and the transaction is
+*fenced* to a control safe point so it never lands mid-`compute()`.
+See [Restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+**lifecycle stage**
+One of the ordered stages (`LifecycleStage`) an operator moves through between
+construction and teardown — for example the arm stage binds
+current-generation external and readiness capabilities. Operators observe
+transitions through lifecycle callbacks, authored either as simple
+`start()`/`stop()` overrides or as sparse advanced stage callbacks. Every
+operator has one logical checkpoint per stage; at most one application
+callback occupies it, and an empty checkpoint is recorded as successfully
+skipped.
+See [Lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).
+
+**loan**
+A temporary, exclusive borrow of a pool slot for writing output data.
+`allocate_tensor()` returns a loan (`TensorOutputLoan` in-graph,
+`TensorPublishLoan` for channel clients); committing it publishes the slot and
+records readiness on the compute stream.
+See [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+## M
+
+**missing-data policy**
+The part of a temporal contract that says what happens when a required input
+is absent or stale at trigger time: `Skip` the activation, substitute a
+`SafeDefault`, or `ReuseLast` within a freshness bound.
+See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+## O
+
+**operator**
+The unit of computation in a graph, defined by three declarations: `setup()`
+(structure — ports and parameters), `contract()` (time), and `compute()`
+(work). `compute()` is intentionally oblivious to temporal concerns.
+See [Operator anatomy](/holoscan/sdk-user-guide/building-operators/operator-anatomy).
+
+## P
+
+**plan digest**
+A compact fingerprint (`PlanDigest`) of a compiled plan's canonical content.
+Tools use it to detect whether a saved artifact — a parameter snapshot, a
+replay trace — still matches the plan it was captured against.
+See [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+**pool**
+A preallocated, fixed-capacity set of resources sized at compile time —
+tensor slots (`BlockMemoryPool`), CUDA streams (`CudaStreamPool`), events.
+Pools are how the runtime stays bounded by construction; exhaustion surfaces
+as `kResourceExhausted`, never as an unbounded allocation.
+See [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+**port**
+A typed endpoint declared on an operator in `setup()`: `Input<T>` receives
+samples, `Output<T>` emits them. Ports are the only way operators inside a
+graph exchange data; `add_flow()` connects them.
+See [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator).
+
+**partition**
+An exact, non-overlapping set of operators that share one serial execution
+owner (`ExecutionPartitionRecord`). A graph with multiple independent roots
+must author a complete partition cover with `Graph::partition()`; regions
+remain separate analysis and admission metadata.
+See [Graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition).
+
+## R
+
+**readiness stream**
+The CUDA-stream ordering chain that makes a published tensor safe to consume:
+committing a loan records a readiness event on the producer's stream, and the
+receiving activation's compute stream waits on it automatically.
+See [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+
+**region**
+A named analysis and admission scope (`RegionRecord`) that groups operators
+sharing profile, placement, resource, or optimization constraints. Regions may
+overlap and do not define execution ownership; use a partition for that.
+See [Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+**run session**
+The handle for one execution of a plan (`RunSession`). It owns startup and
+shutdown, exposes stop and restart control, and reports how the run terminated
+(`RunTermination`). The blocking convenience `holoscan::run(plan)` wraps one
+session.
+See [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+## S
+
+**sample**
+One unit of data traveling through a graph: a payload plus its metadata
+(`Sample`, `SampleMetadata` — tag, timestamps, flags). Contracts select and
+align samples; `compute()` reads and emits them.
+See [Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts).
+
+**selector**
+The input-selection part of a temporal contract: which pending samples on a
+port participate in an activation — `Exact`, `LatestWithin`, `DrainAll`, or
+`BracketedWindow`. Selectors bound queue depth at compile time.
+See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+## T
+
+**tag**
+The stable identity stamped on a sample at its source (`Tag`, paired with a
+timestamp as `TagTime`). Tags let downstream operators align related samples
+and let replay tooling correlate what happened.
+See [Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay).
+
+**temporal contract**
+The full declaration an operator makes in `contract()` about *when* it runs:
+the trigger, per-input selectors, and missing-data policies. Contracts are
+checked and frozen at compile time, so `compute()` never reasons about time.
+See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+**tensor**
+The SDK's n-dimensional, device-aware data payload. Output tensors are
+borrowed from preallocated pools via `allocate_tensor()`; received tensors
+arrive already ordered on your compute stream, and host access is explicit.
+See [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+**topic**
+A named boundary port on a graph that exposes an internal connection to the
+outside world: `ExportedTopic` publishes out of the graph, `ImportedTopic`
+accepts data in, with attach policies (`TopicOptions`) governing peers.
+See [External topics](/holoscan/sdk-user-guide/composing-applications/external-topics).
+
+**trigger**
+The part of a temporal contract that says what causes an activation:
+`OnEach` (a sample on one input), `OnAnyInput`, `OnClock` (a periodic
+schedule), `OnAligned`, `OnWindow`, or `OnInputUpdate`.
+See [Temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).

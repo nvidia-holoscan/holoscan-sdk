@@ -27,8 +27,8 @@ This document aims to guide users with recommended and advanced workflows to bui
     - [Reproducing Test Failures](#reproducing-test-failures)
   - [Linting](#linting)
   - [Pre-commit hooks](#pre-commit-hooks)
+  - [ABI, Visibility, and Header Guards](#abi-visibility-and-header-guards)
   - [Building the User Guide](#building-the-user-guide)
-  - [VSCode](#vscode)
 
 ## Building the SDK from source
 
@@ -61,7 +61,7 @@ Call the **`./run launch`** command to start and enter the build container.
 - *Execute `./run launch --dryrun` to see the commands that will be executed*
 - *Execute `./run launch --run-cmd "..."` to execute a bash command directly in the container*
 
-Run the [**examples**](./examples#readme) inside the container by running their respective commands listed within each directory README file.
+Run the [**examples**](./examples) inside the container. Each example builds with the SDK and can also be built against an installed SDK using its `CMakeLists.min.txt`.
 
 ### Cross-compilation
 
@@ -107,16 +107,16 @@ cmake --build $build_dir -j
 cmake --install $build_dir --prefix $install_dir
 ```
 
-The commands to run the [**examples**](./examples#readme) are then the same as in the dockerized environment, and can be found in the respective source directory READMEs.
+The commands to run the [**examples**](./examples) are then the same as in the dockerized environment.
 
 ### Build Variants and Configuration
 
 The SDK can be built with different configurations to match various deployment targets:
 
-**CUDA Versions**: 12, 13 (default in examples)
+**CUDA Versions**: 13 (5.x supports CUDA 13 only)
 
 ```sh
-export CUDA_MAJOR=13  # or 12
+export CUDA_MAJOR=13
 ./run build
 ```
 
@@ -210,7 +210,7 @@ Test configuration is controlled through:
   - `HOLOSCAN_INPUT_PATH`: Path to test data
   - `HOLOSCAN_TESTS_DATA_PATH`: Path to test-specific data
   - `PYTHONPATH`: Python module search path
-- **Test data**: Required test data should be available in `data/` and `tests/data/` directories
+- **Test data**: when a test needs data, point `HOLOSCAN_INPUT_PATH` / `HOLOSCAN_TESTS_DATA_PATH` at the dataset location. The 5.x skeleton tests do not require downloaded data.
 
 #### Reproducing Test Failures
 
@@ -221,7 +221,7 @@ When a test fails (especially from CI), you can reproduce it locally:
 2. **Match the build configuration**:
 
    ```sh
-   export CUDA_MAJOR=13  # or 12, match CI
+   export CUDA_MAJOR=13  # 5.x is CUDA 13 only
    export ARCH=x86_64    # or aarch64, match CI
    export GPU=dgpu       # or igpu, match CI
    ```
@@ -247,24 +247,17 @@ When a test fails (especially from CI), you can reproduce it locally:
 
    Note: The container is automatically managed by the `./run` script.
 
-5. **Run tests from install tree** (for examples):
+5. **Run an example from the install tree**:
 
    ```sh
-   # Launch container with install tree mounted
+   # Launch a container with the install tree mounted
    ./run launch install-cu13-x86_64
-   # Inside container:
-   # Option 1: Use the run_example_tests script (builds and tests all examples)
-   /workspace/holoscan-sdk/install-cu13-x86_64/examples/testing/run_example_tests
-
-   # Option 2: Build and test examples manually
-   cd /workspace/holoscan-sdk/install-cu13-x86_64/examples
-   cmake -S . -B ../examples-build
-   cmake --build ../examples-build -j
-   ctest --test-dir ../examples-build -R <test_name> --verbose
-
-   # Option 3: Test a specific example from its directory
-   cd /workspace/holoscan-sdk/install-cu13-x86_64/examples/<example_name>/cpp  # or python
-   # Build and run the example test
+   # Inside the container, configure an example against the installed SDK and run
+   # it. Each example ships a CMakeLists.min.txt that uses find_package(holoscan).
+   cmake -S <example_src_dir> -B <example_build_dir> \
+     -DHoloscan_ROOT=/workspace/holoscan-sdk/install-cu13-x86_64
+   cmake --build <example_build_dir> -j
+   ctest --test-dir <example_build_dir> --output-on-failure
    ```
 
 6. **Check test artifacts**: For visual tests (e.g., Holoviz), check for:
@@ -336,6 +329,27 @@ pre-commit run clang-format --all-files
 
 **Relationship to `./run lint`:** They run the **same** hooks from the same config. `./run lint` always executes `pre-commit run --all-files` at the git root (entire tree). After `pre-commit install`, `git commit` runs hooks on **staged** files only. Several hooks apply auto-fixes (for example Ruff and codespell); review `git diff` after a full-tree run.
 
+### ABI, Visibility, and Header Guards
+
+Holoscan Core and SDK-owned C++ libraries follow the policy in
+[`docs/abi_and_exports.md`](./docs/abi_and_exports.md). Hand-written headers use
+`#pragma once`, shared-library targets use hidden default visibility, and public
+DSO ABI declarations use CMake-generated export headers such as
+`<holoscan/holoscan_core_export.h>`.
+
+HoloMQ is standalone, so its contributor-facing policy lives under the module:
+[`modules/holomq/docs/abi_and_exports.md`](./modules/holomq/docs/abi_and_exports.md).
+Use that document when changing HoloMQ public headers or ABI.
+
+Fast checks run through `./run lint`. The staged semantic checks use CMake's
+`compile_commands.json`:
+
+```sh
+cmake --build <build-dir> --target check-export-macro-semantics
+cmake --build <build-dir> --target holomq-check-export-macro-semantics
+cmake --build <build-dir> --target holomq-check-symbols
+```
+
 ### Building the User Guide
 
 The source of the user guide hosted at <https://docs.nvidia.com/holoscan/sdk-user-guide> is located in [docs](./docs/). From the **holoscan-sdk repository root**, build and validate with Fern:
@@ -346,45 +360,3 @@ python3 public/docs/scripts/build_holoscan_docs.py --preview
 ```
 
 See [docs/README.md](./docs/README.md) for authoring and publishing details.
-
-### VSCode
-
-Visual Studio Code (or Cursor) can be utilized to develop the Holoscan SDK. The `.devcontainer` folder holds the configuration for setting up a [development container](https://code.visualstudio.com/docs/remote/containers) with all necessary tools and libraries installed.
-
-The `./run` script contains `vscode` and `vscode_remote` commands for launching Visual Studio Code or Cursor in a container or from a remote machine, respectively.
-
-- To launch an IDE in a dev container, use `./run vscode` (`-j <# of workers>` or `--parallel <# of workers>` can be used to specify the number of parallel jobs to run during the build process). The command automatically detects and launches Cursor if available, otherwise defaults to VSCode. For more information, refer to the instructions from `./run vscode -h`.
-- To attach to an existing dev container from a remote machine, use `./run vscode_remote`. For more information, refer to the instructions from `./run vscode_remote -h`.
-
-Once the IDE is launched, the development container will be built and the recommended extensions will be installed automatically, along with CMake being configured.
-
-#### IDE Selection Options
-
-The `./run vscode` command supports multiple IDE options:
-
-- **Automatic Detection**: Cursor is launched if available, otherwise VSCode is used
-- **Manual Selection**: Use `--ide <ide_name>` to specify the IDE (vscode, vscode-insiders, cursor)
-- **Quick Options**: Use `--code` or `--cursor` for direct IDE selection
-- **Custom Binary**: Use `--cmd <path>` to specify a custom IDE binary
-
-**Examples:**
-
-```bash
-./run vscode                    # Auto-detect (Cursor if available, otherwise VSCode)
-./run vscode --code             # Force VSCode
-./run vscode --cursor           # Force Cursor
-./run vscode --ide cursor       # Specify Cursor explicitly
-./run vscode --cursor --cmd /path/to/cursor_binary # Use custom Cursor binary
-```
-
-#### Configuring CMake in the Development Container
-
-For manual configuration of CMake, open the command palette (`Ctrl + Shift + P`) and run the `CMake: Configure` command.
-
-#### Building the Source Code in the Development Container
-
-The source code in the development container can be built by either pressing `Ctrl + Shift + B` or executing `Tasks: Run Build Task` from the command palette (`Ctrl + Shift + P`).
-
-#### Debugging the Source Code in the Development Container
-
-To debug the source code in the development container, open the `Run and Debug` view (`Ctrl + Shift + D`), select a debug configuration from the dropdown list, and press `F5` to initiate debugging.

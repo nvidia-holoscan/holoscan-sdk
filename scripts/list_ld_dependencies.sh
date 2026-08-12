@@ -23,7 +23,6 @@ dirs=(
   "/workspace/holoscan-sdk/install-x86_64/lib"
   "/workspace/holoscan-sdk/install-aarch64-dgpu/lib"
   "/workspace/holoscan-sdk/install-aarch64-igpu/lib"
-  "/usr/lib/ucx"
   "/opt/libtorch"
   "/opt/onnxruntime"
   "${site_packages}/cupy"
@@ -85,10 +84,6 @@ function lib_id() {
       target="holoscan::infer::${lib_name#'libholoscan_infer_'}"
     elif echo "$lib_name" | grep -q "libholoscan_"; then
       target="holoscan::${lib_name#'libholoscan_'}"
-    elif echo "$lib_name" | grep -q "libgxf_"; then
-      target="holoscan::gxf::${lib_name#'libgxf_'}"
-    elif echo "$lib_name" | grep -q "libuc"; then
-      target="holoscan::ucx"
     elif echo "$lib_name" | grep -q "lib"; then
       target="holoscan::${lib_name#'lib'}"
     else

@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2022-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+include(HoloscanTargetConfiguration)
+
 # https://docs.rapids.ai/api/rapids-cmake/stable/command/rapids_cpm_find.html
 include(${rapids-cmake-dir}/cpm/find.cmake)
 
@@ -35,9 +37,9 @@ FetchContent_MakeAvailable(spdlog)
 set(BUILD_SHARED_LIBS "${_PREV_BUILD_SHARED_LIBS}")
 
 if(spdlog_ADDED)
-    # Hide public spdlog symbols in any Holoscan SDK library to mitigate
-    # downstream symbol conflicts.
-    target_link_options(spdlog INTERFACE "LINKER:--exclude-libs,libspdlog")
+    # Hide public spdlog symbols in Holoscan SDK ELF libraries to mitigate downstream symbol
+    # conflicts. Native MSVC and clang-cl use different archive/linker semantics.
+    holoscan_configure_linux_archive_hiding(spdlog libspdlog)
 
     set(spdlog_SOURCE_DIR "${spdlog_SOURCE_DIR}" PARENT_SCOPE)
     set(spdlog_BINARY_DIR "${spdlog_BINARY_DIR}" PARENT_SCOPE)

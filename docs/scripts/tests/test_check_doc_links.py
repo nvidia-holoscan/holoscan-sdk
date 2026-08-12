@@ -11,7 +11,7 @@ SCRIPT_DIR = Path(__file__).parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from build_holoscan_docs import _should_check_doc_links  # noqa: E402
-from check_doc_links import _link_targets  # noqa: E402
+from check_doc_links import _link_targets, _strip_code  # noqa: E402
 
 
 class CheckDocLinksTestCase(TestCase):
@@ -24,6 +24,23 @@ class CheckDocLinksTestCase(TestCase):
         assert _link_targets(lines) == [
             (1, "operators/visualization#enable-exclusive-display-in-holoviz")
         ]
+
+    def test_preserves_long_fence_until_matching_length_closes_it(self) -> None:
+        text = "\n".join(
+            [
+                "before",
+                "````markdown",
+                "```python",
+                "[ignored](missing)",
+                "```",
+                "```` not a closing fence",
+                "[also ignored](missing)",
+                "````",
+                "after",
+            ]
+        )
+
+        assert _strip_code(text) == ["before", "", "", "", "", "", "", "", "after"]
 
     def test_checks_links_when_replacing_remote_preview(self) -> None:
         args = Namespace(

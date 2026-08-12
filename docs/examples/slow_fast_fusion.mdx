@@ -1,0 +1,263 @@
+Real pipelines rarely run at one rate. A camera produces frames at 60 Hz while
+an IMU streams at hundreds of hertz; a control loop ticks faster than the
+perception stage feeding it. The `ea1_slow_fast_fusion` example distills this
+multi-rate pattern to its essentials: a **fast** source drives every
+activation of a fusion operator, while a **slow** source contributes its most
+recent sample — but only while that sample is still fresh enough to trust.
+
+The runnable source lives at `public/examples/ea1_slow_fast_fusion/` in the
+SDK tree.
+
+The entire policy lives in one temporal contract built from three value
+objects: `OnEach` (activate per fast sample), `LatestWithin` (admit the newest
+slow sample within an age bound), and `Skip` (suppress the activation when no
+slow sample qualifies). `compute()` never checks timestamps or arrival order —
+the runtime has already made those decisions before it runs. If you have not
+read [temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+yet, this page is the shortest end-to-end demonstration of why they exist.
+
+<Note title="You will learn">
+  - How a fast input drives activation with `OnEach` while a slow input rides
+    along as context
+  - How `LatestWithin` age-gates the slow input and `Skip` suppresses
+    activations with no fresh slow sample
+  - How whole-sample metadata (capture time, clock identity) is forwarded
+    through a fusion operator
+  - How the example composes, compiles, and runs the graph with the ordinary
+    application root — no wrapper class
+  - What the program prints and how to interpret it
+</Note>
+
+## The pipeline
+
+Four operators, three connections, two rates:
+
+```text
+slow (OnClock, 20 ms) ──► fuse.slow  (LatestWithin ≤ 100 ms, on-missing: Skip)
+                                     │
+fast (OnClock,  2 ms) ──► fuse.fast ─┴─ (OnEach anchor) ──► sink
+```
+
+- **`slow`** and **`fast`** are two instances of the same `PeriodicSource`
+  operator, configured with different periods (20 ms and 2 ms) and different
+  value scales so you can tell their contributions apart in the output.
+- **`fuse`** (`FuseLatest`) activates once per fast sample, adds the newest
+  fresh slow value to it, and emits the result.
+- **`sink`** (`BoundedSink`) records each fused value; the main routine stops
+  the run after a bounded number of observations.
+
+The example is deliberately host-only and numeric — no tensors, no devices —
+so every line of it is about temporal behavior.
+
+## The sources: one operator, two rates
+
+`PeriodicSource` is a zero-input operator whose contract requests periodic
+activation. Because it has no inputs, a contract is mandatory: the default
+`OnAnyInput` trigger is invalid for an inputless operator.
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result.trigger(holoscan::OnClock{.period = period_});
+  return result;
+}
+```
+
+Each activation emits one monotonically increasing value, stamped with genuine
+capture metadata taken from the activation time:
+
+```cpp
+const std::uint32_t value = (next_++ + 1U) * scale_;
+return output.emit(holoscan::Sample<std::uint32_t>{
+    value,
+    holoscan::SampleMetadata{.capture_timestamp_ns = context.activation_time().timestamp_ns,
+                             .source_clock_id = context.activation_time().clock_id},
+});
+```
+
+Two details are worth noticing. First, the sample carries a `SampleMetadata`
+record with both a capture timestamp **and** the clock identity it was read
+from — a timestamp without its clock domain is meaningless in a multi-clock
+system (see [time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks)).
+Second, `setup()` declares `.max_emits_per_compute(1U)` on the output, so the
+compiler knows the exact per-activation emission bound and can size queues
+accordingly.
+
+The graph instantiates this one class twice with different constructor
+arguments — the slow source scales values by 100, the fast source by 1:
+
+```cpp
+const auto slow = graph.op<PeriodicSource>("slow", 20ms, 100U);
+const auto fast = graph.op<PeriodicSource>("fast", 2ms, 1U);
+```
+
+## The fusion contract: fast drives, slow is age-gated
+
+`FuseLatest` is where the multi-rate policy lives. Its whole temporal behavior
+is these four lines:
+
+```cpp
+[[nodiscard]] holoscan::Contract contract() const override {
+  holoscan::Contract result;
+  result.trigger(holoscan::OnEach{fast})
+      .input(slow, holoscan::LatestWithin{.max_age = 100ms})
+      .on_missing(slow, holoscan::Skip{});
+  return result;
+}
+```
+
+Read it as three independent decisions:
+
+- **`OnEach{fast}`** — the fast port is the *anchor*. Every accepted fast
+  sample produces exactly one activation candidate. The slow port never causes
+  an activation by itself; it only supplies context.
+- **`LatestWithin{.max_age = 100ms}`** — for each activation, the runtime
+  selects the newest causally available slow sample whose age (relative to the
+  activation) is at most 100 ms. With a 20 ms slow period this bound is
+  generous — it exists so the startup transient is visible rather than to
+  filter steady-state samples.
+- **`Skip{}`** — if no slow sample satisfies the age bound, this activation
+  candidate is suppressed entirely. `compute()` does not run with a hole in
+  its inputs; the fast sample is simply not fused.
+
+The practical effect: at startup, the first few fast samples arrive before the
+first slow sample exists, so those activations are skipped. Once the slow
+source has published, every fast sample fuses with the most recent slow value,
+which is *reused* across roughly ten consecutive fast activations until the
+next slow sample supersedes it.
+
+<Warning>
+  `Skip` suppresses the activation, not just the input. If your operator
+  should still run in a degraded mode when the slow input is stale — common
+  in control loops that must keep emitting — use `SafeDefault{}` or
+  `ReuseLast{.max_age = ...}` instead. The full policy menu is on the
+  [temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts)
+  page.
+</Warning>
+
+## Metadata forwarding through `compute()`
+
+Because the contract has already selected both inputs, `compute()` is a
+straight-line function — receive, combine, emit:
+
+```cpp
+auto slow_sample = slow.receive();
+if (!slow_sample) {
+  return holoscan::make_unexpected(std::move(slow_sample).error());
+}
+auto fast_sample = fast.receive();
+if (!fast_sample) {
+  return holoscan::make_unexpected(std::move(fast_sample).error());
+}
+fast_sample->data += slow_sample->data;
+return fused.emit(std::move(*fast_sample));
+```
+
+The last two lines are the metadata-forwarding idiom. The operator mutates the
+fast sample's *payload* in place, then emits the **whole sample** — data plus
+its `SampleMetadata`. The fused sample therefore inherits the fast sample's
+capture timestamp, source clock identity, and the rest of its metadata record,
+so downstream consumers can still ask "when was this measurement actually
+taken?" via `metadata.capture_time()`. This follows the general rule for
+derived data: the anchor input's capture identity is usually the honest one to
+propagate, because the anchor is what the activation *is about*.
+
+Note also the failure style: `receive()` returns an
+`expected`, and errors propagate as values with `make_unexpected` — no
+exceptions on the hot path (see
+[errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values)).
+
+## Composing and running
+
+The application root is the ordinary three-phase sequence — no wrapper class,
+just a `Graph`, free `compile()`, and `run_async()`:
+
+```cpp
+holoscan::Graph graph{"ea1-slow-fast-fusion"};
+// ... graph.op<...>(...) for slow, fast, fuse, sink ...
+graph.add_flow(slow->output, fuse->slow, holoscan::ConnectionOptions{.queue_depth = 8U});
+graph.add_flow(fast->output, fuse->fast, holoscan::ConnectionOptions{.queue_depth = 16U});
+graph.add_flow(fuse->fused, sink->input, holoscan::ConnectionOptions{.queue_depth = 8U});
+graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) {
+  std::cerr << plan.json() << '\n';
+  return 1;
+}
+
+holoscan::RunSession session = holoscan::run_async(plan);
+// ... wait for a bounded number of fused samples ...
+session.request_stop();
+session.wait();
+```
+
+The connections carry explicit `queue_depth` bounds — the fast edge gets the
+deeper queue (16) because it carries an order of magnitude more traffic. The
+graph registers a `RealtimeClock` as its default, which both `OnClock`
+triggers and the `LatestWithin` age comparison read from. `compile()` either
+returns a plan that is `ok()` or a rejected plan whose `json()` explains why;
+the run itself is started asynchronously and stopped cooperatively with
+`request_stop()` once the sink has seen enough samples. These mechanics are
+covered in [composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+and [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+
+The main routine also accepts an artifact-only mode (`--emit-artifacts`) that
+compiles and publishes the plan's deployment artifacts without ever starting
+operator lifecycle — the same composition path serves both live runs and cold
+plan publication.
+
+## Running it and reading the output
+
+From the SDK examples build, the binary takes no arguments for a live run:
+
+```bash
+./ea1_slow_fast_fusion
+```
+
+A successful run ends with a line like:
+
+```text
+trigger_records=4 selection_records=2 fused_samples=6 last_value=...
+slow/fast fusion complete
+```
+
+What to look for:
+
+- **`trigger_records`** — the number of temporal trigger records in the
+  compiled plan (one per operator: two `OnClock`, two `OnEach`). This is the
+  contract vocabulary made visible as plan data: your `contract()` overrides
+  were lowered into inspectable records, not interpreted ad hoc at run time.
+- **`selection_records`** — the plan's input-selection records, covering the
+  fusion operator's age-gated slow input alongside its anchor. Queried via
+  `plan.temporal_triggers()` and `plan.input_selections()`.
+- **`fused_samples`** — the count of fused values the sink observed before
+  the program requested a stop (it waits for at least 6). Each one is proof
+  that a fast activation found a fresh-enough slow sample.
+- **`last_value`** — the most recent fused value. Because the slow source
+  scales by 100 and the fast source by 1, you can decompose any fused value
+  by eye: the hundreds digits are the slow contribution, the remainder is the
+  fast sample it fused with. Watching consecutive values, you will see the
+  slow contribution hold steady across ~10 fast samples and then step —
+  `LatestWithin` reusing the newest admitted slow sample until a newer one
+  arrives.
+
+The program exits nonzero if the run terminates for any reason other than the
+requested stop, or if any diagnostics were recorded — a compact illustration
+of the fail-closed run posture.
+
+## Recap
+
+- One fast input drives activation (`OnEach{fast}`); the slow input is pure
+  context, selected by freshness (`LatestWithin{.max_age = 100ms}`).
+- `Skip{}` suppresses activations that have no fresh slow sample — visible at
+  startup before the first slow sample exists.
+- `compute()` contains zero timing logic; the contract made every temporal
+  decision before it ran.
+- Emitting the moved anchor sample forwards its whole `SampleMetadata` —
+  capture time and clock identity survive fusion.
+- The compiled plan exposes the lowered contract as data
+  (`temporal_triggers()`, `input_selections()`), which the program prints.
+
+Next: [external clients](/holoscan/sdk-user-guide/examples/external-clients)
+connects standalone processes to a running pipeline from outside the graph.

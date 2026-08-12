@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="300" viewBox="0 0 960 300" role="img" aria-labelledby="title desc">
+  <title id="title">holomq host split slot segment with separate SHM and GPU-visible memory</title>
+  <desc id="desc">Payload lives in a POSIX SHM segment; generation words live in a separate GPU-visible memory segment. Same slot index ties the two.</desc>
+  <defs>
+    <marker id="link" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#888"/>
+    </marker>
+  </defs>
+  <style>
+    .h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #1a1a1a; }
+    .l { font-family: Consolas, Menlo, monospace; font-size: 15px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .u { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #444; }
+    .shm { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 600; fill: #5a8f00; }
+    .gpu { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 600; fill: #0b5394; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="24" y="28" class="h">Host split slot segment</text>
+  <text x="24" y="48" class="u">Pageable host pools; pinned host without CU_MEMHOSTREGISTER_DEVICEMAP</text>
+
+  <!-- POSIX SHM segment -->
+  <rect x="20" y="64" width="620" height="92" fill="#f4faf0" stroke="#76b900" stroke-width="1.5" rx="6"/>
+  <text x="36" y="84" class="shm">POSIX SHM segment (payload)</text>
+
+  <rect x="36" y="96" width="200" height="48" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="136" y="126" text-anchor="middle" class="l">payload[i]</text>
+  <rect x="248" y="96" width="200" height="48" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="348" y="126" text-anchor="middle" class="l">payload[i+1]</text>
+  <text x="464" y="126" class="d">...</text>
+
+  <line x1="136" y1="144" x2="136" y2="188" stroke="#888" stroke-width="1.2" marker-end="url(#link)"/>
+  <line x1="348" y1="144" x2="348" y2="188" stroke="#888" stroke-width="1.2" marker-end="url(#link)"/>
+
+  <!-- GPU-visible memory segment -->
+  <rect x="20" y="188" width="620" height="92" fill="#f5f9fd" stroke="#0b5394" stroke-width="1.5" rx="6"/>
+  <text x="36" y="208" class="gpu">GPU-visible memory segment (generation)</text>
+
+  <rect x="36" y="220" width="200" height="48" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="136" y="250" text-anchor="middle" class="l">gen[i]</text>
+  <rect x="248" y="220" width="200" height="48" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="348" y="250" text-anchor="middle" class="l">gen[i+1]</text>
+  <text x="464" y="250" class="d">...</text>
+
+  <text x="660" y="126" class="d">Host-accessible payload bytes.</text>
+  <text x="660" y="146" class="d">Not device-mapped with generation.</text>
+
+  <text x="660" y="250" class="d">Same slot index in both segments.</text>
+  <text x="660" y="270" class="d">Each generation word is uint64.</text>
+</svg>

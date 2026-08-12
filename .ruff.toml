@@ -63,7 +63,6 @@ dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?)|op_input|op_output|con
 #  triple quote comment block, so the copyright header is commented as individual lines)
 "python/holoscan/**/__init__.py" = ["E501"]
 "python/holoscan/decorator.py" = ["E402"]
-"scripts/gxf_entity_codec.py" = ["N815"] # allow mixed-case enum names in this utility script
 
 [lint.isort]
 known-first-party = ["holoscan"]

@@ -33,7 +33,3 @@ IndentWidth: 2
 ---
 Language: Proto
 DisableFormat: true
-
----
-Language: JavaScript
-DisableFormat: true

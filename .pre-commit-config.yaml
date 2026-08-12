@@ -8,15 +8,6 @@
 default_language_version:
   python: python3
 
-# Skip all hooks for skills/ - files in this directory are verbatim upstream
-# copies intended to match the source byte-for-byte. Modifying them in transit
-# (line endings, trailing whitespace, codespell auto-fixes, copyright year
-# bumps, etc.) breaks that byte-for-byte property and invalidates the detached
-# signature (`skill.oms.sig`) that ships alongside each skill - once the
-# signature is attached, any in-place modification fails verification against
-# the trust anchor.
-exclude: ^skills/
-
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
@@ -29,9 +20,9 @@ repos:
         # Exclude .clang-format file because check-yaml do not support multi-document file
         exclude: ^.*\.patch|\.clang-format$
       - id: check-json
-        exclude: ^\.vscode/|^\.devcontainer/|.*\.patch$
-      - id: check-added-large-files
         exclude: ^.*\.patch$
+      - id: check-added-large-files
+        exclude: ^.*\.patch$|^modules/holomq/abi/.*\.exports\.baseline\.txt$
 
   # Copyright header check (NVIDIA SPDX)
   - repo: local
@@ -50,37 +41,31 @@ repos:
           - common-debian.sh
           # Paths are rooted at the repository layout represented by this config.
           - --exclude
-          - \.cache
+          - ^\.cache
           - --exclude
-          - build
+          - ^build
           - --exclude
-          - install
+          - ^install
           - --exclude
-          - build-*
+          - ^build-*
           - --exclude
-          - install-*
+          - ^install-*
           - --exclude
-          - modules/holoviz/thirdparty/
+          - ^modules/holoviz/thirdparty/
           - --exclude
           - .*\.patch$
-          # Fern bundled dist/ output (generated files, no NVIDIA copyright header).
           - --exclude
           - docs/fern/dist/
+          - --exclude
+          - ^modules/holomq/abi/.*\.exports\.baseline\.txt$
           # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
           - --exclude
-          - modules/holoipc/examples/fastdds_benchmark/
+          - ^modules/holomq/examples/fastdds_benchmark/
           - --exclude
-          - modules/holoipc/examples/fastdds_example/
+          - ^modules/holomq/examples/fastdds_example/
           - --update-current-year
         language: system
         pass_filenames: true
-
-      - id: check-doc-links
-        name: Check documentation links
-        entry: python3 docs/scripts/check_doc_links.py
-        language: system
-        pass_filenames: false
-        files: ^docs/
 
       - id: test-check-copyright
         name: Test copyright header checker
@@ -90,6 +75,13 @@ repos:
           - pytest
         pass_filenames: false
         files: ^scripts/(check_copyright|test_check_copyright)\.py$
+
+      - id: check-doc-links
+        name: Check documentation links
+        entry: python3 docs/scripts/check_doc_links.py
+        language: system
+        pass_filenames: false
+        files: ^docs/
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6
@@ -122,8 +114,9 @@ repos:
         additional_dependencies:
           - tomli>=2.0.1,<3.0; python_version<'3.11'
         files: ^
+        exclude: ^docs/fern/dist/
         args:
-          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*docs/fern/dist*
+          - --skip=*.onnx,*NOTICE.txt,*.toml,*vale*,*.patch,*modules/holomq/abi/*.exports.baseline.txt
           - --ignore-regex=.*codespell-ignore$
           - --toml=.codespell.toml
           - --write-changes
@@ -149,7 +142,7 @@ repos:
           - --exclude=examples/custom_cuda_kernel_multi_sample/cpp/edge_detection.cu
           - --filter=-whitespace/indent_namespace,-build/c++17,-build/include_order
         files: ^.*\.(cpp|cu|cuh|h|hpp|cc|cxx)$
-        # Paths are rooted at the repository layout represented by this config.
+        # Paths are rooted at the internal source tree's export directory
         exclude: |
           (?x)^(
             \.cache|
@@ -179,6 +172,37 @@ repos:
         files: ^.*(CMakeLists\.txt|\.cmake)$
         exclude: ^(build|install|build-|install-|\.cache)/
 
+  # Header guards and ABI/export policy
+  - repo: local
+    hooks:
+      - id: check-header-guards
+        name: Check header guards
+        entry: python3 scripts/check_header_guards.py
+        language: system
+        pass_filenames: true
+        files: ^.*\.(h|hh|hpp|hxx|cuh)$
+
+      - id: check-export-macros
+        name: Check export macro policy
+        entry: python3 scripts/check_export_macros.py
+        language: system
+        pass_filenames: true
+        files: ^.*(\.(h|hh|hpp|hxx|cuh|c|cc|cpp|cxx|cu|cmake|txt)|CMakeLists\.txt|Dockerfile)$
+
+      - id: check-export-macro-semantics
+        name: Check export macro semantics
+        entry: python3 scripts/check_export_macro_semantics.py --root .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: test-header-export-checkers
+        name: Test header and export checkers
+        entry: python3 scripts/test_header_export_checks.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
   # markdownlint
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.47.0
@@ -187,10 +211,15 @@ repos:
         args: [--fix, --config, .markdownlint.yaml]
         files: ^.*\.mdx?$
         types_or: [markdown, mdx]
-        exclude: ^swipat/summary\.md$
+        exclude: |
+          (?x)^(
+            design_requirements/.*\.mdx?|
+            swipat/summary\.md
+          )$
 
   # clang-format
   - repo: https://github.com/pre-commit/mirrors-clang-format
     rev: v21.1.8
     hooks:
       - id: clang-format
+        exclude: ^docs/fern/dist/

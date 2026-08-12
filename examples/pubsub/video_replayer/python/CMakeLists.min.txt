@@ -1,7 +1,0 @@
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
-
-# No build step needed for Python examples.
-# Run manually with two terminals:
-#   python pubsub_video_replayer.py --role subscriber --config video_replayer.yaml
-#   python pubsub_video_replayer.py --role publisher --config video_replayer.yaml

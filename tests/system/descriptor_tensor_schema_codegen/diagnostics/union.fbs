@@ -1,0 +1,19 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+table UnionValue {
+  value: uint (id: 0);
+}
+
+union DiagnosticUnion { UnionValue }
+
+table UnionDescriptor {
+  tensor: holoscan.schema.Tensor (id: 0);
+  value: DiagnosticUnion (id: 2);
+}
+
+root_type UnionDescriptor;

@@ -23,7 +23,7 @@ Detailed reports help NVIDIA PSIRT validate severity, develop fixes, and publish
 
 ## Security Architecture & Context
 
-The **Holoscan SDK** is a C++/Python software development kit for building low-latency streaming and AI sensor processing applications. It orchestrates operators in graphs (including integration with NVIDIA GXF), uses the GPU (CUDA) for compute, and ships optional modules for visualization (e.g., Vulkan-backed Holoviz), inference (Holoinfer with ONNX Runtime and optional LibTorch), inter-process communication (optional `holoscan::ipc` and Fast DDS-based pub/sub), and **multi-node distributed execution** coordinated over gRPC between an application driver and workers.
+The **Holoscan SDK** is a C++/Python software development kit for building low-latency streaming and AI sensor processing applications. It orchestrates operators in graphs, uses the GPU (CUDA) for compute, and ships optional modules for visualization (e.g., Vulkan-backed Holoviz), inference (Holoinfer with ONNX Runtime and optional LibTorch), inter-process communication (optional HoloMQ through `holomq::holomq`), and **multi-node distributed execution** coordinated over gRPC between an application driver and workers.
 
 **Classification:** Library / SDK (with optional long-running services when distributed execution or network transports are enabled).
 
@@ -36,7 +36,7 @@ The **Holoscan SDK** is a C++/Python software development kit for building low-l
 **Key boundaries and interfaces:**
 
 - **Application configuration:** YAML-based application and operator configuration loaded from files or strings (`holoscan::Config` and related paths).
-- **User code and extensions:** Application operators, GXF extensions, and Python code run in the same trust domain as the host process unless the deployer isolates them (containers, separate users, etc.).
+- **User code and extensions:** Application operators and Python code run in the same trust domain as the host process unless the deployer isolates them (containers, separate users, etc.).
 - **Distributed execution:** gRPC services and clients under `public/src/core/distributed/` (e.g., `AppDriverServer`, `AppWorkerServer`, `AppDriverClient`, `AppWorkerClient`) exchange allocation, execution, and lifecycle messages; workers listen on all interfaces when started in the default distributed layout.
 - **Inference:** Holoinfer loads ONNX models from caller-supplied paths and uses ONNX Runtime (and optionally LibTorch) as configured by the application.
 - **Pub/sub and IPC (optional CMake options):** Fast DDS and related code paths handle discovery and messaging when those features are built and used.
@@ -48,7 +48,7 @@ The following scenarios reflect the main security concerns for this codebase, in
 
 1. **Unauthorized control of distributed execution (gRPC):** An attacker on the network who can reach driver or worker gRPC ports could invoke allocation, execution, shutdown, or health-related RPCs implemented in `app_driver/service_impl.cpp`, `app_worker/server.cpp`, and related clients, potentially disrupting pipelines or causing unintended execution if the deployment does not restrict access. The distributed stack uses insecure gRPC credentials (`grpc::InsecureServerCredentials` / `grpc::InsecureChannelCredentials`) in the current implementation, so confidentiality and integrity of control-plane traffic depend entirely on network isolation or external protections.
 
-2. **Confidentiality and integrity of pub/sub and IPC traffic (Fast DDS / holo_ipc):** When Fast DDS or IPC transports are enabled, discovery and message exchange may expose application payloads to other participants on the same logical network or domain unless DDS security, TLS, VLANs, or equivalent controls are configured outside this repository’s defaults.
+2. **Confidentiality and integrity of pub/sub and IPC traffic (HoloMQ):** When IPC transports are enabled, discovery and message exchange may expose application payloads to other participants on the same logical network or domain unless transport security, TLS, VLANs, or equivalent controls are configured outside this repository’s defaults.
 
 3. **Malicious or untrusted application configuration (YAML):** Loading attacker-controlled YAML via `YAML::LoadAllFromFile` and related paths in `core/config.cpp`, operator configuration (e.g., Holoviz YAML parsing), or tests’ `YAML::LoadFile` can lead to denial of service, unexpected operator wiring, or unsafe parameters if the deployer does not restrict who can write configuration files.
 
@@ -58,13 +58,13 @@ The following scenarios reflect the main security concerns for this codebase, in
 
 6. **Sensitive data in logs and telemetry:** Components such as `basic_console_logger`, async data loggers, and system resource reporting used in distributed registration can emit fragment names, addresses, or resource metrics. In regulated or multi-tenant environments, verbose logging can leak operational or patient-/process-sensitive metadata if logs are not access-controlled.
 
-7. **GPU / native code faults affecting isolation:** Bugs in CUDA operators, GXF codelets, Vulkan presentation paths, or Python/C++ boundary code could corrupt memory or affect process stability; impact is generally bounded by the host OS process unless the platform provides stronger isolation.
+7. **GPU / native code faults affecting isolation:** Bugs in CUDA operators, Vulkan presentation paths, or Python/C++ boundary code could corrupt memory or affect process stability; impact is generally bounded by the host OS process unless the platform provides stronger isolation.
 
 ### Critical Security Assumptions
 
 - **Trusted operators and application code:** The SDK does not sandbox user-written operators or Python code; it assumes the application author and runtime operator are trusted, or that the deployer enforces isolation (e.g., separate containers or machines).
 
-- **Trusted configuration and model artifacts:** Configuration files, ONNX/Torch models, shared libraries, and GXF extension binaries are assumed to come from trusted sources or to be integrity-checked by the deployer; the SDK does not implement a full code-signing or model attestation workflow.
+- **Trusted configuration and model artifacts:** Configuration files, ONNX/Torch models, and shared libraries are assumed to come from trusted sources or to be integrity-checked by the deployer; the SDK does not implement a full code-signing or model attestation workflow.
 
 - **Network placement for optional server features:** Distributed gRPC endpoints and DDS domains are assumed to be reachable only from trusted networks, or fronted by VPNs, mTLS proxies, or firewalls that compensate for use of insecure gRPC credentials inside the SDK.
 

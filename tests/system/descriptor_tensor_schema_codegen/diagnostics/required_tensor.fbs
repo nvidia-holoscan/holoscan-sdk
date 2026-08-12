@@ -1,0 +1,12 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+table RequiredTensorDescriptor {
+  tensor: holoscan.schema.Tensor (required, id: 0);
+}
+
+root_type RequiredTensorDescriptor;

@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="330" viewBox="0 0 960 330" role="img" aria-labelledby="title desc">
+  <title id="title">holomq interleaved pool slot layout in GPU-visible memory</title>
+  <desc id="desc">Generation and payload share one GPU-visible mapping; one slot detail and full pool with repeated strides.</desc>
+  <style>
+    .h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 18px; font-weight: 700; fill: #1a1a1a; }
+    .s { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #333; }
+    .l { font-family: Consolas, Menlo, monospace; font-size: 14px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .u { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #444; }
+    .tag { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 12px; font-weight: 600; fill: #0b5394; }
+    .gpu { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; font-weight: 600; fill: #0b5394; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="24" y="28" class="h">Interleaved slot segment</text>
+  <text x="24" y="48" class="u">Device pools; pinned host with CU_MEMHOSTREGISTER_DEVICEMAP</text>
+
+  <!-- GPU-visible envelope -->
+  <rect x="20" y="64" width="920" height="252" fill="#f5f9fd" stroke="#0b5394" stroke-width="1.5" rx="6"/>
+  <text x="36" y="84" class="gpu">GPU-visible memory (one mapping per pool)</text>
+
+  <!-- One slot detail -->
+  <text x="36" y="108" class="s">One slot only</text>
+  <rect x="24" y="116" width="840" height="72" fill="none" stroke="#0b5394" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <text x="48" y="132" class="tag">single slot[i]</text>
+
+  <rect x="36" y="140" width="100" height="40" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="86" y="160" text-anchor="middle" class="l">generation</text>
+  <text x="86" y="174" text-anchor="middle" class="d">uint64</text>
+
+  <rect x="136" y="140" width="560" height="40" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="416" y="166" text-anchor="middle" class="l">user payload (buffer_bytes)</text>
+
+  <rect x="696" y="140" width="156" height="40" fill="#f0f4f8" stroke="#b8c4d0" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="774" y="166" text-anchor="middle" class="d">stride pad</text>
+
+  <!-- Full pool -->
+  <text x="36" y="212" class="s">Full pool (buffer_count slots)</text>
+  <text x="36" y="230" class="d">Same GPU-visible mapping; stride repeated for each index</text>
+
+  <!-- slot[0] -->
+  <text x="116" y="250" text-anchor="middle" class="l">slot[0]</text>
+  <rect x="24" y="256" width="188" height="44" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <rect x="28" y="260" width="24" height="36" fill="#fff8e6" stroke="#d4a017"/>
+  <rect x="52" y="260" width="126" height="36" fill="#eef6fc" stroke="#7eb8e0"/>
+  <rect x="178" y="260" width="30" height="36" fill="#f0f4f8" stroke="#b8c4d0" stroke-dasharray="3 2"/>
+
+  <!-- slot[1] -->
+  <text x="312" y="250" text-anchor="middle" class="l">slot[1]</text>
+  <rect x="220" y="256" width="188" height="44" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <rect x="224" y="260" width="24" height="36" fill="#fff8e6" stroke="#d4a017"/>
+  <rect x="248" y="260" width="126" height="36" fill="#eef6fc" stroke="#7eb8e0"/>
+  <rect x="374" y="260" width="30" height="36" fill="#f0f4f8" stroke="#b8c4d0" stroke-dasharray="3 2"/>
+
+  <!-- slot[2] -->
+  <text x="508" y="250" text-anchor="middle" class="l">slot[2]</text>
+  <rect x="416" y="256" width="188" height="44" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <rect x="420" y="260" width="24" height="36" fill="#fff8e6" stroke="#d4a017"/>
+  <rect x="444" y="260" width="126" height="36" fill="#eef6fc" stroke="#7eb8e0"/>
+  <rect x="570" y="260" width="30" height="36" fill="#f0f4f8" stroke="#b8c4d0" stroke-dasharray="3 2"/>
+
+  <text x="620" y="284" class="d">...</text>
+  <text x="660" y="284" class="l">slot[buffer_count - 1]</text>
+
+  <!-- stride bracket under first pool slot -->
+  <line x1="24" y1="310" x2="212" y2="310" stroke="#888" stroke-width="1.2"/>
+  <line x1="24" y1="304" x2="24" y2="310" stroke="#888" stroke-width="1.2"/>
+  <line x1="212" y1="304" x2="212" y2="310" stroke="#888" stroke-width="1.2"/>
+  <text x="118" y="326" text-anchor="middle" class="d">slot_stride_bytes</text>
+
+  <text x="240" y="326" class="d">BufferPool::buffer_count() slots total</text>
+</svg>

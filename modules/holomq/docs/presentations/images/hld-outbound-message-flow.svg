@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" aria-labelledby="title desc">
+  <title id="title">holomq OutboundMessage transport loan flow</title>
+  <desc id="desc">Transport pool loans a slot via loan, send delivers to subscribers, drop recycles unpublished slot.</desc>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+    <marker id="arr-grey" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#888"/>
+    </marker>
+  </defs>
+  <style>
+    .b { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 600; fill: #1a1a1a; }
+    .s { font-family: Consolas, Menlo, monospace; font-size: 15px; fill: #0b5394; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 14px; fill: #666; }
+    .lbl { font-family: Consolas, Menlo, monospace; font-size: 14px; font-weight: 600; fill: #333; }
+    .lbl-dim { font-family: Consolas, Menlo, monospace; font-size: 13px; fill: #888; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <!-- Transport pool -->
+  <rect x="24" y="32" width="240" height="96" rx="6" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="144" y="64" text-anchor="middle" class="b">Transport SHM pool</text>
+  <text x="144" y="88" text-anchor="middle" class="d">pre-allocated sample slots</text>
+  <text x="144" y="110" text-anchor="middle" class="d">transport owns free slots</text>
+
+  <!-- loan() failure branch (under pool) -->
+  <line x1="144" y1="128" x2="144" y2="168" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr-grey)"/>
+  <rect x="24" y="168" width="240" height="64" rx="6" fill="#fff" stroke="#c8d1dc" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="144" y="196" text-anchor="middle" class="lbl-dim">loan() error</text>
+  <text x="144" y="218" text-anchor="middle" class="d">kBackpressured (not logged)</text>
+
+  <!-- loan() -->
+  <text x="304" y="68" text-anchor="middle" class="lbl">loan()</text>
+  <line x1="264" y1="80" x2="344" y2="80" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- OutboundMessage -->
+  <rect x="344" y="32" width="260" height="96" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="474" y="64" text-anchor="middle" class="b">OutboundMessage</text>
+  <text x="474" y="88" text-anchor="middle" class="s">payload()</text>
+  <text x="474" y="110" text-anchor="middle" class="d">move-only app loan</text>
+
+  <!-- send() -->
+  <text x="644" y="68" text-anchor="middle" class="lbl">send()</text>
+  <line x1="604" y1="80" x2="684" y2="80" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Subscribers -->
+  <rect x="684" y="32" width="252" height="96" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="810" y="72" text-anchor="middle" class="b">Subscribers</text>
+  <text x="810" y="98" text-anchor="middle" class="d">sample in flight</text>
+
+  <!-- drop branch -->
+  <line x1="474" y1="128" x2="474" y2="168" stroke="#888" stroke-width="1.2" marker-end="url(#arr-grey)"/>
+  <text x="492" y="154" class="lbl-dim">drop / no send</text>
+
+  <rect x="344" y="168" width="260" height="64" rx="6" fill="#f0f4f8" stroke="#b8c4d0" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="474" y="196" text-anchor="middle" class="d">slot recycled to pool</text>
+  <text x="474" y="218" text-anchor="middle" class="d">not published</text>
+</svg>

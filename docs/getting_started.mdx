@@ -1,38 +1,110 @@
-As described in the [Overview](/holoscan/sdk-user-guide/introduction/overview), the Holoscan SDK provides many components and capabilities. The goal of this section is to provide a recommended path to getting started with the SDK.
+Welcome to Holoscan SDK 5.0. This Getting Started track takes you from an
+empty project to a running multi-rate sensor-fusion pipeline: a 60 Hz camera
+and a high-rate IMU feeding a fusion operator that drives a control output.
+Each chapter adds exactly one capability, and every chapter's code builds on
+the previous one, so by the end you have written — not just read about — a
+complete application that composes, compiles, and runs.
 
-## 1. Choose your platform
+<svg viewBox="0 0 760 300" role="img" aria-labelledby="gs-fusion-topology-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="gs-fusion-topology-title">Running example: camera and IMU sources fused into a control output, driven by one clock</title>
+  <defs>
+    <marker id="gs-fusion-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+    </marker>
+    <marker id="gs-fusion-arrow-green" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#76B900" />
+    </marker>
+  </defs>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">
+    <rect x="60" y="60" width="150" height="60" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="60" y="60" width="150" height="60" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="135" y="85" textAnchor="middle" fontSize="14" fill="currentColor">Camera</text>
+    <text x="135" y="105" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">source · 60 Hz</text>
+    <rect x="60" y="170" width="150" height="60" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="60" y="170" width="150" height="60" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="135" y="195" textAnchor="middle" fontSize="14" fill="currentColor">IMU</text>
+    <text x="135" y="215" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">source · high-rate</text>
+    <rect x="320" y="115" width="150" height="60" rx="8" fill="currentColor" opacity="0.06" />
+    <rect x="320" y="115" width="150" height="60" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="395" y="140" textAnchor="middle" fontSize="14" fill="currentColor">Fusion</text>
+    <text x="395" y="160" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">multi-rate contract</text>
+    <rect x="570" y="115" width="140" height="60" rx="8" fill="#76B900" opacity="0.25" />
+    <rect x="570" y="115" width="140" height="60" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+    <text x="640" y="140" textAnchor="middle" fontSize="14" fill="currentColor">Control</text>
+    <text x="640" y="160" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55">output</text>
+    <path d="M210,90 C270,90 280,132 316,132" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#gs-fusion-arrow)" />
+    <path d="M210,200 C270,200 280,158 316,158" fill="none" stroke="currentColor" strokeWidth="2" markerEnd="url(#gs-fusion-arrow)" />
+    <line x1="470" y1="145" x2="564" y2="145" stroke="#76B900" strokeWidth="2" markerEnd="url(#gs-fusion-arrow-green)" />
+    <text x="517" y="135" textAnchor="middle" fontSize="11" fill="#76B900">tutorial path</text>
+    <circle cx="385" cy="40" r="14" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" />
+    <line x1="385" y1="40" x2="385" y2="31" stroke="currentColor" strokeWidth="1.5" opacity="0.55" strokeLinecap="round" />
+    <line x1="385" y1="40" x2="392" y2="44" stroke="currentColor" strokeWidth="1.5" opacity="0.55" strokeLinecap="round" />
+    <text x="410" y="44" fontSize="11" fill="currentColor" opacity="0.55">clock drives the graph</text>
+    <line x1="385" y1="58" x2="390" y2="107" stroke="currentColor" strokeWidth="1.5" opacity="0.55" strokeDasharray="4 4" markerEnd="url(#gs-fusion-arrow)" />
+  </g>
+</svg>
 
-The Holoscan SDK is optimized and compatible with multiple hardware platforms, including NVIDIA Developer Kits (aarch64), DGX Spark, and x86_64 workstations. Learn more on the [developer page](https://developer.nvidia.com/holoscan-sdk) to help you decide what hardware you should target.
+Two ideas come first, before you write a single operator: **errors as values**
+and **time**. That ordering is deliberate. Every later API in the SDK returns
+`holoscan::expected<T, Error>` instead of throwing, and every operator
+declares a temporal contract that tells the runtime when it may run. Learn
+those two vocabularies up front and the rest of the track reads naturally.
 
-## 2. Setup the SDK and your platform
+## Prerequisites
 
-Start with [installing the SDK](/holoscan/sdk-user-guide/setup/sdk-installation). If you have a need for it, you can go through additional [recommended setups](/holoscan/sdk-user-guide/setup/additional-setup) to achieve peak performance, or [setup additional sensors](/holoscan/sdk-user-guide/setup/third-party-hardware-setup) from NVIDIA's partners.
+- **Linux** (x86_64 or aarch64).
+- A **C++20 toolchain** and CMake.
+- A **CUDA-capable NVIDIA GPU** — optional until the final chapter
+  (Tensors 101); everything before it runs on the CPU.
+- The SDK installed — follow
+  [SDK installation](/holoscan/sdk-user-guide/setup/sdk-installation) first
+  if you have not.
 
-## 3. Learn the framework
+## The chapter sequence
 
-1. Start with the [Core Concepts](/holoscan/sdk-user-guide/using-the-sdk/holoscan-core) to understand the technical terms used in this guide, and the overall behavior of the framework.
-2. Learn how to use the SDK in one of two ways (or both), based on your preference:
-   a. Going through the [Holoscan by Example](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example) tutorial which will build your knowledge step-by-step by going over concrete minimal examples in the SDK. You can refer to each example source code and run instructions to inspect them and run them as you go.
-   b. Going through the condensed documentation that should cover all capabilities of the SDK using minimal mock code snippets, including [creating an application](/holoscan/sdk-user-guide/using-the-sdk/create-an-application), [creating a distributed application](/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application), and [creating operators](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator).
+Work through the chapters in order; each assumes the ones before it.
 
-## 4. Understand the reusable capabilities of the SDK
+1. [Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts) —
+   the three-phase model (compose → compile → run) and the vocabulary the
+   whole guide uses.
+2. [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values) —
+   `holoscan::expected<T, Error>`, branching on `ErrorCode`, and the
+   `HOLOSCAN_TRY` macro that keeps error-handling readable.
+3. [Time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks) —
+   how the runtime models time, and why every sample carries a timestamp.
+4. [Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator) —
+   an operator as three declarations: `setup()` for structure, `contract()`
+   for time, `compute()` for work.
+5. [Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters) —
+   declaring configuration with schemas so bad config fails before run.
+6. [Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph) —
+   wiring operators together through typed ports with `add_flow()`.
+7. [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check) —
+   `compile()` turns your composed graph into an execution plan, or returns a
+   rejected plan that tells you exactly why.
+8. [Running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping) —
+   starting the plan, observing it, and shutting down cleanly.
+9. [Your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline) —
+   assembling the camera + IMU fusion pipeline end to end, with its
+   multi-rate temporal contract.
+10. [Tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101) —
+    GPU payloads: borrowing tensors from preallocated pools with
+    `allocate_tensor()`, and why you never synchronize on the hot path.
 
-The Holoscan SDK does not only provide a framework to build and run applications, but also a set of reusable operators to facilitate implementing applications for streaming, AI, and other general domains.
+<Note>
+  **Why errors and time come first.** In Holoscan 5.0, failure handling and
+  temporal behavior are not advanced topics — they are the calling convention.
+  APIs return `expected` values you must branch on, and `compute()` never
+  reasons about time because `contract()` already did. Chapters 2 and 3 give
+  you those two lenses; every chapter after them assumes you have both.
+</Note>
 
-The list of existing operators is available [here](/holoscan/sdk-user-guide/operators/operators-and-extensions), which points to the C++ or Python API documentation for more details. Specific documentation is available for the [visualization](/holoscan/sdk-user-guide/operators/visualization) (codename: HoloViz) and [inference](/holoscan/sdk-user-guide/operators/inference) (codename: HoloInfer) operators.
+## Where to go afterward
 
-Additionally, [HoloHub](https://github.com/nvidia-holoscan/holohub) is a central repository for users and developers to share reusable operators and sample applications with the Holoscan community, extending the capabilities of the SDK:
-
-- Just like the SDK operators, the HoloHub operators can be used in your own Holoscan applications.
-- The HoloHub sample applications can be used as reference implementations to complete the examples available in the SDK.
-
-Take a glance at [HoloHub](https://github.com/nvidia-holoscan/holohub) to find components you might want to leverage in your application, improve upon existing work, or contribute your own additions to the Holoscan platform.
-
-## 5. Write and run your own application
-
-The steps above cover what is required to write your own application and run it.
-
-## 6. Master the details
-
-- Expand your understanding of the framework with details on the [logging utility](/holoscan/sdk-user-guide/using-the-sdk/logging) or the [data flow tracking](/holoscan/sdk-user-guide/performance/flow-tracking) benchmarking tool.
-- Learn more details on the configurable components that control the execution of your application, like [Schedulers](/holoscan/sdk-user-guide/components/schedulers), [Conditions](/holoscan/sdk-user-guide/components/conditions), and [Resources](/holoscan/sdk-user-guide/components/resources). (Advanced) These components are part of the GXF execution backend.
+When the track is complete, the fusion pipeline you built continues as the
+running example in
+[Building operators](/holoscan/sdk-user-guide/building-operators/operator-anatomy)
+and the full worked applications in
+[Holoscan by example](/holoscan/sdk-user-guide/examples/holoscan-by-example),
+including the `ea1_camera_imu_control` and `ea1_slow_fast_fusion` example
+apps that ship with the SDK.

@@ -17,10 +17,6 @@ init_globals() {
     export RUN_SCRIPT_FILE="$(readlink -f "${BASH_SOURCE[0]}")"
     export TOP=$(dirname "${RUN_SCRIPT_FILE}")
 
-    # Versions
-    export SUPPORTED_CUDA_VERSIONS=("12" "13")
-    export CUDA_DEFAULT_VERSION="12"
-
     # Executables
     export HOLOSCAN_PY_EXE=${HOLOSCAN_PY_EXE:-"python3"}
     export HOLOSCAN_DOCKER_EXE=${HOLOSCAN_DOCKER_EXE:-"docker"}
@@ -32,7 +28,6 @@ init_globals() {
 
     # Define default img and dir names
     export SDK_BUILD_IMG="holoscan-sdk-build"
-    export SDK_RUN_IMG="holoscan-sdk-run"
     export SDK_BUILD_DIR="build"
     export SDK_INSTALL_DIR="install"
 
@@ -91,7 +86,7 @@ get_boolean() {
     echo -n "${bool_out}"
 }
 
-# Archs, GPUs, CUDA =================================================================
+# Archs =========================================================================
 
 checkif_x86_64() {
     if [ $(get_host_arch) == "x86_64" ]; then
@@ -173,60 +168,14 @@ get_gpu_str() {
     echo -n "${gpu_str}"
 }
 
-get_host_gpu() {
-    if ! command -v nvidia-smi >/dev/null; then
-        c_echo_err Y "Could not find any GPU drivers on host. Defaulting build to target dGPU/CPU stack."
-        echo -n "dgpu"
-    elif nvidia-smi  2>/dev/null | grep nvgpu -q; then
-        echo -n "igpu"
-    else
-        echo -n "dgpu"
-    fi
-}
-
-is_cross_gpu() {
-    [ "$GPU" != $(get_host_gpu) ]
-}
-
-get_default_cuda_major_version() {
-    echo -n "${CUDA_DEFAULT_VERSION}"
-}
-
-validate_cuda_major_version() {
-    local cuda_major="${1:-}"
-    # Check if cuda_major is in the supported list
-    local found=0
-    for version in "${SUPPORTED_CUDA_VERSIONS[@]}"; do
-        if [[ "$cuda_major" == "$version" ]]; then
-            found=1
-            break
-        fi
-    done
-
-    if [[ $found -eq 0 ]]; then
-        c_echo_err R "Invalid CUDA version: '${cuda_major}'. Supported versions are: ${SUPPORTED_CUDA_VERSIONS[*]}"
-        return 1
-    fi
-
-    echo -n "${cuda_major}"
-}
-
+# Describe the particular target stack under build/test/development.
+# HSDK 5.x currently varies this by architecture only.
 get_build_flavor_str() {
-    local suffix="cu${CUDA_MAJOR}"
-    if [ "$ARCH" = "aarch64" ]; then
-        suffix+="-$ARCH-$GPU"
-    else
-        suffix+="-$ARCH"
-    fi
-    echo -n "$suffix"
+    echo -n "$ARCH"
 }
 
 get_build_img_name() {
     echo -n "${SDK_BUILD_IMG}-$(get_build_flavor_str)"
-}
-
-get_run_img_name() {
-    echo -n "${SDK_RUN_IMG}-$(get_build_flavor_str)"
 }
 
 get_build_dir() {
@@ -313,7 +262,7 @@ get_image_tag_flags() {
 
 install_python_dev_deps() {
     if [ -n "${VIRTUAL_ENV-}" ] || [ -n "${CONDA_PREFIX-}" ]; then
-        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.cu${CUDA_MAJOR}.txt
+        run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.txt
         run_command ${HOLOSCAN_PY_EXE} -m pip install -q -r ${TOP}/python/requirements.dev.txt
     else
         c_echo_err R "You must be in a virtual environment to install dependencies."
@@ -337,7 +286,7 @@ setup_cli_dev() {
     c_echo W "Setup Holoscan CLI development environment..."
 
     if [ -f "/.dockerenv" ]; then
-        c_echo_err "WARNING: devcontainer is not supported for CLI development"
+        c_echo_err "WARNING: containerized environments are not supported for CLI development"
         exit
     fi
 
@@ -376,7 +325,6 @@ clear_cache() {
 
     run_command rm -rf ${TOP}/.cache/ccache
     run_command rm -rf ${TOP}/.cache/cpm
-    run_command rm -rf ${TOP}/.cache/gxf
 
     # Clean up old build images, keeping only IDs associated with a ':latest' tag
     c_echo W "Cleaning up old '${SDK_BUILD_IMG}-*' images and docker buildx cache..."
@@ -466,11 +414,6 @@ build_image() {
         check_system_deps
     fi
 
-    # Error if requesting iGPU and x86_64 when cross-compiling
-    if [ "$ARCH" = "x86_64" ] && [ "$GPU" = "igpu" ]; then
-        fatal R "Can't combine 'x86_64' arch with 'igpu' GPU type"
-    fi
-
     # Docker tags (-t name:versions)
     local docker_tags=$(get_image_tag_flags $(get_build_img_name))
 
@@ -478,8 +421,6 @@ build_image() {
     local extra_args="$@"
     run_command $HOLOSCAN_DOCKER_EXE build \
         --build-arg BUILDKIT_INLINE_CACHE=1 \
-        --build-arg GPU_TYPE=${GPU} \
-        --build-arg CUDA_MAJOR=${CUDA_MAJOR} \
         --platform $(get_platform_str) \
         --network=host \
         ${NO_CACHE} \
@@ -493,9 +434,6 @@ build_desc() { c_echo 'Build the SDK with CMake
 This command will build the SDK with optional configuration arguments.
 
 Arguments:
-  --build_libtorch [true | false] : Build the SDK with libtorch support
-        Default: true
-        Associated environment variable: HOLOSCAN_BUILD_LIBTORCH
   --config : Use this option to specify additional CMake configuration options.
         Example: --config "-DHOLOSCAN_BUILD_EXAMPLES:BOOL=ON"
   --cudaarchs [native | all | <custom_arch_list>]
@@ -508,14 +446,20 @@ Arguments:
         Default: maximum (number of CPUs, using 'nproc')
         Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
   --buildpath, -d <build_directory> : Change the build path.
-        Default: build-<arch>[-<gpu>]
+        Default: build-<arch>
         Associated environment variable: CMAKE_BUILD_PATH
   --installprefix, -i <install_directory> : Specify the install directory
-        Default: install-<arch>[-<gpu>]
+        Default: install-<arch>
         Associated environment variable: CMAKE_INSTALL_PREFIX
+  --holomq-installprefix <install_directory> : Specify the HoloMQ install directory
+        Default: same as --installprefix
+        Associated environment variable: HOLOMQ_INSTALL_PREFIX
   --reconfigure, -f: Force reconfiguration of the CMake project. By default CMake is only run if
         a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
         is needed.
+        Default: false
+  --clean-build : Remove build outputs before building while preserving the build directory
+        _deps subdirectory.
         Default: false
   --tidy [true | false] : Build the SDK with clang-tidy (will be slower)
         Default: false
@@ -523,9 +467,15 @@ Arguments:
   --tidy-headers [true | false] : Also check project headers with clang-tidy (requires --tidy true)
         Default: false
         Associated environment variable: HOLOSCAN_CLANG_TIDY_CHECK_HEADERS
+  --tidy-extra-checks <checks> : Append additional clang-tidy checks after the default list.
+        Example: --tidy-extra-checks "modernize-*"
+        Associated environment variable: HOLOSCAN_CLANG_TIDY_EXTRA_CHECKS
   --build-python [true | false] : Build the SDK without python support
         Default: true
         Associated environment variable: HOLOSCAN_BUILD_PYTHON
+  --build-benchmarks [true | false] : Build the SDK benchmark targets
+        Default: true
+        Associated environment variable: HOLOSCAN_BUILD_BENCHMARKS
   --sccache [true | false] : Use sccache for build caching (speeds up rebuilds)
         Default: true
         Associated environment variable: HOLOSCAN_USE_SCCACHE
@@ -540,7 +490,7 @@ build() {
 
     # Default cuda architecture
     local default_cuda_archs="native"
-    if is_cross_compiling || is_cross_gpu; then
+    if is_cross_compiling; then
         default_cuda_archs="all"
     fi
 
@@ -550,11 +500,14 @@ build() {
     local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
     local build_path="${CMAKE_BUILD_PATH:-$(get_build_dir)}"
     local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
+    local holomq_install_prefix="${HOLOMQ_INSTALL_PREFIX:-}"
     local reconfigure=false
-    local build_libtorch="${HOLOSCAN_BUILD_LIBTORCH:-ON}"
+    local clean_build=false
     local build_python="${HOLOSCAN_BUILD_PYTHON:-ON}"
+    local build_benchmarks="${HOLOSCAN_BUILD_BENCHMARKS:-ON}"
     local enable_clang_tidy="${HOLOSCAN_ENABLE_CLANG_TIDY:-OFF}"
     local clang_tidy_check_headers="${HOLOSCAN_CLANG_TIDY_CHECK_HEADERS:-OFF}"
+    local clang_tidy_extra_checks="${HOLOSCAN_CLANG_TIDY_EXTRA_CHECKS:-}"
     local use_sccache="${HOLOSCAN_USE_SCCACHE:-ON}"
     local config_args=""
 
@@ -596,15 +549,19 @@ build() {
             build_python_val=$(get_boolean "$2")
             if [ "$build_python_val" == "false" ]; then
                 build_python='OFF'
+            else
+                build_python='ON'
             fi
             reconfigure=true
             shift
             shift
         ;;
-        --build_libtorch)
-            build_libtorch_val=$(get_boolean "$2")
-            if [ "$build_libtorch_val" == "false" ]; then
-                build_libtorch='OFF'
+        --build-benchmarks)
+            build_benchmarks_val=$(get_boolean "$2")
+            if [ "$build_benchmarks_val" == "false" ]; then
+                build_benchmarks='OFF'
+            else
+                build_benchmarks='ON'
             fi
             reconfigure=true
             shift
@@ -624,6 +581,12 @@ build() {
             if [ "$tidy_headers_val" == "true" ]; then
                 clang_tidy_check_headers='ON'
             fi
+            reconfigure=true
+            shift
+            shift
+        ;;
+        --tidy-extra-checks)
+            clang_tidy_extra_checks="$2"
             reconfigure=true
             shift
             shift
@@ -666,7 +629,17 @@ build() {
             shift
             shift
         ;;
+        --holomq-installprefix)
+            holomq_install_prefix="$2"
+            shift
+            shift
+        ;;
         --reconfigure|-f)
+            reconfigure=true
+            shift
+        ;;
+        --clean-build)
+            clean_build=true
             reconfigure=true
             shift
         ;;
@@ -684,7 +657,7 @@ build() {
     done
 
     # Error if requesting native cuda arch explicitly when cross-compiling
-    if [ "$cuda_archs" = "native" ] && (is_cross_compiling || is_cross_gpu); then
+    if [ "$cuda_archs" = "native" ] && is_cross_compiling; then
         fatal Y "Cross-compiling " W "(host: $(get_host_arch), target: $ARCH)" R " does not support 'native' cuda architecture."
     fi
 
@@ -694,6 +667,10 @@ build() {
         runtime=nvidia
     else
         runtime=runc
+    fi
+
+    if [ -z "${holomq_install_prefix}" ]; then
+        holomq_install_prefix="${install_prefix}"
     fi
 
     # DOCKER PARAMETERS
@@ -768,19 +745,39 @@ build() {
         -u $(id -u):$(id -g) \
         -v ${TOP}:/workspace/holoscan-sdk \
         -w /workspace/holoscan-sdk \
+        -e CARGO_HOME=/workspace/holoscan-sdk/.cache/cargo \
         ${sccache_dir_opt} \
         ${sccache_memcached_opt} \
         ${extra_args[@]} \
         $img \
         -c "set -e
+            if ${clean_build} && [ -d '${build_path}' ]; then
+                # Only clean repo-local CMake build trees; preserve _deps to avoid refetching.
+                build_real=\$(realpath '${build_path}')
+                source_real=\$(realpath .)
+                case \"\${build_real}\" in
+                    \"\${source_real}\"/build*) ;;
+                    *)
+                        echo \"Refusing --clean-build for non-build directory: \${build_real}\" >&2
+                        exit 1
+                        ;;
+                esac
+                if [ -n \"\$(find \"\${build_real}\" -mindepth 1 -maxdepth 1 -print -quit)\" ] \
+                    && [ ! -f \"\${build_real}/CMakeCache.txt\" ] \
+                    && [ ! -f \"\${build_real}/build.ninja\" ] \
+                    && [ ! -d \"\${build_real}/_deps\" ]; then
+                    echo \"Refusing --clean-build for directory without CMake build markers: \${build_real}\" >&2
+                    exit 1
+                fi
+                find \"\${build_real}\" -mindepth 1 -maxdepth 1 ! -name _deps -exec rm -rf -- {} +
+            fi
             if [ ! -f '${build_path}/build.ninja' ] || ${reconfigure} ; then
                 cmake -S . -B ${build_path} -G Ninja \
-                    -D HOLOSCAN_CUDA_MAJOR_VERSION=${CUDA_MAJOR} \
-                    -D HOLOSCAN_BUILD_LIBTORCH=${build_libtorch} \
                     -D HOLOSCAN_BUILD_PYTHON=${build_python} \
-                    -D HOLOSCAN_PYTHON_EXAMPLES=${build_python} \
+                    -D HOLOSCAN_BUILD_BENCHMARKS=${build_benchmarks} \
                     -D HOLOSCAN_ENABLE_CLANG_TIDY=${enable_clang_tidy} \
                     -D HOLOSCAN_CLANG_TIDY_CHECK_HEADERS=${clang_tidy_check_headers} \
+                    -D HOLOSCAN_CLANG_TIDY_EXTRA_CHECKS='${clang_tidy_extra_checks}' \
                     -D HOLOSCAN_USE_SCCACHE=${use_sccache} \
                     -D CMAKE_CUDA_ARCHITECTURES='${cuda_archs}' \
                     -D CMAKE_BUILD_TYPE=${build_type} \
@@ -792,118 +789,38 @@ build() {
             fi
 
             # Install Holoscan SDK and its dependencies
+            install_component_if_present() {
+                component=\"\$1\"
+                prefix=\"\${2:-${install_prefix}}\"
+                if grep -Rqs --include=cmake_install.cmake \"CMAKE_INSTALL_COMPONENT.*\\\"\${component}\\\"\" \"${build_path}\"; then
+                    cmake --install ${build_path} --prefix \"\${prefix}\" --component \"\${component}\"
+                else
+                    echo \"Skipping install component \${component}; component was not generated.\"
+                fi
+            }
+
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan
             cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-core
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_extensions
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-examples
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_libs
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-gxf_bins
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-modules
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-dependencies
-            cmake --install ${build_path} --prefix ${install_prefix} --component holoscan-python_libs
-            cmake --install ${build_path} --prefix ${install_prefix} --component cli11
-            cmake --install ${build_path} --prefix ${install_prefix} --component concurrentqueue
-            cmake --install ${build_path} --prefix ${install_prefix} --component dlpack
-            cmake --install ${build_path} --prefix ${install_prefix} --component fmt_core
-            cmake --install ${build_path} --prefix ${install_prefix} --component matx
-            cmake --install ${build_path} --prefix ${install_prefix} --component nvtx3
-            cmake --install ${build_path} --prefix ${install_prefix} --component rapids_logger
-            cmake --install ${build_path} --prefix ${install_prefix} --component rmm
-            cmake --install ${build_path} --prefix ${install_prefix} --component spdlog
-            cmake --install ${build_path} --prefix ${install_prefix} --component tl-expected
-            cmake --install ${build_path} --prefix ${install_prefix} --component ucxx
-            # CCCL libraries
-            cmake --install ${build_path} --prefix ${install_prefix} --component CCCL
-            cmake --install ${build_path} --prefix ${install_prefix} --component CUB
-            cmake --install ${build_path} --prefix ${install_prefix} --component cudax
-            cmake --install ${build_path} --prefix ${install_prefix} --component libcudacxx
-            cmake --install ${build_path} --prefix ${install_prefix} --component Thrust
-
-            # Install Holoscan Sensor Bridge (if enabled)
-            if grep -q "HOLOSCAN_BUILD_HOLOLINK:BOOL=ON" ${build_path}/CMakeCache.txt; then
-                hololink_install_prefix=${install_prefix}/../install-hololink
-                mkdir -p \${hololink_install_prefix}
-                hololink_install_prefix=\$(realpath \${hololink_install_prefix})
-                for component in \
-                    hololink-camera-sensor \
-                    hololink-cmake \
-                    hololink-common \
-                    hololink-core \
-                    hololink-emulation \
-                    hololink-emulation-sensors \
-                    hololink-examples \
-                    hololink-operators \
-                    hololink-python_libs \
-                    hololink-python_tools \
-                    hololink-roce-operators \
-                    hololink-scripts \
-                    hololink-sensors \
-                    hololink-tools
-                do
-                    cmake --install ${build_path} --prefix \${hololink_install_prefix} --component \$component
-                done
-             else
-                echo \"Hololink is not built, skipping installation\"
+            install_component_if_present holoscan-config
+            install_component_if_present holoscan-config-io
+            install_component_if_present holoscan-params
+            install_component_if_present holoscan-params-io
+            install_component_if_present holoscan-experimental-params-web-tuner
+            install_component_if_present holoscan-examples
+            install_component_if_present holoscan-benchmarks
+            install_component_if_present holoscan-dependencies
+            # Install the iceoryx2 C++ and Rust FFI libraries required by Core and HoloMQ.
+            install_component_if_present holomq-iceoryx2-libraries
+            # Install iceoryx2 CMake package metadata required by downstream HoloMQ consumers.
+            install_component_if_present dev
+            if [ '${holomq_install_prefix}' != '${install_prefix}' ]; then
+                echo 'Installing HoloMQ package artifacts to ${holomq_install_prefix}'
+            fi
+            install_component_if_present holomq '${holomq_install_prefix}'
+            if [ \"${build_python}\" != 'OFF' ]; then
+                install_component_if_present holoscan-python_libs
             fi
         "
-}
-
-build_run_image_desc() { c_echo 'Build the runtime image
-
-Build a lightweight docker image meant for running applications only.
-
-Arguments:
-  --cpp : Only build with C++ dependencies
-  --cpp-no-mkl : (x86_64 only) Only build with C++ dependencies apart from MKL (torch dependency)
-'
-}
-
-build_run_image() {
-    # Prerequisite steps
-    if [ "$DO_STANDALONE" != "true" ]; then
-        build $@
-    fi
-
-    # Parse args
-    local stage="runtime_cpp_py"
-    local extra_args=""
-    while [[ $# -gt 0 ]]; do
-    case $1 in
-        --cpp)
-            stage="runtime_cpp"
-            shift
-        ;;
-        --cpp-no-mkl)
-            stage="runtime_cpp_no_mkl"
-            shift
-        ;;
-        *)
-            extra_args+=("$1")
-            shift
-        ;;
-    esac
-    done
-
-    # Current build image to copy from some stages
-    local current_build_img="$(get_build_img_name):$(get_git_sha)"
-
-    # Run image tags (-t name:versions)
-    local docker_tags=$(get_image_tag_flags $(get_run_img_name))
-
-    # Build the runtime image
-    run_command $HOLOSCAN_DOCKER_EXE build \
-        --build-arg BUILDKIT_INLINE_CACHE=1 \
-        --build-arg BUILD_IMAGE=${current_build_img} \
-        --build-arg HOST_INSTALL_DIR=$(get_install_dir) \
-        --build-arg GPU_TYPE=${GPU} \
-        --platform $(get_platform_str) \
-        --network=host \
-        --target ${stage} \
-        ${NO_CACHE} \
-        ${docker_tags} \
-        ${extra_args[@]} \
-        -f ${TOP}/runtime_docker/Dockerfile \
-        ${TOP}
 }
 
 #===============================================================================
@@ -912,8 +829,10 @@ build_run_image() {
 
 lint_desc() { c_echo 'Lint the repository (via pre-commit)
 
-Runs all pre-commit hooks (copyright, ruff, cpplint, cmakelint, codespell, markdownlint)
-on the whole repo. Configuration is in .pre-commit-config.yaml at repo root.
+Runs all ordinary pre-commit hooks on the whole repo, including copyright,
+formatting, lint, header guard, and ABI/export policy checks. Hooks assigned to
+the manual stage run only when explicitly requested. Configuration is in
+.pre-commit-config.yaml at repo root.
 
 pre-commit is resolved automatically:
   1. uvx pre-commit  -- if uvx (from uv) is available (isolated, no pip pollution)
@@ -928,6 +847,7 @@ Examples:
   ./run lint                                    # all hooks, all files
   ./run lint update-notice-files --all-files    # single hook, all files
   ./run lint ruff-check --all-files             # single hook, all files
+  ./run lint check-design-requirements-manifest --hook-stage manual --all-files
 '
 }
 lint() {
@@ -1046,15 +966,12 @@ test() {
         local run_headless=""
     fi
 
-    # Give the ctest container its own /dev/shm (overridable via the environment).
-    # launch()'s default --ipc=host shares the CI Docker-in-Docker host's 64 MB
-    # /dev/shm and ignores --shm-size, so the integrated HSB (Holoscan Sensor
-    # Bridge) Python tests exhaust it on import (ENOSPC, masquerading as a full
-    # disk). A private namespace with --shm-size mirrors HSB's standalone CI
-    # (ci/ci.sh: --shm-size=1gb, no --ipc=host); UCX still works via CAP_SYS_PTRACE.
-    : "${HOLOSCAN_DOCKER_IPC:=private}"
-    : "${HOLOSCAN_DOCKER_SHM_SIZE:=1gb}"
-    export HOLOSCAN_DOCKER_IPC HOLOSCAN_DOCKER_SHM_SIZE
+    local build_dir="$(get_build_dir)"
+    local ctest_file="${TOP}/${build_dir}/CTestTestfile.cmake"
+    if [[ "${options}" != *"-S "* && -f "${TOP}/${build_dir}/CMakeCache.txt" && ! -f "${ctest_file}" ]]; then
+        c_echo W "No CTest tests are registered in ${build_dir}; skipping test execution."
+        return 0
+    fi
 
     # Run ctest and capture output while also displaying it in real-time
     local ctest_output
@@ -1064,7 +981,7 @@ test() {
     local temp_output=$(mktemp)
 
     # Run ctest and tee output to both console and temp file
-    launch $(get_build_dir) \
+    launch "${build_dir}" \
         --init \
         --cap-drop=NET_BIND_SERVICE \
         ${extra_args[@]} \
@@ -1085,6 +1002,464 @@ test() {
 }
 
 #===============================================================================
+# Section: Benchmark
+#===============================================================================
+
+bench_desc() { c_echo 'List, build, or execute benchmark cases
+
+This command discovers CTest entries labeled "benchmark", then runs the matching
+benchmark binaries directly inside the build container so Google Benchmark output
+is not prefixed by CTest. If benchmark tests are not registered yet, it can
+reconfigure and build benchmark targets automatically.
+
+Arguments:
+
+  --list                    List registered benchmark cases instead of running them
+  --name, -n <regex>        Name of benchmark(s) to execute. Accepts aliases,
+                            full CTest names, regex, and wildcards like core_*.
+                            Can be repeated.
+                            Default: all benchmarks
+  --ctest                   Run through CTest instead of executing benchmark binaries directly
+  --verbose, -v             Print verbose CTest output in --ctest mode
+  --quiet                   Suppress verbose CTest output in --ctest mode
+  --type <type>             Benchmark build type: release, rel-debug, or debug
+                            Default: release
+  --timeout, -t <seconds>   CTest timeout in seconds
+                            Default: 480
+  --options, -o <opts>      Extra flags to pass to CTest
+                            Default: None
+  --benchmark-args <args>   Extra Google Benchmark arguments appended to each benchmark
+  --output-json <path>      Write Google Benchmark JSON output to a workspace-relative path
+  --check-system            Report host CPU governor and ASLR benchmark-noise settings
+  --stable-system           Temporarily set host CPU governors to performance and disable ASLR
+                            while benchmarks run, then restore settings. Requires cached sudo.
+  --rebuild                 Reconfigure and rebuild benchmark targets before running
+  --no-build                Do not auto-build missing benchmark targets
+  --no-xvfb                 Do not run through Xvfb when DISPLAY is unset
+
+Examples:
+  # Show registered benchmark aliases and their CTest names.
+  ./run bench --list
+
+  # Build missing benchmark targets and run all benchmarks.
+  ./run bench
+
+  # Run one benchmark by its friendly alias.
+  ./run bench --name core_hello
+
+  # Run benchmarks matching a shell-style wildcard.
+  ./run bench --name core_*
+
+  # Select multiple benchmarks by repeating --name.
+  ./run bench --name core_hello --name BENCHMARK_CORE_HELLO
+
+  # Run one benchmark by its full CTest name.
+  ./run bench --name BENCHMARK_CORE_HELLO
+
+  # Report host CPU governor and ASLR settings that can add benchmark noise.
+  ./run bench --check-system
+
+  # Temporarily reduce host-side benchmark noise while running one benchmark.
+  ./run bench --stable-system --name core_hello
+
+  # Run a longer repeated benchmark and report aggregate statistics only.
+  ./run bench --stable-system --name core_hello \
+    --benchmark-args "--benchmark_min_time=1s --benchmark_repetitions=10 --benchmark_report_aggregates_only=true"
+
+  # Write Google Benchmark JSON output while keeping the terminal table visible.
+  ./run bench --output-json benchmark.json
+'
+}
+print_benchmark_list_guidance() {
+    local ctest_output="$1"
+    local found=false
+
+    echo
+    c_echo B "Available benchmark aliases"
+    while IFS= read -r line; do
+        if [[ "${line}" =~ Test[[:space:]]+#[0-9]+:[[:space:]]+([A-Za-z0-9_./:-]+) ]]; then
+            local ctest_name="${BASH_REMATCH[1]}"
+            local benchmark_alias="${ctest_name#BENCHMARK_}"
+            benchmark_alias="${benchmark_alias,,}"
+            found=true
+            c_echo Y "  ${benchmark_alias}" W " (${ctest_name})"
+            echo "    Run:  ./run bench --name ${benchmark_alias}"
+            echo "    JSON: ./run bench --name ${benchmark_alias} --output-json benchmark-${benchmark_alias}.json"
+        fi
+    done <<< "${ctest_output}"
+
+    if [ "${found}" != true ]; then
+        c_echo W "  No benchmark aliases found in CTest output."
+        return 1
+    fi
+}
+benchmark_filter_to_regex() {
+    local filter="$1"
+    local glob_regex=""
+    local i
+
+    for ((i = 0; i < ${#filter}; i++)); do
+        local char="${filter:i:1}"
+        case "${char}" in
+            '*')
+                glob_regex+=".*"
+            ;;
+            '?')
+                glob_regex+="."
+            ;;
+            '.'|'+'|'^'|'$'|'('|')'|'{'|'}'|'|'|'['|']'|'\\')
+                glob_regex+="\\${char}"
+            ;;
+            *)
+                glob_regex+="${char}"
+            ;;
+        esac
+    done
+
+    if [ "${glob_regex}" = "${filter}" ]; then
+        echo -n "${filter}|${filter^^}"
+    else
+        echo -n "${filter}|${filter^^}|${glob_regex}|${glob_regex^^}"
+    fi
+}
+build_benchmark_name_regex() {
+    local regex_parts=()
+
+    for filter in "$@"; do
+        if [ -z "${filter}" ] || [ "${filter}" = "*" ] || [ "${filter,,}" = "all" ]; then
+            echo -n ""
+            return 0
+        fi
+        regex_parts+=("$(benchmark_filter_to_regex "${filter}")")
+    done
+
+    local IFS="|"
+    echo -n "${regex_parts[*]}"
+}
+benchmark_check_system() {
+    c_echo B "Benchmark host stability checks"
+
+    if [ -r /proc/sys/kernel/randomize_va_space ]; then
+        local aslr_value
+        aslr_value="$(cat /proc/sys/kernel/randomize_va_space)"
+        if [ "${aslr_value}" = "0" ]; then
+            c_echo G "  ASLR: disabled (kernel.randomize_va_space=0)"
+        else
+            c_echo Y "  ASLR: enabled (kernel.randomize_va_space=${aslr_value})"
+            echo "        For lower-noise benchmarks, run with --stable-system or temporarily set:"
+            echo "        sudo sysctl kernel.randomize_va_space=0"
+        fi
+    else
+        c_echo Y "  ASLR: unable to read /proc/sys/kernel/randomize_va_space"
+    fi
+
+    local governors=()
+    local governor_file
+    for governor_file in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        [ -e "${governor_file}" ] || continue
+        governors+=("$(cat "${governor_file}")")
+    done
+
+    if [ ${#governors[@]} -eq 0 ]; then
+        c_echo Y "  CPU governor: unavailable on this host"
+        return 0
+    fi
+
+    local unique_governors
+    unique_governors="$(printf "%s\n" "${governors[@]}" | sort -u | tr '\n' ' ')"
+    if [ "${unique_governors}" = "performance " ]; then
+        c_echo G "  CPU governor: performance"
+    else
+        c_echo Y "  CPU governor(s): ${unique_governors}"
+        echo "        For lower-noise benchmarks, run with --stable-system or temporarily set governors to performance."
+    fi
+}
+benchmark_restore_stable_system() {
+    local state_file="${1:-}"
+    [ -n "${state_file}" ] && [ -f "${state_file}" ] || return 0
+
+    local kind path value
+    while IFS=$'\t' read -r kind path value; do
+        case "${kind}" in
+            ASLR)
+                sudo -n sysctl -w "kernel.randomize_va_space=${value}" >/dev/null || true
+            ;;
+            GOVERNOR)
+                if [ -e "${path}" ]; then
+                    echo "${value}" | sudo -n tee "${path}" >/dev/null || true
+                fi
+            ;;
+        esac
+    done < "${state_file}"
+    rm -f "${state_file}"
+    c_echo W "Restored host benchmark stability settings."
+}
+benchmark_apply_stable_system() {
+    local state_file="$1"
+
+    if ! sudo -n true 2>/dev/null; then
+        c_echo_err R "--stable-system requires cached sudo credentials."
+        c_echo_err W "Run 'sudo -v' on the host, then retry ./run bench --stable-system ..."
+        return 1
+    fi
+
+    if [ -r /proc/sys/kernel/randomize_va_space ]; then
+        local aslr_value
+        aslr_value="$(cat /proc/sys/kernel/randomize_va_space)"
+        printf "ASLR\tkernel.randomize_va_space\t%s\n" "${aslr_value}" >> "${state_file}"
+        if [ "${aslr_value}" != "0" ]; then
+            sudo -n sysctl -w kernel.randomize_va_space=0 >/dev/null
+        fi
+    fi
+
+    local governor_file
+    for governor_file in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        [ -e "${governor_file}" ] || continue
+        local governor
+        governor="$(cat "${governor_file}")"
+        printf "GOVERNOR\t%s\t%s\n" "${governor_file}" "${governor}" >> "${state_file}"
+        if [ "${governor}" != "performance" ]; then
+            echo performance | sudo -n tee "${governor_file}" >/dev/null
+        fi
+    done
+
+    c_echo W "Applied temporary host benchmark stability settings. They will be restored when this command exits."
+}
+bench() {
+    local list_only=false
+    local test_regex_flag=""
+    local verbose="--verbose"
+    local timeout=480
+    local options=""
+    local benchmark_args=""
+    local output_json=""
+    local rebuild=false
+    local no_build=false
+    local no_xvfb=""
+    local use_ctest=false
+    local check_system=false
+    local stable_system=false
+    local bench_build_type="$(get_buildtype_str release)"
+    local name_filters=()
+    local extra_args=()
+
+    while [[ $# -gt 0 ]]; do
+    case $1 in
+        --list)
+            list_only=true
+            shift
+        ;;
+        --name|-n)
+            name_filters+=("$2")
+            shift
+            shift
+        ;;
+        --verbose|-v)
+            verbose="--verbose"
+            shift
+        ;;
+        --ctest)
+            use_ctest=true
+            shift
+        ;;
+        --check-system)
+            check_system=true
+            shift
+        ;;
+        --stable-system)
+            stable_system=true
+            shift
+        ;;
+        --quiet)
+            verbose=""
+            shift
+        ;;
+        --type)
+            bench_build_type="$(get_buildtype_str "$2")"
+            rebuild=true
+            shift
+            shift
+        ;;
+        --timeout|-t)
+            timeout="$2"
+            shift
+            shift
+        ;;
+        --options|-o)
+            options="$2"
+            shift
+            shift
+        ;;
+        --benchmark-args)
+            benchmark_args="$2"
+            shift
+            shift
+        ;;
+        --output-json)
+            output_json="$2"
+            shift
+            shift
+        ;;
+        --rebuild)
+            rebuild=true
+            shift
+        ;;
+        --no-build)
+            no_build=true
+            shift
+        ;;
+        --no-xvfb)
+            no_xvfb="--no-xvfb"
+            shift
+        ;;
+        *)
+            extra_args+=("$1")
+            shift
+        ;;
+    esac
+    done
+
+    if [ "${check_system}" = true ]; then
+        benchmark_check_system
+        return 0
+    fi
+
+    if [ "${stable_system}" = true ]; then
+        export BENCHMARK_STABLE_STATE_FILE="$(mktemp)"
+        trap 'benchmark_restore_stable_system "${BENCHMARK_STABLE_STATE_FILE:-}"; unset BENCHMARK_STABLE_STATE_FILE' EXIT
+        benchmark_apply_stable_system "${BENCHMARK_STABLE_STATE_FILE}"
+        export HOLOSCAN_BENCHMARK_DISABLE_ASLR=1
+        extra_args+=("-e" "HOLOSCAN_BENCHMARK_DISABLE_ASLR")
+        extra_args+=("--security-opt" "seccomp=unconfined")
+    fi
+
+    local benchmark_name_regex
+    benchmark_name_regex="$(build_benchmark_name_regex "${name_filters[@]}")"
+    if [ -n "${benchmark_name_regex}" ]; then
+        test_regex_flag="-R '${benchmark_name_regex}'"
+        export HOLOSCAN_BENCHMARK_REGEX="${benchmark_name_regex}"
+        extra_args+=("-e" "HOLOSCAN_BENCHMARK_REGEX")
+    fi
+    if [ "${list_only}" = true ]; then
+        verbose=""
+    fi
+
+    local build_dir="$(get_build_dir)"
+    local ctest_file="${TOP}/${build_dir}/CTestTestfile.cmake"
+    local benchmark_ctest_dir="${TOP}/${build_dir}/benchmark"
+    local benchmark_ctest_registered=false
+    if [ -f "${ctest_file}" ] && [ -d "${benchmark_ctest_dir}" ] \
+        && grep -Rqs "LABELS.*benchmark" "${benchmark_ctest_dir}"; then
+        benchmark_ctest_registered=true
+    fi
+
+    local cmake_cache="${TOP}/${build_dir}/CMakeCache.txt"
+    if [ -f "${cmake_cache}" ]; then
+        local existing_build_type
+        existing_build_type="$(grep -E '^CMAKE_BUILD_TYPE:STRING=' "${cmake_cache}" | cut -d= -f2 || true)"
+        if [ -n "${existing_build_type}" ] && [ "${existing_build_type}" != "${bench_build_type}" ]; then
+            if [ "${no_build}" = true ]; then
+                c_echo_err R "Benchmark build type is ${existing_build_type}, but ${bench_build_type} is requested."
+                c_echo_err W "Rebuild with: ./run bench --rebuild --type ${bench_build_type,,}"
+                return 1
+            fi
+            c_echo W "Benchmark build type is ${existing_build_type}; reconfiguring as ${bench_build_type}."
+            rebuild=true
+        fi
+    fi
+
+    if [ "${rebuild}" = true ] || [ "${benchmark_ctest_registered}" != true ]; then
+        if [ "${no_build}" = true ]; then
+            c_echo_err R "No benchmark tests are registered in ${build_dir}."
+            c_echo_err W "Rebuild with: ./run build --build-benchmarks true --reconfigure"
+            return 1
+        fi
+        c_echo W "Benchmark tests are not registered; configuring and building benchmark targets."
+        build \
+            --build-benchmarks true \
+            --build-python false \
+            --sccache false \
+            --type "${bench_build_type}" \
+            --reconfigure \
+            --config "-DHOLOSCAN_BUILD_EXAMPLES:BOOL=OFF" \
+            --config "-DHOLOSCAN_BUILD_TESTS:BOOL=OFF"
+    fi
+
+    local benchmark_build_cmd="cmake --build . --target holoscan-benchmark-targets"
+    if [ "${no_build}" = true ]; then
+        benchmark_build_cmd=""
+    fi
+
+    if [ -n "${output_json}" ]; then
+        case "${output_json}" in
+            /*)
+                c_echo_err R "--output-json must be a workspace-relative path: ${output_json}"
+                return 1
+            ;;
+        esac
+        local output_dir="${output_json%/*}"
+        if [ "${output_dir}" != "${output_json}" ]; then
+            mkdir -p "${TOP}/${output_dir}"
+        fi
+        benchmark_args="${benchmark_args} --benchmark_out=/workspace/holoscan-sdk/${output_json} --benchmark_out_format=json"
+    fi
+
+    if [ -n "${benchmark_args}" ]; then
+        export HOLOSCAN_BENCHMARK_ARGS="${benchmark_args}"
+        extra_args+=("-e" "HOLOSCAN_BENCHMARK_ARGS")
+    fi
+
+    local ctest_mode=""
+    local direct_list_arg=""
+    if [ "${list_only}" = true ]; then
+        ctest_mode="-N"
+        direct_list_arg="--list"
+    fi
+
+    local temp_output=$(mktemp)
+    if [ "${use_ctest}" = true ]; then
+        launch "${build_dir}" \
+            --init \
+            ${extra_args[@]} \
+            ${no_xvfb} \
+            --run-cmd "${benchmark_build_cmd:+${benchmark_build_cmd} && }ctest . ${ctest_mode} -L benchmark ${test_regex_flag} --timeout ${timeout} --output-on-failure ${verbose} ${options}" 2>&1 | tee "$temp_output"
+    else
+        launch "${build_dir}" \
+            --init \
+            ${extra_args[@]} \
+            ${no_xvfb} \
+            --run-cmd "${benchmark_build_cmd:+${benchmark_build_cmd} && }python3 /workspace/holoscan-sdk/benchmark/run_benchmark.py --run-ctest-benchmarks ${direct_list_arg}" 2>&1 | tee "$temp_output"
+    fi
+
+    local ctest_exit_code
+    local ctest_output
+    ctest_exit_code=${PIPESTATUS[0]}
+    ctest_output=$(cat "$temp_output")
+    rm -f "$temp_output"
+
+    if echo "$ctest_output" | grep -q "No tests were found"; then
+        c_echo_err R "Error: No benchmark tests were found!"
+        return 1
+    fi
+
+    if [ "${use_ctest}" = true ] && [ "${list_only}" = true ]; then
+        print_benchmark_list_guidance "${ctest_output}"
+    fi
+
+    if [ -n "${output_json}" ] && [ -f "${TOP}/${output_json}" ]; then
+        c_echo G "Benchmark JSON written to ${output_json}"
+    fi
+
+    if [ "${stable_system}" = true ]; then
+        benchmark_restore_stable_system "${BENCHMARK_STABLE_STATE_FILE:-}"
+        trap - EXIT
+        unset BENCHMARK_STABLE_STATE_FILE
+    fi
+
+    return $ctest_exit_code
+}
+
+#===============================================================================
 # Section: Launch
 #===============================================================================
 
@@ -1094,7 +1469,7 @@ Note: any extraneous arguments not listed below will be added to `docker run`
 
 Arguments:
     $1 - Working directory (e.g, "install" => "/workspace/holoscan-sdk/install")
-         Default: build-<arch>[-<gpu>]
+         Default: build-<arch>
     --mount-point - Specifies the mount point (default is the directory of this script)
     --run-cmd - Specifies a command to run in the container instead of running interactively.
                 This is the equivalent of what you would put after `bash -c` with `docker run`.
@@ -1315,23 +1690,9 @@ launch() {
     #   Define path for cupy' kernel cache, needed since $HOME does
     #   not exist when running with `-u id:group`
     #
-    # --ipc=${HOLOSCAN_DOCKER_IPC:-host}
-    #   IPC namespace for the container. Defaults to `host` so UCX can share
-    #   memory with processes outside the container. Override with
-    #   HOLOSCAN_DOCKER_IPC (e.g. `private`) to give the container its own
-    #   /dev/shm whose size is then controlled by --shm-size (see below) instead
-    #   of inheriting the host's /dev/shm. The `test` command sets this to a
-    #   private namespace by default; see the note there.
-    #
-    # ${HOLOSCAN_DOCKER_SHM_SIZE:+--shm-size=...}
-    #   Size of the container's /dev/shm. Only takes effect with a non-`host`
-    #   IPC namespace (Docker ignores --shm-size under --ipc=host, where the
-    #   host's /dev/shm is used directly). Unset by default; set via
-    #   HOLOSCAN_DOCKER_SHM_SIZE.
-    #
+    # --ipc=host
     # --cap-add=CAP_SYS_PTRACE
-    #   Allow process tracing to enable shared memory transport for UCX
-    #   (UCX's cross-memory-attach relies on CAP_SYS_PTRACE, not on --ipc=host)
+    #   Allow process tracing for debugging and profiling tools
     #
     # --cap-add=CAP_SYS_NICE
     # --ulimit rtprio=10
@@ -1344,16 +1705,21 @@ launch() {
     #
     # Container launch command steps:
     # - Append the Holoscan bin folder to the existing `PATH` before running
-    # - Add the GXF module to PYTHONPATH before running
+    # - Preserve the image-provided PYTHONPATH before running
 
     img="$(get_build_img_name):$(get_git_sha)"
     pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
     ld_library_path=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
 
-    # Workaround: Required to support cuda-compat-13-0 on Jetpack 7.0 platform.
-    # Expected library mount path from Jetpack 7.0 with nvidia-container-toolkit
-    if [ "${CUDA_MAJOR}" -eq 13 ] && [ -e /usr/lib/aarch64-linux-gnu/nvidia ]; then
+    # JetPack 7.x uses the SBSA/dGPU CUDA stack, but nvidia-container-toolkit mounts some
+    # host driver libraries under this platform-specific path.
+    if [ -e /usr/lib/aarch64-linux-gnu/nvidia ]; then
         ld_library_path="/usr/lib/aarch64-linux-gnu/nvidia:${ld_library_path}"
+    fi
+
+    # If needed, create the build dir with user permissions
+    if [ "${working_dir}" = "$(get_build_dir)" ]; then
+        run_command mkdir -p "${TOP}/$(get_build_dir)"
     fi
 
     local launch_status=0
@@ -1378,9 +1744,9 @@ launch() {
         -e HOLOSCAN_LIB_PATH=${container_top}/${working_dir}/lib \
         -e HOLOSCAN_INPUT_PATH=${container_top}/data \
         -e HOLOSCAN_TESTS_DATA_PATH=${container_top}/tests/data \
+        -e CARGO_HOME=${container_top}/.cache/cargo \
         -e CUPY_CACHE_DIR=${container_top}/.cupy/kernel_cache \
-        --ipc=${HOLOSCAN_DOCKER_IPC:-host} \
-        ${HOLOSCAN_DOCKER_SHM_SIZE:+--shm-size=${HOLOSCAN_DOCKER_SHM_SIZE}} \
+        --ipc=host \
         --cap-add=CAP_SYS_PTRACE \
         --cap-add=CAP_SYS_NICE \
         --ulimit rtprio=10 \
@@ -1397,173 +1763,6 @@ launch() {
     fi
 
     return ${launch_status}
-}
-
-vscode_desc() { c_echo 'Launch VSCode in DevContainer
-
-Launch a VSCode instance in a Docker container with the development environment.
-If `cursor` command is available, Cursor will be launched instead.
-
-Arguments:
-  --parallel, -j <njobs> : Specify the maximum number of concurrent processes to be used when building
-        Default: maximum (number of CPUs, using 'nproc')
-        Associated environment variable: CMAKE_BUILD_PARALLEL_LEVEL
-  --ide <ide_name> : Specify the IDE to use
-        Default: vscode
-        Supported IDEs: vscode, vscode-insiders, cursor
-  --cmd <path> : Specify the command or path to the IDE binary (such as 'code')
-  --code: Launch VSCode for DevContainer. (using `code` command)
-  --cursor: Launch Cursor for DevContainer. (using `cursor` command)
-'
-}
-vscode() {
-    local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
-    local ide_name="vscode"
-    local ide_bin="code"
-
-    # Check if cursor command is available
-    if command -v cursor &> /dev/null; then
-        ide_name="cursor"
-        ide_bin="cursor"
-    fi
-
-    # Parse CLI arguments next
-    local args=("$@")
-    while [[ $# -gt 0 ]]; do
-        case $1 in
-            --parallel|-j)
-                build_njobs="$2"
-                shift 2
-                ;;
-            --ide)
-                ide_name="$2"
-                shift 2
-                if [ "$ide_name" == "vscode" ]; then
-                    ide_bin="code"
-                elif [ "$ide_name" == "vscode-insiders" ]; then
-                    ide_bin="code-insiders"
-                elif [ "$ide_name" == "cursor" ]; then
-                    ide_bin="cursor"
-                else
-                    ide_bin="$ide_name"
-                    echo_c W "Using binary '${ide_bin}' for VSCode-based IDE"
-                fi
-                ;;
-            --cmd)
-                ide_bin="$2"
-                shift 2
-                ;;
-            --code)
-                ide_name="vscode"
-                ide_bin="code"
-                shift
-                ;;
-            --cursor)
-                ide_name="cursor"
-                ide_bin="cursor"
-                shift
-                ;;
-            *)
-                # If $1 starts with a dash, it's an unknown option
-                if [[ $1 == -* ]]; then
-                    c_echo_err R "Unknown option: $1"
-                fi
-                shift
-                ;;
-        esac
-    done
-
-    if ! command -v "${ide_bin}" > /dev/null; then
-        fatal R "No '${ide_bin}' available. Please install " W "VSCode or Cursor" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
-    fi
-
-    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
-    local workspace_path_hex
-
-    if [ "${workspace_path}" != "${TOP}" ]; then
-        # Set the environment variable 'HOLOSCAN_PUBLIC_FOLDER' to the resolved path relative to the
-        # workspace path if the workspace path is different than the TOP folder so that
-        # the DevContainer can build files under the Holoscan source root folder while mounting the
-        # workspace folder.
-        run_command export HOLOSCAN_PUBLIC_FOLDER=$(realpath --relative-to=${workspace_path} ${TOP})
-    fi
-
-    # These environment variables will be passed to the container via `devcontainer.json`
-    # during the creation of the VSCode Docker dev container.
-    # - CMAKE_BUILD_PARALLEL_LEVEL: without this setting, `make` will not limit the number of jobs
-    # running concurrently, which could lead to memory exhaustion.
-    # - HOLOSCAN_BUILD_IMAGE: name of the base image of the docker dev container
-    export CMAKE_BUILD_PARALLEL_LEVEL=${build_njobs}
-    export HOLOSCAN_BUILD_IMAGE="$(get_build_img_name):$(get_git_sha)"
-
-    # Install the VSCode Remote Development extension.
-    # Checking if the extension is already installed is slow, so we always install it so that
-    # the installation can be skipped if the extension is already installed.
-    if [ "${ide_name}" == "vscode" ] || [ "${ide_name}" == "vscode-insiders" ]; then
-        run_command "${ide_bin}" --force --install-extension ms-vscode-remote.vscode-remote-extensionpack
-    elif [ "${ide_name}" == "cursor" ]; then
-        run_command "${ide_bin}" --force --install-extension anysphere.remote-containers
-        # Install C/C++ themes as a host extension
-        run_command "${ide_bin}" --force --install-extension ms-vscode.cpptools-themes
-    fi
-
-    # For now, there is no easy way to launch DevContainer directly from the command line.
-    # ('devcontainer' CLI is only available after manually executing 'Remote-Containers: Install devcontainer CLI' command)
-    # Here, we launch VSCode with .devcontainer/devcontainer.json with '--folder-uri' option to open the current folder in the container.
-    # See https://github.com/microsoft/vscode-remote-release/issues/2133
-    workspace_path_hex=$(echo -n ${workspace_path} | xxd -p)
-    workspace_path_hex="${workspace_path_hex//[[:space:]]/}"
-    c_echo B "Local workspace path: " W "${workspace_path} (${workspace_path_hex})"
-    run_command "${ide_bin}" --folder-uri "vscode-remote://dev-container+${workspace_path_hex}/workspace/holoscan-sdk"
-}
-
-vscode_remote_desc() { c_echo 'Attach to the existing VSCode DevContainer
-
-This command is useful when you want to attach to the existing VSCode DevContainer from the remote machine.
-
-1) Launch VSCode DevContainer on the local machine with "./run vscode" command.
-2) In the remote machine, launch VSCode Remote-SSH extension to connect to the local machine.
-3) Launch this command on the remote machine to attach to the existing VSCode DevContainer in the local machine.
-'
-}
-vscode_remote() {
-    if ! command -v code > /dev/null; then
-        fatal R "Please install " W "VSCode" R " to use VSCode DevContainer. Follow the instructions in https://code.visualstudio.com/Download"
-    fi
-
-    local workspace_path=$(git rev-parse --show-toplevel 2> /dev/null || dirname $(realpath -s $0))
-
-    local container_name=$(run_command $HOLOSCAN_DOCKER_EXE ps --filter "label=devcontainer.local_folder=${workspace_path}" --format "{{.Names}}" | head -1)
-    if [ -z "${container_name}" ]; then
-        fatal R "No DevContainer (with the label 'devcontainer.local_folder=${workspace_path}') is found in the local machine. Please launch VSCode DevContainer with " W "./run vscode" R " command first."
-    fi
-    c_echo W "Container name: " y "${container_name}"
-
-    # The following command is based on the information of the following issue:
-    #   https://github.com/microsoft/vscode-remote-release/issues/2133#issuecomment-618328138
-    python - > /tmp/holoscan_remote_uri.txt << EOF
-import json
-from urllib.parse import urlunparse
-from subprocess import check_output
-hostname = check_output("hostname" , shell=True).decode('utf-8').strip()
-remote_description = json.dumps({"containerName": f"/${container_name}", "settings":{"host": f"ssh://{hostname}"}})
-remote_uri = urlunparse(('vscode-remote', f'attached-container+{remote_description.encode("utf8").hex()}', '/workspace/holoscan-sdk', '', '', ''))
-print(remote_uri)
-EOF
-    local remote_uri=$(cat /tmp/holoscan_remote_uri.txt)
-    c_echo W "Remote URI: " y "${remote_uri}"
-
-    # VSCode's attached-container mode does not support forwarding SSH keys to the container well.
-    # For the reason, we need to copy SSH keys to the container so that the container can access
-    # the local machine's SSH keys.
-    c_echo W "Copying SSH keys to the container..."
-    for i in identity id_rsa id_ed25519 id_ed25519_sk id_dsa id_cdsa id_ecdsa_sk; do
-        if [ -e ~/.ssh/${i} ]; then
-            run_command $HOLOSCAN_DOCKER_EXE cp ~/.ssh/${i} ${container_name}:/home/holoscan/.ssh/
-        fi
-    done;
-
-    run_command code --folder-uri ${remote_uri}
 }
 
 #===============================================================================
@@ -1693,7 +1892,7 @@ get_unused_ports() {
     comm -23 \
     <(seq ${start} ${end} | sort) \
     <(ss -tan | awk '{print $4}' | while read line; do echo ${line##*\:}; done | grep '[0-9]\{1,5\}' | sort -u) \
-    | shuf | tail -n ${num_of_ports} # use tail instead head to avoid broken pipe in VSCode terminal
+    | shuf | tail -n ${num_of_ports} # use tail instead of head to avoid broken pipes in interactive terminals
 }
 
 newline() {
@@ -1808,12 +2007,6 @@ get_list_of_global_flags() {
     --arch, -a [amd64 | arm64]  : Specify the platform (for cross-compilation)
         Default: current host architecture ($(get_host_arch))
         Associated environment variable: HOLOSCAN_BUILD_ARCH
-    --gpu, -g [igpu | dgpu]     : Specify the GPU stack (integrated vs discrete) for arm64
-        Default: current host GPU ($(get_host_gpu))
-    --cuda, -cu [12 | 13]       : Specify the CUDA major version
-        Associated environment variable: HOLOSCAN_BUILD_GPU_TYPE
-        Default: ${CUDA_DEFAULT_VERSION}
-        Associated environment variable: HOLOSCAN_CUDA_MAJOR_VERSION
     "
 }
 
@@ -1854,10 +2047,14 @@ main() {
     fi
     local cmd=$1
     shift
+    if [ "${cmd}" = "-h" ] || [ "${cmd}" = "--help" ]; then
+        print_usage
+        return 0
+    fi
 
     # Parse args
     local args=()
-    unset ARCH GPU CUDA_MAJOR
+    unset ARCH
     while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
@@ -1881,16 +2078,6 @@ main() {
             shift
             shift
         ;;
-        -g|--gpu)
-            GPU=$(get_gpu_str $2)
-            shift
-            shift
-        ;;
-        -cu|--cuda)
-            CUDA_MAJOR=$(validate_cuda_major_version $2)
-            shift
-            shift
-        ;;
         *)
             args+=("$1")
             shift
@@ -1898,15 +2085,9 @@ main() {
     esac
     done
 
-    # Ensure arch and gpu are defined with defaults if not passed explicitly
+    # Ensure arch is defined with a default if not passed explicitly.
     if [ -z "${ARCH-}" ]; then
         ARCH=$(get_gnu_arch_str ${HOLOSCAN_BUILD_ARCH:-$(get_host_arch)})
-    fi
-    if [ -z "${GPU-}" ]; then
-        GPU=$(get_gpu_str ${HOLOSCAN_BUILD_GPU_TYPE:-$(get_host_gpu)})
-    fi
-    if [ -z "${CUDA_MAJOR-}" ]; then
-        CUDA_MAJOR=$(validate_cuda_major_version ${HOLOSCAN_CUDA_MAJOR_VERSION:-${CUDA_DEFAULT_VERSION}})
     fi
 
     # Run command

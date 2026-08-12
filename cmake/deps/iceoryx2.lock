@@ -1,0 +1,12 @@
+# holomq iceoryx2 upstream pin
+# Used by cmake/deps/iceoryx2.cmake.
+#
+# Patches: cmake/deps/patches/iceoryx2/
+# 0001-add-sample-released-handler.patch adds publisher SampleReleasedHandler.
+# 0002-add-sample-replaced-handler.patch adds per-recipient safe-overflow
+# SampleReplacedHandler callbacks.
+
+ICEORYX2_REPO="https://github.com/eclipse-iceoryx/iceoryx2.git"
+ICEORYX2_BASE_COMMIT="c837bf441419b3b0e7b295a02b0937f35aea5f7f"
+ICEORYX2_BASE_DATE="2026-05-04"
+ICEORYX2_BASE_SUBJECT="Merge pull request #1592 from ekxide/iox2-1578-harden-cleanup-process"

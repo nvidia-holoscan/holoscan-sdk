@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace holoscan.schema;
+
+table SchemaToolingSafeProbe {
+  sequence:ulong;
+}
+
+table SchemaToolingSelectedTensorProbe {
+  tensor:holoscan.schema.Tensor;
+}
+
+root_type SchemaToolingSafeProbe;

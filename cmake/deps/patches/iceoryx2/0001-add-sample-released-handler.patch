@@ -1,0 +1,653 @@
+diff --git a/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs b/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
+index 962ace22a..a0421f182 100644
+--- a/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
++++ b/iceoryx2-cal/src/resizable_shared_memory/dynamic.rs
+@@ -723,6 +723,19 @@ where
+                         segment_id),
+         }
+     }
++
++    fn bucket_chunk_header_ptr(&self, offset: PointerOffset) -> *const u8 {
++        let segment_id = SlotMapKey::new(offset.segment_id().value() as usize);
++        let state = self.state_mut();
++        match state.shared_memory_map.get(segment_id) {
++            Some(entry) => {
++                (offset.offset() + entry.shm.payload_start_address()) as *const u8
++            }
++            None => fatal_panic!(from self,
++                        "This should never happen! Unable to resolve chunk header pointer since the segment for {:?} does not exist.",
++                        offset),
++        }
++    }
+ }
+ 
+ impl<Allocator: ShmAllocator, Shm: SharedMemory<Allocator>> ResizableSharedMemory<Allocator, Shm>
+diff --git a/iceoryx2-cal/src/resizable_shared_memory/mod.rs b/iceoryx2-cal/src/resizable_shared_memory/mod.rs
+index f7dee6861..190424fb8 100644
+--- a/iceoryx2-cal/src/resizable_shared_memory/mod.rs
++++ b/iceoryx2-cal/src/resizable_shared_memory/mod.rs
+@@ -257,4 +257,8 @@ pub trait ResizableSharedMemoryForPoolAllocator<Shm: SharedMemory<PoolAllocator>
+ 
+     /// Returns the bucket size of the corresponding [`PoolAllocator`]
+     fn bucket_size(&self, segment_id: SegmentId) -> usize;
++
++    /// Returns the base address of the chunk (start of the iceoryx message header) for an
++    /// allocated [`PointerOffset`], matching [`ShmPointer::data_ptr`].
++    fn bucket_chunk_header_ptr(&self, offset: PointerOffset) -> *const u8;
+ }
+diff --git a/iceoryx2-cxx/include/iox2/iceoryx2.hpp b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
+index c938eeab3..a69e9008c 100644
+--- a/iceoryx2-cxx/include/iox2/iceoryx2.hpp
++++ b/iceoryx2-cxx/include/iox2/iceoryx2.hpp
+@@ -89,6 +89,7 @@
+ #include "iox2/sample.hpp"
+ #include "iox2/sample_mut.hpp"
+ #include "iox2/sample_mut_uninit.hpp"
++#include "iox2/sample_released_handler.hpp"
+ #include "iox2/server.hpp"
+ #include "iox2/server_details.hpp"
+ #include "iox2/server_error.hpp"
+diff --git a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
+index d91e68ed9..8298c6913 100644
+--- a/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
++++ b/iceoryx2-cxx/include/iox2/port_factory_publisher.hpp
+@@ -21,11 +21,13 @@
+ #include "iox2/internal/callback_context.hpp"
+ #include "iox2/internal/iceoryx2.hpp"
+ #include "iox2/publisher.hpp"
++#include "iox2/sample_released_handler.hpp"
+ #include "iox2/service_type.hpp"
+ #include "iox2/unable_to_deliver_handler.hpp"
+ #include "iox2/unable_to_deliver_strategy.hpp"
+ 
+ #include <cstdint>
++#include <memory>
+ 
+ namespace iox2 {
+ /// Factory to create a new [`Publisher`] port/endpoint for
+@@ -98,6 +100,13 @@ class PortFactoryPublisher {
+     /// data
+     auto set_unable_to_deliver_handler(UnableToDeliverHandler* handler) && -> PortFactoryPublisher&&;
+ 
++    /// Sets a [`SampleReleasedHandler`] invoked when a loaned sample's shared-memory bucket is
++    /// fully released on the publisher and is about to be returned to the pool.
++    /// The handler is moved into the builder and owned by the created [`Publisher`].
++    /// If the [`Publisher`], including send/loan paths, is used from multiple threads, the handler must be
++    /// thread-safe.
++    auto set_sample_released_handler(SampleReleasedHandler handler) && -> PortFactoryPublisher&&;
++
+     /// Creates a new [`Publisher`] or returns a [`PublisherCreateError`] on failure.
+     auto create() && -> bb::Expected<Publisher<S, Payload, UserHeader>, PublisherCreateError>;
+ 
+@@ -113,6 +122,7 @@ class PortFactoryPublisher {
+     bb::Optional<OverridePreallocationCallback> m_override_preallocation_callback;
+     bb::Optional<DegradationHandler* const> m_degradation_handler;
+     bb::Optional<UnableToDeliverHandler* const> m_unable_to_deliver_handler;
++    bb::Optional<SampleReleasedHandler> m_sample_released_handler;
+ };
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+@@ -157,6 +167,13 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_unable_to_deliver_
+     return std::move(*this);
+ }
+ 
++template <ServiceType S, typename Payload, typename UserHeader>
++inline auto PortFactoryPublisher<S, Payload, UserHeader>::set_sample_released_handler(
++    SampleReleasedHandler handler) && -> PortFactoryPublisher&& {
++    m_sample_released_handler.emplace(std::move(handler));
++    return std::move(*this);
++}
++
+ template <ServiceType S, typename Payload, typename UserHeader>
+ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Expected<Publisher<S, Payload, UserHeader>,
+                                                                                       PublisherCreateError> {
+@@ -190,6 +207,16 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+             static_cast<void*>(m_unable_to_deliver_handler.value()));
+     }
+ 
++    std::unique_ptr<SampleReleasedHandler> owned_sample_released_handler;
++    if (m_sample_released_handler.has_value()) {
++        owned_sample_released_handler =
++            std::make_unique<SampleReleasedHandler>(std::move(m_sample_released_handler.value()));
++        iox2_port_factory_publisher_builder_set_sample_released_handler(
++            &m_handle,
++            detail::sample_released_handler_delegate,
++            static_cast<void*>(owned_sample_released_handler.get()));
++    }
++
+     if (m_override_preallocation_callback.has_value()) {
+         // NOLINTNEXTLINE(cppcoreguidelines-owning-memory) must be a raw pointer - crosses FFI boundary
+         auto* callback = new OverridePreallocationCallback(m_override_preallocation_callback.value());
+@@ -205,7 +232,7 @@ inline auto PortFactoryPublisher<S, Payload, UserHeader>::create() && -> bb::Exp
+     auto result = iox2_port_factory_publisher_builder_create(m_handle, nullptr, &pub_handle);
+ 
+     if (result == IOX2_OK) {
+-        return Publisher<S, Payload, UserHeader>(pub_handle);
++        return Publisher<S, Payload, UserHeader>(pub_handle, std::move(owned_sample_released_handler));
+     }
+ 
+     return bb::err(bb::into<PublisherCreateError>(result));
+diff --git a/iceoryx2-cxx/include/iox2/publisher.hpp b/iceoryx2-cxx/include/iox2/publisher.hpp
+index be32dbefd..48a1d6c98 100644
+--- a/iceoryx2-cxx/include/iox2/publisher.hpp
++++ b/iceoryx2-cxx/include/iox2/publisher.hpp
+@@ -22,10 +22,12 @@
+ #include "iox2/publisher_error.hpp"
+ #include "iox2/sample_mut.hpp"
+ #include "iox2/sample_mut_uninit.hpp"
++#include "iox2/sample_released_handler.hpp"
+ #include "iox2/service_type.hpp"
+ #include "iox2/unique_port_id.hpp"
+ 
+ #include <cstdint>
++#include <memory>
+ #include <type_traits>
+ 
+ namespace iox2 {
+@@ -105,15 +107,19 @@ class Publisher {
+     template <ServiceType, typename, typename>
+     friend class PortFactoryPublisher;
+ 
+-    explicit Publisher(iox2_publisher_h handle);
++    explicit Publisher(iox2_publisher_h handle,
++                       std::unique_ptr<SampleReleasedHandler> sample_released_handler = nullptr);
+     void drop();
+ 
+     iox2_publisher_h m_handle = nullptr;
++    std::unique_ptr<SampleReleasedHandler> m_sample_released_handler_owned;
+ };
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+-inline Publisher<S, Payload, UserHeader>::Publisher(iox2_publisher_h handle)
+-    : m_handle { handle } {
++inline Publisher<S, Payload, UserHeader>::Publisher(iox2_publisher_h handle,
++                                                    std::unique_ptr<SampleReleasedHandler> sample_released_handler)
++    : m_handle { handle }
++    , m_sample_released_handler_owned(std::move(sample_released_handler)) {
+ }
+ 
+ template <ServiceType S, typename Payload, typename UserHeader>
+@@ -134,6 +140,7 @@ inline auto Publisher<S, Payload, UserHeader>::operator=(Publisher&& rhs) noexce
+     if (this != &rhs) {
+         drop();
+         m_handle = rhs.m_handle;
++        m_sample_released_handler_owned = std::move(rhs.m_sample_released_handler_owned);
+         rhs.m_handle = nullptr;
+     }
+ 
+diff --git a/iceoryx2-cxx/include/iox2/sample_released_handler.hpp b/iceoryx2-cxx/include/iox2/sample_released_handler.hpp
+new file mode 100644
+index 000000000..7a987b457
+--- /dev/null
++++ b/iceoryx2-cxx/include/iox2/sample_released_handler.hpp
+@@ -0,0 +1,74 @@
++// Copyright (c) 2026 Contributors to the Eclipse Foundation
++//
++// See the NOTICE file(s) distributed with this work for additional
++// information regarding copyright ownership.
++//
++// This program and the accompanying materials are made available under the
++// terms of the Apache Software License 2.0 which is available at
++// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
++// which is available at https://opensource.org/licenses/MIT.
++//
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++#ifndef IOX2_SAMPLE_RELEASED_HANDLER_HPP
++#define IOX2_SAMPLE_RELEASED_HANDLER_HPP
++
++#include "iox2/bb/static_function.hpp"
++#include "iox2/internal/callback_context.hpp"
++#include "iox2/internal/iceoryx2.hpp"
++
++#include <cstdint>
++
++namespace iox2 {
++namespace detail {
++inline void sample_released_handler_delegate(const iox2_sample_released_info_t* info_handle,
++                                             iox2_callback_context callback_cxt);
++} // namespace detail
++
++/// Read-only view of a sample's user header and payload while the publisher pool reclaims the SHM
++/// bucket. Pointers are valid only for the duration of the [`SampleReleasedHandler`] call.
++class SampleReleasedInfo {
++  private:
++    const iox2_sample_released_info_t* m_info;
++
++    explicit SampleReleasedInfo(const iox2_sample_released_info_t* info)
++        : m_info(info) {
++    }
++
++    friend void iox2::detail::sample_released_handler_delegate(const iox2_sample_released_info_t* info_handle,
++                                                                 iox2_callback_context callback_cxt);
++
++  public:
++    [[nodiscard]] auto user_header_ptr() const -> const uint8_t* {
++        return m_info->user_header_ptr;
++    }
++
++    [[nodiscard]] auto user_header_len() const -> std::size_t {
++        return m_info->user_header_len;
++    }
++
++    [[nodiscard]] auto payload_ptr() const -> const uint8_t* {
++        return m_info->payload_ptr;
++    }
++
++    [[nodiscard]] auto payload_len() const -> std::size_t {
++        return m_info->payload_len;
++    }
++};
++
++/// Invoked when a publisher sample's shared-memory bucket is fully released and is about to be
++/// returned to the pool.
++using SampleReleasedHandler = iox2::bb::StaticFunction<void(const SampleReleasedInfo&)>;
++
++namespace detail {
++inline void sample_released_handler_delegate(const iox2_sample_released_info_t* info_handle,
++                                             iox2_callback_context callback_cxt) {
++    auto* callback = static_cast<SampleReleasedHandler*>(callback_cxt);
++    auto info = SampleReleasedInfo(info_handle);
++    (*callback)(info);
++}
++} // namespace detail
++
++} // namespace iox2
++
++#endif // IOX2_SAMPLE_RELEASED_HANDLER_HPP
+diff --git a/iceoryx2-ffi/c/src/api/mod.rs b/iceoryx2-ffi/c/src/api/mod.rs
+index 68c770a26..e803c8c70 100644
+--- a/iceoryx2-ffi/c/src/api/mod.rs
++++ b/iceoryx2-ffi/c/src/api/mod.rs
+@@ -70,6 +70,7 @@ mod response_header;
+ mod response_mut;
+ mod sample;
+ mod sample_mut;
++mod sample_released_handler;
+ mod server;
+ mod server_details;
+ mod service;
+@@ -154,6 +155,7 @@ pub use response_header::*;
+ pub use response_mut::*;
+ pub use sample::*;
+ pub use sample_mut::*;
++pub use sample_released_handler::*;
+ pub use server::*;
+ pub use server_details::*;
+ pub use service::*;
+diff --git a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
+index d1130dd2d..4c996cf2d 100644
+--- a/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
++++ b/iceoryx2-ffi/c/src/api/port_factory_publisher_builder.rs
+@@ -16,9 +16,12 @@ use crate::api::{
+     AssertNonNullHandle, HandleToType, IOX2_OK, IntoCInt, PayloadFfi, PublisherUnion,
+     UnsafeCallbackContextSendWorkaround, UserHeaderFfi, c_size_t, degradation_info_cast,
+     iox2_callback_context, iox2_degradation_handler, iox2_publisher_h, iox2_publisher_t,
+-    iox2_service_type_e, iox2_unable_to_deliver_handler, unable_to_deliver_info_cast,
++    iox2_sample_released_handler, iox2_sample_released_info_t, iox2_service_type_e,
++    iox2_unable_to_deliver_handler, unable_to_deliver_info_cast,
+ };
+ 
++use iceoryx2::port::SampleReleasedInfo;
++
+ use iceoryx2::port::publisher::PublisherCreateError;
+ use iceoryx2::prelude::*;
+ use iceoryx2::service::port_factory::publisher::PortFactoryPublisher;
+@@ -142,7 +145,10 @@ impl PortFactoryPublisherBuilderUnion {
++const _: [(); 272] =
++    [(); core::mem::size_of::<Option<PortFactoryPublisherBuilderUnion>>()];
++
+ #[repr(C)]
+ #[repr(align(16))] // alignment of Option<PortFactoryPublisherBuilderUnion>
+ pub struct iox2_port_factory_publisher_builder_storage_t {
+-    internal: [u8; 208], // magic number obtained with size_of::<Option<PortFactoryPublisherBuilderUnion>>()
++    internal: [u8; 272], // guarded by the compile-time size assertion above
+ }
+ 
+ #[repr(C)]
+@@ -436,6 +439,65 @@ pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_unable_to_deliv
+     }
+ }
+ 
++/// Sets a callback invoked when a publisher sample's shared-memory bucket is fully released and
++/// is about to be returned to the pool.
++///
++/// # Safety
++///
++/// * `port_factory_handle` must be valid
++/// * `ctx` must point to a [`iox2::SampleReleasedHandler`] that outlives the created publisher port.
++///   When using the iceoryx2-cxx API, the handler is heap-allocated and owned by [`iox2::Publisher`].
++/// * if the publisher is used from multiple threads, `ctx` must be thread-safe
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn iox2_port_factory_publisher_builder_set_sample_released_handler(
++    port_factory_handle: iox2_port_factory_publisher_builder_h_ref,
++    handler: iox2_sample_released_handler,
++    ctx: iox2_callback_context,
++) {
++    port_factory_handle.assert_non_null();
++
++    let ctx = UnsafeCallbackContextSendWorkaround { ctx };
++
++    unsafe {
++        let port_factory_struct = &mut *port_factory_handle.as_type();
++        match port_factory_struct.service_type {
++            iox2_service_type_e::IPC => {
++                let port_factory = ManuallyDrop::take(&mut port_factory_struct.value.as_mut().ipc);
++
++                port_factory_struct.set(PortFactoryPublisherBuilderUnion::new_ipc(
++                    port_factory.set_sample_released_handler(move |info: &SampleReleasedInfo| {
++                        let ffi_info = iox2_sample_released_info_t {
++                            user_header_ptr: info.user_header_ptr,
++                            user_header_len: info.user_header_len,
++                            payload_ptr: info.payload_ptr,
++                            payload_len: info.payload_len,
++                        };
++                        let ctx = ctx;
++                        handler(&ffi_info, ctx.ctx);
++                    }),
++                ));
++            }
++            iox2_service_type_e::LOCAL => {
++                let port_factory =
++                    ManuallyDrop::take(&mut port_factory_struct.value.as_mut().local);
++
++                port_factory_struct.set(PortFactoryPublisherBuilderUnion::new_local(
++                    port_factory.set_sample_released_handler(move |info: &SampleReleasedInfo| {
++                        let ffi_info = iox2_sample_released_info_t {
++                            user_header_ptr: info.user_header_ptr,
++                            user_header_len: info.user_header_len,
++                            payload_ptr: info.payload_ptr,
++                            payload_len: info.payload_len,
++                        };
++                        let ctx = ctx;
++                        handler(&ffi_info, ctx.ctx);
++                    }),
++                ));
++            }
++        }
++    }
++}
++
+ /// Sets the max slice length for the publisher
+ ///
+ /// # Arguments
+diff --git a/iceoryx2-ffi/c/src/api/sample_released_handler.rs b/iceoryx2-ffi/c/src/api/sample_released_handler.rs
+new file mode 100644
+index 000000000..7dc383dd5
+--- /dev/null
++++ b/iceoryx2-ffi/c/src/api/sample_released_handler.rs
+@@ -0,0 +1,39 @@
++// Copyright (c) 2026 Contributors to the Eclipse Foundation
++//
++// See the NOTICE file(s) distributed with this work for additional
++// information regarding copyright ownership.
++//
++// This program and the accompanying materials are made available under the
++// terms of the Apache Software License 2.0 which is available at
++// https://www.apache.org/licenses/LICENSE-2.0, or the MIT license
++// which is available at https://opensource.org/licenses/MIT.
++//
++// SPDX-License-Identifier: Apache-2.0 OR MIT
++
++use crate::api::iox2_callback_context;
++
++/// Read-only pointers into a publisher sample that is about to be returned to the SHM pool.
++///
++/// Valid only for the duration of the [`iox2_sample_released_handler`] call.
++#[repr(C)]
++#[derive(Clone, Copy)]
++pub struct iox2_sample_released_info_t {
++    pub user_header_ptr: *const u8,
++    pub user_header_len: usize,
++    pub payload_ptr: *const u8,
++    pub payload_len: usize,
++}
++
++/// Callback invoked when a publisher sample bucket is fully released.
++///
++/// # Arguments
++///
++/// * `info` — const pointer to [`iox2_sample_released_info_t`]; valid only during the call
++/// * `ctx` — user [`iox2_callback_context`](crate::iox2_callback_context)
++///
++/// # Safety
++///
++/// * `ctx` may be stored and invoked from the publisher's internal paths; if the publisher is used
++///   from multiple threads, `ctx` must be thread-safe.
++pub type iox2_sample_released_handler =
++    extern "C" fn(*const iox2_sample_released_info_t, iox2_callback_context);
+diff --git a/iceoryx2/src/port/client.rs b/iceoryx2/src/port/client.rs
+index 6f6bd94e8..fe02b3ac8 100644
+--- a/iceoryx2/src/port/client.rs
++++ b/iceoryx2/src/port/client.rs
+@@ -427,6 +427,7 @@ impl<
+             enable_safe_overflow: static_config.enable_safe_overflow_for_requests,
+             degradation_handler: client_factory.request_degradation_handler,
+             unable_to_deliver_handler: client_factory.unable_to_deliver_handler,
++            sample_released_handler: None,
+             number_of_samples: number_of_requests,
+             max_number_of_segments,
+             service_state: service.clone(),
+diff --git a/iceoryx2/src/port/details/data_segment.rs b/iceoryx2/src/port/details/data_segment.rs
+index d852a763a..f61f44f59 100644
+--- a/iceoryx2/src/port/details/data_segment.rs
++++ b/iceoryx2/src/port/details/data_segment.rs
+@@ -165,6 +165,16 @@ impl<Service: service::Service> DataSegment<Service> {
+         }
+     }
+ 
++    /// Base pointer to the chunk (iceoryx internal header), same as [`ShmPointer::data_ptr`].
++    pub(crate) fn bucket_chunk_header_ptr(&self, offset: PointerOffset) -> *const u8 {
++        match &self.memory {
++            MemoryType::Static(memory) => {
++                (offset.offset() + memory.payload_start_address()) as *const u8
++            }
++            MemoryType::Dynamic(memory) => memory.bucket_chunk_header_ptr(offset),
++        }
++    }
++
+     pub(crate) fn max_number_of_segments(data_segment_type: DataSegmentType) -> u8 {
+         match data_segment_type {
+             DataSegmentType::Static => 1,
+diff --git a/iceoryx2/src/port/details/sender.rs b/iceoryx2/src/port/details/sender.rs
+index ae369736e..b44cc96c5 100644
+--- a/iceoryx2/src/port/details/sender.rs
++++ b/iceoryx2/src/port/details/sender.rs
+@@ -32,10 +32,11 @@ use iceoryx2_log::{error, fail, fatal_panic, warn};
+ use crate::node::SharedNode;
+ use crate::port::{
+     DegradationAction, DegradationCause, DegradationHandler, DegradationInfo, LoanError, SendError,
+-    UnableToDeliverHandler, UnableToDeliverInfo,
++    SampleReleasedHandler, SampleReleasedInfo, UnableToDeliverHandler, UnableToDeliverInfo,
+ };
+ use crate::prelude::UnableToDeliverStrategy;
+ use crate::service::config_scheme::connection_config;
++use crate::service::header::publish_subscribe::Header as PublishSubscribeHeader;
+ use crate::service::static_config::message_type_details::{MessageTypeDetails, TypeVariant};
+ use crate::service::{NoResource, ServiceState};
+ use crate::{service, service::naming_scheme::connection_name};
+@@ -119,6 +120,7 @@ pub(crate) struct Sender<Service: service::Service> {
+     pub(crate) max_number_of_segments: u8,
+     pub(crate) degradation_handler: DegradationHandler<'static>,
+     pub(crate) unable_to_deliver_handler: Option<UnableToDeliverHandler<'static>>,
++    pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
+     pub(crate) service_state: Arc<ServiceState<Service, NoResource>>,
+     pub(crate) tagger: CyclicTagger,
+     pub(crate) loan_counter: AtomicUsize,
+@@ -481,6 +483,30 @@ impl<Service: service::Service> Sender<Service> {
+         if self.segment_states[offset.segment_id().value() as usize].release_sample(offset.offset())
+             == 1
+         {
++            if let Some(ref handler) = self.sample_released_handler {
++                let header_ptr = self.data_segment.bucket_chunk_header_ptr(offset);
++                let user_header_ptr = self
++                    .message_type_details
++                    .user_header_ptr_from_header(header_ptr);
++                let payload_ptr = self
++                    .message_type_details
++                    .payload_ptr_from_header(header_ptr);
++                let user_header_len = self.message_type_details.user_header.size();
++                let header = unsafe { &*(header_ptr as *const PublishSubscribeHeader) };
++                let payload_len = match self.message_type_details.payload.variant() {
++                    TypeVariant::Dynamic => {
++                        header.number_of_elements() as usize * self.message_type_details.payload.size()
++                    }
++                    TypeVariant::FixedSize => self.message_type_details.payload.size(),
++                };
++                let info = SampleReleasedInfo {
++                    user_header_ptr,
++                    user_header_len,
++                    payload_ptr,
++                    payload_len,
++                };
++                handler.call(&info);
++            }
+             unsafe {
+                 self.data_segment.deallocate_bucket(offset);
+             }
+diff --git a/iceoryx2/src/port/mod.rs b/iceoryx2/src/port/mod.rs
+index 60b0f629f..0e5baa3a5 100644
+--- a/iceoryx2/src/port/mod.rs
++++ b/iceoryx2/src/port/mod.rs
+@@ -132,6 +132,44 @@ impl UnableToDeliverHandler<'_> {
+     }
+ }
+ 
++/// Read-only view of a sample's `user_header` and payload memory, valid only for the duration of
++/// the [`SampleReleasedHandler`] callback.
++///
++/// Invoked on the publisher when the last reference to a loaned sample is released and the
++/// shared-memory bucket is about to be returned to the publisher pool (immediately before
++/// deallocation). Pointers must not be used after the handler returns.
++#[derive(Debug)]
++pub struct SampleReleasedInfo {
++    /// Start of the user header bytes in shared memory.
++    pub user_header_ptr: *const u8,
++    /// Length of the user header in bytes.
++    pub user_header_len: usize,
++    /// Start of the payload bytes in shared memory.
++    pub payload_ptr: *const u8,
++    /// Length of the payload in bytes (publish-subscribe slice length from the sample header when
++    /// the payload type is dynamic).
++    pub payload_len: usize,
++}
++
++/// Callback invoked when a publisher sample bucket is reclaimed.
++pub trait SampleReleasedFn: Fn(&SampleReleasedInfo) + Send {}
++
++impl<F: Fn(&SampleReleasedInfo) + Send> SampleReleasedFn for F {}
++
++tiny_fn! {
++    /// Handler invoked when a [`crate::port::publisher::Publisher`] sample is fully released and
++    /// the underlying shared-memory chunk is about to be returned to the pool.
++    pub struct SampleReleasedHandler = Fn(info: &SampleReleasedInfo);
++}
++
++unsafe impl Send for SampleReleasedHandler<'_> {}
++
++impl core::fmt::Debug for SampleReleasedHandler<'_> {
++    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
++        write!(f, "SampleReleasedHandler")
++    }
++}
++
+ /// Defines the action that shall be take when an degradation is detected. This can happen when
+ /// data cannot be delivered, or when the system is corrupted and files are modified by
+ /// non-iceoryx2 instances. Is used as return value of the [`DegradationHandler`] to define a
+diff --git a/iceoryx2/src/port/publisher.rs b/iceoryx2/src/port/publisher.rs
+index 4d57f68e5..f99a28352 100644
+--- a/iceoryx2/src/port/publisher.rs
++++ b/iceoryx2/src/port/publisher.rs
+@@ -454,6 +454,7 @@ impl<
+                     max_number_of_segments,
+                     degradation_handler: publisher_factory.degradation_handler,
+                     unable_to_deliver_handler: publisher_factory.unable_to_deliver_handler,
++                    sample_released_handler: publisher_factory.sample_released_handler,
+                     service_state: service.clone(),
+                     tagger: CyclicTagger::new(),
+                     loan_counter: AtomicUsize::new(0),
+diff --git a/iceoryx2/src/port/server.rs b/iceoryx2/src/port/server.rs
+index 7f097fb9b..4e8554c5a 100644
+--- a/iceoryx2/src/port/server.rs
++++ b/iceoryx2/src/port/server.rs
+@@ -405,6 +405,7 @@ impl<
+             max_number_of_segments,
+             degradation_handler: server_factory.response_degradation_handler,
+             unable_to_deliver_handler: server_factory.unable_to_deliver_handler,
++            sample_released_handler: None,
+             service_state: service.clone(),
+             tagger: CyclicTagger::new(),
+             loan_counter: AtomicUsize::new(0),
+diff --git a/iceoryx2/src/prelude.rs b/iceoryx2/src/prelude.rs
+index 5a9b83488..06f39f9ff 100644
+--- a/iceoryx2/src/prelude.rs
++++ b/iceoryx2/src/prelude.rs
+@@ -12,7 +12,10 @@
+ 
+ pub use crate::config::Config;
+ pub use crate::node::{Node, NodeBuilder, NodeState, node_name::NodeName};
+-pub use crate::port::{event_id::EventId, unable_to_deliver_strategy::UnableToDeliverStrategy};
++pub use crate::port::{
++    event_id::EventId, unable_to_deliver_strategy::UnableToDeliverStrategy, SampleReleasedHandler,
++    SampleReleasedInfo,
++};
+ pub use crate::service::messaging_pattern::MessagingPattern;
+ pub use crate::service::{
+     Service, ServiceDetails, attribute::AttributeSet, attribute::AttributeSpecifier,
+diff --git a/iceoryx2/src/service/port_factory/publisher.rs b/iceoryx2/src/service/port_factory/publisher.rs
+index 8ebf45947..931c5608f 100644
+--- a/iceoryx2/src/service/port_factory/publisher.rs
++++ b/iceoryx2/src/service/port_factory/publisher.rs
+@@ -56,8 +56,8 @@
+ 
+ use crate::{
+     port::{
+-        DegradationAction, DegradationFn, DegradationHandler, UnableToDeliverFn,
+-        UnableToDeliverHandler,
++        DegradationAction, DegradationFn, DegradationHandler, SampleReleasedFn,
++        SampleReleasedHandler, UnableToDeliverFn, UnableToDeliverHandler,
+         publisher::{Publisher, PublisherCreateError},
+         unable_to_deliver_strategy::UnableToDeliverStrategy,
+     },
+@@ -115,6 +115,7 @@ pub struct PortFactoryPublisher<
+     pub(crate) config: LocalPublisherConfig,
+     pub(crate) degradation_handler: DegradationHandler<'static>,
+     pub(crate) unable_to_deliver_handler: Option<UnableToDeliverHandler<'static>>,
++    pub(crate) sample_released_handler: Option<SampleReleasedHandler<'static>>,
+     pub(crate) preallocate_number_of_samples_override: PreallocatedSamplesOverride<'static>,
+     pub(crate) factory: &'factory PortFactory<Service, Payload, UserHeader>,
+ }
+@@ -143,6 +144,7 @@ impl<
+             factory: self.factory,
+             degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
+             unable_to_deliver_handler: None,
++            sample_released_handler: None,
+             preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
+         }
+     }
+@@ -172,6 +174,7 @@ impl<
+             },
+             degradation_handler: DegradationHandler::new_with(DegradationAction::Warn),
+             unable_to_deliver_handler: None,
++            sample_released_handler: None,
+             preallocate_number_of_samples_override: PreallocatedSamplesOverride::new(|v| v),
+             factory,
+         }
+@@ -237,6 +240,17 @@ impl<
+         self
+     }
+ 
++    /// Sets a callback that is invoked when a sample's shared-memory bucket is fully released on
++    /// the publisher and is about to be returned to the pool.
++    ///
++    /// The [`crate::port::SampleReleasedInfo`] pointers are valid only for the duration of the
++    /// callback. Payload sizing follows publish-subscribe rules (including slice payloads).
++    pub fn set_sample_released_handler<F: SampleReleasedFn + 'static>(mut self, handler: F) -> Self {
++        self.sample_released_handler = Some(SampleReleasedHandler::new(handler));
++
++        self
++    }
++
+     /// Creates a new [`Publisher`] or returns a [`PublisherCreateError`] on failure.
+     pub fn create(self) -> Result<Publisher<Service, Payload, UserHeader>, PublisherCreateError> {
+         let origin = format!("{self:?}");

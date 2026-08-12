@@ -1,0 +1,297 @@
+When something goes wrong in a Holoscan application, *where* it goes wrong tells
+you *how* it will be reported. The SDK follows the three-phase model —
+**compose → compile → run** — and each phase has exactly one failure style:
+authoring throws, `compile()` returns rejected plans, and the run fails closed.
+There is no fourth channel, and the styles never blur into each other: a wiring
+mistake never surfaces as a runtime crash, and a runtime resource problem never
+comes back as an exception from `compile()`.
+
+This page walks all three styles end to end with concrete examples, shows how to
+read diagnostic tokens (the debugging entry point for the compile and run
+phases), takes a closer look at `kResourceExhausted` — the signature failure of
+a bounded-by-construction runtime — and recaps error-code branching.
+
+**Complete C++ examples:** [`examples/errors_as_values/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/errors_as_values/cpp),
+[`examples/compile_and_check/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/compile_and_check/cpp),
+and [`examples/running_and_stopping/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp)
+
+<Note title="You will learn">
+  - Which failure style belongs to which phase: throws at compose time,
+    rejected plans at compile time, fail-closed termination at run time.
+  - How to iterate `plan.diagnostics()` and `session.diagnostics()` and branch
+    on stable registry tokens instead of parsing log text.
+  - Real diagnostic tokens you will meet in practice, such as
+    `RUNTIME_CLOCK_BINDING_UNAVAILABLE` and `ENDPOINT_TYPE_MISMATCH`.
+  - What `kResourceExhausted` means in a bounded runtime and what to check
+    when you see it: pool bounds, queue depths, fanout caps.
+  - How to branch on `ErrorCode` values rather than message strings.
+</Note>
+
+## One phase, one failure style
+
+| Phase | What you call | How failure is reported |
+| --- | --- | --- |
+| Compose | `graph.op<Op>()`, `add_flow()`, `export_*` | **Throws** `holoscan::RuntimeError` immediately at the bad call |
+| Compile | `holoscan::compile(graph)` | **Returns a rejected plan** — `plan.ok()` is `false`, inspect `plan.diagnostics()` |
+| Run | `holoscan::run()` / `run_async()` | **Fails closed** — terminal `RunTermination::kFailed`, inspect `session.diagnostics()` |
+
+The split is deliberate. Composition happens on your development machine at the
+moment you write the bad line, so an exception that points straight at the call
+site is the fastest possible feedback. Compilation is a cold build step that
+tooling and CI want to inspect and diff, so it never unwinds — it hands back a
+fully queryable result even on rejection. And the run is where real work (and
+real hardware) is at stake, so the runtime refuses to guess: if a required
+binding or resource is unavailable, it stops before any of your callbacks run
+rather than silently degrading.
+
+## Style 1: authoring throws (compose time)
+
+Graph composition APIs throw `holoscan::RuntimeError` when you wire something
+that cannot be wired — a stale handle, a flow whose source or target no longer
+exists, an invalid argument. This is a deliberate boundary choice, not a
+contradiction of the errors-as-values model: authoring mistakes are programmer
+errors at a construction boundary, and the throw lands exactly on the offending
+line.
+
+```cpp
+#include <holoscan/core/graph.hpp>
+
+holoscan::Graph graph{"pipeline"};
+auto camera = graph.op<CameraOp>("camera");
+auto fusion = graph.op<FusionOp>("fusion");
+
+try {
+  // A stale handle, a retired graph, or an invalid source/target throws
+  // right here — not later at compile or run time.
+  graph.add_flow(camera->frame, fusion->camera,
+                 holoscan::ConnectionOptions{.queue_depth = 4U});
+} catch (const holoscan::RuntimeError& e) {
+  // e.code() recovers the ErrorCode (typically kInvalidArgument);
+  // e.what() carries a stable token such as GRAPH_HANDLE_INVALID or
+  // GRAPH_FLOW_SOURCE_INVALID plus context.
+  log_error(e.what());
+  throw;  // an authoring bug is not recoverable at this level
+}
+```
+You normally do not write `try`/`catch` around composition at all: let the
+exception propagate and fix the code. The catch block above is for the rare
+host process (an editor plugin, a graph-building service) that composes graphs
+from untrusted descriptions and must survive a bad one.
+
+<Warning>
+  Do not "handle" a composition throw by skipping the failed call and
+  compiling anyway. The graph is missing the declaration you intended;
+  the compile step may still admit the smaller graph, and you will chase a
+  confusing runtime symptom instead of the real one-line authoring bug.
+</Warning>
+
+## Style 2: compile returns rejected plans
+
+`holoscan::compile()` does not throw on admission failure. It returns a fully
+queryable **rejected** `ExecutionPlan`: `plan.ok()` is `false`, and
+`plan.diagnostics()` tells you why — as structured records, in canonical order,
+suitable for tooling and CI diffing. The only compile-surface throw is
+`plan.require_no_errors()` (and attempting to run a rejected plan), which
+raises `holoscan::CompileError` for callers that cannot proceed without an
+admitted plan.
+
+```cpp
+#include <holoscan/core/compile.hpp>
+#include <holoscan/core/execution_plan.hpp>
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+
+if (!plan.ok()) {
+  for (const holoscan::Diagnostic& d : plan.diagnostics()) {
+    if (d.severity != holoscan::DiagnosticSeverity::kError) continue;  // skip warnings
+    // d.token is a stable registry spelling — branch or report on it directly.
+    report_rejection(d.token, d.required, d.provided);
+  }
+  return;  // never run a rejected plan
+}
+```
+
+Each `Diagnostic` carries a stable registry `token`, a `severity`
+(`kWarning` or `kError` — warnings preserve evidence without rejecting the
+plan), an optional bounded `source` locating the problem in the plan, and,
+where applicable, canonical `required` / `provided` summaries so a mismatch
+explains both sides of itself.
+
+Tokens you are likely to meet at compile time:
+
+- `ENDPOINT_TYPE_MISMATCH` — an exported or imported topic's payload type does
+  not match what the other side declares; check the `required` and `provided`
+  fields on the record.
+- `PARTITION_LIMIT_EXCEEDED` — the graph needs more execution partitions than
+  the planner's finite limit admits.
+- `PROFILE_CAPABILITY_UNSATISFIED` — the requested profile demands a
+  capability the composed graph or platform evidence cannot satisfy.
+- `ENDPOINT_NAME_GENERATED_PIN_REQUIRED` — a boundary topic got a
+  compiler-generated endpoint name that no pin acknowledges; under a
+  constrained profile this is a hard error (author an explicit endpoint name,
+  or pin the generated one).
+
+When a record names a vertex or port, resolve it against `plan.graph()` —
+plan records use dense canonical IDs, not the authoring handles you held while
+composing. For the full compile workflow, see
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+
+## Style 3: the run fails closed
+
+`holoscan::run()` returns `0` only for clean `kCompleted` termination; a
+compiler-accepted empty graph is one valid zero-work example. A recurring
+nonempty graph does not complete naturally and must be stopped cooperatively.
+Any other outcome is nonzero. With `run_async()`, the session reaches a
+terminal `RunTermination` — and anything other than `kCompleted` means stopped
+or failed. Crucially, when a required runtime binding or resource is unavailable,
+the run terminates `kFailed` **before any of your callbacks execute**. The
+runtime never selects weaker semantics to limp along.
+
+The only exceptions at this boundary are `holoscan::CompileError` for a
+default-constructed/no-state or rejected plan wrapper (check `plan.ok()` first)
+and `std::system_error` if the platform join fails. A plan produced by compiling
+an empty graph is distinct: when admitted, it completes as a zero-work run.
+Everything else — startup exhaustion, missing bindings, execution failure —
+arrives through the terminal state plus diagnostics:
+
+```cpp
+#include <holoscan/core/run_session.hpp>
+
+holoscan::RunSession session = holoscan::run_async(plan);
+session.wait();
+
+if (session.termination() == holoscan::RunTermination::kFailed) {
+  for (const holoscan::Diagnostic& d : session.diagnostics()) {
+    log_error(d.token);  // same Diagnostic record type as the compile phase
+  }
+}
+```
+
+Runtime tokens you are likely to meet:
+
+- `RUNTIME_CLOCK_BINDING_UNAVAILABLE` — the plan requires a clock the runtime
+  cannot bind in this process; check that every clock named in the plan's
+  clock catalog is available where you run.
+- `RUNTIME_PARAMETER_BINDING_UNAVAILABLE` — operators declare typed
+  parameters but the parameter binding the plan expects is not installed.
+- `RUNTIME_OPERATOR_REPLAY_MISMATCH` — an operator reconstructed for this run
+  does not match what the plan recorded at compile time; recompile after
+  changing operator code rather than reusing a stale serialized plan.
+- `RUNTIME_LIFECYCLE_CALLBACK_FAILED` — one of your lifecycle callbacks
+  (a `start()`/`stop()` override or an advanced stage callback) reported
+  failure or threw, failing the affected scope closed. During startup this
+  means the run rolled back — completed work unwound in reverse, with simple
+  `stop()` running only for the operators that completed `kStart` earlier;
+  during shutdown, cleanup still ran to completion before the run was marked
+  failed. See
+  [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+  for the exact rollback rules.
+
+`session.diagnostics()` is append-only and stable: the span you hold stays
+valid, and a later call may expose a longer prefix. Until the session is
+terminal, do not treat the prefix you observed as complete — call it again.
+
+<Warning>
+  `run()` and `run_async()` require an accepted plan. Passing an empty or
+  rejected plan throws `CompileError` at the boundary — it is the one
+  situation where the run phase throws instead of failing closed. Make
+  `if (!plan.ok()) return;` a habit between compile and run.
+</Warning>
+
+## Tokens are the debugging entry point
+
+Across compile and run, the `Diagnostic` token is where debugging starts. It is
+a **stable registry spelling**, not free-form log prose: the registry is
+append-only, so a token you branch on or grep for today keeps its meaning
+across SDK releases. That makes tokens the right key for CI assertions
+("this graph must not produce `ENDPOINT_NAME_GENERATED_PIN_RECOMMENDED`"),
+for dashboards, and for your own triage notes. Never match on rendered message
+text — wording can improve; tokens do not change.
+
+A practical triage loop:
+
+1. Read the token — its spelling names the subsystem (`GRAPH_*`, `ENDPOINT_*`,
+   `PARTITION_*`, `PROFILE_*`, `RUNTIME_*`) and the condition.
+2. Check `severity` — a `kWarning` preserves evidence without rejecting or
+   failing; only `kError` records reject a plan or fail a run.
+3. Use `source` (and `required` / `provided` when present) to locate the
+   vertex or port, resolving IDs against `plan.graph()`.
+4. Follow `cause_id` when set — it points at the earlier record that caused
+   this one, so fix the root record first.
+
+## `kResourceExhausted`: the bounded-runtime signature
+
+Holoscan is bounded by construction: payload pools are preallocated, queues
+have finite depth, and fanout tracking has fixed capacity. Nothing on the hot
+path allocates on demand, so when a bound is hit the SDK does not grow a
+buffer or block indefinitely — it returns
+`holoscan::ErrorCode::kResourceExhausted`. Seeing it is not a runtime bug; it
+is the runtime telling you a capacity you configured (or defaulted) does not
+match your workload. Check, in order:
+
+- **Pool bounds.** `Output<Tensor>::allocate_tensor()` borrows a slot from a
+  preallocated pool; when every slot is on loan, allocation returns
+  `kResourceExhausted`. If a downstream consumer holds tensors longer than
+  you sized for, grow the pool — or release sooner. See
+  [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth).
+- **Queue depths.** Edge queues are sized at composition via
+  `ConnectionOptions::queue_depth`. Persistent exhaustion or backpressure on
+  an edge means the consumer cannot keep up with the producer at that depth —
+  fix the rate mismatch or deepen the queue deliberately.
+- **Fanout caps.** Shared payloads track their consumers against fixed
+  capacities (for example, the bounded fanout release-stream count on
+  GPU-backed buffers). A one-to-many edge with more simultaneous borrowers
+  than the cap admits exhausts it.
+
+Its transient sibling is `kBackpressured` — a channel or queue momentarily
+full. Backpressure is a normal flow-control outcome you retry or shed;
+`kResourceExhausted` from a pool means a sizing decision needs revisiting.
+
+## Error-code branching recap
+
+Inside operators and application glue, fallible calls return
+`holoscan::expected<T, Error>`; you branch on `Error::code`, never on message
+text — codes are the stable identity, messages are human context:
+
+```cpp
+auto result = output_.emit(std::move(frame));
+if (!result) {
+  switch (result.error().code) {
+    case holoscan::ErrorCode::kBackpressured:
+      // momentarily full — drop or retry next activation
+      break;
+    case holoscan::ErrorCode::kResourceExhausted:
+      // a bound is undersized — count it; revisit pool/queue sizing
+      break;
+    default:
+      log_error(holoscan::runtime_error_message(result.error()));
+      break;
+  }
+}
+```
+
+`runtime_error_message(error)` renders `"<code name>: <message>"` for logs,
+and `error_code_name(code)` gives the enumerator spelling. Code-only errors
+allocate nothing, which is why hot paths return them freely. For the full
+value-channel model, including the `HOLOSCAN_TRY` propagation macros, see
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+## Recap
+
+- One failure style per phase: compose **throws** `RuntimeError`, `compile()`
+  **returns** a rejected plan, the run **fails closed** with terminal
+  `kFailed` — and nothing crosses between the styles.
+- Check `plan.ok()` after every compile and iterate `plan.diagnostics()` on
+  rejection; use `require_no_errors()` only when downstream setup cannot
+  proceed without an admitted plan.
+- `rc == 0` / `kCompleted` is the only run success; accepted zero-work plans
+  complete immediately, while recurring nonempty graphs require a cooperative
+  stop. Inspect `session.diagnostics()` for anything else, and re-poll it until
+  terminal.
+- Diagnostic tokens are stable registry spellings — branch, grep, and assert
+  on tokens, never on message text.
+- `kResourceExhausted` means a configured bound is undersized: check pool
+  bounds, queue depths, and fanout caps; `kBackpressured` is its transient,
+  retryable sibling.
+- Next: capture the full picture with structured
+  [Logging](/holoscan/sdk-user-guide/debugging-and-testing/logging).

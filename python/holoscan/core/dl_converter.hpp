@@ -3,131 +3,71 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#ifndef PYHOLOSCAN_CORE_DL_CONVERTER_HPP
-#define PYHOLOSCAN_CORE_DL_CONVERTER_HPP
+#pragma once
 
-#include <cuda_runtime.h>
-#include <dlpack/dlpack.h>
-#include <pybind11/pybind11.h>
+#include <nanobind/nanobind.h>
 
 #include <memory>
 #include <optional>
-#include <string>
 #include <tuple>
-#include <utility>
-#include <vector>
+
+#include <dlpack/dlpack.h>
 
 #include <holoscan/core/domain/tensor.hpp>
 
-namespace py = pybind11;
-
 namespace holoscan {
 
+namespace nb = nanobind;
+
+// DLPack capsule names per the array API standard. A capsule is renamed to its "used_*" variant
+// once a consumer has taken ownership, so the producer's destructor knows not to free it again.
 constexpr const char* dlpack_capsule_name{"dltensor"};
 constexpr const char* used_dlpack_capsule_name{"used_dltensor"};
 constexpr const char* dlpack_versioned_capsule_name{"dltensor_versioned"};
 constexpr const char* used_dlpack_versioned_capsule_name{"used_dltensor_versioned"};
 
-/**
- * @brief Structure to hold the context of a DLManagedTensor.
- *
- * This structure is used to hold the context of a DLManagedTensor for array interface.
- */
-struct ArrayInterfaceMemoryBuffer {
-  py::object obj_ref;               ///< Reference to the Python object that owns the memory buffer.
-  std::vector<int64_t> dl_shape;    ///< Shape of the DLManagedTensor.
-  std::vector<int64_t> dl_strides;  ///< Strides of the DLManagedTensor.
-};
-
-/**
- * @brief Set the array interface object of a Python object.
- *
- * This method sets `__array_interface__` or `__cuda_array_interface__` attribute of a Python
- * object.
- *
- * @param obj The Python object to set the array interface object.
- * @param ctx The context of the DLManagedTensor.
- */
-void set_array_interface(const py::object& obj, const std::shared_ptr<DLManagedTensorContext>& ctx);
-
-/**
- * @brief Provide `__dlpack__` method with separate parameters
- *
- * @param tensor The tensor to provide the `__dlpack__` method.
- * @param stream The client stream to use for the `__dlpack__` method.
- * @param max_version Optional tuple of (major, minor) version to use for DLPack.
- * @param dl_device Optional tuple of (device_type, device_id) to use for DLPack.
- * @param copy Optional boolean indicating whether to make a copy.
- * @return The PyCapsule object.
- */
-py::capsule py_dlpack(Tensor* tensor, py::object stream,
+/// @brief Implement the `__dlpack__` protocol: produce a PyCapsule wrapping the tensor's
+/// (versioned or unversioned) DLManagedTensor, honoring the consumer stream / max_version /
+/// dl_device / copy arguments. Phase 2 of the nanobind port (export); see
+/// h5x_plan_holoscan_tensor_python.md.
+nb::capsule py_dlpack(Tensor* tensor, const nb::object& stream,
                       std::optional<std::tuple<int, int>> max_version,
-                      std::optional<std::tuple<DLDeviceType, int>> dl_device,
-                      std::optional<bool> copy);
+                      std::optional<std::tuple<int, int>> dl_device, std::optional<bool> copy);
 
-/**
- * @brief Provide `__dlpack_device__` method
- *
- * @param tensor The tensor to provide the `__dlpack_device__` method.
- * @return The tuple of device type and device id.
- */
-py::tuple py_dlpack_device(Tensor* tensor);
+/// @brief Implement the `__dlpack_device__` protocol: return a (device_type, device_id) tuple.
+nb::tuple py_dlpack_device(Tensor* tensor);
 
-/**
- * @brief Convert std::vector to pybind11::tuple
- *
- * @tparam PT The type of the elements in the tuple.
- * @tparam T The type of the elements in the vector.
- * @param vec The vector to convert.
- * @return The Python tuple object.
- */
-template <typename PT, typename T>
-pybind11::tuple vector2pytuple(const std::vector<T>& vec) {
-  py::tuple result(vec.size());
-  int counter = 0;
-  for (auto& item : vec) {
-    PyTuple_SET_ITEM(result.ptr(),
-                     counter++,
-                     pybind11::reinterpret_steal<pybind11::object>(
-                         pybind11::detail::make_caster<PT>::cast(
-                             std::forward<PT>(item),
-                             pybind11::return_value_policy::automatic_reference,
-                             nullptr))
-                         .release()
-                         .ptr());
-  }
-  return result;
-}
+/// @brief Import a Tensor from any object supporting the `__dlpack__` protocol.
+///
+/// The imported DLManagedTensor is owned via a GIL-acquiring memory reference, so the producer's
+/// deleter (which touches Python refcounts) runs safely even if the Tensor is released from a
+/// non-Python thread. This avoids the async LazyDLManagedTensorDeleter used in the 4.x bindings.
+std::shared_ptr<Tensor> tensor_from_dlpack(const nb::object& obj);
 
-/**
- * @brief Convert an array to pybind11::tuple
- *
- * @tparam PT The type of the elements in the tuple.
- * @tparam T The type of the elements in the array.
- * @param vec The vector to convert.
- * @return The Python tuple object.
- */
-template <typename PT, typename T>
-pybind11::tuple array2pytuple(const T* arr, size_t length) {
-  py::tuple result(length);
-  for (size_t index = 0; index < length; ++index) {
-    const auto& value = arr[index];
-    PyTuple_SET_ITEM(result.ptr(),
-                     index,
-                     pybind11::reinterpret_steal<pybind11::object>(
-                         pybind11::detail::make_caster<PT>::cast(
-                             std::forward<PT>(value),
-                             pybind11::return_value_policy::automatic_reference,
-                             nullptr))
-                         .release()
-                         .ptr());
-  }
-  return result;
-}
+/// @brief Import a Tensor from any tensor-like object, preferring the DLPack C exchange API and
+/// then Python DLPack over the CUDA/host array interfaces (see the rationale comment in
+/// dl_converter.cpp). Backs `Tensor.as_tensor`.
+std::shared_ptr<Tensor> as_tensor(const nb::object& obj);
 
-/// @brief Synchronize two CUDA streams
-void synchronize_streams(cudaStream_t stream1, cudaStream_t stream2);
+/// @brief Whether @p obj exposes a tensor-like protocol (`__dlpack_c_exchange_api__`,
+/// `__dlpack__` + `__dlpack_device__`, or an array interface). Mirrors the duck-typing used by
+/// `as_tensor`.
+bool is_tensor_like(const nb::object& obj);
+
+/// @brief Build the NumPy `__array_interface__` dict for a host (CPU / pinned-host) Tensor.
+/// Raises AttributeError if the tensor is not host-resident, so `hasattr` reports correctly.
+nb::dict array_interface(const Tensor& tensor);
+
+/// @brief Build the `__cuda_array_interface__` dict for a device (CUDA / managed) Tensor.
+/// Raises AttributeError if the tensor is not device-resident.
+nb::dict cuda_array_interface(const Tensor& tensor);
+
+/// @brief PyCapsule wrapping the DLPack 1.3 C exchange API table; bound as
+/// `Tensor.__dlpack_c_exchange_api__` (see https://dmlc.github.io/dlpack/latest/python_spec.html).
+nb::capsule dlpack_c_exchange_api_capsule();
+
+/// @brief Test-only helper that looks up the C exchange API capsule and invokes its callbacks
+/// (managed export, stack DLTensor export, import, stream), returning a dict of results.
+nb::dict test_dlpack_c_exchange_api(const nb::object& tensor_obj);
 
 }  // namespace holoscan
-
-#endif /* PYHOLOSCAN_CORE_DL_CONVERTER_HPP */

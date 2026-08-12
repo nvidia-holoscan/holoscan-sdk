@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 3.30.4)
+
+project(holoscan_ea1_camera_imu_control LANGUAGES CXX)
+
+include(CTest)
+
+find_package(Threads REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+add_executable(ea1_camera_imu_control camera_imu_control.cpp)
+target_compile_features(ea1_camera_imu_control PRIVATE cxx_std_20)
+target_link_libraries(ea1_camera_imu_control PRIVATE holoscan::core Threads::Threads)
+
+holoscan_add_graph_artifacts(
+    TARGET ea1_camera_imu_control
+    DEPLOYMENT_ID developer
+    OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/holoscan-artifacts"
+)
+
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_EA1_CAMERA_IMU_RUNTIME_TEST COMMAND ea1_camera_imu_control)
+    set_tests_properties(EXAMPLE_EA1_CAMERA_IMU_RUNTIME_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "camera/IMU runtime complete"
+            TIMEOUT 15
+    )
+endif()

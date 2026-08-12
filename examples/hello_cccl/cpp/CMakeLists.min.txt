@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+cmake_minimum_required(VERSION 4.0)
+
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND "$ENV{CUDAARCHS}" STREQUAL "")
+    set(CMAKE_CUDA_ARCHITECTURES "native")
+endif()
+
+project(holoscan_hello_cccl LANGUAGES CXX CUDA)
+
+include(CTest)
+
+find_package(CUDAToolkit REQUIRED)
+find_package(holoscan REQUIRED CONFIG
+    PATHS
+        "/opt/nvidia/holoscan"
+        "/workspace/holoscan-sdk/install"
+        "/workspace/holoscan-sdk/public/install-cu13-x86_64"
+)
+
+find_package(CCCL 3.3.3 CONFIG REQUIRED)
+
+add_executable(hello_cccl hello_cccl.cu)
+target_compile_features(hello_cccl PRIVATE cxx_std_20 cuda_std_20)
+target_link_libraries(hello_cccl
+    PRIVATE
+        CCCL::CCCL
+        CUDA::cudart
+        holoscan::core
+)
+
+if(BUILD_TESTING)
+    add_test(NAME EXAMPLE_CPP_HELLO_CCCL_TEST COMMAND hello_cccl)
+    set_tests_properties(EXAMPLE_CPP_HELLO_CCCL_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "CCCL CUDA sample complete"
+            SKIP_RETURN_CODE 77
+    )
+endif()

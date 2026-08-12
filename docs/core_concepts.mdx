@@ -1,0 +1,344 @@
+Every Holoscan application is built from the same five primitives and moves
+through the same three phases. You describe **what** your application is —
+operators, typed ports, wiring, clocks, and temporal rules — and the runtime
+decides **how** to execute it: channel placement, memory pools, scheduling, and
+GPU lowering are all results of compilation, not code you write. This page
+gives you the complete mental model in one pass; the rest of the guide links
+back here instead of re-explaining it.
+
+**Complete C++ example:** [`examples/first_pipeline/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/first_pipeline/cpp)
+
+<Note title="You will learn">
+  - The three-phase lifecycle — **compose → compile → run** — and the distinct
+    failure style that belongs to each phase
+  - The five primitives: `Operator`, `Graph`, `Contract`, `ExecutionPlan`, and
+    `RunSession`
+  - Why an operator is **three declarations** — `setup()` = structure,
+    `contract()` = time, `compute()` = work — and why `contract()` earns its
+    name
+  - The five cross-cutting motifs you will meet on every other page: errors as
+    values, bounded by construction, weak handles vs durable views, the
+    mandatory default clock, and never syncing CUDA on the hot path
+</Note>
+
+If you keep one sentence from this page, keep this: **authoring throws,
+compilation returns an inspectable plan, and running fails closed.**
+
+## The three-phase model: compose → compile → run
+
+A Holoscan program has three strictly separated phases:
+
+1. **Compose.** You author a `holoscan::Graph`: register operator types with
+   `graph.op<T>("name")`, wire typed ports with `graph.add_flow(...)`, and
+   declare clocks. Nothing executes; the graph is a pure description.
+2. **Compile.** `holoscan::compile(graph)` validates topology, temporal
+   contracts, and resource bounds, then returns an `ExecutionPlan` — an
+   immutable snapshot of everything the compiler accepted or rejected.
+3. **Run.** `holoscan::run(plan)` blocks until the graph finishes;
+   `holoscan::run_async(plan)` returns a `RunSession` that owns the running
+   graph and lets you stop it cooperatively. Inside the session, the runtime's
+   dispatcher drives operator activations according to the plan.
+
+Each phase has its own failure style, and they never bleed into each other:
+
+| Phase | Failure style | What it looks like |
+|---|---|---|
+| Compose | **Authoring throws.** | A duplicate operator name, an unknown port, or a borrowed capture is a programming error on a cold path — you get an exception at the exact call site. |
+| Compile | **Returns a rejected plan.** | `compile()` does not throw for admission problems. It returns a plan with `plan.ok() == false` and the complete list in `plan.diagnostics()`, so you (and your tooling) see every problem at once instead of one throw at a time. |
+| Run | **Fails closed.** | If a required runtime binding is unavailable, startup stops *before* any of your callbacks run. On the hot path, failures are typed error values your `compute()` returns — never exceptions, never silent degradation. |
+
+<svg viewBox="0 0 760 264" role="img" aria-labelledby="compose-compile-run-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="compose-compile-run-title">The three-phase pipeline: compose produces a Graph of operators, compile produces an ExecutionPlan, run drives it through a RunSession and Dispatcher; each phase has its own failure style.</title>
+  <defs>
+    <marker id="ccr-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="currentColor"/>
+    </marker>
+  </defs>
+  {/* Compose panel */}
+  <rect x="20" y="44" width="210" height="168" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="20" y="44" width="210" height="168" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+  <text x="125" y="72" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Compose</text>
+  <rect x="45" y="90" width="160" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="125" y="114" textAnchor="middle" fontSize="14" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Graph</text>
+  <rect x="45" y="142" width="160" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="125" y="166" textAnchor="middle" fontSize="14" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Operators</text>
+  {/* Compile panel — the pivotal artifact */}
+  <rect x="275" y="44" width="210" height="168" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="275" y="44" width="210" height="168" rx="8" fill="none" stroke="#76B900" strokeWidth="2"/>
+  <text x="380" y="72" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Compile</text>
+  <rect x="300" y="106" width="160" height="44" rx="8" fill="#76B900" opacity="0.25"/>
+  <rect x="300" y="106" width="160" height="44" rx="8" fill="none" stroke="#76B900" strokeWidth="2"/>
+  <text x="380" y="133" textAnchor="middle" fontSize="14" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">ExecutionPlan</text>
+  <text x="380" y="170" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">immutable snapshot</text>
+  {/* Run panel */}
+  <rect x="530" y="44" width="210" height="168" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="530" y="44" width="210" height="168" rx="8" fill="none" stroke="currentColor" strokeWidth="2"/>
+  <text x="635" y="72" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Run</text>
+  <rect x="555" y="90" width="160" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="635" y="114" textAnchor="middle" fontSize="14" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">RunSession</text>
+  <rect x="555" y="142" width="160" height="38" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="635" y="166" textAnchor="middle" fontSize="14" fill="currentColor" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">Dispatcher</text>
+  {/* Phase arrows */}
+  <line x1="234" y1="128" x2="266" y2="128" stroke="currentColor" strokeWidth="2" markerEnd="url(#ccr-arrow)"/>
+  <line x1="489" y1="128" x2="521" y2="128" stroke="currentColor" strokeWidth="2" markerEnd="url(#ccr-arrow)"/>
+  {/* Failure-style annotations */}
+  <text x="125" y="240" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">authoring throws</text>
+  <text x="380" y="240" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">rejected plan + diagnostics</text>
+  <text x="635" y="240" textAnchor="middle" fontSize="11" fill="currentColor" opacity="0.55" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">fails closed</text>
+</svg>
+
+The separation is the point: by the time data flows, every structural question
+has already been answered, and the only failures left are the ones you have
+explicitly declared policies for.
+
+<Warning>
+  **An accepted plan is not a started run.** Admission proves the graph is
+  well-formed and every resource is boundable. Startup separately verifies that
+  each required runtime binding is available and fails closed — with
+  diagnostics, before invoking user code — when one is missing. Check
+  `session.termination()` and `session.diagnostics()`, not just `plan.ok()`.
+</Warning>
+
+## The five primitives
+
+### Operator — three declarations
+
+An operator is not "a class with a run method." It is three declarations with
+a strict division of labor:
+
+| Declaration | Answers | When it runs |
+|---|---|---|
+| `setup(OperatorSpec&)` | **Structure** — which typed ports exist and their bounded geometry (`queue_depth`, `max_emits_per_compute`) | Compile time and run start, possibly repeatedly |
+| `contract()` | **Time** — when the operator fires and which samples it sees | Compile time; the result is serialized into the plan |
+| `compute(ExecutionContext&)` | **Work** — pure values-in, values-out logic | The hot path, once per activation |
+
+Why is it called a *contract*? Because it is one — between your operator and
+the runtime. `contract()` declares what the runtime must satisfy **before** it
+invokes `compute()`: the **trigger** (what causes an activation), **input
+selection** (which samples participate), and the **missing-data policy** (what
+happens when inputs are absent or stale). If the runtime cannot honor those
+terms for an activation, it does not call `compute()` with degraded inputs —
+your declared policy runs instead. That is what lets `compute()` be
+intentionally oblivious to temporal concerns: by the time it runs, its inputs
+are already the right samples.
+
+<Warning>
+  `setup()` must be deterministic, idempotent, and side-effect-free. Both
+  compilation and run start reconstruct operators and call it again, and they
+  require the declarations to agree exactly. Put device discovery and resource
+  acquisition in [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks),
+  never in `setup()`.
+</Warning>
+
+Deep dive: [Operator anatomy](/holoscan/sdk-user-guide/building-operators/operator-anatomy)
+and [your first operator](/holoscan/sdk-user-guide/getting-started/first-operator).
+
+### Graph — the sole public root
+
+`holoscan::Graph` is the only public root. There is no `Application` class, no
+`Pipeline`, and no runner object to subclass — a small script, a test, and a
+production host program all author the same `Graph`. For reusable bodies,
+subclass `Graph`, override `compose()`, and embed the body into a larger graph.
+
+One subtlety worth internalizing early: `graph.op<T>("name", args...)` does not
+store your live object. It copies the constructor arguments into an owning,
+replayable factory, and each run constructs *fresh* operator instances from it.
+That is why captures must own their state — and why a plan can outlive the
+graph that produced it. Details in
+[composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph)
+and [graph composition](/holoscan/sdk-user-guide/composing-applications/graph-composition).
+
+### Contract — the temporal policy object
+
+The value returned by `contract()` combines three parts, each from a small
+closed vocabulary:
+
+- a **trigger** — `OnAnyInput{}` (the default for operators with inputs),
+  `OnClock{.period = ...}`, or alignment/window/predicate triggers;
+- a per-input **selector** — `Exact{}`, `LatestWithin{.max_age}`, `DrainAll{}`,
+  or `BracketedWindow{...}`;
+- a per-input **missing-data policy** — `Skip{}`, `SafeDefault{}`, or
+  `ReuseLast{.max_age}`.
+
+Contracts are owned by the operator type and compiled into the plan;
+application code cannot rewrite another operator's temporal behavior from the
+outside. An operator with inputs that returns an empty contract gets the
+explicit, plan-visible `OnAnyInput{}` default. The full vocabulary lives in
+[temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+### ExecutionPlan — immutable and inspectable
+
+`compile(graph)` is a pure function: it runs no part of your graph and returns
+an `ExecutionPlan` **even when admission fails**. The plan is an immutable
+snapshot — it records what you requested, what the compiler accepted (channel
+placement, pool sizes, scheduling, lowering decisions), and what it rejected
+and why. It survives destruction of the `Graph` that produced it.
+
+Three calls cover most needs: `plan.ok()` answers "any errors?",
+`plan.diagnostics()` returns the stable, complete list (warnings included), and
+`plan.require_no_errors()` is the cold-path guard that throws on errors while
+letting warnings pass. See
+[compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)
+for the workflow and [plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling)
+for working with plan artifacts.
+
+### RunSession — strict RAII
+
+`run_async(plan)` returns a `RunSession` that owns *every* runtime activity the
+run starts. It is strict RAII: destroying a live session requests cooperative
+stop and joins all session-owned work — it never detaches a thread, never
+force-kills your code. `request_stop()` is nonblocking and idempotent;
+`wait()` joins; `termination()` reports the coarse outcome (`kRunning`,
+`kCompleted`, `kStopped`, `kFailed`). The blocking `run(plan)` is a convenience
+wrapper over the exact same path.
+
+<Warning>
+  Because destruction joins, a `compute()` that never returns can block session
+  destruction indefinitely. Long-running work should poll the cooperative
+  cancellation view — `ctx.cancellation().stop_requested()` — at natural
+  boundaries and return. See
+  [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+</Warning>
+
+## The whole model in one sketch
+
+One operator shown in full, plus the three-phase `main()`. The source and sink
+follow the same pattern as the `Doubler`; for a complete multi-rate program,
+see the [camera + IMU control example](/holoscan/sdk-user-guide/examples/camera-imu-control).
+
+The sketch below is illustrative. For compiled source using the same
+compose → compile → run model, see the shipping `first_pipeline` example and
+[Slow/fast fusion](/holoscan/sdk-user-guide/examples/slow-fast-fusion).
+
+```cpp
+#include <holoscan/holoscan.hpp>
+
+class Doubler final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {          // structure
+    spec.input(in, "in").queue_depth(4U);
+    spec.output(out, "out").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {  // time
+    holoscan::Contract c;
+    c.trigger(holoscan::OnAnyInput{})
+        .input(in, holoscan::Exact{})
+        .on_missing(in, holoscan::Skip{});
+    return c;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {                   // work
+    HOLOSCAN_TRY(auto sample, in.receive());
+    return out.emit(sample.data * 2);
+  }
+
+  holoscan::Input<std::int32_t> in;
+  holoscan::Output<std::int32_t> out;
+};
+
+int main() {
+  holoscan::Graph graph{"starter"};                             // 1. compose
+  auto src = graph.op<CounterSource>("source");
+  auto dbl = graph.op<Doubler>("doubler");
+  auto snk = graph.op<PrintSink>("sink");
+  graph.add_flow(src->out, dbl->in, holoscan::ConnectionOptions{.queue_depth = 4U});
+  graph.add_flow(dbl->out, snk->in, holoscan::ConnectionOptions{.queue_depth = 4U});
+  graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"));
+
+  const holoscan::ExecutionPlan plan = holoscan::compile(graph);  // 2. compile
+  if (!plan.ok()) {
+    // Inspect plan.diagnostics() — the complete, ordered story of why.
+    return 1;
+  }
+
+  holoscan::RunSession session = holoscan::run_async(plan);       // 3. run
+  // ... let the source drive the pipeline ...
+  session.request_stop();
+  session.wait();
+  return session.termination() == holoscan::RunTermination::kStopped ? 0 : 1;
+}
+```
+
+## Cross-cutting motifs
+
+Five motifs recur through the entire SDK. They are stated once, here; every
+other page links back to this section.
+
+### Errors as values
+
+Hot-path APIs — `receive()`, `emit()`, allocation, tensor access — return
+`holoscan::expected<T, holoscan::Error>`. You branch on `Error::code`
+(an `ErrorCode`) or propagate with `HOLOSCAN_TRY(expr)` /
+`HOLOSCAN_TRY(lhs, expr)`, which returns the original error object from the
+enclosing function. Exceptions appear only at genuine cold-path boundaries:
+authoring misuse and guards like `plan.require_no_errors()`. Full treatment in
+[errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+### Bounded by construction
+
+Every queue depth, emit burst, and payload pool is declared while composing and
+reserved while compiling; the compiler rejects over-subscription at admission
+instead of letting it surface as a runtime stall. Nothing on the hot path
+allocates or grows. When a declared bound is reached at run time, the failure
+is `ErrorCode::kResourceExhausted` — the signature exhaustion error that means
+"your budget was consumed," not "the system is broken." Interpreting it is
+covered in [understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures);
+the sizing consequences in
+[performance considerations](/holoscan/sdk-user-guide/performance/performance-considerations).
+
+### Weak handles vs durable views
+
+Everything the API hands you has one of two lifetime characters, and neither is
+a raw pointer into someone else's lifetime:
+
+- **Weak handles** re-resolve on every use and fail *closed* when their owner
+  is gone. The handle from `graph.op<T>(...)` revalidates against the graph on
+  each access and reports a typed error once the graph or declaration is
+  retired; run-scoped handles likewise go stale — never dangling — after
+  teardown.
+- **Durable views** are immutable snapshots that remain valid on their own.
+  The `ExecutionPlan` and its records are the canonical example: keep them,
+  inspect them, archive them, independent of the graph or any run.
+
+A third, narrower category exists inside `compute()`: activation-scoped views
+(such as batch selections) are valid only for the current activation and must
+never be stored past it.
+
+### The mandatory default clock
+
+Every graph that runs operators must declare a clock and select it as the
+default — `graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("clock"))`
+in the sketch above. There is no implicit wall-clock fallback: time sources are
+explicit so that every timestamp belongs to an identified clock domain and runs
+are reproducible under test clocks. A graph without a default clock fails
+startup closed with a `RUNTIME_CLOCK_BINDING_UNAVAILABLE` diagnostic. See
+[time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+### Never sync CUDA on the hot path
+
+`compute()` receives its invocation stream via `ctx.cuda_stream()`. A received
+tensor is already ordered on that stream, and committing a tensor you produce
+records its readiness — stream ordering is the runtime's job, end to end.
+There is therefore never a reason to call `cudaStreamSynchronize` inside
+`compute()`; doing so stalls the pipeline for work that was already correctly
+ordered. Host access to device data is always an explicit step, never a hidden
+copy. Start with [tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+## Recap
+
+- A Holoscan program is three phases: **compose** (authoring throws),
+  **compile** (returns a plan — rejected plans carry complete diagnostics), and
+  **run** (fails closed; hot-path errors are values).
+- An operator is three declarations: `setup()` = structure, `contract()` =
+  time, `compute()` = work — and `compute()` never reasons about time.
+- `Graph` is the sole public root; `ExecutionPlan` is an immutable, inspectable
+  snapshot; `RunSession` is strict RAII over everything a run starts.
+- The `contract()` is a real contract: trigger, input selection, and
+  missing-data policy that the runtime must satisfy before calling `compute()`.
+- Five motifs recur everywhere: errors as values (`HOLOSCAN_TRY`), bounded by
+  construction (`kResourceExhausted`), weak handles vs durable views, the
+  mandatory default clock, and never syncing CUDA on the hot path.
+
+Next: [Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).

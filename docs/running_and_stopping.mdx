@@ -1,0 +1,224 @@
+Compilation gave you an accepted `ExecutionPlan` — an immutable, self-contained
+description of *what* to run. This page covers the third phase of the
+compose → compile → run model: turning that plan into a running session,
+watching it, stopping it cooperatively, and finding out why it ended.
+
+There are exactly two entry points, and they are two views of the same path:
+`holoscan::run(plan)` blocks until the run reaches a terminal state, while
+`holoscan::run_async(plan)` returns immediately with a `RunSession` — a
+move-only RAII owner of everything the run started. There is no scheduler or
+executor object to construct or configure; one free call starts everything.
+
+**Complete C++ example:** [`examples/running_and_stopping/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/running_and_stopping/cpp)
+
+<Note title="You will learn">
+  - How to start a plan with the blocking `run()` or the asynchronous `run_async()`
+  - The strict RAII rules that govern a `RunSession`'s lifetime
+  - How to stop a run cooperatively with `request_stop()` and `wait()`
+  - How to branch on `termination()` and read `diagnostics()` after a failure
+  - The two distinct failure channels: boundary exceptions versus a terminal `kFailed` session
+</Note>
+
+## The blocking entry point: `run()`
+
+When your `main()` has nothing else to do while the pipeline executes, call
+`run()`. It blocks until the run reaches a terminal state and returns an `int`:
+
+```cpp
+#include <holoscan/core/run.hpp>
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+if (!plan.ok()) {
+  // Rejected plan — inspect plan diagnostics; never try to run it.
+  return 1;
+}
+
+const int rc = holoscan::run(plan);  // blocks until terminal
+```
+
+`rc == 0` means one thing only: the run reached clean completion
+(`RunTermination::kCompleted`). A compiler-accepted empty `Graph` is a valid
+zero-work plan and completes immediately. A nonempty graph built from recurring
+sources does **not** infer a natural completion point; stop it cooperatively.
+Any nonzero result means the run was stopped or failed. `run()` is
+`[[nodiscard]]` — the compiler will remind you not to drop the result.
+
+`run()` is exactly the blocking wrapper over the path `run_async()` uses, so
+synchronous and asynchronous runs cannot diverge in behavior. When a nonzero
+result is all the detail you need, `run()` is the whole story. When you need to
+know *why* a run ended, use `run_async()` and inspect the session, as shown
+below.
+
+## The asynchronous entry point: `run_async()` and `RunSession`
+
+`run_async()` starts the run and immediately returns a `RunSession` that owns
+the run and every activity it started:
+
+```cpp
+#include <holoscan/core/run_session.hpp>
+
+holoscan::RunSession session = holoscan::run_async(plan);
+// Your thread is free: serve a UI, watch a signal handler, do other work.
+// The source graph and even your ExecutionPlan wrapper may be destroyed now —
+// the session reconstructed everything it needs from the plan.
+```
+
+The plan is self-contained: the session rebuilds fresh operators and clocks
+from the plan's own factories, so repeated runs never alias each other's state
+and the authoring objects need not outlive the run.
+
+### Strict RAII: the session is the run
+
+`RunSession` follows a small, strict set of lifetime rules:
+
+- **Move-only.** There is no copy and no move-assignment. Move-construction
+  transfers the entire owner; the moved-from wrapper becomes inert, reports
+  `kStopped`, and its operations become no-ops.
+- **The destructor stops and joins.** Destroying a live session requests a
+  cooperative stop and then joins every owned activity. It never detaches,
+  throws, or force-kills user code. When the wrapper is gone, the run is done —
+  ownership is unambiguous by construction.
+- **The destructor can block.** Because it joins rather than kills, the
+  destructor waits for your operators' `compute()` calls to return. Make
+  `compute()` return promptly when the runtime signals cancellation.
+
+<Warning>
+  **Never call `wait()` — or destroy the session — from run-owned code.**
+  Calling `wait()`, or letting the destructor run, from the run-owned worker
+  thread or from any compute, lifecycle, or dispatcher callback context is a
+  fatal contract violation and terminates the process. Sessions are controlled
+  from *outside* the run; from inside an operator, return from `compute()` and
+  let the runtime wind down.
+</Warning>
+
+### Stopping and waiting
+
+Stopping is a two-step, cooperative protocol:
+
+```cpp
+session.request_stop();  // ask: thread-safe, nonblocking, idempotent
+session.wait();          // block until every owned activity has joined
+```
+
+`request_stop()` only *asks*: it publishes the cancellation signal and wakes
+the run's worker, then returns immediately. Diagnostics publication and cleanup
+remain owned by the run itself. It is safe to call from any external thread,
+safe to call twice, and a no-op on a moved-from wrapper. To actually block
+until the run has finished, call `wait()`. Like the destructor, `wait()` may
+block indefinitely if an operator ignores cancellation and never returns from
+`compute()`.
+
+Query operations — `is_running()`, `termination()`, `diagnostics()`,
+`request_stop()`, and `wait()` — may be called concurrently on one session.
+Moving or destroying the wrapper is the exception: that requires external
+exclusion from every other operation on it.
+
+## Reading the outcome: `termination()`
+
+`termination()` reports the session's coarse outcome. It returns `kRunning`
+until the run reaches one stable terminal state, then never changes:
+
+```cpp
+switch (session.termination()) {
+  case holoscan::RunTermination::kCompleted:
+    // Natural clean completion — the only success.
+    break;
+  case holoscan::RunTermination::kStopped:
+    // A cooperative stop completed (or this wrapper is moved-from).
+    break;
+  case holoscan::RunTermination::kFailed:
+    // Startup or execution failed; see diagnostics() below.
+    break;
+  case holoscan::RunTermination::kRunning:
+    // Work is still outstanding — not terminal yet.
+    break;
+}
+```
+
+`is_running()` stays true through startup, execution, the stop-requested
+window, and cleanup; treat it as "work is still outstanding," not as "compute
+is currently executing."
+
+## Reading `diagnostics()` on failure
+
+A `kFailed` session is not a dead end: the session retains a bounded set of
+structural `Diagnostic` records explaining why the run stopped or failed. Each
+record carries a stable registry token — a fixed spelling such as
+`RUNTIME_CLOCK_BINDING_UNAVAILABLE`, not free-form log prose — plus an optional
+plan-local source location:
+
+```cpp
+if (session.termination() == holoscan::RunTermination::kFailed) {
+  for (const holoscan::Diagnostic& d : session.diagnostics()) {
+    std::cerr << d.token << '\n';  // stable registry token
+  }
+}
+```
+
+The returned span is append-only and stable: the storage and the prefix you
+observed remain valid until the wrapper is moved or destroyed, so you may hold
+the span safely. Before the session is terminal, a later `diagnostics()` call
+may expose a *longer* prefix — reacquire it rather than assuming the one you
+saw was complete. For how to interpret the tokens themselves, see
+[Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+## The two failure channels
+
+Run-phase failures arrive through exactly two channels, and they are not
+interchangeable:
+
+1. **Exceptions at the boundary.** `run()` and `run_async()` throw
+   `holoscan::CompileError` if the plan is a default-constructed/no-state
+   wrapper or was rejected at compile admission — so check `plan.ok()` first,
+   or be prepared to catch. Beyond that, only `std::system_error` from a
+   failed platform thread join can escape `run()` or `wait()`. That is the
+   entire set.
+2. **A terminal `kFailed` session.** Everything that goes wrong *after* the
+   boundary — a required runtime binding that is unavailable, a worker that
+   fails to start, resource exhaustion during startup, an execution failure —
+   is reported as `termination() == kFailed` (a nonzero `run()` result) plus
+   `diagnostics()` records. No exception is thrown for these.
+
+This split is deliberate and mirrors the failure styles of the three-phase
+model: authoring throws, `compile()` returns rejected plans, and run fails
+closed. An accepted plan whose required runtime bindings are unavailable
+terminates `kFailed` *before any user callback runs*, rather than silently
+degrading to weaker semantics.
+
+<Warning>
+  **Check `plan.ok()` before running.** Passing a rejected plan or a
+  default-constructed/no-state plan wrapper to `run()` or `run_async()` throws
+  `CompileError` at the call site. That is distinct from compiling an empty
+  `Graph`: the compiler may admit that graph as a valid zero-work plan, which
+  completes with `kCompleted`. Compilation already told you whether a plan was
+  admitted — running it is never the way to discover rejection. See
+  [Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check).
+</Warning>
+
+## Restarting operators
+
+A run is not all-or-nothing: when the plan grants the authority, individual
+operators can be restarted in place while the rest of the graph keeps running.
+That machinery has its own page — see
+[Restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+## Recap
+
+- `run(plan)` blocks and returns an `int`; `rc == 0` only for
+  `kCompleted` — including a compiler-accepted zero-work empty graph — and any
+  nonzero result means stopped or failed. Recurring nonempty graphs require an
+  explicit cooperative stop.
+- `run_async(plan)` returns a move-only `RunSession`; its destructor requests
+  stop and joins everything the run started — RAII is the shutdown story.
+- Stop cooperatively: `request_stop()` asks and returns immediately;
+  `wait()` blocks until the run has fully joined.
+- Never call `wait()` or destroy the session from run-owned code — that is a
+  fatal contract violation.
+- Branch on `termination()` (`kCompleted` / `kStopped` / `kFailed` /
+  `kRunning`); on failure, read the stable tokens in `session.diagnostics()`.
+- Two failure channels only: `CompileError` (plus `std::system_error` on join)
+  at the boundary; everything else is a terminal `kFailed` session with
+  diagnostics.
+
+Next: wire these pieces into a complete application in
+[Your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline).

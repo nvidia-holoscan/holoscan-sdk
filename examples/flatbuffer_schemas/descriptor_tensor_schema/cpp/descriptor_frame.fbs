@@ -1,0 +1,29 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+include "tensor.fbs";
+
+namespace app3p;
+
+table FrameDetails {
+  code: uint (id: 0);
+  note: string (id: 1);
+}
+
+struct FramePoint {
+  x: float;
+  y: float;
+}
+
+table DescriptorFrame {
+  sequence: ulong (id: 0);
+  label: string (id: 1);
+  gain: float = 1.0 (id: 2);
+  tensor: holoscan.schema.Tensor (id: 3);
+  samples: [short] (id: 4);
+  aliases: [string] (id: 5);
+  details: FrameDetails (id: 6);
+  point: FramePoint (id: 7);
+}
+
+root_type DescriptorFrame;

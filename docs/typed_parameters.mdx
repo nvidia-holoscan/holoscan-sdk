@@ -1,0 +1,232 @@
+Every operator has values you would otherwise hard-code: a detection threshold,
+a gain, a label. In Holoscan SDK 5.0 those values live in a **typed parameter
+struct** — a plain C++ aggregate you declare next to your operator — plus a
+**schema** that tells the runtime what each field means and what values it may
+take. The runtime binds one validated copy of the struct to each run, and your
+`compute()` reads it as an ordinary `const` reference.
+
+This page covers the basics: defining the struct, declaring its schema, and
+reading the values inside `compute()`. The full policy vocabulary (validators,
+string encodings, nesting, persistence markers) lives in
+[Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+**Complete C++ example:** [`examples/typed_parameters/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/typed_parameters/cpp)
+
+<Note title="You will learn">
+  - How to define a parameter struct as a plain aggregate with default member
+    initializers
+  - How to declare its schema with `HOLOSCAN_PARAM_SCHEMA` — and why the macro
+    must sit right beside the struct
+  - The `field<>` builder basics: name, `description()`, `range()`, and
+    `allowed_values()`
+  - How to attach the struct to your operator with `Operator<Params>`
+  - How to read parameters in `compute()` with `context.params<Params>()`
+</Note>
+
+## The parameter struct
+
+Parameters start as a **plain aggregate struct** — no constructors, no private
+members, no base classes — with default member initializers supplying the
+fallback values:
+
+```cpp
+struct DetectorParams {
+  std::uint32_t threshold{4};
+  float gain{1.0F};
+};
+```
+
+That is the whole storage story. The struct stays an ordinary value type: you
+can construct it, copy it, and test with it like any other POD. The defaults
+you write here are what the operator uses when nothing in the application
+configuration overrides them.
+
+The aggregate constraint is deliberate: a trivially copyable value with no
+hidden state is something the runtime can bind atomically and hand to
+`compute()` as a plain reference. If you add a user-declared constructor or a
+private member, the type stops satisfying the runtime's parameter-aggregate
+concept and the operator fails to compile.
+
+## Declaring the schema
+
+The struct alone gives you typed storage. The **schema** is what makes the
+fields real parameters: it names them, documents them, and lets the runtime
+validate values before they ever reach your `compute()`. You declare it with
+`HOLOSCAN_PARAM_SCHEMA`, placed **immediately after the struct, in the same
+namespace**:
+
+```cpp
+#include <holoscan/core/parameter_schema.hpp>
+
+struct DetectorParams {
+  std::uint32_t threshold{4};
+  float gain{1.0F};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    DetectorParams, holoscan::param_schema("com.example.DetectorParams", 1),
+    holoscan::field<&DetectorParams::threshold>("threshold")
+        .description("Detections below this score are dropped.")
+        .range(1U, 8U),
+    holoscan::field<&DetectorParams::gain>("gain")
+        .description("Multiplier applied to the raw measurement.")
+        .range(0.0F, 10.0F));
+```
+
+The macro takes the struct type, one leading `param_schema(id, version)`
+clause, and one `field<...>` clause per parameter. The `id` is a stable,
+reverse-DNS-style string identifying this schema across builds and tools; the
+`version` is a small integer you bump when the schema changes shape.
+
+<Warning>
+  **The macro must sit beside the struct.** `HOLOSCAN_PARAM_SCHEMA` is found
+  through argument-dependent lookup, so it only works when it is declared in
+  the struct's own namespace. If the macro is missing — or lands in the wrong
+  namespace — there is **no compile error**: the type silently becomes an
+  *opaque* parameter aggregate with no schema, no validation, and no tooling
+  metadata. This is the most common first-use mistake. Make "struct, then
+  macro, same namespace, same header" a habit.
+</Warning>
+
+### The `field<>` chain
+
+Each `field<&Struct::member>("name")` clause names one member and returns a
+builder you extend with a fluent chain of policies. The essentials:
+
+| Call | What it declares |
+|---|---|
+| `field<&T::m>("name")` | The member this parameter maps to, and its canonical name. The member pointer is checked at compile time — a typo in the member is a compile error, not a runtime surprise. |
+| `.description("...")` | Human-facing documentation, surfaced by tooling and the generated reference. |
+| `.range(min, max)` | Inclusive numeric bounds. A value outside the range is rejected at bind time, before `compute()` ever runs. |
+| `.allowed_values({...})` | A fixed set of admissible values, for fields that are enumerations in spirit. The literals must match the declared field type exactly. |
+
+Because the whole schema is evaluated at compile time, malformed declarations —
+a `range()` whose bounds are inverted, an `allowed_values()` set that overflows
+the fixed capacity — fail the build rather than a run.
+
+You will also see `.runtime_mutable()` in real codebases. It marks a field as
+updatable while the application runs; declaring it is harmless now, but the
+update machinery is its own topic — see
+[Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+Everything else the chain can express — custom validators, string encodings,
+nested aggregates, persistence and visibility markers — is cataloged in
+[Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+## Attaching parameters to an operator
+
+Your operator names its parameter struct as the template argument of
+`holoscan::Operator`:
+
+```cpp
+class Detector final : public holoscan::Operator<DetectorParams> {
+  // setup(), contract(), compute() as usual
+};
+```
+
+That single declaration is the whole wiring: the runtime now knows this
+operator is configured by a `DetectorParams`, validates any configured values
+against the schema, and binds one immutable copy before your operator runs. An
+operator with no configuration derives from `holoscan::Operator<>` and declares
+no struct or schema at all — exactly what the operators in
+[Your first operator](/holoscan/sdk-user-guide/getting-started/first-operator)
+did.
+
+## Reading parameters in `compute()`
+
+Inside `compute()`, read the bound value once into a `const` reference and use
+its fields directly:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(
+    holoscan::ExecutionContext& context) override {
+  const DetectorParams& p = context.params<DetectorParams>();
+
+  if (measure() * p.gain >= static_cast<float>(p.threshold)) {
+    // ... act on the configured threshold ...
+  }
+  return {};
+}
+```
+
+Three properties make this read boring in the best way:
+
+- **Pinned per activation.** The reference is stable for the entire
+  `compute()` call. A parameter can never change underneath you mid-activation,
+  even in an application that updates parameters at runtime.
+- **Cheap.** The read is O(1) and allocation-free — one token check, one
+  pointer return. Bind it once at the top of `compute()` and read as many
+  fields as you like; there is no reason to call `params<T>()` per field.
+- **Exact-type only.** `T` must be your operator's exact `Params` type — not a
+  base class, not a layout-compatible twin. Asking for the wrong type is a
+  contract violation, not a recoverable error.
+
+<Tip>
+  The idiomatic shape is a single line at the top of `compute()`:
+  `const MyParams& p = context.params<MyParams>();`. Short name, one read,
+  plain field access after that.
+</Tip>
+
+## Putting it together
+
+A complete minimal operator, from struct to read:
+
+```cpp
+#include <cstdint>
+
+#include <holoscan/core/operator.hpp>
+#include <holoscan/core/parameter_schema.hpp>
+
+struct SmoothingParams {
+  std::uint32_t window{4};
+  float weight{0.5F};
+};
+
+HOLOSCAN_PARAM_SCHEMA(
+    SmoothingParams, holoscan::param_schema("com.example.SmoothingParams", 1),
+    holoscan::field<&SmoothingParams::window>("window")
+        .description("Number of samples in the smoothing window.")
+        .allowed_values({2U, 4U, 8U}),
+    holoscan::field<&SmoothingParams::weight>("weight")
+        .description("Blend weight for the newest sample.")
+        .range(0.0F, 1.0F));
+
+class Smoother final : public holoscan::Operator<SmoothingParams> {
+ public:
+  holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext& context) override {
+    const SmoothingParams& p = context.params<SmoothingParams>();
+    // p.window is one of {2, 4, 8}; p.weight is in [0.0, 1.0] — guaranteed
+    // by the schema before compute() is ever invoked.
+    smooth(p.window, p.weight);
+    return {};
+  }
+
+ private:
+  void smooth(std::uint32_t window, float weight);
+};
+```
+
+By the time `compute()` runs, the schema has already done the checking:
+`window` is one of the three allowed sizes and `weight` is within `[0, 1]`.
+Your logic never needs defensive clamping or re-validation.
+
+## Recap
+
+- Parameters live in a **plain aggregate struct** with default member
+  initializers — no constructors, no private members, no base classes.
+- Declare the schema with `HOLOSCAN_PARAM_SCHEMA` **immediately beside the
+  struct, in the same namespace**; misplacing it silently produces a
+  schema-less (opaque) type rather than a compile error.
+- Each `field<&T::member>("name")` chain adds `description()`, `range()`, or
+  `allowed_values()`; the whole schema is checked at compile time.
+- `Operator<Params>` wires the struct to your operator; parameter-less
+  operators use `Operator<>`.
+- Read with `const Params& p = context.params<Params>();` — pinned for the
+  activation, O(1), exact type required.
+- `.runtime_mutable()` exists but is covered in
+  [Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates);
+  the full policy taxonomy is in
+  [Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+Next: wire configured operators together in
+[Composing a graph](/holoscan/sdk-user-guide/getting-started/composing-a-graph).

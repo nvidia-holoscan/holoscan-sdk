@@ -1,0 +1,325 @@
+You already know the shape of an operator from
+[your first operator](/holoscan/sdk-user-guide/getting-started/first-operator):
+three declarations — `setup()` for structure, `contract()` for time,
+`compute()` for work. This chapter goes deeper into the two declarations that
+surround the data itself: what `setup()` can actually say about each port, and
+the full menu that `compute()` has for reading inputs, publishing outputs, and
+talking to the runtime through its single `ExecutionContext&` argument.
+
+Everything here follows one rule of the compose → compile → run model: an
+operator never owns or sizes a queue, allocates a transport buffer, or decides
+when it runs. It *declares* bounds and expectations in `setup()`, and at run
+time it reads a selection the runtime has already frozen for the activation.
+That division is what lets the compiler check your graph before a single
+sample flows.
+
+**Complete C++ example:** [`examples/operator_anatomy/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/operator_anatomy/cpp)
+
+<Note title="You will learn">
+  - The three ways to read an input — `receive()`, `receive_data()`, and the
+    batch views — and how to pick between them
+  - What a `Sample<T>` owns, what `SampleMetadata` carries, and what a read
+    claim costs
+  - Every `emit()` overload, `EmitOptions`, and why
+    `max_emits_per_compute` exists
+  - The `InputSpecBuilder` / `OutputSpecBuilder` options you can chain in
+    `setup()`, including the Tensor allocation grant and readiness sources
+  - What the `ExecutionContext` facade exposes — parameters, clock, tag, CUDA
+    stream, cancellation, and restart requests
+  - Which types are admitted across a port (`PublishedPayload`)
+</Note>
+
+## Reading inputs: three accessors, one frozen selection
+
+Before `compute()` runs, the runtime has already applied your temporal
+contract and frozen an **input selection** for this activation: which samples
+participate on each port. `compute()` only reads that frozen selection — it
+never pops a live queue. `Input<T>` gives you three ways in, plus inspectors:
+
+| Accessor | Returns | Reach for it when… |
+|---|---|---|
+| `in_.receive()` | `expected<Sample<T>, Error>` | You need the payload **and** its metadata (capture time, `frame_id`, …), or the sample must outlive the callback. Takes a read claim. |
+| `in_.receive_data()` | `expected<T, Error>` | You only need the value. Copies the payload, takes no claim — the lighter default. |
+| `in_.selected_batch()` | `expected<SelectedBatchView<T>, Error>` | The port is batch-shaped (e.g. a windowed high-rate input): a borrowed, immutable, activation-scoped view. An *empty* successful view is valid. |
+| `in_.for_each_selected(fn)` | `expected<void, Error>` | Run a fallible callable over the batch in order; stops at the first error. |
+| `in_.selection()` / `in_.is_missing()` / `in_.is_stale()` | `InputSelection` / `bool` | Inspect selection state without reading any value. |
+
+The simplest path stays simple:
+
+```cpp
+HOLOSCAN_TRY(auto value, in_.receive_data());   // just the value, copied out
+```
+
+### `receive()`: an owning `Sample<T>` with a read claim
+
+`receive()` hands you a `Sample<T>` — a small owning wrapper with exactly two
+public members:
+
+- `sample.data` — the payload value, of type `T`. This is exactly what
+  `receive_data()` would have returned directly.
+- `sample.metadata` — a plain-value `SampleMetadata` record of
+  transport-neutral facts about the sample.
+
+`SampleMetadata` carries the sample's provenance. Its time-bearing fields are
+canonically *absent* (zero clock identity) unless a producer supplied them:
+
+| Field / accessor | Meaning |
+|---|---|
+| `metadata.capture_time()` → `TimePoint` | Genuine acquisition instant (e.g. when the camera captured the frame), in its source clock domain; absent when the producer supplied none. |
+| `metadata.publish_time()` → `TimePoint` | When the sample was published, stamped by the runtime. |
+| `metadata.frame_id` | Application frame/sample identity, or zero when unset. |
+| `metadata.sequence` | Producer/publication sequence number. |
+| `metadata.trace_id` | Trace-correlation identity for tooling, or zero when absent. |
+| `metadata.byte_size` | Logical payload size in bytes, when known. |
+| `metadata.valid()` / `metadata.degraded()` | `valid()` is false only when the sample is explicitly marked invalid; `degraded()` reports degraded evidence. |
+
+```cpp
+HOLOSCAN_TRY(auto frame, camera.receive());                    // Sample<Tensor>
+const holoscan::TimePoint captured = frame.metadata.capture_time();
+if (frame.metadata.valid() && captured.valid()) {
+  // compare `captured` against ctx.clock().now() for freshness, etc.
+}
+```
+
+Interpreting `TimePoint`, capture versus publish time, and clock domains is
+covered in [time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+
+The owning part matters: a `Sample<T>` holds a **finite read claim** on the
+underlying slot, which is what makes it safe to move the sample out of the
+callback and finish with it later. Claims come from a bounded pool sized at
+compile time — this is the same bounded-by-construction discipline as
+everywhere else in the runtime.
+
+<Warning>
+  **`receive()` does not pop, and claims are finite.** Calling `receive()`
+  twice in one activation returns copies of the *same* frozen selection, not
+  the next sample. And each owning `Sample<T>` you hold consumes one claim
+  from a bounded pool: hoard too many across activations and `receive()`
+  starts returning `kResourceExhausted`. If you only need the value, use
+  `receive_data()` — it copies the payload and takes no claim at all.
+</Warning>
+
+### Batch views: `selected_batch()` and `for_each_selected()`
+
+When the temporal contract selects a *window* of samples — the IMU input in
+the camera + IMU fusion pipeline is the canonical case — read them as a batch.
+`selected_batch()` returns a `SelectedBatchView<T>`: borrowed, immutable, and
+valid only for the duration of this activation. From the `ea1_camera_imu_control`
+example's fusion operator:
+
+```cpp
+if (imu.selection().state == holoscan::InputState::kSelected) {
+  HOLOSCAN_TRY(auto batch, imu.selected_batch());
+  for (const auto& sample : *batch) {
+    integrated += sample.data;      // each element is a Sample<T> view
+  }
+}
+```
+
+`for_each_selected(fn)` is the same iteration with error propagation built in:
+the callable returns `expected<void, Error>`, and iteration stops at the first
+error, which becomes the call's result.
+
+<Warning>
+  **Batch views expire with the activation.** A `SelectedBatchView<T>` borrows
+  runtime-owned storage for exactly one callback. Never stash one in a member
+  or capture it for later — dereferencing it after `compute()` returns is a
+  checked contract violation, not undefined-but-lucky behavior.
+</Warning>
+
+## Emitting outputs
+
+`Output<T>` publishes a value or forwards a sample. Every overload is
+`[[nodiscard]] expected<void, Error>` — publishing can fail (an unbound output
+returns `kNotReady`), so every result must be checked. Dropping one is a
+compiler warning by design.
+
+```cpp
+HOLOSCAN_TRY(out_.emit(value));                                           // by value
+HOLOSCAN_TRY(out_.emit(value, holoscan::EmitOptions{.frame_id = 7}));     // with metadata
+HOLOSCAN_TRY(out_.emit(std::move(sample)));                               // forward a Sample<T>
+```
+
+`EmitOptions` lets you attach author-owned metadata at publish time:
+
+- `.capture_time` — the genuine acquisition instant, when you have one. It
+  must belong to a clock admitted for the binding; omitting it is canonical
+  absence, never a silent substitute timestamp. A present sample without this
+  field remains valid arrival evidence, but capture-time selectors treat it as
+  ineligible and apply the input's authored missing-data policy.
+- `.frame_id` — application frame/sample identity.
+- `.trace` — an explicit trace context.
+- `.flags` — validity/degradation flags.
+
+The runtime stamps the framework-owned fields itself: sequence, publish time,
+payload kind, and byte size. Forwarding a received `Sample<T>` with
+`emit(std::move(sample))` preserves its author metadata (capture time,
+`frame_id`, trace, flags) downstream — which is why that overload deliberately
+takes no `EmitOptions`: the sample already carries them.
+
+For pooled values there is a loan path — `allocate()` returns a move-only
+`LoanedSample<T>` you fill and then `emit(std::move(loan))` — and
+`Output<Tensor>` replaces generic `allocate()` with
+`allocate_tensor(request)` → a move-only `TensorOutputLoan`. Tensor
+production, host/device writers, and commit-based stream ordering are covered
+in [tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth);
+the pool-not-heap semantics of "allocate" are introduced in
+[tensors 101](/holoscan/sdk-user-guide/getting-started/tensors-101).
+
+### `max_emits_per_compute`: declaring your burst
+
+A port emits **one** sample per `compute()` by default. If an operator may
+publish more than once to the same port in a single activation, declare that
+bound in `setup()`:
+
+```cpp
+spec.output(out_, "out").max_emits_per_compute(4U);   // up to 4 emits per activation
+```
+
+This is not a soft hint. The bound sizes the output pool at compile time, so
+the runtime can preallocate exactly enough slots for your worst-case burst —
+and an emit beyond the declared bound fails rather than growing anything. The
+common case needs no call at all: declaring the port plainly means "one emit
+per compute."
+
+## The `setup()` surface: spec builders
+
+`spec.input(member)` and `spec.output(member)` (optionally with a name) return
+chainable builders. Everything you can say about a port is said here, once,
+before compilation — the compiler validates it against the rest of the graph.
+
+**`InputSpecBuilder`** (from `spec.input(...)`):
+
+- `.queue_depth(n)` — the input history depth the runtime keeps for this port
+  (default 1). The fusion example keeps `queue_depth(4)` on its 60 Hz camera
+  port and `queue_depth(32)` on the high-rate IMU port so a bracketed window
+  always has samples to select from.
+- `.expects_tensor(layout)` — for `Input<Tensor>`, declares the
+  `TensorPortLayout` (memory kind, dtype, rank) this operator expects, letting
+  the compiler reject mismatched producers instead of you discovering them at
+  run time.
+- `.memory_conversion(policy)`, `.payload_options(...)`,
+  `.diagnostic_alias(...)` — conversion policy, payload tuning, and a stable
+  alias for diagnostics.
+
+**`OutputSpecBuilder`** (from `spec.output(...)`):
+
+- `.max_emits_per_compute(n)` — the burst bound described above.
+- `.produces_tensor(layout)` — the output-side layout declaration, the mirror
+  of `expects_tensor`.
+- `.diagnostic_alias(...)` — as on inputs.
+
+**`TensorOutputSpecBuilder`** — `spec.output(...)` on an `Output<Tensor>`
+returns this specialized builder, and its `.tensor_allocation(bounds)` is the
+**only** grant of direct Tensor allocation authority:
+
+```cpp
+spec.output(frame, "frame")
+    .produces_tensor(kHostByteFrame)
+    .tensor_allocation(holoscan::TensorAllocationBounds{.max_rank = 1U, .max_byte_span = 64U});
+```
+
+<Warning>
+  **No grant, no allocation.** Without `tensor_allocation(bounds)` in
+  `setup()`, `allocate_tensor()` returns `kNotReady` at run time. The bounds
+  (together with `max_emits_per_compute`) size the preallocated tensor pool at
+  compile time — this explicit grant is why the steady-state data path never
+  heap-allocates per sample.
+</Warning>
+
+**Readiness sources** live on the spec too, at the `OperatorSpec` level rather
+than per port: `spec.readable_source(...)`, `spec.notification_source(...)`,
+`spec.doorbell_source(...)`, and `spec.spin_source(...)` declare named,
+operator-owned event sources — an OS-readable handle, a cross-thread
+notification, a device-completion doorbell, or a polled condition — that your
+`contract()` can then name as triggers (for example `OnReadable{...}`).
+Declaring the source in `setup()` and referencing it in `contract()` keeps the
+structure/time split clean. Their use as triggers is covered in
+[temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts).
+
+**Lifecycle callbacks** are the spec's other operator-level surface:
+`spec.lifecycle().stage(...)`/`.optional(...)` registers sparse advanced stage
+callbacks, plus `produces`/`requires_dependency` ordering facts. Simple
+`start()`/`stop()` overrides need no spec declaration at all. Both paths are
+covered in
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks).
+
+## The `ExecutionContext` facade
+
+The single `ExecutionContext&` argument to `compute()` is a one-pointer,
+activation-scoped facade. Every accessor is O(1), non-blocking, and
+allocation-free, and it deliberately exposes no graph mutation or scheduler
+wait — `compute()` cannot reach outside its activation.
+
+- **Parameters** — `ctx.params<Params>()` returns the immutable parameter
+  aggregate pinned for this callback; `ctx.params_generation()` identifies
+  which generation you are seeing. See
+  [parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+- **Time** — `ctx.clock()` (a read-only `ClockRef`), `ctx.tag()` (this
+  activation's identity), `ctx.tag_time()` (its deterministic logical
+  coordinate), and `ctx.activation_time()` (dispatch time in the activation
+  clock — distinct from any sample's capture time). See
+  [time and clocks](/holoscan/sdk-user-guide/getting-started/time-and-clocks).
+- **Stream** — `ctx.cuda_stream()` returns the CUDA stream assigned to this
+  activation; received tensors are already ordered on it, so you launch work
+  and never synchronize on the hot path.
+- **Tracing and status** — `ctx.trace()` / `ctx.trace_id()` for correlation,
+  `ctx.activation()` for the activation and violation outcome.
+- **Cancellation** — `ctx.cancellation().stop_requested()` observes a
+  cooperative stop. A long-running or looping `compute()` should poll it and
+  wind down cleanly:
+
+  ```cpp
+  if (ctx.cancellation().stop_requested()) {
+    return {};   // wind down cooperatively
+  }
+  ```
+
+  How stops propagate through a running application is covered in
+  [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+- **Restart** — `ctx.request_restart(options)` (plus an authorized-target
+  overload) returns `expected<LifecycleRestartReceipt, Error>`. Acceptance
+  only *queues* the request; the lifecycle machinery executes it. The full
+  restart model lives in
+  [restart control](/holoscan/sdk-user-guide/advanced/restart-control).
+
+## What can cross a port: `PublishedPayload`
+
+Not every C++ type may travel between operators. A port admits only
+**`PublishedPayload`** types:
+
+- **Arithmetic types and enums** — plain scalar values.
+- **Exactly `Tensor`** — the SDK's pooled, stream-ordered payload (not
+  tensor-like wrappers).
+- **Schema-identified copyable values** — structs you have explicitly
+  registered with a payload schema.
+
+Emitting anything else is a compile-time error, not a runtime surprise. This
+restriction is deliberate: every admitted type has known size, copy, and
+serialization behavior, which is what lets the compiler size pools and — for
+schema-identified types — carry the same payload across process boundaries.
+The full admission rules, and how to make your own struct schema-identified,
+are in [payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules).
+
+## Recap
+
+- `receive()` returns an owning `Sample<T>` (payload in `.data`, provenance in
+  `.metadata`) and takes a finite read claim; `receive_data()` copies just the
+  value; `selected_batch()` / `for_each_selected()` read windowed inputs
+  through activation-scoped views. None of them pop a queue — the selection is
+  frozen per activation.
+- Every `emit()` is `[[nodiscard]] expected`; `EmitOptions` attaches
+  author-owned metadata, and forwarding a `Sample<T>` preserves it.
+- `setup()` builders declare everything the compiler needs: `queue_depth`,
+  tensor layout expectations, the `tensor_allocation` grant,
+  `max_emits_per_compute` (which sizes the output pool), and readiness
+  sources for `contract()` to trigger on.
+- `ExecutionContext` is the whole runtime surface inside `compute()`: params,
+  clock, tag, CUDA stream, cancellation, and restart requests — all O(1) and
+  non-blocking.
+- Only `PublishedPayload` types cross ports: arithmetic/enums, exact `Tensor`,
+  and schema-identified copyable values.
+
+Next: [temporal contracts](/holoscan/sdk-user-guide/building-operators/temporal-contracts) —
+how `contract()` tells the runtime *when* to invoke the `compute()` you just
+learned to write.

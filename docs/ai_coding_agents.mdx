@@ -1,0 +1,150 @@
+AI coding assistants — whether an inline autocomplete model or a fully
+autonomous agent iterating in a terminal — work best against APIs that are
+declarative, statically typed, and honest about failure. The Holoscan SDK 5.x
+API was not designed *for* agents, but the same properties that make it
+predictable for human engineers make it unusually agent-friendly. This page
+explains why, and gives practical tips for pointing an assistant at a
+Holoscan codebase.
+
+<Note title="You will learn">
+  - Which properties of the 5.x API make it work well with AI coding assistants
+  - Why compile-time validation gives an agent a truthful iteration signal
+  - How to ground an agent with this guide, the C++ API reference, and the examples tree
+  - What to expect from the planned Holoscan coding-assistant skill package
+</Note>
+
+## Why the 5.x API suits coding assistants
+
+**Declarative structure.** An application is built in three explicit phases —
+compose, compile, run. An operator is three declarations: `setup()` describes
+structure, `contract()` describes time, and `compute()` does the work. There
+is no hidden global state an agent has to discover by running the program;
+the graph, the ports, the parameters, and the temporal contracts are all
+spelled out in code the agent can read.
+
+**Statically typed, enumerable surfaces.** Ports are `Input<T>` and
+`Output<T>`; connections are made with `add_flow()`, which type-checks the
+endpoints. Parameters are declared through typed schemas. Payload kinds are a
+closed set. When the surface area of an API is enumerable — a finite set of
+headers, a finite set of error codes, a finite set of diagnostic identities —
+a model can hold an accurate picture of it and generate code that is right
+the first time far more often.
+
+**Errors as values.** Fallible operations return
+`holoscan::expected<T, Error>` rather than throwing from deep inside the
+runtime. Agents handle value-typed errors well: the failure path is visible
+in the function signature, so generated code that ignores it fails to compile
+under `[[nodiscard]]` rather than silently misbehaving. See
+[Errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+
+**Compile-time validation is the feedback loop.** The single biggest win: a
+mis-wired graph, a type mismatch on a flow, or an unsatisfiable temporal
+contract is rejected by `compile()` — before anything runs. `compile()`
+returns an `ExecutionPlan` whose `diagnostics()` carry structured
+`Diagnostic` records with stable identities and severities, not free-form log
+prose. An agent iterating on a Holoscan application therefore gets a
+*truthful* signal: build the code, call `compile()`, read the diagnostics,
+fix, repeat. It never needs to launch hardware-attached pipelines to learn
+that its graph is wrong. See
+[Compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)
+and [Understanding failures](/holoscan/sdk-user-guide/debugging-and-testing/understanding-failures).
+
+**Plans and diagnostics are machine-readable.** The compiled plan is an
+inspectable artifact — partitions, pools, capacities, and policy decisions
+are queryable data structures rather than opaque runtime behavior. Structured
+diagnostics with stable IDs mean an agent (or a script wrapped around one)
+can pattern-match on *which* rule fired instead of scraping message text that
+may change between releases. See
+[Plan tooling](/holoscan/sdk-user-guide/advanced/plan-tooling).
+
+## Practical tips
+
+### Ground the agent in the right documents
+
+Point your assistant at two sources of truth before it writes any code:
+
+- **This user guide**, especially
+  [Core concepts](/holoscan/sdk-user-guide/getting-started/core-concepts) and
+  the [Building operators](/holoscan/sdk-user-guide/building-operators/operator-anatomy)
+  section, so it learns the compose → compile → run model and the
+  setup/contract/compute split.
+- **The generated C++ API reference**
+  ([API reference](/holoscan/sdk-user-guide/api-reference/holoscan)) for exact
+  signatures. Models trained on earlier Holoscan releases will otherwise
+  reproduce 4.x-era patterns that no longer exist in 5.x.
+
+<Warning>
+  **Pretrained knowledge of Holoscan is probably stale.** The 5.x API differs
+  substantially from 4.x (see
+  [Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x)).
+  If an agent emits scheduler conditions, `Fragment`-era wiring, or
+  exception-based error handling on the hot path, it is pattern-matching on
+  the old API. Re-ground it with this guide and the API reference rather than
+  correcting one symptom at a time.
+</Warning>
+
+### Use compile diagnostics as the iteration signal
+
+Structure the agent's loop around the compiler, not around runtime trial and
+error:
+
+```text
+edit code → build → run compile() → read diagnostics → fix → repeat
+```
+
+Because `compile()` rejects invalid plans deterministically and cheaply, this
+loop is fast, requires no cameras or sensors attached, and never gives the
+agent a false "it works" signal from a run that happened to avoid the broken
+path. Only once the plan compiles cleanly should the agent move on to
+runtime testing (see
+[Testing](/holoscan/sdk-user-guide/debugging-and-testing/testing)).
+
+<Tip>
+  Ask the agent to treat any `Diagnostic` with severity `kError` as a hard
+  stop and to quote the diagnostic record — not its own paraphrase — when
+  reporting what it fixed. Stable diagnostic identities make this reliable
+  across iterations.
+</Tip>
+
+### Keep the examples tree as grounding
+
+The SDK ships a graded examples tree — from `hello_world` and `hello_core`
+through `ea1_camera_imu_control` and `ea1_slow_fast_fusion` — that
+demonstrates idiomatic 5.x patterns end to end. Keep it checked out where the
+agent can read it, and instruct the agent to imitate the nearest example
+rather than invent structure from scratch. Working, compiling code is the
+strongest grounding an agent can have; see
+[Holoscan by example](/holoscan/sdk-user-guide/examples/holoscan-by-example)
+for the guided tour.
+
+### General hygiene
+
+- Give the agent a build command it can run unattended, so the
+  edit-build-compile loop needs no human in the middle.
+- Keep tasks scoped to one operator or one graph change at a time; the
+  three-declaration operator shape makes such increments natural.
+- Have the agent state which layer a new primitive targets and verify the
+  header it imports actually exists under `include/holoscan/` before using it.
+
+## Coming soon: a Holoscan coding-assistant skill package
+
+A dedicated skill package for AI coding assistants is planned: a distributable
+bundle of Holoscan-specific instructions, API-surface summaries, and
+compile-loop recipes that popular agent frameworks can load directly, so the
+grounding steps above become a single install. Details will be announced in a
+future release; until then, the manual grounding described on this page is
+the recommended approach.
+
+## Recap
+
+- The 5.x API is declarative, statically typed, and enumerable — properties
+  that let coding assistants build an accurate model of it.
+- `compile()` gives agents a truthful, hardware-free feedback loop; rejected
+  plans carry structured diagnostics with stable identities.
+- Ground your agent in this guide plus the C++ API reference; pretrained 4.x
+  knowledge is stale.
+- Keep the examples tree readable by the agent and have it imitate the
+  nearest working example.
+- A dedicated Holoscan coding-assistant skill package is planned.
+
+Next: [HoloHub](/holoscan/sdk-user-guide/resources/holohub).

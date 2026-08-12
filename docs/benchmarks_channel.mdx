@@ -1,0 +1,533 @@
+Holoscan channels are built on HoloMQ, a typed shared-memory transport. This
+page explains how to read their hot-path measurements for the two payload
+families you will use most: small POD values carried inline through the
+transport, and Tensors carried as descriptors while the payload bytes stay in
+place. Read
+[the performance model](/holoscan/sdk-user-guide/performance/performance-model)
+first if you have not — the vocabulary here (serialized vs. saturated,
+delivery cycle vs. one-way E2E) comes from that page.
+
+The controlled result set below comes from one Release build and one tuned
+x86_64 workstation. The older measurements later on this page remain useful
+evidence of cost *structure*, but the controlled tables are the current
+reference for this machine. They are measurements, not guarantees for your
+hardware.
+
+<Note title="You will learn">
+- What one controlled x86_64 run measured for HoloMQ and Channel latency and
+  throughput.
+- How the two Tensor transports differ: same-process sidecar vs. interprocess
+  `BufferHandle` descriptor import.
+- Why serialized and saturated results must never be compared directly.
+- How publish cost grows with fanout (1:1, 1:2, 1:4) for both Tensor paths.
+- Which provenance must accompany every published result.
+</Note>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+## Controlled transport suite
+
+<Note title="How to read the controlled results">
+  Each value is the median of three repetition-level results. Channel and
+  interprocess HoloMQ latency use 5,000 post-warmup samples, 500 warmup
+  samples, queue depth 1, and 200 µs spin pacing. They measure from
+  immediately before publication through successful receive completion.
+  Throughput is unpaced and saturated; matched POD rows use queue depth 1
+  and bulk rows use queue depth 64. The intraprocess HoloMQ control retains
+  its benchmark-native batch and mean-iteration semantics. The balanced
+  preset does not report p99.9 because its 5,000 latency samples are below
+  the suite's 10,000-sample p99.9 threshold.
+</Note>
+
+{/* BENCHMARK-SUITE:CHANNEL-LATENCY:BEGIN */}
+
+### Intraprocess 1:1 latency
+
+The HoloMQ concurrent-polling control reports a Google Benchmark mean rather
+than sample percentiles. It is included because its two-thread publication
+and receive loop is the closest available HoloMQ control, but its central
+statistic is not interchangeable with a Channel p50.
+
+| Layer | Payload | Storage | Application payload | Central statistic | Tail |
+| --- | --- | --- | ---: | ---: | ---: |
+| HoloMQ | 64-byte inline value | Inline | 64 B | Mean 1.253 µs | Not reported |
+| Channel | `BenchmarkPod64` | Inline | 64 B | p50 1.496 µs | p99 1.905 µs |
+| Channel | `Tensor` | Pinned host | 1 MiB | p50 2.414 µs | p99 2.967 µs |
+| Channel | `Tensor` | Device | 1 MiB | p50 2.277 µs | p99 2.738 µs |
+| Channel | `ImageT` | Pinned host | 1 MiB | p50 3.686 µs | p99 5.924 µs |
+| Channel | `ImageT` | Device | 1 MiB | p50 3.486 µs | p99 4.012 µs |
+
+### Interprocess 1:1 latency
+
+| Layer | Payload | Storage | Application payload | p50 | p99 | Transport detail |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| HoloMQ | 64-byte inline value | Inline | 64 B | 0.718 µs | 0.978 µs | Raw inline transport |
+| Channel | `BenchmarkPod64` | Inline | 64 B | 1.451 µs | 1.801 µs | Typed `Sample<T>` Channel path |
+| HoloMQ | Raw buffer | Pinned host | 1 MiB | 1.183 µs | 1.620 µs | 224-byte `BufferHandle` descriptor |
+| HoloMQ | Raw buffer | Device | 1 MiB | 1.072 µs | 1.367 µs | Preinitialized immutable buffer; no per-message CUDA fence |
+| Channel | `Tensor` | Pinned host | 1 MiB | 2.437 µs | 4.099 µs | 464-byte Tensor descriptor |
+| Channel | `Tensor` | Device | 1 MiB | 2.280 µs | 3.649 µs | Automatic stream ordering |
+| Channel | `ImageT` | Pinned host | 1 MiB | 3.593 µs | 5.657 µs | 856-byte image metadata and Tensor descriptor |
+| Channel | `ImageT` | Device | 1 MiB | 3.428 µs | 6.742 µs | Image metadata plus device Tensor |
+
+{/* BENCHMARK-SUITE:CHANNEL-LATENCY:END */}
+
+{/* BENCHMARK-SUITE:CHANNEL-THROUGHPUT:BEGIN */}
+
+### Intraprocess 1:1 throughput
+
+The HoloMQ control and Channel POD row both use concurrent polling. The
+Channel bulk rows use the same `BufferHandle` transfer mode as their
+interprocess counterparts, but publisher and subscriber run as threads in
+one process.
+
+| Layer | Payload | Storage | Application payload | Queue depth | Logical messages/s |
+| --- | --- | --- | ---: | ---: | ---: |
+| HoloMQ | 64-byte inline value | Inline | 64 B | Benchmark-native | 1,229,987 |
+| Channel | `BenchmarkPod64` | Inline | 64 B | 1 | 1,124,338 |
+| Channel | `Tensor` | Pinned host | 1 MiB | 64 | 695,029 |
+| Channel | `Tensor` | Device | 1 MiB | 64 | 717,283 |
+| Channel | `ImageT` | Pinned host | 1 MiB | 64 | 524,326 |
+| Channel | `ImageT` | Device | 1 MiB | 64 | 516,897 |
+
+### Interprocess 1:1 throughput
+
+At fanout 1, logical messages/s and aggregate deliveries/s are identical.
+
+| Layer | Payload | Storage | Application payload | Queue depth | Logical messages/s |
+| --- | --- | --- | ---: | ---: | ---: |
+| HoloMQ | 64-byte inline value | Inline | 64 B | 1 | 1,323,158 |
+| Channel | `BenchmarkPod64` | Inline | 64 B | 1 | 1,182,636 |
+| HoloMQ | Raw buffer | Pinned host | 1 MiB | 64 | 746,961 |
+| HoloMQ | Raw buffer | Device | 1 MiB | 64 | 767,705 |
+| Channel | `Tensor` | Pinned host | 1 MiB | 64 | 692,791 |
+| Channel | `Tensor` | Device | 1 MiB | 64 | 700,028 |
+| Channel | `ImageT` | Pinned host | 1 MiB | 64 | 516,040 |
+| Channel | `ImageT` | Device | 1 MiB | 64 | 525,397 |
+
+For the directly matched CPU rows, Channel retains 89% of raw HoloMQ POD
+throughput and 93% of raw HoloMQ pinned-buffer throughput. The typed facade
+adds 0.733 µs to the POD p50 and 1.254 µs to the pinned-host Tensor p50.
+`ImageT` carries image metadata in addition to the Tensor descriptor, so it
+is not a raw-buffer equivalent.
+
+The raw HoloMQ device row is the transport-only control for Channel's
+descriptor-only rows: all device contents are initialized and synchronized
+before timing, so no per-message CUDA readiness or release fence is needed.
+Channel device Tensor throughput is 91% of that raw control. A separate
+HoloMQ synchronization sweep, shown below, measures the reusable-buffer
+protocol needed around per-sample GPU work. HoloMQ has no semantic `Tensor`,
+`ImageT`, or generated-schema type; its raw rows are controls, not
+substitutes for those types.
+
+{/* BENCHMARK-SUITE:CHANNEL-THROUGHPUT:END */}
+
+### CUDA stream-ordering control
+
+The device-buffer control separates raw descriptor transport from
+stream-ordered ownership. All four rows reuse backing initialized before
+timing; they differ only in the CUDA readiness and release protocol applied
+to each publication.
+
+| Producer readiness | Consumer deferred release | Logical messages/s | Paced p50 | Paced p99 |
+| --- | --- | ---: | ---: | ---: |
+| No | No | 767,705 | 1.072 µs | 1.367 µs |
+| Yes | No | 43,957 | Not measured | Not measured |
+| No | Yes | 363,661 | Not measured | Not measured |
+| Yes | Yes | 12,372 | 3.197 µs | 4.507 µs |
+
+The fully stream-ordered row is the relevant lower-level control when a
+producer changes device contents on one stream and a consumer uses them on
+another. It enqueues a generation write, a generation wait, and deferred
+producer and consumer refcount releases. Its 74.281 µs
+pool-acquisition p50 shows that stream-ordered slot recycling, not the
+BufferHandle descriptor itself, limits this implementation under saturation.
+By contrast, the descriptor-only row needs no fence because initialization
+completed before publication.
+
+<Warning>
+  The controlled Channel Tensor and ImageT throughput rows above are
+  descriptor-only transport measurements. Do not use them to predict a
+  workload that writes a fresh device payload every sample. Such a workload
+  must retain stream ordering and also includes its producer work. The
+  current intraprocess sidecar benchmark does not yet provide a matched
+  per-sample CUDA-work row.
+</Warning>
+
+{/* BENCHMARK-SUITE:HOLOMQ-MEAN:BEGIN */}
+
+### HoloMQ serialized intraprocess cycles
+
+| Inline payload | Mean publish-and-receive iteration |
+| ---: | ---: |
+| 64 B | 746 ns |
+| 128 B | 752 ns |
+| 440 B | 763 ns |
+
+These are Google Benchmark repetition-level mean iterations with one sample
+in flight, not per-sample percentiles. They are useful size controls but are
+not directly comparable with the concurrent latency table.
+
+{/* BENCHMARK-SUITE:HOLOMQ-MEAN:END */}
+
+### Controlled-run provenance
+
+The controlled suite supplies the primary tables and the fully stream-ordered
+HoloMQ device latency. A focused rerun at the same SDK revision, on the same
+machine, supplies the four device synchronization throughput controls and the
+no-fence device latency.
+
+| Field | Value |
+| --- | --- |
+| SDK and benchmark-runner revision | `6192b66621cc0558264b7a0f0d4424effdcf9421` |
+| Run date and artifact digest | 2026-07-24; `summary.json` SHA-256 `4de99f99de7b9b65bdbb257f4a7b732e2225c7506114d7ae54904c4dfcabadc4` |
+| HoloMQ device supplement | 2026-07-24; sorted per-file digest manifest SHA-256 `8fbb3a60e9237b5860622215f24e17cc90cf0ebb503a9ab5be78f1b25f8d8de7` |
+| CPU and topology | Intel Core i9-10980XE; 18 physical cores, 36 logical CPUs, one socket, SMT enabled |
+| Selected CPUs | Logical CPUs 0–7, each mapped to a distinct physical core on socket 0 |
+| GPU, driver, and CUDA | NVIDIA RTX A6000 (48 GiB); driver 595.71.05; CUDA 13.0.88 |
+| OS and kernel | Ubuntu 24.04.4 LTS host; Ubuntu 24.04.2 LTS container; Linux 6.8.0-136-generic |
+| Compiler, build, and container | GCC 13.3.0; `Release`; image `sha256:7ee202e725363e6c10677aaa8e8fdbfc5cb46167b96a969767f19c4e0e0144ed` |
+| CPU controls | `performance` governor; C1E and C6 disabled on all logical CPUs; the suite did not change or restore host settings |
+| Preset and repetitions | `balanced`; three repetitions |
+| Latency geometry | 5,000 measured samples, 500 warmup, queue depth 1, 200 µs spin pacing |
+| Throughput geometry | 50,000 measured POD samples; 10,000 pinned-host or 5,000 device bulk samples; 500 warmup; no pacing |
+| Payload and topology | Intraprocess and interprocess 1:1; 64-byte POD or 1 MiB external buffer; timed payload validation disabled |
+
+The exact command was:
+
+```bash
+HOLOSCAN_CUDA_MAJOR_VERSION=13 ./public/run launch build-cu13-x86_64 \
+  --run-cmd "python3 ../benchmark/run_transport_benchmark_suite.py \
+    --build-dir . \
+    --output-dir transport-suite-userguide-balanced-20260724 \
+    --preset balanced \
+    --cpus 0,1,2,3,4,5,6,7"
+```
+
+For the focused HoloMQ device control, the runner swept `--device-sync none`,
+`publisher_ready`, `subscriber_release`, and `ready` with queue depth 64 and
+pool size 66. The no-fence latency row used queue depth 1, pool size 3, and
+200 µs pacing. The fully stream-ordered latency row came from the controlled
+suite's `ready` case with queue depth 1 and 500 µs pacing.
+
+The tables remain the accessible source of truth. No chart is included because
+the small number of curated rows is clearer in tabular form.
+
+## Earlier reference measurements
+
+The measurements below were collected in July 2026 before the controlled
+transport-suite run above. They retain their original provenance and caveats
+for historical comparison, but are not the current controlled result set.
+
+## How to read these tables
+
+Two execution models appear throughout, and they measure different things:
+
+- **Serialized**: one thread calls `emit_sample()` and then immediately calls
+  `receive_sample()` on the paired endpoint, with exactly one sample in
+  flight. The **delivery cycle** is the emit-plus-receive round through the
+  transport. This isolates API cost cleanly.
+- **Saturated**: publisher and subscriber run concurrently on separate
+  threads or processes with no pacing and a queue depth of 64. The **one-way
+  E2E p50** runs from the publisher's timestamp to completed receive and
+  includes queue residence and scheduling. Because several samples are in
+  flight, completed samples per second can *exceed* `1 / E2E` — throughput is
+  a pipelined completion cadence, not the reciprocal of latency.
+
+Every `emit`/`receive` in these benchmarks carries a full `Sample<T>` — the
+value plus its `SampleMetadata` — even when the convenience `emit(T)` /
+`receive()` overloads are used.
+
+## POD inline transport
+
+POD payloads travel inline: the bytes of `T` and the `SampleMetadata` are
+copied into the transport sample itself. The same code path serves
+same-process and interprocess deployments — only the queue's process
+placement changes.
+
+| POD execution model | Measured interval | Median | Completed samples/s |
+| --- | --- | ---: | ---: |
+| Same process, same thread | Serialized emit + receive delivery cycle | 583 ns | 1.716 M/s |
+| Same process, publisher and subscriber threads | One-way E2E p50 | 1,333 ns | 1.118 M/s |
+| Separate publisher and subscriber processes | One-way E2E p50 | 1,304 ns | 1.128 M/s |
+
+Breaking the saturated rows into per-call API cost:
+
+| Deployment | `emit_sample()` p50 | Successful `receive_sample()` p50 | E2E p50 |
+| --- | ---: | ---: | ---: |
+| Same process, inline | 789 ns | 500 ns | 1,333 ns |
+| Separate processes, inline | 778 ns | 467 ns | 1,304 ns |
+
+The near-identical intraprocess and interprocess rows are expected, not a
+fluke: both use the same typed inline transport path, so crossing a process
+boundary costs essentially nothing extra for POD payloads on this host.
+
+<Warning>
+  Do not add the emit and receive medians to reconstruct latency. The two
+  calls execute on different threads or processes and overlap with transport
+  and scheduling; their sum is not the end-to-end path. Likewise, the 583 ns
+  same-thread delivery cycle has no publisher-to-subscriber timestamp and
+  must not be read as concurrent latency.
+</Warning>
+
+## Tensor transport: sidecar vs. BufferHandle
+
+Tensor payloads never copy their bytes through the queue. Two mechanisms
+carry them:
+
+- **Same-process sidecar**: the publisher stores the Tensor handle in a
+  runtime-owned sidecar store and publishes a small descriptor. The
+  subscriber resolves the descriptor and receives *the same underlying Tensor
+  allocation* — no import, no new view.
+- **Interprocess `BufferHandle`**: the publisher exports a descriptor
+  encoding a `BufferHandle` plus shape, strides, and dtype. The subscriber
+  imports the referenced pool slot (cached after first import) and
+  materializes a new read-only Tensor view whose lifetime is tied to the
+  lease.
+
+### Serialized comparison (one sample in flight)
+
+Both rows use the same warmed pinned-host source pool, so the difference is
+purely the transport choice:
+
+| Tensor path | Emit stage | Receive stage | Delivery cycle | Delivery cycles/s |
+| --- | ---: | ---: | ---: | ---: |
+| Same-process sidecar, pinned-host-backed Tensor | 591 ns | 357 ns | 890 ns | 1.124 M/s |
+| `BufferHandle`, same pinned-host source pool | 701 ns | 637 ns | 1,300 ns | 0.769 M/s |
+
+These are Google Benchmark median aggregates of repetition-level mean
+iteration times, not per-operation percentiles. The stage columns and the
+delivery-cycle column come from separate benchmark rows and are not
+mathematically additive; the delivery-cycle value is authoritative.
+
+### Saturated comparison (production runner, 1 MiB device Tensor)
+
+| Payload and deployment | `emit_sample()` p50 | Successful `receive_sample()` p50 | E2E p50 | Completed/s |
+| --- | ---: | ---: | ---: | ---: |
+| Tensor, same process, sidecar | 1,174 ns | 730 ns | 2,028 ns | 758,847 |
+| Tensor, separate processes, device `BufferHandle` | 1,046 ns | 1,004 ns | 2,369 ns | 846,421 |
+
+<Warning>
+  **The serialized and saturated tables are not directly comparable.** They
+  measure different execution models: the serialized rows time one sample in
+  flight with no concurrency, while the saturated rows include queue
+  residence, scheduling, and cross-thread or cross-process handoff under full
+  load. Compare cost *structure* across them (sidecar receive stays cheaper;
+  `BufferHandle` receive pays for import and view materialization), never
+  their absolute medians. Note also that the serialized rows above use
+  pinned-host-backed Tensors while the saturated rows use device Tensors.
+</Warning>
+
+Structurally, sidecar receive reuses the existing Tensor handle, whereas
+`BufferHandle` receive imports a pool slot and materializes a new Tensor
+view — that is why the interprocess receive p50 is markedly higher even
+though its emit is competitive. The interprocess row can still complete more
+samples per second because publisher and subscriber pipeline across process
+boundaries.
+
+Putting the saturated 1:1 rows from both payload families side by side makes
+the cost structure visible at a glance: both POD deployments land at ~1.3 µs,
+and the two Tensor descriptor paths sit roughly 0.7–1.1 µs above them.
+
+<svg viewBox="0 0 760 260" role="img" aria-labelledby="ch-e2e-p50-title" aria-describedby="ch-e2e-p50-desc" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="ch-e2e-p50-title">Saturated 1:1 one-way E2E p50 by payload and deployment</title>
+  <desc id="ch-e2e-p50-desc">Historical horizontal bar chart comparing four saturated one-to-one reference measurements. POD same-process and separate-process rows are close to 1.3 microseconds; Tensor descriptor rows are approximately 2.0 and 2.4 microseconds.</desc>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">
+    <text x="380" y="24" textAnchor="middle" fontSize="16" fontWeight="600">Saturated 1:1 one-way E2E p50</text>
+    <line x1="215" y1="44" x2="215" y2="222" stroke="currentColor" strokeWidth="1.5" opacity="0.35"/>
+    <text x="205" y="61" textAnchor="end" fontSize="12">POD</text>
+    <text x="205" y="73" textAnchor="end" fontSize="12" opacity="0.75">same process</text>
+    <rect x="215" y="50" width="240" height="26" fill="#76B900"/>
+    <text x="463" y="68" fontSize="12">1,333 ns</text>
+    <text x="205" y="103" textAnchor="end" fontSize="12">POD</text>
+    <text x="205" y="115" textAnchor="end" fontSize="12" opacity="0.75">separate processes</text>
+    <rect x="215" y="92" width="235" height="26" fill="#76B900"/>
+    <text x="458" y="110" fontSize="12">1,304 ns</text>
+    <text x="205" y="145" textAnchor="end" fontSize="12">Tensor, sidecar</text>
+    <text x="205" y="157" textAnchor="end" fontSize="12" opacity="0.75">same process</text>
+    <rect x="215" y="134" width="365" height="26" fill="#76B900"/>
+    <text x="588" y="152" fontSize="12">2,028 ns</text>
+    <text x="205" y="187" textAnchor="end" fontSize="12">Tensor, BufferHandle</text>
+    <text x="205" y="199" textAnchor="end" fontSize="12" opacity="0.75">separate processes</text>
+    <rect x="215" y="176" width="427" height="26" fill="#76B900"/>
+    <text x="650" y="194" fontSize="12">2,369 ns</text>
+    <text x="215" y="242" fontSize="12" opacity="0.75">one-way E2E p50 (ns), saturated, queue depth 64 — lower is better</text>
+  </g>
+</svg>
+
+## Fanout scaling
+
+The same saturated matrix at 1:1, 1:2, and 1:4 fanout, with a 1 MiB device
+Tensor. Each publisher call is one logical sample regardless of fanout; the
+receive column is the *worst* subscriber's successful `receive_sample()` p50
+and the E2E column is the worst-subscriber one-way E2E p50.
+
+| Fanout | Transport | Emit p50 | Worst receive p50 | Worst E2E p50 | Completed logical samples/s |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 1:1 | Same-process sidecar | 1,174 ns | 730 ns | 2,028 ns | 758,847 |
+| 1:1 | Interprocess `BufferHandle` | 1,046 ns | 1,004 ns | 2,369 ns | 846,421 |
+| 1:2 | Same-process sidecar | 1,475 ns | 719 ns | 2,386 ns | 610,933 |
+| 1:2 | Interprocess `BufferHandle` | 1,409 ns | 1,075 ns | 2,497 ns | 661,811 |
+| 1:4 | Same-process sidecar | 2,084 ns | 1,063 ns | 3,258 ns | 434,260 |
+| 1:4 | Interprocess `BufferHandle` | 2,055 ns | 1,166 ns | 3,153 ns | 463,389 |
+
+<svg viewBox="0 0 760 300" role="img" aria-labelledby="ch-fanout-e2e-title" aria-describedby="ch-fanout-e2e-desc" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="ch-fanout-e2e-title">Worst-subscriber E2E p50 versus fanout for sidecar and BufferHandle transports</title>
+  <desc id="ch-fanout-e2e-desc">Historical grouped horizontal bars for one-to-one, one-to-two, and one-to-four Tensor fanout. Worst-subscriber latency rises with fanout for both same-process sidecar and interprocess BufferHandle transport.</desc>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">
+    <text x="380" y="24" textAnchor="middle" fontSize="16" fontWeight="600">Fanout scaling — worst-subscriber E2E p50</text>
+    <rect x="215" y="36" width="14" height="12" fill="#76B900"/>
+    <text x="234" y="46" fontSize="12">sidecar (same process)</text>
+    <rect x="400" y="36" width="14" height="12" fill="currentColor" opacity="0.3"/>
+    <text x="419" y="46" fontSize="12">BufferHandle (interprocess)</text>
+    <line x1="170" y1="60" x2="170" y2="262" stroke="currentColor" strokeWidth="1.5" opacity="0.35"/>
+    <text x="160" y="93" textAnchor="end" fontSize="13" fontWeight="600">1:1</text>
+    <rect x="170" y="66" width="284" height="20" fill="#76B900"/>
+    <text x="462" y="81" fontSize="12">2,028 ns</text>
+    <rect x="170" y="90" width="332" height="20" fill="currentColor" opacity="0.3"/>
+    <text x="510" y="105" fontSize="12">2,369 ns</text>
+    <text x="160" y="163" textAnchor="end" fontSize="13" fontWeight="600">1:2</text>
+    <rect x="170" y="136" width="334" height="20" fill="#76B900"/>
+    <text x="512" y="151" fontSize="12">2,386 ns</text>
+    <rect x="170" y="160" width="350" height="20" fill="currentColor" opacity="0.3"/>
+    <text x="528" y="175" fontSize="12">2,497 ns</text>
+    <text x="160" y="233" textAnchor="end" fontSize="13" fontWeight="600">1:4</text>
+    <rect x="170" y="206" width="456" height="20" fill="#76B900"/>
+    <text x="634" y="221" fontSize="12">3,258 ns</text>
+    <rect x="170" y="230" width="441" height="20" fill="currentColor" opacity="0.3"/>
+    <text x="619" y="245" fontSize="12">3,153 ns</text>
+    <text x="170" y="284" fontSize="12" opacity="0.75">worst-subscriber one-way E2E p50 (ns), 1 MiB device Tensor — lower is better</text>
+  </g>
+</svg>
+
+Publisher cost grows with fanout in both modes and becomes the limiting
+stage. Sidecar receive remains cheaper at all three fanouts, though its
+advantage narrows at 1:4, and the interprocess rows sustain 7–12% more
+completed logical samples per second in this matrix. These are single-run
+results without CPU isolation — repeat with isolation before treating small
+differences as an optimization gate.
+
+## Where the nanoseconds go
+
+A matched decomposition of the same-process sidecar path (serialized,
+then-current 440-byte unified transport payload) attributes the cost as
+follows:
+
+```text
+812 ns full sidecar delivery cycle
+├── 654 ns raw typed HoloMQ transport            (~80%)
+├──  55 ns warmed release callback
+└── 103 ns sidecar/Tensor insert, acquire, release
+```
+
+<svg viewBox="0 0 760 190" role="img" aria-labelledby="ch-sidecar-decomp-title" aria-describedby="ch-sidecar-decomp-desc" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="ch-sidecar-decomp-title">Decomposition of the 812 ns serialized sidecar delivery cycle</title>
+  <desc id="ch-sidecar-decomp-desc">Historical stacked bar showing 654 nanoseconds of HoloMQ transport, 103 nanoseconds of sidecar and Tensor lifecycle work, and 55 nanoseconds of release-callback work.</desc>
+  <g fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fill="currentColor">
+    <text x="380" y="24" textAnchor="middle" fontSize="16" fontWeight="600">Sidecar delivery cycle — where 812 ns goes</text>
+    <text x="60" y="48" fontSize="12" fontWeight="600">total: 812 ns (serialized)</text>
+    <rect x="60" y="56" width="515" height="38" fill="#76B900"/>
+    <rect x="575" y="56" width="81" height="38" fill="currentColor" opacity="0.25"/>
+    <rect x="656" y="56" width="43" height="38" fill="currentColor" opacity="0.1"/>
+    <rect x="60" y="56" width="639" height="38" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5"/>
+    <text x="317" y="79" textAnchor="middle" fontSize="12" fill="#000000">HoloMQ transport — 654 ns (80%)</text>
+    <line x1="615" y1="94" x2="615" y2="118" stroke="currentColor" strokeWidth="1.5" opacity="0.55"/>
+    <text x="620" y="132" textAnchor="end" fontSize="12">sidecar/Tensor lifecycle — 103 ns (13%)</text>
+    <line x1="677" y1="94" x2="677" y2="152" stroke="currentColor" strokeWidth="1.5" opacity="0.55"/>
+    <text x="699" y="166" textAnchor="end" fontSize="12">release callback — 55 ns (7%)</text>
+  </g>
+</svg>
+
+The takeaway: the sidecar store is *not* the dominant cost. Raw typed
+transport occupies roughly 80% of the serialized path, and within that, the
+publisher stage (loan, payload assignment, send — about 421 ns at batch depth
+one) is the largest measured substage; subscriber take-and-copy is about
+232 ns. The release callback exists because sidecar and `BufferHandle`
+publications carry external ownership; self-contained POD payloads omit it
+entirely. These deltas come from matched whole-path benchmark pairs, so they
+can be displayed additively; the independently timed substages cannot be
+subtracted from other rows as if they shared one clock.
+
+{/* This 812 ns decomposition run and the 890 ns serialized sidecar row above
+    are separate matched benchmark configurations; the small difference is
+    benchmark-shape, not a contradiction. */}
+
+## Earlier-reference provenance and caveats
+
+All results were collected on a single workstation: an Intel Core i9-10980XE
+(18 physical cores, SMT enabled) running Linux, from a Release build
+(`CMAKE_BUILD_TYPE=Release`, clang-tidy off) with CUDA 13, inside the
+matching SDK container. ASLR and normal frequency scaling remained enabled.
+
+- **Concurrent POD rows**: 2026-07-10 production matrix at commit
+  `2369aea9c`. One million measured samples after 10,000 warmup samples,
+  queue depth 64, no publisher pacing, publisher pinned to a dedicated core,
+  subscribers on distinct physical cores.
+- **Same-thread POD row**: focused 11-repetition Release run on 2026-07-12
+  (583 ns median), after configuring exact subscriber capacity and omitting
+  the unused release handler. A directly comparable raw-HoloMQ POD benchmark
+  measured 632 ns in the same session; that cross-binary ordering is
+  sensitive to code layout and run order and should not be read as negative
+  channel overhead.
+- **Tensor rows (serialized, saturated, fanout)**: refreshed on 2026-07-12 at
+  commit `1d06c716a`, with exact subscriber capacity configured and
+  local-only CUDA FD export disabled. Fanout rows used 100,000 measured
+  samples after 10,000 warmup samples, queue depth 64, final payload
+  validation; all rows completed without sequence gaps.
+
+Interpretation constraints — read these before quoting any number:
+
+- **Device rows measure descriptor transport only.** They transport
+  descriptors, import pool slots, and materialize Tensor views; they do not
+  copy 1 MiB of payload data or execute any real GPU work. CUDA
+  generation-ordering waits and stream-ordered deallocation can dominate a
+  real stream-ordered interprocess pipeline and are deliberately excluded
+  here.
+- **Percentiles are post-warmup and successful-calls-only.** Production-run
+  p50 values are nearest-rank percentiles over individual successful samples
+  after warmup; subscriber `kNotReady` polls are not included in the
+  successful-receive durations.
+- **Saturated E2E is not idle-system latency.** The concurrent runs are
+  saturated throughput tests; E2E percentiles include queue residence and
+  scheduling.
+- **Small deltas need isolated reruns.** With ASLR and frequency scaling
+  enabled, confirm small cross-run differences with repeated isolated runs
+  before using them to gate an optimization.
+
+## Recap
+
+- Intraprocess Channel measured 1.124 million `BenchmarkPod64` messages/s
+  with 1.496 µs p50 latency; the closest concurrent HoloMQ polling control
+  measured 1.230 million messages/s and a 1.253 µs mean iteration.
+- In the controlled interprocess 1:1 run, HoloMQ delivered 64-byte values at
+  1.323 million messages/s with 0.718 µs p50 latency; Channel delivered
+  `BenchmarkPod64` at 1.183 million messages/s with 1.451 µs p50 latency.
+- A 1 MiB device `Tensor` reached 700,028 messages/s and 2.280 µs p50 through
+  Channel; device `ImageT` reached 525,397 messages/s and 3.428 µs p50.
+- Earlier July measurements remain historical evidence, not current release
+  results or performance guarantees.
+- Tensor bytes never cross the queue: same-process sidecar reuses the
+  original Tensor allocation, interprocess `BufferHandle` imports and
+  materializes a new view.
+- Serialized and saturated benchmarks measure different execution models —
+  compare structure, never absolute medians.
+- Publisher cost grows with fanout and becomes the limiting stage in both
+  Tensor transports.
+- Raw typed transport is ~80% of the sidecar delivery cycle; sidecar
+  bookkeeping (~103 ns) and the release callback (~55 ns) are not the
+  bottleneck.
+- Device rows exclude GPU work; treat them as transport cost, not pipeline
+  latency.
+
+Next: [Core runtime benchmarks](/holoscan/sdk-user-guide/performance/core-runtime-benchmarks)
+covers what the scheduler and operator activation machinery add on top of
+these channel costs. For the mechanics behind the interprocess path, see
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels)
+and [Standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients).

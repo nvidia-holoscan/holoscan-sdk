@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Keep this file intentionally small. Entries should explain why a public declaration is
+# header-only, non-ABI, or intentionally exempt from the generated export macro policy.
+holomq: []
+holoscan_core:
+  # DSO-local shared-authority constructor used only by the retained manual Tensor facade.
+  - public/include/holoscan/channel/runtime.hpp::explicit ChannelRuntime(std::shared_ptr<Impl> impl) noexcept;
+  # Factory-only PImpl constructor; callers use exported runtime and factory APIs.
+  - public/include/holoscan/channel/manual_tensor_publisher.hpp::explicit ManualChannelBinding(std::unique_ptr<Impl> impl) noexcept;
+  # Factory-only PImpl constructor; callers use the exported free factory.
+  - public/include/holoscan/channel/manual_tensor_publisher.hpp::explicit ManualTensorPublisher(std::unique_ptr<Impl> impl) noexcept;

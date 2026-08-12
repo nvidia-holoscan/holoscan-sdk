@@ -1,5 +1,0 @@
-cloudpickle>=3.0,<4.0
-cupy-cuda12x>=12.2,<14.0
-numpy>=1.0.4,<3.0
-pillow>=11.2
-pip>22.0.2

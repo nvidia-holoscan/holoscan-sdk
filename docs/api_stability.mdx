@@ -1,0 +1,141 @@
+Holoscan SDK 5.0 is an early-access release of a substantially redesigned
+runtime. To make it clear what you can build on today — and what may still
+move — every public surface of the SDK is assigned one of three stability
+stages: **Stable**, **Beta**, or **Prototype**. This page defines those
+stages, tells you how to recognize them in the documentation, and sketches
+which capabilities arrive in which stage across upcoming releases.
+
+<Note title="You will learn">
+  - What Stable, Beta, and Prototype mean for your code
+  - How stability is signaled on individual documentation pages
+  - Which parts of the SDK are Beta or Prototype in this release
+  - Which capabilities are planned for future releases
+</Note>
+
+<Warning>
+  **Early access.** In the current release, most SDK surfaces are Beta or
+  Prototype. APIs may change between releases based on your feedback. Pin
+  your SDK version and read the release notes before upgrading.
+</Warning>
+
+## The three stability stages
+
+### Stable
+
+Stable APIs are maintained for the long term. We do not expect breaking
+changes; if one ever becomes necessary, it is announced at least one release
+ahead of time, with a migration path documented before the old behavior is
+removed. Stable surfaces are safe to build production applications on.
+
+### Beta
+
+Beta APIs are feature-complete for their intended scope and covered by
+tests, but the API shape may still change in response to user feedback.
+Value-add improvements — better error messages, better diagnostics, better
+performance — land continuously. When a Beta API changes, the release notes
+call it out, but changes are not guaranteed a deprecation cycle. Beta is the
+default stage for most of the SDK in this release.
+
+### Prototype
+
+Prototype (preview) APIs are early access for feedback. They are available
+so you can try a direction and tell us whether it works for your use case.
+A Prototype API may change significantly — or be removed entirely — in a
+later release, without a deprecation cycle. Do not depend on Prototype
+surfaces in production code. Some Prototype headers live under an
+`experimental` include path, but not all do — the page banner, not the
+include path, is the reliable signal.
+
+## How stability is signaled
+
+- Each user-guide and API-reference page that documents a Beta or Prototype
+  surface carries a banner (a `Warning` like the one at the top of this
+  page) naming the current limitation and noting that the API may evolve.
+- Release notes list every API change per stage, so you can scan the Beta
+  and Prototype sections before upgrading.
+- Absence of a banner does not yet mean Stable: in this early-access
+  release, treat unbannered surfaces as Beta unless a page explicitly says
+  Stable.
+
+## Current stages by area
+
+The table below summarizes where the major areas of the SDK stand today.
+Individual pages remain authoritative when they differ.
+
+| Area | Current stage |
+|---|---|
+| Core programming model (compose → compile → run, `Graph`, `Operator`) | Beta |
+| Typed operator ports (`Input<T>`/`Output<T>`) and `add_flow()` composition | Beta |
+| Temporal contracts (`contract()`: triggers, input selection, missing-data policy) | Beta |
+| Errors as values (`holoscan::expected`, `ErrorCode`, `HOLOSCAN_TRY`) | Beta |
+| Per-input buffer policies and explicit backpressure | Beta |
+| Reusable subgraphs | Beta |
+| Lifecycle callbacks (`start()`/`stop()` overrides and staged callbacks) | Beta |
+| Lifecycle restart control | Beta |
+| Parameter schemas, runtime updates, snapshots, and persistence | Beta |
+| Compile-time parameter resolution (`CompileOptions` target-bound overrides) | Beta |
+| Computational deadlines | Beta |
+| Host/device memory-kind awareness (declared Tensor memory kinds, bounded staging) | Beta |
+| Deterministic execution controls and simulated-time testing | Beta |
+| Tensors and preallocated memory pools | Beta |
+| Interprocess channels and standalone channel clients | Prototype |
+| Payload schemas (schema-described payloads) | Prototype |
+| Scheduling policies (thread placement, priorities) | Prototype |
+| Plan tooling and plan inspection | Prototype |
+| Operator unit-testing harness | Planned (upcoming release) |
+| Full pre-execution graph validation | Planned (upcoming release) |
+| GPU-resident execution | Planned (upcoming release) |
+| Automatic host↔device memory transfer | Planned (upcoming release) |
+| Runtime observability (tracing, lineage, "why did this run") | Planned (upcoming release) |
+| Windows support and additional language bindings | Planned (upcoming release) |
+
+{/* TODO(verify): Owner: release owner. Durable target: the release-notes
+    stability matrix for this SDK version. Current-stage rows were audited
+    against shipped code and tests on 2026-08-05 (EA1-032); the remaining
+    unblock condition is mapping the rows against the published release-notes
+    matrix before publication. */}
+
+## Capabilities arrive in stages
+
+The 5.x series is designed to grow in deliberate steps rather than ship
+everything at once. The current release ships the core programming model —
+typed ports, temporal contracts, explicit buffer policies, reusable
+subgraphs, and external connections — together with lifecycle callbacks and
+restart control, the parameter engines (compile-time resolution, runtime
+updates, snapshots, and persistence), computational deadlines, declared
+memory-kind awareness, and the deterministic execution controls used for
+simulated-time testing. Upcoming releases layer on, in rough order: an
+operator unit-testing harness, full graph validation, rate-aware outputs,
+automatic host↔device memory transfer, fault-handling policies, and
+GPU-resident execution — followed by deep runtime observability, full
+capture/replay tooling built on today's deterministic primitives, Windows
+support, and language bindings beyond C++ and Python.
+
+A capability usually enters as Prototype, graduates to Beta once its shape
+has survived real usage, and reaches Stable when we are ready to commit to
+its long-term maintenance. Feedback on Beta and Prototype surfaces directly
+shapes what Stable eventually looks like — if an API gets in your way,
+please say so early.
+
+<Tip>
+  If you are starting a new project today, build on the Beta core
+  programming model and isolate any Prototype dependencies behind your own
+  interfaces. That keeps upgrades cheap while the SDK converges.
+</Tip>
+
+## Recap
+
+- Three stages: **Stable** (maintained, breaking changes announced ahead),
+  **Beta** (may change on feedback, changes noted in release notes), and
+  **Prototype** (early access, may change or be removed).
+- In this early-access release, most surfaces are Beta or Prototype; pages
+  carry a banner where relevant.
+- The stage table above maps each SDK area to its current stage; the still
+  planned capabilities (unit-testing harness, full graph validation,
+  automatic memory transfer, GPU-resident execution, full capture/replay
+  tooling, runtime observability, Windows, more languages) arrive across
+  upcoming releases.
+- Pin your SDK version, scan release notes per stage, and keep Prototype
+  usage behind your own interfaces.
+
+Next: [Migrating from 4.x](/holoscan/sdk-user-guide/introduction/migrating-from-4x)

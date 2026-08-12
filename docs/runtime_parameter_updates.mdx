@@ -1,0 +1,507 @@
+Sometimes a parameter should change while the graph is running: nudging a gain,
+adjusting a threshold, retuning a filter interval — without stopping the
+session, recompiling, and starting over. Holoscan 5.0 supports this through
+**runtime parameter generations**: a running operator's typed parameters live
+in immutable, versioned snapshots, and an update publishes a *new* snapshot at
+a scheduler-safe boundary rather than mutating the current one in place.
+
+This page covers the whole cycle: how a field becomes updatable, how an
+operator reads the values pinned for its current callback, how application
+code submits and observes an update through a control handle, how operator
+code submits `runtime_mutable()` self-updates from inside `compute()`, and how
+to fence off further updates.
+
+<Warning>
+  **Beta.** Runtime parameter updates work today as described on this page,
+  and the API may still evolve in upcoming releases.
+
+  **Works today, with hard bounds:** values are **scalars only** (bool,
+  fixed-width integers, enums, `float`, `double`, and integral-nanosecond
+  durations — no strings, containers, or Tensors); a `runtime_mutable()` field
+  publishes at the target operator's **next compute boundary** (never
+  mid-callback and never at an arbitrary clock time), while a
+  `lifecycle_mutable(stage)` field publishes through a **lifecycle restart
+  transaction** whose barrier is `kStart`; and active parameter mutation —
+  including both mutability markers — is admitted only under the **Standard**
+  and **Research** profiles. Atomic batches are limited to a single operator —
+  there is no graph-wide atomic update.
+
+  **Not yet in EA1:** non-scalar updates, arbitrary/clock-timed publication,
+  and cross-operator atomic batches.
+</Warning>
+
+**Complete C++ examples:** [`examples/experimental/runtime_params/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/runtime_params/cpp)
+and [`examples/experimental/web_tuner/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/web_tuner/cpp)
+
+<Note>
+  The experimental web tuner is built by default when parameter tooling is
+  enabled. To build without parameter tooling, disable both
+  `HOLOSCAN_BUILD_PARAMS` and
+  `HOLOSCAN_BUILD_EXPERIMENTAL_PARAMS_WEB_TUNER`; leaving the tuner enabled
+  while disabling its required params component is a configure-time error.
+</Note>
+
+<Note>
+  **You will learn**
+
+  - How the generations model gives every callback one coherent, torn-read-free
+    parameter snapshot
+  - The two kinds of mutable fields — `runtime_mutable()` publishing at the
+    next compute boundary, and `lifecycle_mutable(stage)` publishing through a
+    restart transaction
+  - The two-step opt-in chain that makes a field updatable (and what happens
+    when you skip a step)
+  - How to mint a `ParamControlHandle` and use `submit`, `await`, `read`,
+    `capture`, and event cursors
+  - Why an accepted submission is a *reservation*, not a live value — and how
+    to wait for publication
+  - How operator code submits `runtime_mutable()` self-updates from inside
+    `compute()` with `try_submit_from_compute()`
+  - How `close_parameter_update_ingress()` irreversibly fences the run
+</Note>
+
+## Parameters as immutable generations
+
+When a session starts, each operator is bound to immutable **generation 0**.
+This is the plan's compile-resolved initial aggregate: the parameter type's
+default aggregate, optionally replaced by an explicit typed baseline supplied
+through `OperatorHandle::set_params()`, and then sparsely patched by admitted
+target-bound compile/config overrides. See
+[Typed parameters](/holoscan/sdk-user-guide/getting-started/typed-parameters)
+and
+[Configuring applications](/holoscan/sdk-user-guide/configuration/configuring-applications).
+
+An update never mutates a published generation. Instead, an accepted update
+reserves a new **immutable candidate generation**. The fields in the batch
+determine its publication path: a batch containing only `runtime_mutable()`
+fields publishes at the target operator's next scheduler-safe compute
+boundary; a batch containing any `lifecycle_mutable(stage)` field presents its
+candidate privately to the restart-forward lifecycle callbacks and publishes
+the whole batch only when the lifecycle transaction reaches `kPublished`.
+
+The payoff is a very simple mental model for operator authors:
+
+- Each callback reads exactly **one coherent, pinned generation**. A value
+  never changes underneath a running `compute()` — there are no torn reads and
+  no mid-callback surprises.
+- A *later* callback of the same operator may observe a newer generation.
+- Updates are deterministic and race-free, at the cost of not being instant.
+
+The timeline below shows the **runtime-only** path: a `submit()` arriving
+mid-run reserves a candidate generation, which publishes only at the next
+compute boundary — where generation 1 begins. It does not describe a
+lifecycle-mutable or mixed batch; those use the restart path described below.
+
+<svg viewBox="0 0 760 310" role="img" aria-labelledby="param-generation-timeline-title" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="param-generation-timeline-title">Runtime-mutable parameter timeline: a submit() mid-generation-0 reserves a candidate that publishes at the next compute boundary, starting generation 1</title>
+  <defs>
+    <marker id="param-gen-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  {/* submit() arriving from control code */}
+  <text x="300" y="38" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fontWeight="600" fill="currentColor">submit()</text>
+  <line x1="300" y1="46" x2="300" y2="152" stroke="currentColor" strokeWidth="2" markerEnd="url(#param-gen-arrow)"/>
+
+  {/* activation timeline */}
+  <line x1="30" y1="110" x2="722" y2="110" stroke="currentColor" strokeWidth="2" markerEnd="url(#param-gen-arrow)"/>
+  <text x="732" y="114" textAnchor="start" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor" opacity="0.55">t</text>
+
+  {/* compute() activations */}
+  <rect x="50" y="95" width="80" height="30" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="50" y="95" width="80" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="90" y="114" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">compute()</text>
+  <rect x="190" y="95" width="80" height="30" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="190" y="95" width="80" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="230" y="114" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">compute()</text>
+  <rect x="330" y="95" width="80" height="30" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="330" y="95" width="80" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="370" y="114" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">compute()</text>
+  <rect x="470" y="95" width="80" height="30" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="470" y="95" width="80" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="510" y="114" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">compute()</text>
+  <rect x="610" y="95" width="80" height="30" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="610" y="95" width="80" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="650" y="114" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor">compute()</text>
+
+  {/* publication marker at the NextCompute boundary */}
+  <line x1="470" y1="88" x2="470" y2="246" stroke="#76B900" strokeWidth="2.5"/>
+  <circle cx="470" cy="88" r="5" fill="#76B900"/>
+  <text x="470" y="78" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fontWeight="600" fill="#76B900">published (NextCompute)</text>
+
+  {/* generation spans */}
+  <rect x="50" y="160" width="420" height="28" rx="8" fill="currentColor" opacity="0.06"/>
+  <rect x="50" y="160" width="420" height="28" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="175" y="178" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor">generation 0</text>
+  <rect x="470" y="160" width="230" height="28" rx="8" fill="#76B900" opacity="0.25"/>
+  <rect x="470" y="160" width="230" height="28" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5"/>
+  <text x="585" y="178" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="14" fill="currentColor">generation 1</text>
+
+  {/* reserved candidate (not yet live) */}
+  <line x1="300" y1="188" x2="300" y2="214" stroke="currentColor" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.55"/>
+  <rect x="300" y="214" width="170" height="30" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4"/>
+  <text x="385" y="233" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="11" fill="currentColor" opacity="0.8">candidate gen 1 (reserved)</text>
+
+  {/* annotation */}
+  <text x="380" y="288" textAnchor="middle" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif" fontSize="12" fill="currentColor" opacity="0.7">no torn reads — a compute() sees exactly one generation</text>
+</svg>
+
+Inside `compute()`, read the pinned aggregate through the `ExecutionContext`:
+
+```cpp
+[[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+    holoscan::ExecutionContext& ctx) override {
+  const GainParams& p = ctx.params<GainParams>();  // pinned for this whole callback
+  apply_gain(p.gain);
+  // ctx.params_generation() reports this callback's generation
+  // (0 until an update publishes).
+  return {};
+}
+```
+
+In `start()` and `stop()`, an operator reads the phase-selected generation
+through `Operator::params()` instead — `ctx.params<T>()` is the compute-path
+accessor. Advanced lifecycle callbacks read the same phase-selected view
+through their `LifecycleContext`; the
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+page explains which generation each transition phase presents.
+
+## Two kinds of mutable fields
+
+Not every change fits the next-compute boundary. A gain nudge can take effect
+between two activations, but a pool size or a device binding only makes sense
+if part of the operator's lifecycle re-runs. The schema therefore
+distinguishes two mutability markers, and everything else on this page follows
+from which one a field carries:
+
+| | `runtime_mutable()` | `lifecycle_mutable(stage)` |
+|---|---|---|
+| What executes | Generation swap only — no lifecycle callback runs | A [lifecycle restart transaction](/holoscan/sdk-user-guide/advanced/restart-control) re-entering at the earliest invalidated `stage` across the batch |
+| Value visible during callbacks | Old generation until publication | Restart-forward lifecycle callbacks already see the private candidate; `compute()` still reads the old generation |
+| Publish boundary | Target operator's next compute boundary | The `kStart` lifecycle barrier — public only once the whole transaction reaches `kPublished` |
+| Channel epoch effect | None — epoch and sequence continue | When the restart closure owns channels, generations advance and old-epoch data is discarded |
+| Principal rejections | `kUpdatesDisabled`, `kRequiresRecompile`, `kUnsupportedInProfile` | `kRequiresLifecycleBarrier` when lifecycle publication cannot be used — explicit `NextCompute` timing, or lifecycle transactions not admitted |
+| Compile gate | `options.parameters.runtime_updates` opt-in, under the **Standard**/**Research** profiles | `CompileOptions::lifecycle_transactions`, under the **Standard**/**Research** profiles; the admitted field itself supplies parameter-origin restart authority — no graph restart grant is needed (the `ParamControlHandle` still needs its own update/scope authority) |
+
+Three rules keep mixed batches coherent:
+
+- **One batch, one boundary.** A same-operator batch that touches *any*
+  lifecycle-mutable field becomes a lifecycle candidate as a whole — the
+  runtime-mutable fields in that batch publish with it at the lifecycle
+  barrier, not at next-compute. A runtime-only batch never triggers a restart.
+- **No leaking ahead.** While a lifecycle candidate is pending for an
+  operator, ordinary runtime-update ingress for that operator returns
+  `kQueueFull`, so a lifecycle-only field can never become visible before the
+  transaction's successful publication.
+- **Equivalence can short-circuit.** A parameter-only submission whose values
+  equal the published generation may terminate `kAcceptedNoChange` without
+  restarting — unless a compatible queued transaction already carries explicit
+  restart intent, in which case the submission may join it.
+
+Track a lifecycle-triggered update with the same result types as any other
+update — the parameter path never returns a `LifecycleRestartReceipt`.
+`ParamControlHandle::submit` returns a `ParamBatchUpdateResult` with the
+accepted update sequence, and `await(sequence, ...)` returns a
+`ParamUpdateResult` whose `lifecycle_transaction_id` and
+`coalesced_into_transaction` fields correlate the update with its restart
+transaction. (The compute-side seam differs again:
+`try_submit_from_compute()` returns an initial `ParamSubmitResult` — see
+below.)
+
+## The opt-in chain: making a field updatable
+
+Updates are **opt-in per field, at compile time**. A field you do not mark is
+frozen for the lifetime of the plan, and the plan reserves no update capacity
+for it. Two links must both be present:
+
+1. **The field marker.** In the operator's parameter schema, mark the tunable
+   field `runtime_mutable()`:
+
+   ```cpp
+   HOLOSCAN_PARAM_SCHEMA(GainParams,
+                         param_schema("acme.camera.GainParams", 1),
+                         field<&GainParams::gain>("gain").runtime_mutable());
+   ```
+
+2. **The compile-time policy.** Enable runtime updates in `CompileOptions`:
+
+   ```cpp
+   holoscan::CompileOptions options;
+   options.parameters.runtime_updates =
+       holoscan::ParamRuntimeUpdatePolicy::kEnabledIfAdmitted;
+
+   const holoscan::ExecutionPlan plan = holoscan::compile(graph, options);
+   ```
+
+`kEnabledIfAdmitted` follows the usual compile-and-check style: the compiler
+enables updates only when every required proof is admitted — including the
+active profile. This is where bounded-by-construction shows up again: opting
+in reserves **bounded capacity** (ingress slots, candidate generation storage,
+audit records) in the compiled plan, so nothing is allocated on the hot path
+later.
+
+<Warning>
+  **A missing link fails at submit time, not silently.** If the field lacks
+  `runtime_mutable()` or the policy is not enabled, submissions come back with
+  a typed rejection — `ParamUpdateStatus::kUpdatesDisabled` when the plan or
+  capability disables updates, `kRequiresRecompile` when the field is
+  immutable in the active plan, or `kUnsupportedInProfile` when the effective
+  profile rejects the operation. Nothing throws; branch on the status like any
+  other [error-as-value](/holoscan/sdk-user-guide/getting-started/errors-as-values).
+</Warning>
+
+The chain above is the `runtime_mutable()` gate. A `lifecycle_mutable(stage)`
+field uses a different one: it needs `CompileOptions::lifecycle_transactions`
+(see [restart control](/holoscan/sdk-user-guide/advanced/restart-control))
+rather than the runtime-updates policy, and without that admission its
+submissions report `kRequiresLifecycleBarrier` — not
+`kLifecycleTransactionsDisabled`, which belongs to the dedicated restart APIs.
+
+For the schema builder itself, see
+[Parameter schemas](/holoscan/sdk-user-guide/building-operators/parameter-schemas).
+
+## Minting a control handle
+
+External application code drives updates through a `ParamControlHandle`
+(declared in `holoscan/core/parameter_control.hpp`), minted from the running
+session:
+
+```cpp
+holoscan::ParamAccessPolicy policy{
+    .permissions = holoscan::ParamPermission::kRead |
+                   holoscan::ParamPermission::kUpdate |
+                   holoscan::ParamPermission::kAwait,
+    .allowed_scope = holoscan::ParamScopeFilter::for_operator(camera_ref),
+};
+auto minted = session.parameter_control(policy);  // expected<ParamControlHandle, Error>
+if (!minted) { /* handle the error */ }
+holoscan::ParamControlHandle handle = std::move(minted).value();
+```
+
+The policy is **restriction-only**: it can only narrow the authority the plan
+and session already admitted, never widen it. `handle.restrict(policy)`
+derives a further-narrowed handle — useful for passing a read-only view to a
+monitoring component. To find out which fields the handle can actually see and
+address, consult its policy-filtered discovery catalog via `handle.catalog()`.
+
+## Submitting an update
+
+Build a patch addressing the target field and submit it. `submit` copies the
+patch and returns synchronously with a typed result:
+
+```cpp
+holoscan::ParamPatch patch{
+    .target = holoscan::ParamAddress{.operator_instance = camera_ref,
+                                     .field = gain_field},
+    .value = holoscan::ParamValue::from(0.5F),
+};
+holoscan::ParamBatchUpdateResult r =
+    handle.submit(patch, holoscan::ParamUpdateOptions{.effective = holoscan::NextCompute{}});
+if (!r.committed) {
+  // Inspect the rejection category; nothing throws.
+}
+// A committed result has a retained update_sequence. target_generation is
+// the candidate generation, or the unchanged published generation for no-change.
+```
+
+A few details worth knowing:
+
+- **Batches are same-operator, all-or-nothing.** Pass
+  `std::span<const holoscan::ParamPatch>` to update several fields of one
+  operator atomically. A batch spanning multiple operators rejects with
+  `kUnsupportedAtomicScope`.
+- **Optimistic concurrency.** Set `patch.expected_generation` to make the
+  update conditional on the latest accepted generation; a mismatch rejects
+  with `kExpectedGenerationMismatch`.
+- **Equivalent values short-circuit.** Submitting a value equal to the current
+  one can return `kAcceptedNoChange` — accepted, but nothing publishes.
+
+<Warning>
+  **Acceptance is a reservation, not liveness.** `kAccepted` means the runtime
+  reserved a candidate generation and its audit evidence; the value is not
+  public yet. Publication makes the generation available to future `compute()`
+  callbacks. `kObserved` is stronger evidence: a later callback actually
+  pinned the published generation. Because `await()` returns at *any* terminal
+  outcome, always inspect `done->state`; only `kPublished` and `kObserved`
+  report successful publication.
+</Warning>
+
+## Observing an update
+
+Three complementary tools cover "has it landed?", "what would compute see
+now?", and "tell me when anything changes."
+
+**Await a terminal state.** `await` blocks (with a timeout) until the accepted
+sequence reaches any terminal state. `kPublished` is terminal for update
+processing, and a later activation may advance the retained state to
+`kObserved` once a `compute()` has actually pinned the new generation:
+
+```cpp
+const auto done = handle.await(r.update_sequence, std::chrono::seconds{1});
+if (!done) {
+  if (done.error().code == holoscan::ErrorCode::kTimeout) {
+    // Still pending. A timeout never cancels the update; await it again later.
+  } else {
+    // Handle permission, stale-handle, closed-session, or argument errors.
+  }
+} else {
+  switch (done->state) {
+    case holoscan::ParamUpdateState::kPublished:
+    case holoscan::ParamUpdateState::kObserved:
+      // Publication succeeded. kObserved also proves a callback pinned it.
+      break;
+    case holoscan::ParamUpdateState::kAcceptedNoChange:
+      // The value was equivalent; no new generation was published.
+      break;
+    case holoscan::ParamUpdateState::kSuperseded:
+    case holoscan::ParamUpdateState::kCanceled:
+      // This accepted sequence ended without publication.
+      break;
+    case holoscan::ParamUpdateState::kRolledBack:
+      // Lifecycle publication failed; the previous generation was restored.
+      break;
+    case holoscan::ParamUpdateState::kFailedStopped:
+      // Recovery failed and the affected run stopped.
+      break;
+    default:
+      // await() does not return a nonterminal state for an accepted sequence.
+      break;
+  }
+}
+```
+
+An immediate submit rejection has no accepted sequence and cannot be awaited.
+`kAcceptedNoChange` is terminal but is not a publication event.
+
+**Read the current view.** `read` returns a coherent record without waiting:
+
+```cpp
+if (auto rec = handle.read(patch.target, holoscan::ParamReadView::kPublished)) {
+  const float live = rec->value.as<float>().value_or(0.0F);
+  // rec->generation is the generation this value belongs to.
+}
+```
+
+`ParamReadView::kPublished` is the value a future `compute()` would see right
+now; `kLatestAccepted` includes a pending-but-unpublished candidate; and
+`kPending` returns only an unpublished candidate (absence reports as not
+ready). For a broader coherent view across fields, `handle.capture(...)` — or
+`session.capture_params(...)` from the session — returns an owning
+`ParamSnapshot`.
+
+**Follow the event stream.** For change notifications, open a bounded
+per-capability event cursor (the handle needs `ParamPermission::kObserve`) and
+drain it from cold or control code:
+
+```cpp
+if (auto cursor = handle.open_event_cursor()) {
+  std::array<holoscan::ParamEvent, 16> events{};
+  if (auto n = cursor->drain(events)) { /* process events[0..*n) */ }
+}
+```
+
+The cursor carries transition records, never parameter values. If retention
+overflows, the loss surfaces as a single explicit `ParamEventKind::kGap`
+record — resynchronize with a `read` or a `capture` rather than assuming
+continuity.
+
+## Submitting from inside `compute()`
+
+An operator may want to self-tune — for example, a fusion operator adjusting
+its own blend weight based on observed input staleness.
+
+<Warning>
+  **Never call the owning handle from operator code.** The
+  `ParamControlHandle` methods (`submit`, `read`, `await`, `capture`,
+  `open_event_cursor`) are control-path only and are rejected from callback
+  contexts. Inside `compute()`, use the dedicated nonblocking,
+  allocation-free seam for `runtime_mutable()` self-updates instead.
+</Warning>
+
+Submit a general `lifecycle_mutable(stage)` patch from external or control
+context with `ParamControlHandle::submit`. A compute-origin lifecycle patch can
+reach the lifecycle transaction path only when the same plan separately admits
+runtime updates and freezes positive compute-ingress and per-request patch
+capacity. A lifecycle-only plan reserves neither; a one-patch compute
+submission returns `kOutOfBounds`.
+
+The compute seam is reached through the `ExecutionContext`:
+
+```cpp
+[[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+    holoscan::ExecutionContext& ctx) override {
+  const holoscan::ParamInlinePatch patch{
+      .target = holoscan::ParamAddress{.operator_instance = ctx.self(),
+                                       .field = gain_field},
+      .value = holoscan::ParamValue::from(new_gain),
+  };
+  const holoscan::ParamSubmitResult sr =
+      ctx.param_control().try_submit_from_compute({&patch, 1});
+  // sr.status == kSubmitted on success; kQueueFull if the bounded ingress
+  // is momentarily full (retry on a later callback, or drop the intent).
+  return {};
+}
+```
+
+Two behaviors distinguish the seam from the owning handle:
+
+- A successful enqueue returns `kSubmitted` with **sequence zero** — identity
+  is assigned only after the bounded ingress drains and the update is
+  accepted. There is nothing to `await` from inside the callback.
+- The submission **never** changes the generation pinned by the current
+  callback. After bounded ingress drains, a runtime-only batch publishes at a
+  future compute boundary; a batch touching a lifecycle-mutable field instead
+  follows the lifecycle transaction path. Either way, only a later callback
+  can observe a different generation.
+
+`kQueueFull` is the seam's flavor of the familiar exhaustion signature: the
+ingress capacity was reserved at compile time, and a full queue is reported,
+not grown.
+
+## Fencing further updates
+
+When a run must stop accepting parameter changes — a validated configuration
+entering a measurement window, for example — close the update ingress:
+
+```cpp
+auto fence = session.close_parameter_update_ingress();
+// expected<ParamStopFenceResult, Error>
+```
+
+The fence is **irreversible for the run**: no later submission is accepted
+through either path, from the owning handle or from inside `compute()`.
+Updates already accepted before the fence still complete their publication.
+The result records the final sequence accepted before closure, so control
+code can `await` everything that made it in.
+
+## Recap
+
+- Parameters live in **immutable versioned generations**; generation 0 is the
+  compile-resolved initial aggregate, and each callback pins exactly one
+  coherent snapshot — no torn reads, ever.
+- A runtime-only field is updatable only through the full opt-in chain:
+  `runtime_mutable()` on the field **and**
+  `ParamRuntimeUpdatePolicy::kEnabledIfAdmitted` in `CompileOptions`, under
+  the Standard or Research profile.
+- The two mutability markers publish differently: `runtime_mutable()` swaps
+  generations at the target's next compute boundary; `lifecycle_mutable(stage)`
+  routes the whole batch through a lifecycle restart transaction gated by
+  `CompileOptions::lifecycle_transactions` under the Standard or Research
+  profile, publishes after `kPublished`, and correlates via
+  `ParamUpdateResult::lifecycle_transaction_id`.
+- `session.parameter_control(policy)` mints a restriction-only
+  `ParamControlHandle`; `submit` returns a typed result, and **acceptance is
+  a reservation**. `await` returns any terminal result; treat the value as
+  published only when `state` is `kPublished` or `kObserved`.
+- Operator code self-updating `runtime_mutable()` fields uses
+  `ctx.param_control().try_submit_from_compute(...)`; general
+  `lifecycle_mutable(stage)` updates use an external/control-context owning
+  handle, which is forbidden from callback contexts.
+- `close_parameter_update_ingress()` irreversibly fences the run against
+  further updates.
+
+Next:
+[Determinism and replay](/holoscan/sdk-user-guide/advanced/determinism-and-replay)
+builds on the same scheduler-boundary discipline to make whole runs
+reproducible.

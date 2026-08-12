@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="260" viewBox="0 0 960 260" role="img" aria-labelledby="title desc">
+  <title id="title">holomq InboundMessage transport take flow</title>
+  <desc id="desc">Subscriber takes a sample from the transport queue; drop releases the transport hold.</desc>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+    <marker id="arr-grey" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#888"/>
+    </marker>
+  </defs>
+  <style>
+    .b { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 600; fill: #1a1a1a; }
+    .s { font-family: Consolas, Menlo, monospace; font-size: 15px; fill: #0b5394; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 14px; fill: #666; }
+    .lbl { font-family: Consolas, Menlo, monospace; font-size: 13px; font-weight: 600; fill: #333; }
+    .lbl-dim { font-family: Consolas, Menlo, monospace; font-size: 13px; fill: #888; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <!-- Transport subscriber queue -->
+  <rect x="24" y="32" width="210" height="96" rx="6" fill="#fafbfc" stroke="#c8d1dc" stroke-width="1.5"/>
+  <text x="129" y="64" text-anchor="middle" class="b">Transport subscriber queue</text>
+  <text x="129" y="88" text-anchor="middle" class="d">sample delivered to port</text>
+  <text x="129" y="110" text-anchor="middle" class="d">transport holds until taken</text>
+
+  <!-- try_take() kNotReady branch (under queue) -->
+  <line x1="129" y1="128" x2="129" y2="168" stroke="#c8d1dc" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#arr-grey)"/>
+  <rect x="24" y="168" width="210" height="64" rx="6" fill="#fff" stroke="#c8d1dc" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="129" y="196" text-anchor="middle" class="lbl-dim">try_take() error</text>
+  <text x="129" y="218" text-anchor="middle" class="d">kNotReady (not logged)</text>
+
+  <!-- take (141px arrow) -->
+  <text x="304" y="62" text-anchor="middle" class="lbl">try_take()</text>
+  <text x="304" y="80" text-anchor="middle" class="lbl-dim">wait_and_take()</text>
+  <line x1="234" y1="88" x2="375" y2="88" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- InboundMessage -->
+  <rect x="375" y="32" width="210" height="96" rx="6" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="480" y="64" text-anchor="middle" class="b">InboundMessage</text>
+  <text x="480" y="88" text-anchor="middle" class="s">payload() const</text>
+  <text x="480" y="110" text-anchor="middle" class="d">move-only app hold</text>
+
+  <!-- read (141px arrow) -->
+  <text x="656" y="68" text-anchor="middle" class="lbl">read / use</text>
+  <line x1="585" y1="88" x2="726" y2="88" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- Application -->
+  <rect x="726" y="32" width="210" height="96" rx="6" fill="#eef7e8" stroke="#76b900" stroke-width="1.5"/>
+  <text x="831" y="72" text-anchor="middle" class="b">Application</text>
+  <text x="831" y="98" text-anchor="middle" class="d">process sample</text>
+
+  <!-- drop branch -->
+  <line x1="480" y1="128" x2="480" y2="168" stroke="#888" stroke-width="1.2" marker-end="url(#arr-grey)"/>
+  <text x="498" y="154" class="lbl-dim">drop / destroy</text>
+
+  <rect x="375" y="168" width="210" height="64" rx="6" fill="#f0f4f8" stroke="#b8c4d0" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="480" y="196" text-anchor="middle" class="d">transport sample hold released</text>
+  <text x="480" y="218" text-anchor="middle" class="d">slot returned to transport</text>
+</svg>

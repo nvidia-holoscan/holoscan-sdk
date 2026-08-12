@@ -16,3 +16,5 @@ include(rapids-cpm)
 include(rapids-cuda)
 include(rapids-export)
 include(rapids-find)
+
+rapids_cpm_init()

@@ -9,7 +9,7 @@ index ea113e1..4eefb49 100644
 +export(
 +    TARGETS dlpack
 +    NAMESPACE "${namespace}"
-+    FILE "${TARGETS_EXPORT_NAME}.cmake"
++    FILE "${generated_dir}/${TARGETS_EXPORT_NAME}.cmake"
 +)
  
  # }

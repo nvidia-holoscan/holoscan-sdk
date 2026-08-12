@@ -1,0 +1,1 @@
+{"schema":"holoscan.tooling-component/v1","component":"holoscan-params-io","target":"holoscan::params_io","version":"@PROJECT_VERSION@","direct_holoscan_dependencies":["holoscan::params","holoscan::config_io"],"features":{"archive_format":"holoscan.param-snapshot","archive_version":1,"formats":["json"]},"experimental":false}

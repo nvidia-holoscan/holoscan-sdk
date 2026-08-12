@@ -1,0 +1,277 @@
+Sometimes the process that produces or consumes your data is not a Holoscan
+application at all: a sensor daemon that predates your pipeline, a recorder
+that archives Graph output to disk, a bridge that forwards samples to another
+middleware. For these **standalone processes**, Holoscan provides the
+`ChannelRuntime` client API — an explicit publisher/subscriber surface that
+attaches to the same `holomq://` topics a Graph imports or exports, using the
+same endpoint catalog as the contract.
+
+This page covers the client API itself: creating the runtime, obtaining a
+catalog, creating typed publishers and subscribers, the emit/receive verbs,
+and the attach/retry discipline that cross-process operation requires. For
+the Graph side of the boundary — `import_topic`/`export_topic`, sharing the
+catalog, and producer restart — see
+[Interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels).
+
+<Warning>
+  **Developer preview.** The standalone client API is a developer preview:
+  cross-process Tensor transport supports host-pageable, pinned-host, and
+  CUDA-device memory (bounded staging where placement requires it) and is
+  always read-only on import; non-Tensor producer restart capacity is bounded
+  to one replacement, while catalog Tensor imports do not support rebind; and
+  there is no author-facing launcher for distributed workers. The API surface
+  may evolve in upcoming releases — verify against the current headers before
+  depending on details.
+</Warning>
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+<Note title="You will learn">
+  - How to create a `ChannelRuntime` and attach it to an endpoint catalog
+  - How to obtain a catalog: load one saved by a Graph, or build one directly
+  - How `create_publisher<T>` / `create_subscriber<T>` bind to named endpoints
+  - The emit and receive verbs, and why identity traits must match exactly
+  - The retry discipline for asynchronous cross-process attach
+  - When a standalone client is the right tool — and when it never is
+</Note>
+
+## When to use a standalone client
+
+Reach for `ChannelRuntime` when a process **outside any graph** must exchange
+samples with a running Holoscan application:
+
+- **External daemons** — a sensor or acquisition process that feeds a Graph
+  import topic.
+- **Recorders** — a process that subscribes to a Graph export topic and
+  archives samples.
+- **Bridges** — a process that translates between a Holoscan topic and some
+  other system (another middleware, a network protocol, a database).
+
+And when **not** to use it: **never inside a graph**. If both endpoints of a
+connection are operators, wire them with `add_flow()` — even across processes,
+the Graph-side vocabulary stays `import_topic`/`export_topic` and binding is
+automatic. The standalone client exists precisely for the peer that has no
+graph.
+
+## Creating the runtime
+
+`ChannelRuntime::create()` builds the minimal transport context for one
+process. Like everything on this surface, it returns
+`holoscan::expected` — branch on the error rather than assuming success:
+
+```cpp
+#include <holoscan/channel/endpoint_catalog.hpp>
+#include <holoscan/channel/runtime.hpp>
+
+auto runtime = holoscan::ChannelRuntime::create();
+if (!runtime) { /* inspect runtime.error().code and exit */ }
+```
+
+Creation is a cold-path operation: it sets up common backend control state
+but does not wait for any peer. One runtime serves all the publishers and
+subscribers your process creates.
+
+<Warning>
+  **The runtime must outlive its endpoints.** Destroy every publisher and
+  subscriber (and stop the threads using them) before destroying the
+  `ChannelRuntime` they came from. The runtime must also outlive every
+  Tensor received through its endpoints, including derived views and any
+  asynchronous GPU work touching them.
+</Warning>
+
+## Obtaining an endpoint catalog
+
+Every catalog attachment starts from a `ChannelEndpointCatalog` — the
+serialized, inspectable description of the boundary: endpoint names, payload
+identities, queue policies, and capacities. There are two ways to get one.
+
+**Load the catalog a Graph saved.** This is the common path. The Graph-side
+process calls `plan.endpoint_catalog().save_json(path)` after `compile()`;
+your standalone client loads the same file:
+
+```cpp
+auto catalog = holoscan::ChannelEndpointCatalog::load_json("/tmp/frames-catalog.json");
+if (!catalog) { /* bad path or malformed catalog */ }
+```
+
+**Build a catalog directly.** A client can also author a catalog with the
+builder, declaring topics by name, URI, and payload type. From the builder's
+point of view, `import_topic<T>` declares an endpoint that publishes *into* a
+Graph, and `export_topic<T>` declares one that subscribes to Graph output:
+
+```cpp
+auto builder = holoscan::ChannelEndpointCatalog::builder("my-deployment");
+if (auto added = builder.export_topic<std::uint32_t>("control", "holomq://control");
+    !added) { /* validation or duplicate error */ }
+auto catalog = std::move(builder).build();   // consumes the builder
+if (!catalog) { /* cross-record validation failed */ }
+```
+
+However you obtain it, both processes must agree on the **same** catalog: a
+wrong or stale catalog fails at attach time, not at compile time. When the
+boundary changes, regenerate and re-share it.
+
+## Creating publishers and subscribers
+
+With a runtime and a catalog in hand, attach typed endpoints by name:
+
+```cpp
+auto publisher = runtime->create_publisher<std::uint32_t>(*catalog, "frames");
+if (!publisher) { /* lookup, role, or identity error */ }
+
+auto subscriber = runtime->create_subscriber<std::uint32_t>(*catalog, "results");
+if (!subscriber) { /* lookup, role, or identity error */ }
+```
+
+The type parameter `T` may be a portable scalar, a custom POD struct, a
+generated schema type, or `Tensor`. The catalog is inspected only during the
+call; the returned endpoint retains its own private runtime attachment, so
+you may discard the catalog afterwards. An optional third argument,
+`ChannelAttachOptions`, lets a caller shorten (never lengthen) the catalog's
+attachment timeout.
+
+<Warning>
+  **Identity traits must match the graph side exactly.** For a custom POD,
+  the standalone process must declare the *same* `ChannelTypeIdentity<T>`
+  (name + version) and `ChannelPodLayout<T>` specializations as the graph
+  process; for a schema type, name, version, schema digest, and id must all
+  agree. Identity is pinned, not negotiated — any mismatch is rejected with
+  a typed incompatibility error at attach or at the boundary, and a
+  malformed or wrong-identity frame never reaches the graph's operators.
+  See [Payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
+  for the trait declarations.
+</Warning>
+
+## Emitting and receiving samples
+
+Publishers offer two main verbs. `emit_sample` publishes a complete
+`Sample<T>` — value plus metadata — while `emit_captured` publishes a value
+labeled with a caller-supplied capture timestamp in the endpoint's bound
+capture clock:
+
+```cpp
+// Value + explicit metadata:
+auto emitted = publisher->emit_sample(
+    holoscan::Sample<std::uint32_t>{42U, {}});
+
+// Value + capture coordinate (nanoseconds):
+auto emitted2 = publisher->emit_captured(43U, capture_ns);
+```
+
+Both return the exact recipient count on success. Subscribers poll with
+`receive_sample()`, which returns the next `Sample<T>` or `kNotReady` when
+nothing is queued:
+
+```cpp
+auto sample = subscriber->receive_sample();
+if (sample) { consume(sample->data, sample->metadata); }
+```
+
+These are the client-side mirrors of the failure conventions you know from
+[errors as values](/holoscan/sdk-user-guide/getting-started/errors-as-values):
+every operation returns `holoscan::expected`, and you branch on `ErrorCode`.
+
+When a producer finishes, publish an explicit end-of-stream with
+`publisher->close()`. Process exit, disconnect, or silence never imply EOS —
+the importing graph (and its restart fencing) relies on the explicit signal.
+
+## Attach and retry discipline
+
+Cross-process attach is **asynchronous**: creating a publisher or subscriber
+does not mean the peer is connected yet. There is no "wait until connected"
+helper — the retry loop *is* the connection protocol:
+
+- A subscriber's `receive_sample()` returns `kNotReady` until the peer
+  connects; polling it is how the subscriber establishes its transport
+  connection.
+- A publisher's emits return `kNotReady` or `kBackpressured` while the peer
+  is absent or the queue is full; both are retryable. A publisher can also
+  poll `update_connections()` + `has_subscribers()` to wait for a peer
+  before its first emit — but treat that as advisory, not proof of delivery.
+
+Wrap the retryable codes in a deadline loop:
+
+```cpp
+const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+for (;;) {
+  auto emitted = publisher->emit_captured(value, capture_ns);
+  if (emitted) break;
+  if (!emitted) {
+    const auto code = emitted.error().code;
+    const bool retryable = code == holoscan::ErrorCode::kNotReady ||
+                           code == holoscan::ErrorCode::kBackpressured;
+    if (!retryable) { break; }  // handle this code outside the loop
+  }
+  if (std::chrono::steady_clock::now() >= deadline) { break; }  // timed out
+  std::this_thread::sleep_for(std::chrono::milliseconds(1));
+}
+```
+
+<Warning>
+  **Never retry a terminal publication outcome.** Only pre-submit `kNotReady`
+  and `kBackpressured` are safe to retry.
+  `kPublicationPartial` reports exact delivered and expected counts for a
+  known strict subset.
+  `kPublicationIndeterminate` means submission began but the outcome is
+  unknown. Retrying either result could duplicate the sample. Treat both as
+  terminal for that sample (and for `close()`, terminal for the publisher),
+  and leave the retry loop on other errors for code-specific handling.
+</Warning>
+
+The `ea1_external_clients` example ships both sides of this discipline: a
+`sensor_daemon` publisher with deadline-bounded emit and EOS loops, and a
+`recorder` subscriber with a `kNotReady` poll loop. Start from those rather
+than writing the loops from scratch — see
+[External clients](/holoscan/sdk-user-guide/examples/external-clients).
+## Publishing Tensors from outside a graph
+
+A standalone client can also publish `Tensor` payloads. Instead of emitting a
+value, you **borrow** endpoint-owned storage with `loan_tensor`, fill it, and
+publish the loan — the same borrow-then-commit shape as operator-side pools
+(see [Tensors in depth](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth)):
+
+```cpp
+auto pub = runtime->create_publisher<holoscan::Tensor>(*catalog, "frames");
+auto loan = pub->loan_tensor(request);   // TensorLoanRequest: shape, dtype, strides
+if (!loan) { /* kResourceExhausted: finite pool, never blocks or allocates */ }
+// ... fill the loaned storage ...
+auto emitted = pub->emit_captured(std::move(*loan), capture_ns);
+```
+
+At the survey level, know the current preview bounds: pool exhaustion is
+reported immediately (`kResourceExhausted`, no fallback allocation);
+cross-process Tensor transport supports host-pageable, pinned-host, and
+CUDA-device memory, with bounded staging where the declared placement
+requires it; creating catalog Tensor endpoints requires an available CUDA
+device even for host-pageable backing; and the receiving process materializes
+a **read-only** Tensor — a consumer that must mutate has to copy.
+
+## Recap
+
+- `ChannelRuntime::create()` builds one per-process client context; it must
+  outlive every publisher, subscriber, and received Tensor created from it.
+- The endpoint catalog is the contract: `load_json` what a Graph saved, or
+  author one with `ChannelEndpointCatalog::builder(...)` + `build()`.
+- `create_publisher<T>` / `create_subscriber<T>` attach by endpoint name;
+  identity traits (POD name/version/layout, schema identity) must match the
+  graph side exactly — identity is pinned, never negotiated.
+- `emit_sample` / `emit_captured` publish; `receive_sample` polls. Retry
+  `kNotReady` / `kBackpressured` with a deadline; never retry
+  `kPublicationPartial` or `kPublicationIndeterminate`. Signal EOS explicitly
+  with `close()`.
+- `loan_tensor` borrows endpoint-owned storage for external Tensor
+  publication; cross-process Tensors may be host-pageable, pinned-host, or
+  CUDA-device backed, and are always read-only on import.
+- Use standalone clients for daemons, recorders, and bridges — never inside
+  a graph, where `add_flow()` and `import_topic`/`export_topic` are the only
+  vocabulary.
+
+Next: define and carry your own message types across these boundaries in
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas).

@@ -1,0 +1,453 @@
+Sometimes one operator in a running pipeline needs to start over — a camera
+driver wedged, a model needs to rebind a device, a worker must re-run its
+allocation stage — without tearing down the whole application. Holoscan models
+this as a **lifecycle restart**: a bounded, permissioned transaction that
+rewinds one operator (and its lifecycle dependents) to a chosen forward stage
+and drives it back to `kStart` without restarting operators outside that
+closure. Those operators may continue, but uninterrupted progress is not
+guaranteed.
+
+This page covers who is allowed to trigger a restart, how an operator requests
+one from inside `compute()`, and how an external controller drives restarts
+through a `RunSession`. It builds on
+[lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+(the eight stages and their ordering) and
+[running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping)
+(`run_async()` and `RunSession`).
+
+<Warning>
+  **Beta.** Lifecycle restart executes end to end today, and the API may still
+  evolve in upcoming releases.
+
+  **Works today:** deny-by-default graph-scope grants; nonblocking requests
+  from `compute()` and from an external `LifecycleControlHandle`; the full
+  teardown/forward re-entry matrix below; compiler-frozen closures, widening,
+  and fencing; rollback with old-epoch restoration; and restarts triggered by
+  `lifecycle_mutable` parameter updates. Compatible requests accepted while a
+  transaction is still queued may share it — including requests for different
+  operators. Each dedicated request keeps its own receipt, and a parameter
+  update keeps its own update identity and transaction correlation. Once
+  quiescing starts, one successor transaction may queue; compatible work can
+  still join that successor, while a request that would need another
+  transaction is rejected as `kLifecycleRestartQueueFull`.
+
+  **Not yet in EA1:** restart requests from inside a lifecycle callback, a
+  graph-wide atomic restart, quiescing of interprocess neighbors, automatic
+  retry of failed stages, and clock- or tag-timed restarts. Lifecycle
+  transactions are unavailable under the `real_time` and `regulated` profiles;
+  enabling `CompileOptions::lifecycle_transactions` for a plan containing
+  either profile causes compilation to fail.
+</Warning>
+
+**Complete C++ example:** [`examples/experimental/restart_control/cpp`](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/experimental/restart_control/cpp)
+
+<Note>
+  **You will learn**
+
+  - Why restart authority is deny-by-default, and the three graph-scope grants
+    that open it up.
+  - How an operator requests a restart from `compute()` with
+    `ctx.request_restart(LifecycleRestartOptions)`.
+  - How external code mints a `LifecycleControlHandle` from a `RunSession` and
+    drives restarts with `request_restart` / `inspect` / `await` / `restrict`.
+  - Why a restart affects a *closure* of operators, when it *widens* to an
+    earlier stage, and how the runtime fences the restart so it never lands
+    mid-`compute()`.
+  - The exact teardown/forward re-entry matrix for each `from_stage`, and how
+    a failed restart rolls back and restores the old epoch.
+  - How a run-time patch to a `.lifecycle_mutable(stage)` parameter field
+    triggers the same restart machinery.
+</Note>
+
+## Deny-by-default permissions at graph scope
+
+Nothing in a Holoscan application can restart an operator unless the graph
+explicitly said so. Restart authority is granted **at graph scope, at
+authoring time**, through the same `graph.lifecycle()` builder used for
+cross-operator lifecycle ordering:
+
+```cpp
+graph.lifecycle()
+    .allow_self_restart(worker)                     // worker may restart itself
+    .allow_external_restart(worker)                 // run control outside the graph may restart worker
+    .allow_restart_request(supervisor, worker);     // supervisor may request worker's restart
+```
+
+The three grants are independent and narrow:
+
+| Grant | Who it empowers |
+|---|---|
+| `allow_self_restart(target)` | The target operator itself, from its own `compute()`. |
+| `allow_external_restart(target)` | External run control (a `LifecycleControlHandle`, below). |
+| `allow_restart_request(requester, target)` | One specific *other* operator, from its `compute()`. |
+
+Two prerequisites are frozen into the plan at compile time, and both fail
+closed at run time if missing:
+
+1. **The grants above.** An unauthorized request returns
+   `kLifecycleRestartUnauthorized`; it does not degrade to a weaker action.
+2. **The compile-time opt-in.** The plan must be compiled with the
+   `lifecycle_transactions` option set in `CompileOptions` (see
+   [compile and check](/holoscan/sdk-user-guide/getting-started/compile-and-check)).
+   The two failure modes differ: when the option is *absent*, compilation
+   succeeds and every dedicated restart API path returns
+   `kLifecycleTransactionsDisabled` at run time; when the option is *present*,
+   all nine of its capacity fields must be positive and at least the
+   compiler-derived minima, or **compilation itself is rejected** with
+   `LIFECYCLE_TRANSACTION_CAPACITY_*` diagnostics.
+
+Dedicated lifecycle restart is also profile-gated at compile admission: only
+the `standard`, `robotics`, and `research` profiles admit it, and enabling the
+opt-in on a plan containing a `real_time` or `regulated` region fails
+compilation rather than degrading at run time. Parameter-origin restart
+inherits the narrower active-mutation profile gate, so the admitted sets
+differ:
+
+| Operation | Admitted profiles |
+|---|---|
+| Dedicated lifecycle restart | Standard, Robotics, Research |
+| Active parameter mutation, including `lifecycle_mutable(stage)` | Standard, Research |
+
+The parameter field still uses the same transaction kernel after admission;
+the narrower row is the parameter-mutation profile policy, not a different
+restart algorithm. See
+[runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates)
+for the complete parameter gate.
+
+This is the same fail-closed philosophy as the rest of the runtime: the plan
+records exactly what is allowed, and anything not recorded is rejected as a
+typed error value rather than silently permitted.
+
+## Requesting a restart from `compute()`
+
+An operator with `allow_self_restart` requests its own restart through the
+`ExecutionContext` it receives in `compute()`. The request names a **forward
+stage** to rewind to — `kConfigure` through `kStart`; the teardown stages
+`kStop` and `kRelease` are never valid entry points:
+
+```cpp
+holoscan::expected<void, holoscan::Error> compute(holoscan::ExecutionContext& ctx) override {
+  if (device_needs_rebind_) {
+    HOLOSCAN_TRY(auto receipt,
+                 ctx.request_restart(holoscan::LifecycleRestartOptions{
+                     .from_stage = holoscan::LifecycleStage::kAllocate}));
+    (void)receipt;   // LifecycleRestartReceipt: run-scoped identity, not a waiter
+  }
+  return {};
+}
+```
+
+A two-argument overload, `ctx.request_restart(target, options)`, requests the
+restart of an authorized *other* operator (requires
+`allow_restart_request(requester, target)` on the graph). In both forms:
+
+- The call is **nonblocking** and returns
+  `expected<LifecycleRestartReceipt, Error>`: acceptance only queues the
+  request and installs an activation fence — a restart is never applied
+  mid-compute. A self-restart begins after the current `compute()` callback
+  retires. For a cross-target request, a target that is itself computing
+  finishes that callback first, while an idle target restarts at the control
+  safe point before its next activation — possibly while the requester's own
+  `compute()` is still running.
+- The receipt is a small run-scoped identity you can hand to external
+  observation code. It records the accepted request and its **requested**
+  stage; it does not wait, cancel, or grant any extra authority by itself.
+- `LifecycleRestartOptions::reason` is a **registered audit code**
+  (`LifecycleRestartReason`), not free text — restart requests carry no
+  hot-path strings.
+- Rejections come back as typed errors — `kLifecycleRestartUnauthorized`
+  (including a self-restart the plan did not admit),
+  `kLifecycleInvalidRestartStage`, `kLifecycleRestartQueueFull`, and friends —
+  without changing any state.
+
+<Warning>
+  **Not from lifecycle callbacks.** Only `compute()` may submit a restart
+  request. A `LifecycleContext` (the facade lifecycle callbacks receive)
+  deliberately has no restart-submission service, and calling the external
+  handle's operations from any runtime callback context returns
+  `kLifecycleInvalidCallingContext`. This keeps the stage machinery from
+  re-entering itself.
+</Warning>
+
+## External control: `LifecycleControlHandle`
+
+Code *outside* the run — an application supervisor, a health monitor, an
+operations console — drives restarts through a capability minted from the
+`RunSession`. You first bind plan operator identities to the current run with
+`session.operator_ref(...)`, then mint a handle with an explicit
+**access policy** naming the targets and stages this handle may touch:
+
+```cpp
+#include <holoscan/core/lifecycle_control.hpp>
+
+holoscan::RunSession session = holoscan::run_async(plan);
+
+// Bind the plan-level reference to this run generation.
+const std::array<holoscan::OperatorRef, 1> targets{ *session.operator_ref(plan_ref) };
+const std::array<holoscan::LifecycleStage, 1> stages{ holoscan::LifecycleStage::kStart };
+const holoscan::LifecycleAccessPolicy policy{ .allowed_targets = targets,
+                                              .allowed_from_stages = stages };
+
+auto handle = session.lifecycle_control(policy);   // expected<LifecycleControlHandle, Error>
+if (!handle) { /* kLifecycleTransactionsDisabled, kLifecycleRestartUnauthorized, ... */ return; }
+
+auto receipt = handle->request_restart(
+    targets[0],
+    holoscan::LifecycleRestartOptions{ .from_stage = holoscan::LifecycleStage::kStart });
+if (!receipt) { /* typed rejection; no state changed */ return; }
+
+// Observe the transaction: nonblocking inspect(), or the one blocking op, await().
+const auto view = handle->await(*receipt, std::chrono::seconds{5});
+// On success, inspect view->state: terminal outcomes include kPublished,
+// kCanceled, kRolledBack, and kFailedStopped.
+```
+
+The handle exposes four operations:
+
+| Operation | Behavior |
+|---|---|
+| `request_restart(target, options)` | Submit a restart; returns a `LifecycleRestartReceipt` on acceptance. Nonblocking. |
+| `inspect(receipt)` | Return the transaction's current `LifecycleRestartReceiptView` — state, **effective** stage, and transaction lineage — without waiting or advancing anything. Nonblocking. |
+| `await(receipt, timeout)` | Block until the receipt reaches a terminal state, or `kTimeout`. The **only** blocking handle operation; the timeout never cancels the transaction. |
+| `restrict(policy)` | Derive a *narrower* handle. |
+
+### Restriction-only, by design
+
+A `LifecycleControlHandle` is a **restriction-only capability**. The policy
+you mint it with — and any policy passed to `restrict()` — can only *narrow*
+the authority the plan admitted at compile time; it can never add a target or
+a stage. Empty `allowed_targets` or `allowed_from_stages` spans deny
+everything. This means you can hand a tightly scoped handle to a subsystem
+(say, "may restart the camera operator from `kStart`, nothing else") without
+that subsystem being able to escalate.
+
+The handle is an opaque, process-local value: copying it preserves exactly the
+same authority, it retains no `RunSession`, plan, or operator, and accepted
+receipts remain inspectable until the last handle copy is destroyed — even
+after the originating session has closed. Never serialize, transport, or
+persist a handle; if you need a durable record, keep the receipt or a
+diagnostic record instead.
+
+## What a restart actually does
+
+A restart is localized, but it is not always *one* operator. Three semantics
+determine its shape — all decided by the compiler and executor, never by the
+caller:
+
+**Closure scope.** The compiler freezes, per target, the transitive set of
+operators whose lifecycle stages depend on the target — through
+`produces`/`requires_dependency` facts and `graph.lifecycle().before(...)`
+ordering. Requesting a restart of one target executes the restart over that
+whole **lifecycle-dependency closure**, and you cannot narrow below it. If the
+target has no lifecycle dependents, the closure is just the target. Note this
+is a *lifecycle-ordering* closure, not data-flow fan-out: an operator that
+merely consumes the target's output messages is not pulled in unless it also
+declared a lifecycle dependency.
+
+**Re-entry depth.** `from_stage` sets how far back the closure rewinds and
+exactly which teardown runs before the forward suffix:
+
+| Requested stage | Teardown (pre-restart) | Forward suffix |
+|---|---|---|
+| `kStart` | `kStop` | `kStart` |
+| `kArm` | `kStop` | `kArm → kStart` |
+| `kWarmUp` | `kStop` | `kWarmUp → kArm → kStart` |
+| `kAllocate` | `kStop → kRelease` | `kAllocate → kWarmUp → kArm → kStart` |
+| `kDiscover` | `kStop → kRelease` | `kDiscover → kAllocate → kWarmUp → kArm → kStart` |
+| `kConfigure` | `kStop → kRelease` | `kConfigure → kDiscover → kAllocate → kWarmUp → kArm → kStart` |
+
+Two rows are worth reading twice. A `kStart` restart keeps everything reserved
+at `kAllocate`/`kWarmUp`/`kArm` allocated — `kRelease` does not run — and only
+quiesces and republishes the operator. `kAllocate` and every earlier stage add
+the `kRelease` teardown, so those re-entries rebuild the operator's resources
+from scratch. `kStop` and `kRelease` themselves are never valid requests
+(`kLifecycleInvalidRestartStage`).
+
+**Widening.** If any closure member declares a lifecycle dependency at a stage
+earlier than the requested one, the whole restart is **widened** to that
+earlier stage. Widening only ever moves toward `kConfigure`, never toward
+`kStart`. The receipt records the **requested** stage; the
+`LifecycleRestartReceiptView` returned by `inspect()`/`await()` reports the
+**effective** stage and transaction lineage. The compiler's per-stage widening
+resolution — including its reason — is frozen in the plan and read through
+plan inspection; it is not a receipt or view field.
+
+**Fencing.** Acceptance installs an **activation fence** on the closure. A
+target that is mid-`compute()` finishes that callback first; an idle target
+restarts at the control safe point before its next activation. Operators
+outside the closure are neither torn down nor re-initialized and receive no
+lifecycle callbacks — they may continue computing, though scheduler,
+partition, and control-safe-point effects mean this is not a guarantee of
+uninterrupted progress. Across the closure boundary, the restarted target
+advances its input source generation, so stale data emitted under the old
+generation is not consumed after the restart; already-emitted output is not
+retracted, and downstream consumers simply see the target's output resume once
+`kStart` re-runs.
+
+<Warning>
+  **There is no graph-wide restart transaction.** If you need to restart the
+  entire pipeline, that is a cooperative stop plus a *new* `RunSession` — see
+  [running and stopping](/holoscan/sdk-user-guide/getting-started/running-and-stopping).
+  The restart mechanism deliberately never stops the world.
+</Warning>
+
+## One restart transaction, end to end
+
+The timeline below follows one transaction from either ingress — a dedicated
+request or a parameter update — through the safe point, teardown, forward
+suffix, and publication, with the bounded failure branches.
+
+<svg viewBox="0 0 760 460" role="img" aria-labelledby="restart-transaction-timeline-title" aria-describedby="restart-transaction-timeline-description" style={{width: "100%", maxWidth: "760px", height: "auto", display: "block", margin: "1.5rem auto"}}>
+  <title id="restart-transaction-timeline-title">One restart transaction: dedicated requests and lifecycle-mutable parameter updates queue into one coalescing transaction, execute teardown and the forward suffix at a control safe point, then publish — with bounded rollback and restoration on failure</title>
+  <desc id="restart-transaction-timeline-description">Flow diagram in four rows. Row one: a dedicated request from compute or a control handle returns a receipt, and a parameter update touching a lifecycle-mutable field returns an update sequence; both feed one queued transaction whose activation fence is installed and whose coalescing window is open, so compatible queued work, including requests for other operators, may join. A stop or activation failure that wins before publication instead terminates an accepted transaction in the canceled state without publishing a new epoch. Row two: at the control safe point, in-flight compute retires and quiescing closes the coalescing window; the kStop teardown runs, plus the kRelease teardown when the compiler-resolved effective stage is kAllocate or earlier. Row three: the forward suffix runs from the effective stage through kStart, with a parameter candidate visible to callbacks; on success the runtime advances Tag and readiness generations, re-arms channels, and the transaction terminates in the published state. Operators outside the closure receive no lifecycle callbacks and may continue. Row four: a teardown failure terminates failed-stopped with no forward suffix or restoration; a forward-stage failure rolls back the new work in reverse order and re-enters the old epoch — successful restoration terminates rolled-back with the old epoch live, and a failed restoration terminates failed-stopped and fails the run.</desc>
+  <defs>
+    <marker id="restart-transaction-timeline-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="20" y="30" width="260" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="30" width="260" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="150" y="49" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">dedicated request:</text>
+  <text x="150" y="65" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compute() or control handle → receipt</text>
+  <rect x="20" y="96" width="260" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="96" width="260" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="150" y="115" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">parameter update patch touching a</text>
+  <text x="150" y="131" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">lifecycle_mutable field → update sequence</text>
+  <line x1="280" y1="54" x2="348" y2="78" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <line x1="280" y1="120" x2="348" y2="96" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="352" y="63" width="200" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="352" y="63" width="200" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="452" y="82" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">transaction kQueued</text>
+  <text x="452" y="98" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">fence installed, coalescing open</text>
+  <text x="744" y="56" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">compatible queued work may</text>
+  <text x="744" y="72" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">coalesce, including requests</text>
+  <text x="744" y="88" textAnchor="end" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">for other operators</text>
+  <path d="M 452 111 L 452 140 L 140 140 L 140 158" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.55" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="20" y="162" width="240" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="162" width="240" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="140" y="181" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">control safe point (kQuiescing):</text>
+  <text x="140" y="197" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">in-flight compute retires</text>
+  <line x1="260" y1="186" x2="284" y2="186" stroke="currentColor" strokeWidth="2" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="288" y="162" width="130" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="288" y="162" width="130" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="353" y="190" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kStop teardown</text>
+  <line x1="418" y1="186" x2="442" y2="186" stroke="currentColor" strokeWidth="2" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <polygon points="462,166 482,186 462,206 442,186" fill="currentColor" opacity="0.06" />
+  <polygon points="462,166 482,186 462,206 442,186" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="462" y="151" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">effective stage ≤ kAllocate?</text>
+  <text x="490" y="179" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">yes</text>
+  <line x1="482" y1="186" x2="510" y2="186" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="514" y="162" width="226" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4" />
+  <text x="627" y="181" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kRelease teardown</text>
+  <text x="627" y="197" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">then merge into forward suffix</text>
+  <text x="474" y="220" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">no</text>
+  <path d="M 462 206 L 462 228 L 353 228" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.8" />
+  <path d="M 627 210 L 627 228 L 353 228" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.8" />
+  <circle cx="353" cy="228" r="3" fill="currentColor" />
+  <path d="M 353 228 L 170 228 L 170 244" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="20" y="248" width="300" height="48" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="20" y="248" width="300" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="2" />
+  <text x="170" y="267" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">forward suffix: effective stage → … → kStart</text>
+  <text x="170" y="283" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">parameter candidate visible here</text>
+  <line x1="320" y1="272" x2="344" y2="272" stroke="currentColor" strokeWidth="2" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="348" y="248" width="392" height="48" rx="8" fill="#76B900" opacity="0.25" />
+  <rect x="348" y="248" width="392" height="48" rx="8" fill="none" stroke="#76B900" strokeWidth="2" />
+  <text x="544" y="267" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">publish: Tag/readiness generations advance,</text>
+  <text x="544" y="283" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">channels re-arm → kPublished</text>
+  <text x="20" y="318" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.8" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">operators outside the closure receive no lifecycle callbacks and may continue</text>
+  <line x1="60" y1="296" x2="60" y2="360" stroke="currentColor" strokeWidth="1.5" opacity="0.55" strokeDasharray="6 4" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <text x="20" y="344" textAnchor="start" fill="currentColor" fontSize="12" opacity="0.85" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">teardown failure → kFailedStopped: no forward suffix, no restoration; the run fails</text>
+  <rect x="20" y="360" width="260" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4" />
+  <text x="150" y="379" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">forward stage fails:</text>
+  <text x="150" y="395" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">roll back new work (reverse order)</text>
+  <line x1="280" y1="384" x2="304" y2="384" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="308" y="360" width="220" height="48" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="6 4" />
+  <text x="418" y="379" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">re-enter old epoch</text>
+  <text x="418" y="395" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">(kRestoreOld)</text>
+  <line x1="528" y1="374" x2="558" y2="366" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <line x1="528" y1="394" x2="558" y2="418" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#restart-transaction-timeline-arrow)" />
+  <rect x="562" y="348" width="178" height="36" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="562" y="348" width="178" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="651" y="370" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kRolledBack: old epoch live</text>
+  <rect x="562" y="404" width="178" height="36" rx="8" fill="currentColor" opacity="0.06" />
+  <rect x="562" y="404" width="178" height="36" rx="8" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="651" y="426" textAnchor="middle" fill="currentColor" fontSize="12" fontFamily="'NVIDIA Sans', Arial, Helvetica, sans-serif">kFailedStopped: run fails</text>
+</svg>
+
+Failures are bounded at every step. A **teardown** failure runs neither the
+forward suffix nor restoration: the transaction terminates `kFailedStopped`
+and the run fails. A **forward-suffix** failure rolls the newly completed work
+back in reverse completion order, then re-enters the old published epoch: if
+that restoration succeeds, the transaction terminates `kRolledBack` and the
+old epoch keeps running; if restoration also fails, the transaction terminates
+`kFailedStopped` and the run fails with `RUNTIME_LIFECYCLE_CALLBACK_FAILED`.
+A successful pass publishes the new epoch — affected Tag and readiness-source
+generations advance so old-generation data cannot be consumed after the
+restart, channels re-arm — and the transaction terminates `kPublished`.
+
+An accepted transaction can also finish before those execution branches: if a
+stop or activation failure wins before publication, its receipt terminates
+`kCanceled` and no new lifecycle epoch is published. This differs from an
+`await()` timeout. `kTimeout` ends only that caller-side wait; it never cancels
+or mutates the transaction, so a later `inspect()` or `await()` can observe the
+eventual terminal state.
+
+## Restarts triggered by parameter updates
+
+A restart does not always begin with an explicit request. A typed-parameter
+field declared `.lifecycle_mutable(stage)` submits into the **same transaction
+kernel** when patched at run time: the accepted batch reserves a candidate
+parameter generation and requests re-entry at the earliest invalidated stage
+across the batch's lifecycle-mutable fields. The candidate uses `kStart` as
+its lifecycle barrier, but it becomes publicly visible only after the whole
+coalesced transaction publishes. The full treatment — admission, guardrails,
+result states, and correlation IDs — is on
+[runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).
+
+## Parameter views inside restart callbacks
+
+Lifecycle callbacks see a **phase-selected** parameter view during a restart.
+The [lifecycle callbacks](/holoscan/sdk-user-guide/building-operators/lifecycle-callbacks)
+page introduces the mechanism; this is the exact selection:
+
+| Transition phase | Parameter view presented to callbacks |
+|---|---|
+| Initial startup | Generation zero |
+| Pre-restart teardown | Old published generation |
+| Restart forward | Private candidate for a parameter-origin restart; otherwise the retained current generation |
+| Forward rollback | The exact view that created the work being unwound |
+| Restore old | Old published generation |
+| Final shutdown | Current published generation |
+
+## Recap
+
+- Restart authority is **deny-by-default**: grant it at graph scope with
+  `allow_self_restart`, `allow_external_restart`, or
+  `allow_restart_request(requester, target)`, and compile with
+  `lifecycle_transactions` enabled.
+- Operators request restarts from `compute()` via
+  `ctx.request_restart(LifecycleRestartOptions{.from_stage = ...})`; only
+  forward stages (`kConfigure`–`kStart`) are valid entry points, and lifecycle
+  callbacks can never submit one.
+- External controllers call `session.lifecycle_control(policy)` to mint a
+  `LifecycleControlHandle` with `request_restart` / `inspect` / `await` /
+  `restrict` — a **restriction-only** capability that can narrow but never
+  broaden the plan's admitted authority.
+- A restart executes over the target's compiler-frozen lifecycle-dependency
+  **closure** with the exact teardown/forward matrix above: `kStop` always,
+  plus `kRelease` when the compiler-resolved effective stage is `kAllocate` or
+  earlier. The request may **widen** toward `kConfigure`, and execution is
+  **fenced** to the control safe point — never applied mid-`compute()`;
+  operators outside the closure receive no lifecycle callbacks and may
+  continue.
+- Requests are nonblocking and return
+  `expected<LifecycleRestartReceipt, Error>`; the receipt carries the
+  requested stage, while `inspect()`/`await()` return the
+  `LifecycleRestartReceiptView` with the effective stage and lineage. Read
+  failures as typed error values.
+- A run-time patch to a `.lifecycle_mutable(stage)` parameter field enters the
+  same transaction kernel: the candidate generation publishes only after the
+  whole transaction reaches `kPublished`.
+
+**Next:** change an operator's typed parameters in a running session in
+[Runtime parameter updates](/holoscan/sdk-user-guide/advanced/runtime-parameter-updates).

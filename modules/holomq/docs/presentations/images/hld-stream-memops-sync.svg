@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="340" viewBox="0 0 960 340" role="img" aria-labelledby="title desc">
+  <title id="title">holomq CUDA stream memory ops synchronization</title>
+  <desc id="desc">Publisher enqueues WriteValue on its CUDA stream; subscriber enqueues WaitValue on its CUDA stream against the shared generation word.</desc>
+  <defs>
+    <marker id="ar" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#444"/>
+    </marker>
+  </defs>
+  <style>
+    .h { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 16px; font-weight: 700; fill: #1a1a1a; }
+    .c { font-family: Consolas, Menlo, "DejaVu Sans Mono", monospace; font-size: 14px; fill: #333; }
+    .d { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 13px; fill: #666; }
+    .p { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #5a8f00; }
+    .s { font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: 15px; font-weight: 600; fill: #0b5394; }
+  </style>
+
+  <rect x="0" y="0" width="100%" height="100%" fill="#ffffff"/>
+
+  <text x="164" y="32" text-anchor="middle" class="p">Publisher CUDA stream</text>
+  <text x="796" y="32" text-anchor="middle" class="s">Subscriber CUDA stream</text>
+
+  <rect x="24" y="44" width="280" height="48" rx="4" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="44" y="68" class="c">1. GPU work</text>
+  <text x="44" y="84" class="d">enqueued on stream, not CPU</text>
+
+  <line x1="164" y1="92" x2="164" y2="108" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="24" y="108" width="280" height="56" rx="4" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="44" y="132" class="c">2. cuStreamWriteValue64(G)</text>
+  <text x="44" y="152" class="d">enqueued on publisher stream</text>
+
+  <line x1="304" y1="136" x2="340" y2="136" stroke="#d4a017" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="340" y="108" width="280" height="56" rx="6" fill="#fffdf5" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="480" y="132" text-anchor="middle" class="c">generation word</text>
+  <text x="480" y="152" text-anchor="middle" class="d">per slot; value = G</text>
+
+  <line x1="620" y1="136" x2="656" y2="136" stroke="#d4a017" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <rect x="656" y="108" width="280" height="56" rx="4" fill="#fff8e6" stroke="#d4a017" stroke-width="1.5"/>
+  <text x="676" y="132" class="c">2. cuStreamWaitValue64(&gt;= G)</text>
+  <text x="676" y="152" class="d">enqueued on subscriber stream</text>
+
+  <line x1="164" y1="164" x2="164" y2="196" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+  <text x="164" y="184" text-anchor="middle" class="d">stream continues...</text>
+
+  <line x1="796" y1="164" x2="796" y2="180" stroke="#444" stroke-width="1.2" marker-end="url(#ar)"/>
+
+  <rect x="656" y="180" width="280" height="48" rx="4" fill="#eef6fc" stroke="#7eb8e0" stroke-width="1.5"/>
+  <text x="676" y="210" class="c">3. GPU work on payload (safe)</text>
+
+  <rect x="24" y="264" width="912" height="56" rx="6" fill="#f5f9fd" stroke="#0b5394" stroke-width="1.5"/>
+  <text x="44" y="288" class="h">Stream ordering (R4)</text>
+  <text x="44" y="308" class="d">WriteValue(G) on the publisher CUDA stream must be enqueued before WaitValue(&gt;= G) on the subscriber CUDA stream</text>
+</svg>

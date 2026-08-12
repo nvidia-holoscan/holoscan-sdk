@@ -1,0 +1,1 @@
+{"schema":"holoscan.tooling-component/v1","component":"holoscan-config","target":"holoscan::config","version":"@PROJECT_VERSION@","direct_holoscan_dependencies":[],"features":{"config_semantic_version":1,"codec_version":1},"experimental":false}

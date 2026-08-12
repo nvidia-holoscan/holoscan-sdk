@@ -8,7 +8,8 @@ The **Holoscan SDK** is part of [NVIDIA Holoscan](https://developer.nvidia.com/h
 - [Obtaining the Holoscan SDK](#obtaining-the-holoscan-sdk)
 - [AI Coding Assistants](#ai-coding-assistants)
 - [Troubleshooting and Feedback](#troubleshooting-and-feedback)
-- [Additional Notes](#additional-notes)
+- [Contributing to Holoscan SDK](#contributing-to-holoscan-sdk)
+- [Repository structure](#repository-structure)
 
 ## Getting Started
 
@@ -41,20 +42,12 @@ before getting started.
 
 ## AI Coding Assistants
 
-The Holoscan team publishes agent-readable skills that help you install, run, and explore
-the SDK from inside AI coding assistants such as Claude Code, Cursor, and GitHub Copilot CLI.
-The skills live in the public [NVIDIA/skills](https://github.com/NVIDIA/skills) repository
-and are installed with the bundled `skills` CLI, which runs through `npx` and prompts you
-to choose a skill and an install destination; no manual cloning required:
-
-```bash
-npx skills add nvidia/skills
-```
-
-See [`skills/`](./skills/README.md) for the list of available skills and a feedback link,
-or the [AI Coding-Assistant Skills](https://docs.nvidia.com/holoscan/sdk-user-guide/ai_skills.html)
-page in the user guide. Advanced install options are documented in the
-[skills CLI advanced install guide](https://docs.nvidia.com/skills/advanced-install).
+The Holoscan SDK 5.x user guide includes
+[AI Coding Assistants](https://docs.nvidia.com/holoscan/sdk-user-guide/resources/ai-coding-agents)
+guidance for grounding AI coding assistants in the 5.x API, examples, and
+compile-time diagnostics. A dedicated Holoscan coding-assistant skill package
+is planned; until then, use the guide page as the source of truth for
+assistant-facing 5.x development guidance.
 
 ## Troubleshooting and Feedback
 
@@ -75,11 +68,10 @@ and may include them in Holoscan SDK releases at our discretion. Please refer to
 The repository is organized as such:
 
 - `cmake/`: CMake configuration files
-- `data/`: directory where data will be downloaded
+- `data/`: created during the build when dataset download is enabled
 - `examples/`: source code for the examples
-- `gxf_extensions/`: source code for the holoscan SDK gxf codelets
 - `include/`: source code for the holoscan SDK core
-- `modules/`: source code for the holoscan SDK modules
+- `modules/`: source code for optional SDK modules (currently HoloMQ)
 - `patches/`: patch files applied to dependencies
 - `python/`: python bindings for the holoscan SDK
 - `scripts/`: utility scripts

@@ -1,0 +1,351 @@
+Raw POD payloads are an experimental, expert-level escape hatch for applications
+that intentionally need fixed-layout C++ structs without a schema compiler or
+generated code. They use ordinary `Output<T>`/`Input<T>` ports, but the
+application owns the message identity, exact layout, compatibility policy, and
+coordinated producer/consumer deployment.
+
+<Warning>
+  **Prefer a generated FlatBuffers schema for ordinary application messages.**
+  Schemas provide generated owning types, verified serialization, reflection,
+  nested and variable-length fields, and a schema identity derived from the
+  `.fbs` source. Raw POD has no machine-readable schema, compatibility
+  negotiation, or rollout tooling. Its declarations may change between
+  early-access releases.
+</Warning>
+
+Use this path only when avoiding FlatBuffers and generated code is itself a
+requirement, the payload is a small fixed-layout scalar aggregate, and every
+producer and consumer can be updated together. Start with
+[Custom FlatBuffer schemas](/holoscan/sdk-user-guide/data-and-payloads/custom-flatbuffer-schemas)
+otherwise.
+
+**Complete C++ example:** `public/examples/experimental/pod_payloads/cpp`
+
+<Note title="You will learn">
+  - Why a custom struct needs an explicit identity and layout declaration
+  - How to specialize `ChannelTypeIdentity<T>` (name + version)
+  - How to specialize `ChannelPodLayout<T>` so the fields tile the struct exactly
+  - How to wire a POD port exactly like a scalar port — and run it
+  - How the canonical little-endian codec is selected automatically
+  - Which compatibility, evolution, and rollout responsibilities remain yours
+  - How focused compile-time diagnostics reject invalid identities and layouts
+</Note>
+
+## Decide whether raw POD is justified
+
+Raw POD can be appropriate when all of these are true:
+
+- A schema compiler dependency and generated sources are unacceptable for the
+  deployment.
+- The message is a small, fixed set of portable scalar values or fixed arrays.
+- You need the direct fixed-size in-process carriage and accept the restricted
+  data model.
+- You control and coordinate every producer and consumer.
+
+Choose a FlatBuffers schema when the message may evolve, contains optional,
+nested, string, vector, or Tensor fields, crosses independently deployed
+components, or benefits from reflection and generated tooling. A raw POD cannot
+own external storage: pointers are rejected, and putting a Tensor or buffer
+handle in the struct does not create a valid lifetime or transport contract.
+
+<Note>
+  Generated schemas also use exact-match package identity in this release; they
+  do not negotiate compatible versions at runtime. Their advantage is that
+  identity, native types, verification, and codecs are generated consistently
+  from one machine-readable `.fbs` source instead of duplicated manual layout
+  declarations.
+</Note>
+
+<Warning>
+  **Binary compatibility and schema evolution are your responsibility.** The
+  SDK verifies the exact identity and declared field layout presented by each
+  endpoint; it cannot determine whether two independently authored declarations
+  still have the same meaning. Change the version whenever layout or semantics
+  change, and deploy matching producers and consumers together.
+</Warning>
+
+## Why declare anything at all?
+
+The runtime never guesses what your struct means. There is no RTTI fallback, no
+compiler-name fallback, and no "same size, close enough" matching. Instead, a
+POD payload carries an explicit, versioned identity, and a producer and a
+consumer interoperate only when their canonical name, version, object
+size/alignment, and complete field layout are **identical** — even across
+processes, even when the two sides were built from different C++ types.
+
+Pinning the identity at authoring time moves layout problems into compile errors
+and mismatched identities into typed, fail-closed rejections. It does not
+provide compatibility across versions or coordinate independent deployments. See
+[payload type rules](/holoscan/sdk-user-guide/data-and-payloads/payload-type-rules)
+for where POD structs sit among the admitted port payload families.
+
+## The two trait specializations
+
+A POD payload type must be standard-layout and trivially copyable, and must have
+both traits specialized. When `OperatorSpec::input`/`output` or typed external-topic
+authoring materializes the payload identity, the
+`assert_complete_channel_pod_contract` check rejects an incomplete contract with
+a focused compile-time diagnostic. The Boolean `CatalogChannelPod<T>` concept can
+still be inspected safely in detection and overload-selection code.
+
+### `ChannelTypeIdentity<T>`: name and version
+
+```cpp
+template <>
+struct holoscan::ChannelTypeIdentity<FusionControl> {
+  static constexpr std::string_view name = "com.example.FusionControl";
+  static constexpr std::uint32_t version = 1U;
+};
+```
+
+- `name` is a globally scoped, dotted UTF-8 string (it must contain at least one
+  `.`, must not start or end with `.`, and is capped at 255 bytes). Use a
+  reverse-DNS style prefix you control.
+- `version` is a nonzero `std::uint32_t`. Bump it whenever the struct's meaning
+  or layout changes — producer and consumer must match it exactly.
+
+### `ChannelPodLayout<T>`: exact byte tiling
+
+```cpp
+template <>
+struct holoscan::ChannelPodLayout<FusionControl> {
+  static constexpr auto fields = holoscan::pod_fields(
+      holoscan::pod_field("frame_id", &FusionControl::frame_id,
+                          offsetof(FusionControl, frame_id)),
+      holoscan::pod_field("exposure_delta", &FusionControl::exposure_delta,
+                          offsetof(FusionControl, exposure_delta)),
+      holoscan::pod_field("confidence", &FusionControl::confidence,
+                          offsetof(FusionControl, confidence)));
+};
+```
+
+Each `pod_field(name, member-pointer, offsetof(...))` describes one member. The
+ordered list must **tile the struct exactly**:
+
+- Fields appear in increasing byte-offset order, each starting exactly where the
+  previous one ended.
+- Every object byte is covered exactly once — no gaps, no overlap, and no tail
+  padding (`next offset == sizeof(T)` after the last field).
+- Each field is a fixed-width scalar (`std::uint8_t` … `std::uint64_t`,
+  `std::int8_t` … `std::int64_t`, `float`, `double`) or a fixed-length array of
+  one (`T[N]` or `std::array<T, N>`).
+- Field names are unique, and each member pointer must actually select the bytes
+  its declared offset claims.
+
+All of this is checked at compile time when typed authoring materializes the
+port identity. Diagnostics identify invalid names or versions, unsupported member types,
+duplicate fields, incorrect member offsets, gaps or overlap, and incomplete
+coverage including tail padding.
+
+<Warning>
+  **Fixed-width scalars only — and mind the padding.** Use `std::int32_t`, not
+  `int`. `bool`, `enum`, pointers, nested structs, and `std::string` are not
+  admitted as POD *fields* (plain `bool` remains fine as a standalone scalar
+  port payload). If your member order introduces alignment padding, the tiling
+  check fails at compile time; reorder members (largest first is a good habit)
+  so the struct is padding-free.
+</Warning>
+
+## Worked example: a fusion control struct
+
+Continuing the camera + IMU running example: suppose the fusion stage emits a
+small control message — which frame it corresponds to, an exposure correction,
+and a confidence score — for a downstream controller. Three fixed-width members,
+12 bytes, no padding:
+
+```cpp
+#include <holoscan/channel/pod_type.hpp>
+
+struct FusionControl {
+  std::uint32_t frame_id{};
+  std::int32_t exposure_delta{};
+  float confidence{};
+};
+
+namespace holoscan {
+
+template <>
+struct ChannelTypeIdentity<FusionControl> {
+  static constexpr std::string_view name = "com.example.FusionControl";
+  static constexpr std::uint32_t version = 1U;
+};
+
+template <>
+struct ChannelPodLayout<FusionControl> {
+  static constexpr auto fields = pod_fields(
+      pod_field("frame_id", &FusionControl::frame_id, offsetof(FusionControl, frame_id)),
+      pod_field("exposure_delta", &FusionControl::exposure_delta,
+                offsetof(FusionControl, exposure_delta)),
+      pod_field("confidence", &FusionControl::confidence, offsetof(FusionControl, confidence)));
+};
+
+}  // namespace holoscan
+```
+
+From here on, `FusionControl` behaves exactly like a scalar port type. The
+producer declares an `Output<FusionControl>` in `setup()`, states its temporal
+contract, and emits values from `compute()`:
+
+```cpp
+class FusionStage final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.output(control, "control").max_emits_per_compute(1U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnClock{.period = std::chrono::milliseconds{20}});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    return control.emit(
+        FusionControl{.frame_id = frame_++, .exposure_delta = -2, .confidence = 0.9F});
+  }
+
+  holoscan::Output<FusionControl> control;
+
+ private:
+  std::uint32_t frame_{};
+};
+```
+
+The consumer mirrors it with an `Input<FusionControl>`; `receive()` returns an
+`expected<Sample<FusionControl>, Error>` whose `data` member is the struct
+value, ready to use:
+
+```cpp
+class Controller final : public holoscan::Operator<> {
+ public:
+  void setup(holoscan::OperatorSpec& spec) override {
+    spec.input(control, "control").queue_depth(4U);
+  }
+
+  [[nodiscard]] holoscan::Contract contract() const override {
+    holoscan::Contract result;
+    result.trigger(holoscan::OnAnyInput{})
+        .input(control, holoscan::Exact{})
+        .on_missing(control, holoscan::Skip{});
+    return result;
+  }
+
+  [[nodiscard]] holoscan::expected<void, holoscan::Error> compute(
+      holoscan::ExecutionContext&) override {
+    auto sample = control.receive();
+    if (!sample) {
+      return holoscan::make_unexpected(std::move(sample).error());
+    }
+    apply_exposure(sample->data.exposure_delta, sample->data.confidence);
+    return {};
+  }
+
+  holoscan::Input<FusionControl> control;
+};
+```
+
+Wiring, compiling, and running are byte-for-byte the same as the scalar pipeline
+you built in [your first pipeline](/holoscan/sdk-user-guide/getting-started/first-pipeline)
+— there is no codec opt-in and no special compile option:
+
+```cpp
+holoscan::Graph graph{"fusion-control"};
+const auto fusion = graph.op<FusionStage>("fusion");
+const auto controller = graph.op<Controller>("controller");
+graph.add_flow(fusion->control, controller->control,
+               holoscan::ConnectionOptions{.queue_depth = 4U});
+graph.set_default_clock(graph.add_clock<holoscan::RealtimeClock>("runtime-clock"));
+
+const holoscan::ExecutionPlan plan = holoscan::compile(graph);
+holoscan::RunSession session = holoscan::run_async(plan);
+// ... session.request_stop(); session.wait();
+```
+
+The shipping experimental `pod_payloads` example provides the complete `FusionControl`,
+`ChannelTypeIdentity`, exact-tiling `ChannelPodLayout`, graph round trip, and
+rejection cases.
+
+## The canonical codec — selected automatically
+
+You never write encode/decode code for a POD payload. The runtime derives a
+fieldwise codec from your `ChannelPodLayout<T>` declaration:
+
+- The wire representation is **canonical little-endian** for integers, with
+  IEEE 754 formats for `float`/`double`, so an encoded struct is portable across
+  processes and ABIs by construction.
+- In-process, no encoding happens at all: the value is carried inline as the
+  typed struct (payload size is exactly `sizeof(T)`), so a local `add_flow()`
+  connection pays no serialization cost.
+- The choice between the inline and serialized representations is made by the
+  runtime from the connection — your operators are identical either way.
+
+## The same struct across processes
+
+Because the codec is canonical, a POD payload is **interprocess-capable**. A
+graph can export or import the port's topic over an interprocess channel
+(`holomq://…` via `export_topic<T>()` / `import_topic<T>()`), and a standalone
+process can publish or subscribe with the `ChannelRuntime` client API — both
+sides simply compile the *same* two trait specializations. See
+[interprocess channels](/holoscan/sdk-user-guide/advanced/interprocess-channels)
+and [standalone channel clients](/holoscan/sdk-user-guide/advanced/standalone-channel-clients)
+for the wiring.
+
+<Warning>
+  **One graph, one vocabulary.** Inside a graph, operators communicate through
+  typed ports (`Input<T>`/`Output<T>`) wired with `add_flow()` — the runtime
+  materializes the channels for you. The `ChannelRuntime` client API exists
+  only for standalone processes outside any graph. Never mix the two: using
+  `ChannelRuntime` inside an operator bypasses the compiled plan and its
+  guarantees.
+</Warning>
+
+At the boundary, identity is enforced strictly: an incoming frame whose name,
+version, or layout digest does not match the declared identity is rejected with
+a typed `kIncompatible` error and **never reaches your `compute()`**. There is
+no negotiation, no "best effort" decode, and no partial struct — the mismatch
+fails closed, in keeping with the runtime's
+[errors-as-values](/holoscan/sdk-user-guide/getting-started/errors-as-values)
+discipline.
+
+## Rules of thumb and failure modes
+
+- **Two traits, always.** `ChannelTypeIdentity<T>` and `ChannelPodLayout<T>` are
+  both required; there is no macro shortcut and no reflection fallback.
+- **Tile the struct exactly.** Fields in offset order, every byte covered, no
+  padding — or typed port/topic authoring does not compile when it materializes
+  the identity. This is the *good* failure mode: layout bugs die at build time.
+- **Fixed-width scalars (and fixed arrays of them) only.** `std::int32_t`, not
+  `int`; no `bool`, `enum`, pointers, nested structs, or `std::string` as
+  fields.
+- **Identity is pinned, not negotiated.** Producer and consumer must agree on
+  name + version (and, implicitly, the full field layout) exactly. Any mismatch
+  is a typed `kIncompatible` rejection — fail closed, never a garbled struct.
+- **Bump the version when the struct changes.** Same name + same version must
+  always mean the same bytes; treat a layout edit without a version bump as a
+  wire-protocol bug. The SDK does not coordinate rollout or establish semantic
+  compatibility for you.
+- **No external ownership.** Pointer, string, nested object, buffer-handle, and
+  Tensor members are unsupported. Raw POD cannot express storage lifetime or
+  device-transfer policy.
+- **Keep PODs small and self-contained.** Bulk or device-backed data belongs on
+  the [tensor path](/holoscan/sdk-user-guide/data-and-payloads/tensors-in-depth);
+  structured, evolving messages may fit
+  [schema payloads](/holoscan/sdk-user-guide/data-and-payloads/schema-payloads)
+  better.
+- **In-graph traffic uses `add_flow()`, never `ChannelRuntime`.**
+
+## Recap
+
+- A custom POD struct becomes a first-class port payload with exactly two
+  declarations: `ChannelTypeIdentity<T>` (dotted name + nonzero version) and
+  `ChannelPodLayout<T>` (`pod_fields`/`pod_field` tiling every byte exactly).
+- Ports, `emit()`/`receive()`, `add_flow()`, `compile()`, and `run_async()` are
+  unchanged from the scalar workflow — the runtime selects the codec from the
+  type.
+- The canonical little-endian codec makes the same struct work in-process
+  (carried inline, zero serialization) and across processes.
+- Layout mistakes fail at compile time; identity mismatches fail closed with a
+  typed `kIncompatible` error before your `compute()` ever runs.
+
+Next: [FAQ](/holoscan/sdk-user-guide/resources/faq)

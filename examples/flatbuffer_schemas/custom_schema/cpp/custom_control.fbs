@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+// Application-defined control message for the custom_schema example. This is
+// the worked schema from the user guide's "Custom FlatBuffer schemas" page.
+// A semantic schema change produces new generated package evidence. Update
+// the TRAITS_SCHEMA_VERSION policy in CMake as part of that change.
+namespace app;
+
+table CustomControl {
+  // Monotonic control sequence.
+  sequence: ulong (id: 0);
+
+  // Small scalar control gain.
+  gain: float (id: 1);
+
+  // User-defined label.
+  label: string (id: 2);
+}
+
+root_type CustomControl;

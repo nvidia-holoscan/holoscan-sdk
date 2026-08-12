@@ -1,0 +1,1271 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
+
+import pytest
+
+BENCHMARK_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BENCHMARK_DIR))
+
+
+def load_module(name: str, filename: str) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, BENCHMARK_DIR / filename)
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+runner = load_module("transport_suite_runner", "run_transport_benchmark_suite.py")
+summarizer = load_module("transport_suite_summarizer", "summarize_transport_benchmark_suite.py")
+docs_summarizer = load_module("runtime_docs_summarizer", "summarize_runtime_benchmarks.py")
+
+
+def suite_args(tmp_path: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        build_dir=tmp_path / "build",
+        output_dir=tmp_path / "results",
+        preset="smoke",
+        groups=list(runner.GROUPS),
+        cpus=list(range(8)),
+        latency_period_us=200,
+        tensor_bytes=1 << 20,
+        repetitions=1,
+        skip_gpu=False,
+    )
+
+
+def docs_contract() -> tuple[dict[str, object], list[dict[str, object]]]:
+    case_ids = sorted(docs_summarizer.expected_case_ids())
+    manifest: dict[str, object] = {
+        "preset": docs_summarizer.DOCS_PRESET,
+        "repetitions": 7,
+        "cases": [{"case_id": case_id, "status": "passed"} for case_id in case_ids],
+    }
+    rows: list[dict[str, object]] = [
+        {"native_runs": [{"manifest_case_id": case_id}]} for case_id in case_ids
+    ]
+    return manifest, rows
+
+
+def test_current_suite_plan_covers_every_maintained_transport_group(tmp_path: Path) -> None:
+    # Key setup: construct the complete smoke plan without requiring built binaries.
+    cases = runner.build_cases(suite_args(tmp_path))
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: the plan spans all five existing result producers and known topology limits.
+    assert len(cases) == 81
+    assert {case.layer for case in cases} == {"holomq", "channel", "graph"}
+    assert "holomq_interprocess_inline_64_throughput_q1" in by_id
+    assert "holomq_interprocess_inline_64_throughput_q64" in by_id
+    assert "holomq_interprocess_inline_64_1to2_throughput" in by_id
+    assert "holomq_interprocess_buffer_pageable_host_latency" in by_id
+    assert "holomq_interprocess_buffer_pinned_host_latency" in by_id
+    assert "holomq_intraprocess_concurrent_1to1" in by_id
+    assert "channel_matrix_latency_rep000" in by_id
+    assert "graph_intraprocess_tensor_pageable_host_latency" in by_id
+    assert "graph_intraprocess_pod_throughput_q1" in by_id
+    assert "graph_intraprocess_pod_throughput_q64" in by_id
+    assert "graph_intraprocess_chain_8_throughput" in by_id
+    assert "graph_interprocess_1to2_latency" in by_id
+    assert "graph_interprocess_1to1_throughput_q8" in by_id
+    assert "graph_interprocess_schema_1to1_latency" in by_id
+    assert "graph_interprocess_tensor_pinned_host_1to1_throughput" in by_id
+    assert "graph_interprocess_image_device_1to1_latency" in by_id
+    assert "graph_interprocess_1to2_throughput" in by_id
+    assert "graph_interprocess_tensor_device_1to2_latency" not in by_id
+    assert "graph_interprocess_image_device_chain_latency" not in by_id
+    assert "graph_intraprocess_pod_busy_poll_latency" in by_id
+    assert "graph_interprocess_1to1_busy_poll_latency" in by_id
+    for relays in (1, 2, 4, 8):
+        for workload in ("throughput", "latency"):
+            command = by_id[f"graph_intraprocess_chain_{relays}_{workload}"].command
+            assert command[command.index("--relay-count") + 1] == str(relays)
+            assert "--partition-algorithm" not in command
+    assert "--consumer-cpus" in by_id["graph_interprocess_1to2_latency"].command
+    fanout_command = by_id["graph_interprocess_1to2_latency"].command
+    assert fanout_command[fanout_command.index("--publisher-period-us") + 1] == "5000"
+    assert fanout_command[fanout_command.index("--queue-depth") + 1] == "2"
+    one_to_one_command = by_id["graph_interprocess_1to1_latency"].command
+    assert one_to_one_command[one_to_one_command.index("--queue-depth") + 1] == "1"
+    saturated_fanout_command = by_id["graph_interprocess_1to2_throughput"].command
+    assert (
+        saturated_fanout_command[saturated_fanout_command.index("--publisher-period-us") + 1] == "0"
+    )
+    assert saturated_fanout_command[saturated_fanout_command.index("--queue-depth") + 1] == "2"
+    pageable_command = by_id["holomq_interprocess_buffer_pageable_host_latency"].command
+    assert pageable_command[pageable_command.index("--storage") + 1] == "pageable_host"
+    pinned_command = by_id["holomq_interprocess_buffer_pinned_host_latency"].command
+    assert pinned_command[pinned_command.index("--storage") + 1] == "pinned_host"
+    device_command = by_id["holomq_interprocess_buffer_device_latency"].command
+    assert device_command[device_command.index("--publisher-period-us") + 1] == "500"
+    assert device_command[device_command.index("--device-sync") + 1] == "ready"
+    assert "holomq_interprocess_buffer_device_ready_latency" not in by_id
+    concurrent_command = by_id["holomq_intraprocess_concurrent_1to1"].command
+    assert "HOLOMQ_BENCHMARK_PUBLISHER_CPU=0" in concurrent_command
+    assert "HOLOMQ_BENCHMARK_SUBSCRIBER_CPU=1" in concurrent_command
+    assert "--busy-poll" in by_id["graph_intraprocess_pod_busy_poll_latency"].command
+    assert "--busy-poll" in by_id["graph_interprocess_1to1_busy_poll_latency"].command
+    for case_id in (
+        "graph_intraprocess_pod_1to2_latency",
+        "graph_intraprocess_schema_1to2_latency",
+    ):
+        command = by_id[case_id].command
+        assert command[command.index("--queue-depth") + 1] == "2"
+    schema_command = by_id["graph_interprocess_schema_1to1_latency"].command
+    assert schema_command[schema_command.index("--payload") + 1] == "schema"
+    tensor_command = by_id["graph_interprocess_tensor_pinned_host_1to1_throughput"].command
+    assert tensor_command[tensor_command.index("--tensor-storage") + 1] == "pinned_host"
+    assert tensor_command[tensor_command.index("--bulk-work-profile") + 1] == "descriptor_only"
+    image_command = by_id["graph_interprocess_image_device_1to1_latency"].command
+    assert image_command[image_command.index("--payload") + 1] == "image"
+    assert image_command[image_command.index("--tensor-storage") + 1] == "device"
+    assert image_command[image_command.index("--bulk-work-profile") + 1] == "full_write"
+    validation_commands = [case.command for case in cases if "--payload-validation" in case.command]
+    assert validation_commands
+    assert all(
+        command[command.index("--payload-validation") + 1] in {"all", "final"}
+        for command in validation_commands
+    )
+    assert runner.WORKLOAD_GEOMETRY_POLICY["throughput_queue_depths"] == [1, 2, 8, 64]
+
+
+def test_production_plan_disables_payload_scans_and_records_sampling_policy(
+    tmp_path: Path,
+) -> None:
+    # Key setup: build the production plan for every sample-driven benchmark layer.
+    args = suite_args(tmp_path)
+    args.preset = "production"
+    args.repetitions = 7
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: production commands suppress content scans while retaining structural checks.
+    validation_commands = [case.command for case in cases if "--payload-validation" in case.command]
+    assert validation_commands
+    assert all(
+        command[command.index("--payload-validation") + 1] == "none"
+        for command in validation_commands
+    )
+    assert runner.PRODUCTION_MEASUREMENT_POLICY["repetitions"] == 7
+    assert runner.PRODUCTION_MEASUREMENT_POLICY["inline"]["latency_samples"] >= 10_000
+    assert runner.PRODUCTION_MEASUREMENT_POLICY["percentiles"]["p999_minimum_samples"] == 10_000
+    intraprocess_holomq = by_id["graph_intraprocess_pod_holomq_throughput"].command
+    assert intraprocess_holomq[intraprocess_holomq.index("--session-timeout-ms") + 1] == "120000"
+    assert intraprocess_holomq[intraprocess_holomq.index("--process-timeout-sec") + 1] == "150"
+    tensor_latency = by_id["graph_interprocess_tensor_device_1to1_latency"].command
+    assert tensor_latency[tensor_latency.index("--bulk-work-profile") + 1] == "descriptor_only"
+    intraprocess_tensor_latency = by_id["graph_intraprocess_tensor_device_latency"].command
+    assert (
+        intraprocess_tensor_latency[intraprocess_tensor_latency.index("--bulk-work-profile") + 1]
+        == "descriptor_only"
+    )
+    holomq_device = by_id["holomq_interprocess_buffer_device_latency"].command
+    assert holomq_device[holomq_device.index("--device-sync") + 1] == "none"
+    assert holomq_device[holomq_device.index("--publisher-period-us") + 1] == "200"
+    holomq_device_ready = by_id["holomq_interprocess_buffer_device_ready_latency"].command
+    assert holomq_device_ready[holomq_device_ready.index("--device-sync") + 1] == "ready"
+    assert holomq_device_ready[holomq_device_ready.index("--publisher-period-us") + 1] == "500"
+
+
+def test_docs_core_runtime_plan_contains_only_documented_production_rows(
+    tmp_path: Path,
+) -> None:
+    # Key setup: construct the dedicated docs plan with the requested eight physical CPUs.
+    args = suite_args(tmp_path)
+    args.preset = runner.DOCS_CORE_RUNTIME_PRESET
+    args.repetitions = 7
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: the exact inventory uses the documented counts and both fanout placements.
+    assert len(cases) == 40
+    assert set(by_id) == docs_summarizer.expected_case_ids()
+    assert {case.layer for case in cases} == {"graph"}
+    assert {case.domain for case in cases} == {"intraprocess", "interprocess"}
+    assert all("--repetitions" in case.command for case in cases)
+    assert all(case.command[case.command.index("--repetitions") + 1] == "7" for case in cases)
+    fanout = by_id["graph_intraprocess_docs_pod_1to4_throughput"].command
+    assert fanout[fanout.index("--operator-lanes") + 1] == "shared"
+    assert "--sink-cpus" not in fanout
+    assert fanout[fanout.index("--controller-cpu") + 1] == "1"
+    assert fanout[fanout.index("--channel-pump-cpu") + 1] == "2"
+    assert fanout[fanout.index("--notification-driver-cpu") + 1] == "3"
+    separate_fanout = by_id["graph_intraprocess_docs_pod_1to4_per_sink_throughput"].command
+    assert separate_fanout[separate_fanout.index("--operator-lanes") + 1] == "per_sink"
+    assert separate_fanout[separate_fanout.index("--sink-cpus") + 1] == "1,2,3,4"
+    assert separate_fanout[separate_fanout.index("--controller-cpu") + 1] == "5"
+    assert separate_fanout[separate_fanout.index("--channel-pump-cpu") + 1] == "6"
+    assert separate_fanout[separate_fanout.index("--notification-driver-cpu") + 1] == "7"
+    chain = by_id["graph_intraprocess_docs_chain_10_operators_latency"].command
+    assert chain[chain.index("--relay-count") + 1] == "8"
+    intraprocess_multi_tensor = by_id[
+        "graph_intraprocess_docs_multi_tensor_pageable_host_1to1_latency"
+    ].command
+    assert intraprocess_multi_tensor[intraprocess_multi_tensor.index("--scenario") + 1] == (
+        "multi_tensor"
+    )
+    assert (
+        intraprocess_multi_tensor[intraprocess_multi_tensor.index("--bulk-work-profile") + 1]
+        == "descriptor_only"
+    )
+    for case_id in (
+        "graph_intraprocess_docs_tensor_pinned_host_1to1_latency",
+        "graph_intraprocess_docs_tensor_pinned_host_1to1_throughput",
+        "graph_intraprocess_docs_tensor_device_1to1_latency",
+        "graph_intraprocess_docs_tensor_device_1to1_throughput",
+        "graph_intraprocess_docs_multi_tensor_pageable_host_1to1_latency",
+        "graph_intraprocess_docs_multi_tensor_pageable_host_1to1_throughput",
+    ):
+        command = by_id[case_id].command
+        assert command[command.index("--bulk-work-profile") + 1] == "descriptor_only"
+    multi_tensor = by_id[
+        "graph_interprocess_docs_multi_tensor_loan_pageable_host_1to1_latency"
+    ].command
+    assert multi_tensor[multi_tensor.index("--payload") + 1] == "multi_tensor_loan"
+    assert multi_tensor[multi_tensor.index("--bulk-work-profile") + 1] == "descriptor_only"
+    assert multi_tensor[multi_tensor.index("--samples") + 1] == "1000"
+    multi_tensor_throughput = by_id[
+        "graph_interprocess_docs_multi_tensor_loan_pageable_host_1to1_throughput"
+    ].command
+    assert multi_tensor_throughput[multi_tensor_throughput.index("--samples") + 1] == "20000"
+    interprocess_latency = by_id["graph_interprocess_docs_pod_1to2_latency"].command
+    assert interprocess_latency[interprocess_latency.index("--samples") + 1] == "1000"
+    assert interprocess_latency[interprocess_latency.index("--warmup") + 1] == "1000"
+    intraprocess_latency = by_id["graph_intraprocess_docs_pod_1to4_latency"].command
+    assert intraprocess_latency[intraprocess_latency.index("--samples") + 1] == "10000"
+
+
+def test_runtime_docs_summarizer_renders_requested_tables_and_percentiles() -> None:
+    # Key setup: provide one normalized production row for every docs case identifier.
+    rows = {
+        case_id: {
+            "application_payload_bytes": (2 << 20 if "multi_tensor" in case_id else (1 << 20)),
+            "latency_p50_ns": 1_234.0,
+            "latency_p99_ns": 2_345.0,
+            "latency_p999_ns": 3_456.0,
+            "logical_messages_per_second": 12_345.0,
+            "aggregate_deliveries_per_second": 49_380.0,
+            "primary_metric_coefficient_of_variation": 0.01,
+            "event_wake": True,
+            "runtime_support_threads": "controller,channel_pump",
+        }
+        for case_id in docs_summarizer.expected_case_ids()
+    }
+    rows["graph_intraprocess_docs_pod_1to2_throughput"][
+        "primary_metric_coefficient_of_variation"
+    ] = 0.228
+
+    latency, throughput = docs_summarizer.render_tables(rows)
+
+    # Key assertion: only the sufficiently sampled domain reports p99.9.
+    single_process_latency, interprocess_latency = latency.split(
+        "### Interprocess Graph transport latency"
+    )
+    assert "| p50 | p99 | p99.9 |" in single_process_latency
+    assert "| p50 | p99 | Notes |" in interprocess_latency
+    assert "p99.9" not in interprocess_latency
+    assert "Single-process 1:4" in latency
+    assert "Shared operator partition; HoloMQ fanout; event wake; channel pump" in latency
+    assert "One source partition and one partition per subscriber; HoloMQ fanout" in latency
+    assert "Single-process 10-operator chain" in latency
+    assert "runtime_benchmark::MultiTensorMessageT" in latency
+    assert "3.456 µs" in latency
+    assert "Single-process Graph throughput" in throughput
+    assert "Interprocess Graph throughput" in throughput
+    assert "49,380" in throughput
+    assert "run-to-run CV 22.8% exceeds the 10% publication gate" in throughput
+
+
+@pytest.mark.parametrize("duplicate_source", ["manifest", "rows"])
+def test_runtime_docs_summarizer_rejects_duplicate_case_ids(duplicate_source: str) -> None:
+    # Key setup: duplicate one otherwise complete case in either contract input.
+    manifest, rows = docs_contract()
+    if duplicate_source == "manifest":
+        cases = manifest["cases"]
+        assert isinstance(cases, list)
+        cases.append(dict(cases[0]))
+    else:
+        rows.append(dict(rows[0]))
+
+    # Key assertion: duplicate evidence is rejected before set/dict collapsing can mask it.
+    with pytest.raises(RuntimeError, match="duplicate case identifiers"):
+        docs_summarizer.require_complete_docs_run(manifest, rows)
+
+
+def test_runtime_docs_update_renders_provenance_from_suite_artifacts(tmp_path: Path) -> None:
+    # Key setup: provide one complete docs contract and the native manifest for its widest
+    # CPU-placement row.
+    suite_dir = tmp_path / "suite"
+    suite_dir.mkdir()
+    (suite_dir / "summary.json").write_text("{}\n", encoding="utf-8")
+    manifest, rows = docs_contract()
+    manifest.update(
+        {
+            "created_unix_seconds": 0,
+            "cpus": list(range(8)),
+        }
+    )
+    for row in rows:
+        native_runs = row["native_runs"]
+        assert isinstance(native_runs, list)
+        case_id = native_runs[0]["manifest_case_id"]
+        assert isinstance(case_id, str)
+        row.update(
+            {
+                "primary_metric_coefficient_of_variation": 0.01,
+                "payload_validation": "none",
+                "measured_samples": (
+                    1_000 if "interprocess" in case_id and case_id.endswith("_latency") else 10_000
+                ),
+                "warmup_samples": 1_000,
+            }
+        )
+        if case_id == docs_summarizer.PROVENANCE_CASE_ID:
+            native_runs[0]["artifact"] = "graph/widest/summary.json"
+    native_dir = suite_dir / "graph/widest"
+    native_dir.mkdir(parents=True)
+    write_json(
+        native_dir / "manifest.json",
+        {
+            "machine": "x86_64",
+            "kernel": "6.8.0-test",
+            "cpu_topology": [
+                {
+                    "cpu": cpu,
+                    "pinned": True,
+                    "package_id": 0,
+                    "core_id": cpu,
+                    "thread_siblings": f"{cpu},{cpu + 8}",
+                    "governor": "performance",
+                }
+                for cpu in range(8)
+            ],
+            "gpus": [{"name": "Test GPU", "driver_version": "1.2.3"}],
+            "build": {
+                "cmake_build_type": "Release",
+                "cxx_compiler_version": "Test C++ 1.0",
+                "cuda_compiler_version_output": "Test CUDA 2.0",
+            },
+        },
+    )
+    by_id = docs_summarizer.require_complete_docs_run(manifest, rows)
+    provenance = docs_summarizer.render_provenance(suite_dir, manifest, by_id)
+    document = "\n".join(
+        (
+            docs_summarizer.LATENCY_BEGIN,
+            "old latency",
+            docs_summarizer.LATENCY_END,
+            docs_summarizer.THROUGHPUT_BEGIN,
+            "old throughput",
+            docs_summarizer.THROUGHPUT_END,
+            docs_summarizer.PROVENANCE_BEGIN,
+            "old provenance",
+            docs_summarizer.PROVENANCE_END,
+        )
+    )
+    document_path = tmp_path / "benchmarks_core_runtime.mdx"
+    document_path.write_text(document, encoding="utf-8")
+
+    docs_summarizer.update_doc(document_path, "new latency", "new throughput", provenance)
+
+    # Key assertion: one update refreshes tables and artifact-derived provenance together.
+    updated = document_path.read_text(encoding="utf-8")
+    assert "old provenance" not in updated
+    assert "1970-01-01" in updated
+    assert "`docs-core-runtime`; 7 repetitions" in updated
+    assert "40/40 rows passed" in updated
+    assert "Test GPU (driver 1.2.3)" in updated
+    assert "new latency" in updated
+    assert "new throughput" in updated
+
+
+def test_balanced_plan_reduces_repetitions_and_preserves_p99_sampling(
+    tmp_path: Path,
+) -> None:
+    # Key setup: build the routine measurement plan for the two dominant suite groups.
+    args = suite_args(tmp_path)
+    args.preset = "balanced"
+    args.repetitions = 3
+    args.groups = ["holomq_interprocess", "channel", "graph_interprocess"]
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: routine runs retain three trials and at least 1,000 latency samples.
+    channel = by_id["channel_matrix_latency_rep000"].command
+    assert channel[channel.index("--pod-samples") + 1] == "5000"
+    assert channel[channel.index("--host-samples") + 1] == "5000"
+    assert channel[channel.index("--device-samples") + 1] == "5000"
+    fanout = by_id["graph_interprocess_1to2_latency"].command
+    assert fanout[fanout.index("--samples") + 1] == "2000"
+    assert fanout[fanout.index("--warmup") + 1] == "200"
+    assert fanout[fanout.index("--repetitions") + 1] == "3"
+    assert fanout[fanout.index("--session-timeout-ms") + 1] == "30000"
+    assert len([case for case in cases if case.case_id.startswith("channel_matrix_latency")]) == 3
+    for case_id in (
+        "graph_interprocess_tensor_pinned_host_1to1_latency",
+        "graph_interprocess_image_device_1to1_latency",
+    ):
+        command = by_id[case_id].command
+        assert command[command.index("--bulk-work-profile") + 1] == "descriptor_only"
+    holomq_device = by_id["holomq_interprocess_buffer_device_throughput"].command
+    assert holomq_device[holomq_device.index("--device-sync") + 1] == "none"
+    holomq_device_ready = by_id["holomq_interprocess_buffer_device_ready_throughput"].command
+    assert holomq_device_ready[holomq_device_ready.index("--device-sync") + 1] == "ready"
+    assert runner.BALANCED_MEASUREMENT_POLICY["percentiles"]["p99_minimum_samples"] == 1_000
+
+
+def test_smoke_plan_records_the_counts_used_by_commands(tmp_path: Path) -> None:
+    # Key setup: build smoke rows for inline, host-bulk, and device-bulk payload classes.
+    args = suite_args(tmp_path)
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: manifest policy and generated commands share one count contract.
+    assert runner.measurement_policy(args) == runner.SMOKE_MEASUREMENT_POLICY
+    inline = by_id["graph_interprocess_1to1_latency"].command
+    host = by_id["graph_interprocess_tensor_pinned_host_1to1_latency"].command
+    device = by_id["graph_interprocess_tensor_device_1to1_latency"].command
+    assert inline[inline.index("--samples") + 1] == "1000"
+    assert host[host.index("--samples") + 1] == "200"
+    assert device[device.index("--samples") + 1] == "100"
+    assert inline[inline.index("--warmup") + 1] == "100"
+    assert host[host.index("--warmup") + 1] == "100"
+    assert device[device.index("--warmup") + 1] == "100"
+
+
+def test_production_graph_fanout_timeout_covers_effective_pacing(tmp_path: Path) -> None:
+    # Key setup: build the production plan whose 1:2 row raises pacing to five milliseconds.
+    args = suite_args(tmp_path)
+    args.preset = "production"
+    args.repetitions = 7
+    args.groups = ["graph_interprocess"]
+    cases = runner.build_cases(args)
+    by_id = {case.case_id: case for case in cases}
+
+    # Key assertion: the worker and orchestration timeouts cover all paced samples.
+    command = by_id["graph_interprocess_1to2_latency"].command
+    assert command[command.index("--session-timeout-ms") + 1] == "110000"
+    assert command[command.index("--process-timeout-sec") + 1] == "330"
+
+
+def test_cpu_validation_rejects_sibling_threads(tmp_path: Path) -> None:
+    # Key setup: model two logical CPUs backed by the same physical core.
+    sysfs = tmp_path / "sysfs"
+    for cpu in (2, 18):
+        topology = sysfs / f"cpu{cpu}/topology"
+        topology.mkdir(parents=True)
+        (topology / "physical_package_id").write_text("0\n", encoding="utf-8")
+        (topology / "core_id").write_text("2\n", encoding="utf-8")
+
+    # Key assertion: a manually supplied sibling pair fails before any benchmark starts.
+    with pytest.raises(ValueError, match="sibling threads"):
+        runner.validate_distinct_physical_cpus([2, 18], sysfs)
+
+
+def test_dry_run_writes_replayable_manifest_without_binaries(tmp_path: Path) -> None:
+    # Key setup: request one group from an empty build tree in dry-run mode.
+    output_dir = tmp_path / "dry-run"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(BENCHMARK_DIR / "run_transport_benchmark_suite.py"),
+            "--build-dir",
+            str(tmp_path / "missing-build"),
+            "--output-dir",
+            str(output_dir),
+            "--groups",
+            "graph_interprocess",
+            "--no-build",
+            "--dry-run",
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    # Key assertion: planning records exact commands while deliberately doing no execution.
+    manifest = json.loads((output_dir / "suite_manifest.json").read_text(encoding="utf-8"))
+    assert completed.stdout.startswith("planned 24 cases")
+    assert len(manifest["cases"]) == 24
+    assert {case["status"] for case in manifest["cases"]} == {"planned"}
+    assert manifest["scenario_identity_contract"] == runner.scenario_identity_contract()
+    assert manifest["workload_geometry_policy"] == runner.WORKLOAD_GEOMETRY_POLICY
+    commands = (output_dir / "commands.sh").read_text(encoding="utf-8")
+    assert "run_runtime_graph_interprocess_benchmark.py" in commands
+    assert "--consumer-cpus" not in commands
+
+
+def test_resume_preserves_completed_cases_and_updates_pending_commands(tmp_path: Path) -> None:
+    # Key setup: retain one passed case from a compatible suite manifest.
+    args = suite_args(tmp_path)
+    args.groups = ["graph_interprocess"]
+    cases = runner.build_cases(args)
+    manifest = {
+        "schema": runner.SUITE_SCHEMA,
+        "preset": args.preset,
+        "repetitions": args.repetitions,
+        "latency_period_us": args.latency_period_us,
+        "tensor_bytes": args.tensor_bytes,
+        "groups": args.groups,
+        "cpus": args.cpus,
+        "build_dir": str(args.build_dir.resolve()),
+        "cases": [case.manifest_record(args.output_dir.resolve()) for case in cases],
+    }
+    manifest["cases"][0]["status"] = "passed"
+    manifest["cases"][0]["returncode"] = 0
+    manifest["cases"][0]["command"] = ["recorded", "passed", "command"]
+    manifest["cases"][1]["status"] = "failed"
+    manifest["cases"][1]["returncode"] = 1
+    manifest["cases"][1]["command"] = ["stale", "failed", "command"]
+    replanned_command = list(cases[1].command)
+
+    runner.restore_completed_cases(args, cases, manifest)
+
+    # Key assertion: resume skips completed work but replans failed or unstarted cases.
+    assert cases[0].status == "passed"
+    assert cases[0].returncode == 0
+    assert cases[0].command == ["recorded", "passed", "command"]
+    assert cases[1].status == "planned"
+    assert cases[1].returncode is None
+    assert cases[1].command == replanned_command
+    assert all(case.status == "planned" for case in cases[2:])
+
+
+def test_resume_requires_binaries_only_for_pending_case_groups(tmp_path: Path) -> None:
+    # Key setup: mark every Graph case complete while leaving one Channel case pending.
+    args = suite_args(tmp_path)
+    args.groups = ["channel", "graph_interprocess"]
+    cases = runner.build_cases(args)
+    for case in cases:
+        if runner.case_group(case) == "graph_interprocess":
+            case.status = "passed"
+
+    # Key assertion: completed groups no longer contribute a binary prerequisite.
+    assert runner.pending_case_groups(cases) == {"channel"}
+
+
+def test_unpinned_graph_fanout_omits_list_cpu_arguments(tmp_path: Path) -> None:
+    # Key setup: build the intraprocess Graph plan without controlled CPU placement.
+    args = suite_args(tmp_path)
+    args.groups = ["graph_intraprocess"]
+    args.cpus = None
+    cases = runner.build_cases(args)
+    fanout = next(case for case in cases if case.case_id == "graph_intraprocess_pod_1to2_latency")
+
+    # Key assertion: runner defaults represent unpinned execution without invalid -1 lists.
+    assert "--sink-cpus" not in fanout.command
+    assert "--source-cpu" not in fanout.command
+
+
+def test_latency_contract_records_known_minimum_period_overrides() -> None:
+    # Key setup: model the two rows whose effective period exceeds the common request.
+    device_row = {
+        "workload": "latency",
+        "publisher_pacing": "spin",
+        "effective_period_us": 500,
+        "layer": "holomq",
+        "payload": "buffer_handle",
+        "storage": "device",
+    }
+    fanout_row = {
+        "workload": "latency",
+        "publisher_pacing": "notification_driver_sleep",
+        "effective_period_us": 5_000,
+        "layer": "graph",
+        "payload": "pod",
+        "storage": "inline",
+    }
+
+    # Key assertion: normalized rows explain both exceptions instead of appearing comparable.
+    summarizer.apply_latency_contract(device_row, {"case_id": "holomq-device"}, 200)
+    summarizer.apply_latency_contract(
+        fanout_row, {"case_id": "graph_interprocess_1to2_latency"}, 200
+    )
+    assert device_row["pacing_period_reason"] == "device_ready_release_headroom"
+    assert fanout_row["pacing_period_reason"] == "distributed_graph_1to2_flow_control_minimum"
+    assert device_row["pacing_period_policy"] == "minimum_period_override"
+    assert fanout_row["pacing_period_policy"] == "minimum_period_override"
+
+
+def write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def test_scenario_identity_distinguishes_holomq_buffer_handle_delivery(
+    tmp_path: Path,
+) -> None:
+    # Key setup: model a device-backed HoloMQ endpoint with explicit ready-event ordering.
+    result_path = tmp_path / "summary.json"
+    write_json(
+        result_path,
+        {
+            "benchmark": "holomq_buffer_handle_transport",
+            "workload": "throughput",
+            "payload": "buffer_handle",
+            "storage": "device",
+            "device_sync": "ready",
+            "application_payload_bytes": 1_048_576,
+            "inline_transport_bytes": 64,
+            "external_buffer_bytes": 1_048_576,
+            "payload_write_profile": "reused_preinitialized_contents",
+            "bulk_work_profile": "descriptor_only",
+            "wake": {
+                "event_wake": False,
+                "busy_poll": False,
+                "receive_polling": True,
+            },
+            "clock": {
+                "source": "clock_gettime(CLOCK_MONOTONIC)",
+                "steady": True,
+                "scope": "same_host_cross_process",
+            },
+            "runtime_support_threads": "none",
+            "payload_validation": "final",
+            "validation_timing": "after_timed_operations",
+            "subscriber_count": 1,
+            "queue_depth": 8,
+            "pool_slots": 10,
+            "samples": 1_000,
+            "warmup": 100,
+            "metrics": {
+                "completed_messages_per_second": {"median": 20_000.0},
+                "completed_deliveries_per_second": {"median": 20_000.0},
+                "buffer_acquire_p50_ns": {"median": 75.0},
+                "buffer_import_p50_ns": {"median": 125.0},
+                "final_validation_ns": {"median": 2_500.0},
+            },
+            "runs": [
+                {
+                    "completed_messages_per_second": 20_000.0,
+                    "publication_counts": {
+                        "scope": "measured_plus_warmup",
+                        "attempted": 1_101,
+                        "accepted": 1_100,
+                        "backpressured": 1,
+                        "indeterminate": 0,
+                        "completed": 1_100,
+                    },
+                }
+            ],
+        },
+    )
+
+    row = summarizer.complete_scenario_dimensions(summarizer.holomq_interprocess_row(result_path))
+
+    # Key assertion: the normalized identity does not collapse BufferHandle into intraprocess.
+    assert row["delivery_path"] == "holomq_buffer_handle"
+    assert row["synchronization"] == "cuda_ready_event"
+    assert row["scenario_payload"] == "raw_buffer_1048576"
+    assert row["execution_model"] == "concurrent"
+    assert row["pool_acquisition_p50_ns"] == 75.0
+    assert row["import_materialization_p50_ns"] == 125.0
+    assert row["final_validation_ns"] == 2_500.0
+    assert row["cuda_enqueue_p50_ns"] is None
+    assert row["deferred_release_p50_ns"] is None
+
+
+def test_graph_interprocess_summary_preserves_image_transport_identity(
+    tmp_path: Path,
+) -> None:
+    # Key setup: model one device-backed Image result using worker-emitted geometry.
+    result_path = tmp_path / "summary.json"
+    write_json(
+        result_path,
+        {
+            "benchmark": "runtime_graph_interprocess_image_1to1_device_descriptor_only",
+            "payload": "image",
+            "tensor_storage": "device",
+            "workload": "latency",
+            "topology": "fanout",
+            "fanout": 1,
+            "clock": {
+                "source": "clock_gettime(CLOCK_MONOTONIC)",
+                "steady": True,
+                "scope": "same_host_cross_process",
+            },
+            "wake": {
+                "event_wake": True,
+                "busy_poll": False,
+                "receive_polling": False,
+            },
+            "runtime_support_threads": "controller,channel_pump",
+            "payload_validation": "final",
+            "validation_timing": "after_timed_operations",
+            "slowest_sink_end_to_end_p50_ns": {"p50": 8_000.0},
+            "slowest_sink_end_to_end_p99_ns": {"p50": 12_000.0},
+            "slowest_sink_end_to_end_p999_ns": None,
+            "producer": [
+                {
+                    "geometry": {
+                        "samples": 1_000,
+                        "warmup": 100,
+                        "queue_depth": 1,
+                        "notification_capacity": 1,
+                        "publication_backpressure_capacity": 1,
+                        "pool_slots": 6,
+                        "release_capacity": 6,
+                        "publisher_period_us": 200,
+                        "application_payload_bytes": 1 << 20,
+                        "inline_transport_bytes": 856,
+                        "external_buffer_bytes": 1 << 20,
+                        "payload_write_profile": "preinitialized_immutable_backing",
+                        "bulk_work_profile": "descriptor_only",
+                    },
+                    "counts": {"publications": 1_100, "backpressured_emits": 0},
+                }
+            ],
+            "consumers": [[{"timing": {"end_to_end_ns": {"p50": 8_000.0, "p99": 12_000.0}}}]],
+        },
+    )
+
+    row = summarizer.complete_scenario_dimensions(summarizer.graph_interprocess_row(result_path))
+
+    # Key assertion: normalization retains the Tensor-backed schema's true transport dimensions.
+    assert row["payload"] == "image"
+    assert row["storage"] == "device"
+    assert row["application_payload_bytes"] == 1 << 20
+    assert row["inline_transport_bytes"] == 856
+    assert row["external_buffer_bytes"] == 1 << 20
+    assert row["pool_slots"] == 6
+    assert row["release_capacity"] == 6
+    assert row["delivery_path"] == "holomq_buffer_handle"
+    assert row["synchronization"] == "cuda_stream_ordered"
+
+
+def test_summarizer_normalizes_all_existing_result_schemas(tmp_path: Path) -> None:
+    # Key setup: create one minimal valid artifact for each existing benchmark result producer.
+    suite_dir = tmp_path / "suite"
+    write_json(
+        suite_dir / "holomq-intra.json",
+        {
+            "benchmarks": [
+                {
+                    "name": "BM_PubSubPOD_OneToOne_Blocking/real_time",
+                    "real_time": 100.0,
+                    "time_unit": "ns",
+                    "items_per_second": 1_000_000.0,
+                    "iterations": 100,
+                    "subscribers": 1,
+                    "event_wake": 0,
+                    "busy_poll": 0,
+                    "receive_polling": 1,
+                },
+                {
+                    "name": "BM_PubSubPOD_OneToOne_Blocking/real_time",
+                    "real_time": 90.0,
+                    "time_unit": "ns",
+                    "items_per_second": 1_200_000.0,
+                    "iterations": 100,
+                    "subscribers": 1,
+                    "event_wake": 0,
+                    "busy_poll": 0,
+                    "receive_polling": 1,
+                },
+                {
+                    "name": "BM_PubSubFixed_PollingRoundTrip<64>/real_time",
+                    "real_time": 800.0,
+                    "time_unit": "ns",
+                    "event_wake": 0,
+                    "busy_poll": 0,
+                    "receive_polling": 1,
+                    "iterations": 100,
+                },
+                {
+                    "name": "BM_PubSubPOD_ConcurrentWaitSet_Latency/manual_time",
+                    "real_time": 1_500.0,
+                    "time_unit": "ns",
+                    "latency_workload": 1,
+                    "event_wake": 1,
+                    "busy_poll": 0,
+                    "receive_polling": 0,
+                    "subscribers": 1,
+                    "iterations": 100,
+                },
+            ]
+        },
+    )
+    write_json(
+        suite_dir / "holomq-ipc/summary.json",
+        {
+            "benchmark": "holomq_inline_transport",
+            "workload": "latency",
+            "payload": "inline",
+            "storage": "inline",
+            "payload_bytes": 64,
+            "application_payload_bytes": 64,
+            "inline_transport_bytes": 64,
+            "external_buffer_bytes": 0,
+            "payload_write_profile": "full_payload_per_sample",
+            "bulk_work_profile": "not_applicable",
+            "wake": {
+                "event_wake": False,
+                "busy_poll": False,
+                "receive_polling": True,
+            },
+            "runtime_support_threads": "none",
+            "samples": 1_000,
+            "warmup": 100,
+            "publisher_period_us": 200,
+            "publisher_pacing": "spin",
+            "clock": {
+                "source": "clock_gettime(CLOCK_MONOTONIC)",
+                "steady": True,
+                "scope": "same_host_cross_process",
+            },
+            "subscriber_count": 1,
+            "metrics": {
+                "worst_subscriber_latency_p50_ns": {"median": 2_000.0},
+                "worst_subscriber_latency_p99_ns": {"median": 4_000.0},
+            },
+            "runs": [
+                {
+                    "worst_subscriber_latency_p50_ns": 2_000.0,
+                    "publication_counts": {
+                        "scope": "measured_plus_warmup",
+                        "attempted": 1_100,
+                        "accepted": 1_100,
+                        "backpressured": 0,
+                        "indeterminate": 0,
+                        "completed": 1_100,
+                    },
+                }
+            ],
+        },
+    )
+    write_json(
+        suite_dir / "channel/pod.json",
+        {
+            "benchmark": "channel_interprocess_pod_1to2",
+            "domain": "interprocess",
+            "publisher": {
+                "payload": "pod",
+                "transport": "inline",
+                "workload": "throughput",
+                "payload_bytes": 64,
+                "application_payload_bytes": 64,
+                "inline_transport_bytes": 64,
+                "external_buffer_bytes": 0,
+                "payload_write_profile": "full_payload_per_sample",
+                "bulk_work_profile": "not_applicable",
+                "publisher_period_us": 0,
+                "publisher_pacing": "sleep",
+                "samples": 1_000,
+                "warmup": 100,
+                "subscriber_queue_depth": 64,
+                "failed_emits": 0,
+                "clock": {
+                    "source": "clock_gettime(CLOCK_MONOTONIC)",
+                    "steady": True,
+                    "scope": "same_host_cross_process",
+                },
+                "wake": {
+                    "event_wake": False,
+                    "busy_poll": False,
+                    "receive_polling": True,
+                },
+                # Tensor-only options must not leak into normalized POD dimensions.
+                "tensor_storage": "pinned_host",
+                "tensor_bytes": 1_048_576,
+            },
+            "subscribers": [{}, {}],
+            "fanout": {
+                "completed_logical_messages_per_second": 500_000.0,
+                "completed_deliveries_per_second": 1_000_000.0,
+            },
+        },
+    )
+    write_json(
+        suite_dir / "channel/tensor-sidecar.json",
+        {
+            "benchmark": "channel_intraprocess_sidecar_tensor_pinned_host_1to1",
+            "domain": "intraprocess_sidecar",
+            "publisher": {
+                "payload": "tensor",
+                "transport": "sidecar",
+                "tensor_storage": "pinned_host",
+                "async_cuda_work": False,
+                "workload": "throughput",
+                "application_payload_bytes": 1_048_576,
+                "inline_transport_bytes": 128,
+                "external_buffer_bytes": 1_048_576,
+                "payload_write_profile": "reused_preinitialized_contents",
+                "bulk_work_profile": "descriptor_only",
+                "samples": 200,
+                "warmup": 100,
+                "subscriber_queue_depth": 64,
+                "failed_emits": 0,
+                "pool_slots": 256,
+                "release_capacity": 256,
+                "max_fanout_release_streams": 1,
+                "payload_validation": "final",
+                "validation_timing": "after_timed_operations",
+                "clock": {
+                    "source": "std::chrono::steady_clock",
+                    "steady": True,
+                    "scope": "process_local",
+                },
+                "wake": {
+                    "event_wake": False,
+                    "busy_poll": False,
+                    "receive_polling": True,
+                },
+            },
+            "subscribers": [
+                {
+                    "channel_receive_p50_ns": 350,
+                    "final_validation_ns": 1_200,
+                }
+            ],
+            "fanout": {
+                "completed_logical_messages_per_second": 100_000.0,
+                "completed_deliveries_per_second": 100_000.0,
+            },
+        },
+    )
+    write_json(
+        suite_dir / "graph-intra/summary.json",
+        {
+            "benchmark": "runtime_graph_tensor_1to1",
+            "workload": "latency",
+            "source_trigger": "clock",
+            "scenario": "tensor",
+            "process_local_inline_delivery": "direct_retained",
+            "clock": {
+                "source": "std::chrono::steady_clock",
+                "steady": True,
+                "scope": "single_process",
+            },
+            "timestamp_instrumentation": {"pair_overhead_p50_ns_across_runs": {"median": 21.0}},
+            "geometry": {
+                "samples": 1_000,
+                "warmup": 100,
+                "fanout": 1,
+                "payload_bytes": 1_048_576,
+                "application_payload_bytes": 1_048_576,
+                "inline_transport_bytes": 0,
+                "external_buffer_bytes": 1_048_576,
+                "queue_depth": 1,
+                "notification_capacity": 0,
+                "pool_slots": 4,
+                "release_capacity": 4,
+                "publication_backpressure_capacity": 1,
+                "max_fanout_release_streams": 1,
+                "allocation_probe_samples": 1,
+                "payload_write_profile": "full_payload_per_sample",
+                "bulk_work_profile": "full_write",
+                "publisher_period_us": 200,
+            },
+            "wake": {
+                "event_wake": False,
+                "busy_poll": False,
+                "receive_polling": False,
+            },
+            "runtime_support_threads": "controller",
+            "placement": {"operator_lanes": "shared"},
+            "metrics": {
+                "latency_p50_ns_across_runs": {"median": 5_000.0},
+                "latency_p99_ns_across_runs": {"median": 9_000.0},
+                "publication_to_receive_p50_ns_across_runs": {"median": 4_000.0},
+                "publication_to_receive_p99_ns_across_runs": {"median": 8_000.0},
+                "final_validation_ns_across_runs": {"median": 1_500.0},
+            },
+            "runs": [
+                {
+                    "publication_to_receive_p50_ns": 4_000.0,
+                    "counts": {
+                        "publications": 1_101,
+                        "backpressured_emits": 0,
+                    },
+                }
+            ],
+            "validation": {
+                "mode": "final",
+                "timing": "after_timed_operations",
+            },
+        },
+    )
+    write_json(
+        suite_dir / "graph-intra-schema/summary.json",
+        {
+            "benchmark": "runtime_graph_schema_1to2",
+            "workload": "latency",
+            "source_trigger": "clock",
+            "scenario": "schema",
+            "process_local_inline_delivery": "holomq",
+            "clock": {
+                "source": "std::chrono::steady_clock",
+                "steady": True,
+                "scope": "single_process",
+            },
+            "timestamp_instrumentation": {"pair_overhead_p50_ns_across_runs": {"median": 22.0}},
+            "geometry": {
+                "samples": 1_000,
+                "warmup": 100,
+                "fanout": 2,
+                "application_payload_bytes": 16,
+                "inline_transport_bytes": None,
+                "external_buffer_bytes": 0,
+                "queue_depth": 1,
+                "notification_capacity": 0,
+                "publication_backpressure_capacity": 1,
+                "allocation_probe_samples": 1,
+                "payload_write_profile": "full_payload_per_sample",
+                "bulk_work_profile": "not_applicable",
+                "publisher_period_us": 200,
+            },
+            "wake": {
+                "event_wake": False,
+                "busy_poll": False,
+                "receive_polling": False,
+            },
+            "runtime_support_threads": "controller",
+            "placement": {"operator_lanes": "per_sink"},
+            "metrics": {
+                "latency_p50_ns_across_runs": {"median": 6_000.0},
+                "latency_p99_ns_across_runs": {"median": 10_000.0},
+                "publication_to_receive_p50_ns_across_runs": {"median": 5_000.0},
+                "publication_to_receive_p99_ns_across_runs": {"median": 9_000.0},
+            },
+            "runs": [
+                {
+                    "publication_to_receive_p50_ns": 5_000.0,
+                    "counts": {
+                        "publications": 1_101,
+                        "backpressured_emits": 0,
+                    },
+                }
+            ],
+            "validation": {
+                "mode": "final",
+                "timing": "after_timed_operations",
+            },
+        },
+    )
+    write_json(
+        suite_dir / "graph-ipc/summary.json",
+        {
+            "benchmark": "runtime_graph_interprocess_pod_1to1",
+            "workload": "latency",
+            "fanout": 1,
+            "clock": {
+                "source": "clock_gettime(CLOCK_MONOTONIC)",
+                "steady": True,
+                "scope": "same_host_cross_process",
+            },
+            "timestamp_instrumentation": {
+                "pair_overhead_p50_ns_across_processes_and_runs": {"median": 25.0}
+            },
+            "wake": {
+                "event_wake": True,
+                "busy_poll": False,
+                "receive_polling": False,
+            },
+            "runtime_support_threads": "controller,channel_pump",
+            "payload_validation": "final",
+            "validation_timing": "after_timed_operations",
+            "slowest_sink_end_to_end_p50_ns": {"p50": 7_000.0},
+            "slowest_sink_end_to_end_p99_ns": {"median": 13_000.0},
+            "slowest_sink_end_to_end_p999_ns": None,
+            "producer": [
+                {
+                    "geometry": {
+                        "samples": 1_000,
+                        "warmup": 100,
+                        "application_payload_bytes": 64,
+                        "inline_transport_bytes": 64,
+                        "external_buffer_bytes": 0,
+                        "payload_write_profile": "value_fill",
+                        "bulk_work_profile": "not_applicable",
+                        "queue_depth": 1,
+                        "notification_capacity": 1,
+                        "publication_backpressure_capacity": 1,
+                        "publisher_period_us": 200,
+                    },
+                    "counts": {
+                        "publications": 1_100,
+                        "backpressured_emits": 0,
+                    },
+                }
+            ],
+            "consumers": [
+                [{"timing": {"end_to_end_ns": {"p50": 7_000.0, "p99": 12_000.0}}}],
+                [{"timing": {"end_to_end_ns": {"p50": 8_000.0, "p99": 14_000.0}}}],
+            ],
+        },
+    )
+    manifest_cases = [
+        ("gb", "google_benchmark", "holomq-intra.json"),
+        ("hmq", "holomq_interprocess", "holomq-ipc/summary.json"),
+        ("channel", "channel_matrix", "channel"),
+        (
+            "graph_intraprocess_tensor_device_latency",
+            "graph_intraprocess",
+            "graph-intra/summary.json",
+        ),
+        (
+            "graph_intraprocess_schema_1to2_latency",
+            "graph_intraprocess",
+            "graph-intra-schema/summary.json",
+        ),
+        ("graph-ipc", "graph_interprocess", "graph-ipc/summary.json"),
+    ]
+    write_json(
+        suite_dir / "suite_manifest.json",
+        {
+            "schema": runner.SUITE_SCHEMA,
+            "preset": "smoke",
+            "latency_period_us": 200,
+            "scenario_identity_contract": runner.scenario_identity_contract(),
+            "workload_geometry_policy": runner.WORKLOAD_GEOMETRY_POLICY,
+            "cases": [
+                {
+                    "case_id": case_id,
+                    "result_kind": kind,
+                    "output": output,
+                    "status": "passed",
+                    "command": ["benchmark", "--case", case_id],
+                }
+                for case_id, kind, output in manifest_cases
+            ],
+        },
+    )
+
+    _, rows = summarizer.collect_rows(suite_dir)
+    by_benchmark = {row["benchmark"]: row for row in rows}
+
+    # Key assertion: rates and percentiles retain their native meaning across schemas.
+    pod_row = by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]
+    assert pod_row["logical_messages_per_second"] == 1_100_000.0
+    assert pod_row["repetitions"] == 2
+    assert pod_row["primary_metric_min"] == 1_000_000.0
+    assert pod_row["primary_metric_median"] == 1_100_000.0
+    assert pod_row["primary_metric_max"] == 1_200_000.0
+    assert pod_row["primary_metric_coefficient_of_variation"] is not None
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["application_payload_bytes"] == 64
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["inline_transport_bytes"] == 64
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["external_buffer_bytes"] == 0
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["receive_polling"]
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["execution_model"] == "serialized"
+    assert by_benchmark["BM_PubSubPOD_OneToOne_Blocking"]["delivery_path"] == "holomq_inline"
+    assert by_benchmark["BM_PubSubFixed_PollingRoundTrip<64>"]["mean_iteration_ns"] == 800.0
+    assert by_benchmark["BM_PubSubPOD_ConcurrentWaitSet_Latency"]["mean_iteration_ns"] == 1_500.0
+    assert by_benchmark["BM_PubSubPOD_ConcurrentWaitSet_Latency"]["event_wake"]
+    assert by_benchmark["BM_PubSubPOD_ConcurrentWaitSet_Latency"]["execution_model"] == "concurrent"
+    assert not by_benchmark["BM_PubSubPOD_ConcurrentWaitSet_Latency"]["receive_polling"]
+    assert by_benchmark["holomq_inline_transport"]["latency_p99_ns"] == 4_000.0
+    assert by_benchmark["holomq_inline_transport"]["publisher_pacing"] == "spin"
+    assert by_benchmark["holomq_inline_transport"]["comparison_period_us"] == 200
+    assert by_benchmark["holomq_inline_transport"]["effective_period_us"] == 200
+    assert (
+        by_benchmark["holomq_inline_transport"]["pacing_period_policy"] == "common_requested_period"
+    )
+    assert by_benchmark["holomq_inline_transport"]["clock_scope"] == "same_host_cross_process"
+    channel_pod = by_benchmark["channel_interprocess_pod_1to2"]
+    assert channel_pod["aggregate_deliveries_per_second"] == 1_000_000.0
+    assert channel_pod["storage"] == "inline"
+    assert channel_pod["application_payload_bytes"] == 64
+    assert channel_pod["inline_transport_bytes"] == 64
+    assert channel_pod["external_buffer_bytes"] == 0
+    assert channel_pod["payload_write_profile"] == "full_payload_per_sample"
+    assert channel_pod["bulk_work_profile"] == "not_applicable"
+    assert channel_pod["runtime_support_threads"] == "none"
+    assert channel_pod["topology"] == "1to2"
+    assert channel_pod["delivery_path"] == "holomq_inline"
+    assert channel_pod["execution_model"] == "concurrent"
+    tensor_sidecar = by_benchmark["channel_intraprocess_sidecar_tensor_pinned_host_1to1"]
+    assert tensor_sidecar["delivery_path"] == "holomq_sidecar"
+    assert tensor_sidecar["bulk_work_profile"] == "descriptor_only"
+    assert tensor_sidecar["import_materialization_p50_ns"] == 350
+    assert tensor_sidecar["final_validation_ns"] == 1_200
+    assert tensor_sidecar["pool_acquisition_p50_ns"] is None
+    assert tensor_sidecar["deferred_release_p50_ns"] is None
+    graph_tensor = by_benchmark["runtime_graph_tensor_1to1"]
+    assert graph_tensor["storage"] == "device"
+    assert graph_tensor["application_payload_bytes"] == 1_048_576
+    assert graph_tensor["inline_transport_bytes"] == 0
+    assert graph_tensor["external_buffer_bytes"] == 1_048_576
+    assert graph_tensor["publisher_pacing"] == "runtime_on_clock"
+    assert graph_tensor["timestamp_read_pair_p50_ns"] == 21.0
+    assert graph_tensor["delivery_path"] == "direct_retained"
+    assert graph_tensor["execution_model"] == "shared_lane"
+    assert graph_tensor["final_validation_ns"] == 1_500
+    assert graph_tensor["pool_acquisition_p50_ns"] is None
+    assert graph_tensor["import_materialization_p50_ns"] is None
+    assert graph_tensor["cuda_enqueue_p50_ns"] is None
+    assert graph_tensor["deferred_release_p50_ns"] is None
+    assert graph_tensor["scenario_identity"] == {
+        "scope": "operator_graph",
+        "domain": "intraprocess",
+        "topology": "1to1",
+        "workload": "rate_limited_latency",
+        "trigger": "runtime_on_clock",
+        "payload": "tensor",
+        "storage": "device",
+        "bulk_work_profile": "full_write",
+        "delivery": "direct_retained",
+        "execution": "shared_lane",
+        "synchronization": "cuda_stream_ordered",
+        "wake": "sleeping_waitset",
+        "geometry": {
+            "fanout": 1,
+            "relay_count": 0,
+            "queue_depth": 1,
+            "notification_capacity": 0,
+            "pool_slots": 4,
+            "release_capacity": 4,
+            "publication_backpressure_capacity": 1,
+            "max_fanout_release_streams": 1,
+            "process_count": 1,
+            "application_payload_bytes": 1_048_576,
+            "inline_transport_bytes": 0,
+            "external_buffer_bytes": 1_048_576,
+        },
+    }
+    assert by_benchmark["runtime_graph_tensor_1to1"]["publication_attempted_count"] == 1_101
+    assert by_benchmark["runtime_graph_tensor_1to1"]["publication_completed_count"] == 1_101
+    assert by_benchmark["runtime_graph_tensor_1to1"]["native_benchmark"] == (
+        "runtime_graph_tensor_1to1"
+    )
+    assert by_benchmark["runtime_graph_tensor_1to1"]["native_runs"] == [
+        {
+            "manifest_case_id": "graph_intraprocess_tensor_device_latency",
+            "artifact": "graph-intra/summary.json",
+            "command": [
+                "benchmark",
+                "--case",
+                "graph_intraprocess_tensor_device_latency",
+            ],
+        }
+    ]
+    assert by_benchmark["runtime_graph_schema_1to2"]["inline_transport_bytes"] is None
+    assert by_benchmark["runtime_graph_schema_1to2"]["delivery_path"] == "holomq_inline"
+    assert by_benchmark["runtime_graph_schema_1to2"]["execution_model"] == "per_subscriber_lane"
+    assert by_benchmark["runtime_graph_interprocess_pod_1to1"]["execution_model"] == "separate_lane"
+    assert by_benchmark["runtime_graph_interprocess_pod_1to1"]["application_payload_bytes"] == 64
+    assert by_benchmark["runtime_graph_interprocess_pod_1to1"]["inline_transport_bytes"] == 64
+    assert by_benchmark["runtime_graph_interprocess_pod_1to1"]["latency_p99_ns"] == 13_000.0
+    assert (
+        by_benchmark["runtime_graph_interprocess_pod_1to1"]["runtime_support_threads"]
+        == "controller,channel_pump"
+    )
+
+    # Key assertion: human- and machine-readable outputs preserve the same identity and trace.
+    summarizer.write_csv(suite_dir / "summary.csv", rows)
+    summarizer.write_markdown(suite_dir / "summary.md", rows)
+    csv_text = (suite_dir / "summary.csv").read_text(encoding="utf-8")
+    markdown_text = (suite_dir / "summary.md").read_text(encoding="utf-8")
+    assert "scenario_identity" in csv_text
+    assert "direct_retained" in csv_text
+    assert "Manifest cases" in markdown_text

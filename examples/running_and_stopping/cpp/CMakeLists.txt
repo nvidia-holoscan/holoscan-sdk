@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    cmake_minimum_required(VERSION 4.0)
+    project(holoscan_running_and_stopping LANGUAGES CXX)
+    include("${CMAKE_CURRENT_LIST_DIR}/CMakeLists.min.txt")
+    return()
+endif()
+
+add_executable(running_and_stopping running_and_stopping.cpp)
+target_link_libraries(running_and_stopping PRIVATE holoscan::core Threads::Threads)
+holoscan_configure_example_install(running_and_stopping)
+
+if(BUILD_TESTING)
+    # REQ: SYSTEM-014
+    # REQ: RUNTIME-035
+    add_test(NAME EXAMPLE_CPP_RUNNING_AND_STOPPING_TEST COMMAND running_and_stopping)
+    set_tests_properties(EXAMPLE_CPP_RUNNING_AND_STOPPING_TEST
+        PROPERTIES
+            PASS_REGULAR_EXPRESSION "running_and_stopping: all sub-runs behaved as documented"
+            LABELS "examples;run-session"
+            TIMEOUT 30
+    )
+endif()
+
+install(TARGETS running_and_stopping
+    RUNTIME DESTINATION examples/running_and_stopping/cpp
+    COMPONENT holoscan-examples
+)
