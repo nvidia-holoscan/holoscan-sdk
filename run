@@ -832,6 +832,9 @@ build() {
                     hololink-emulation \
                     hololink-emulation-sensors \
                     hololink-examples \
+                    hololink-module \
+                    hololink-modules \
+                    hololink-module-tools \
                     hololink-operators \
                     hololink-python_libs \
                     hololink-python_tools \
@@ -904,6 +907,53 @@ build_run_image() {
         ${extra_args[@]} \
         -f ${TOP}/runtime_docker/Dockerfile \
         ${TOP}
+}
+
+#===============================================================================
+# Section: Documentation
+#===============================================================================
+
+build_docs_desc() { c_echo 'Build and validate the Fern user guide
+
+Runs the repository documentation pipeline from the current checkout. Any
+remaining arguments are passed to docs/scripts/build_holoscan_docs.py.
+With no arguments and no FERN_TOKEN, generated library MDX is skipped; when no
+local API tree exists, validation omits the API-reference section.
+
+Examples:
+  ./public/run build_docs
+  ./run build_docs                 # public repository layout
+  ./public/run build_docs --skip-library-mdx
+'
+}
+build_docs() {
+    local docs_args=("$@")
+    if [[ $# -eq 0 && -z "${FERN_TOKEN:-}" ]]; then
+        docs_args=(--skip-library-mdx)
+    fi
+    run_command "${HOLOSCAN_PY_EXE}" \
+        "${TOP}/docs/scripts/build_holoscan_docs.py" "${docs_args[@]}"
+}
+
+live_docs_desc() { c_echo 'Start a foreground local Fern user-guide preview
+
+Runs the same documentation pipeline with --preview. Any remaining arguments
+are passed to docs/scripts/build_holoscan_docs.py after --preview.
+With no arguments and no FERN_TOKEN, the local preview omits the API-reference
+section when no generated library MDX exists.
+
+Examples:
+  ./public/run live_docs
+  ./run live_docs                   # public repository layout
+  ./public/run live_docs --skip-library-mdx
+'
+}
+live_docs() {
+    local docs_args=(--preview "$@")
+    if [[ $# -eq 0 && -z "${FERN_TOKEN:-}" ]]; then
+        docs_args+=(--skip-library-mdx)
+    fi
+    build_docs "${docs_args[@]}"
 }
 
 #===============================================================================

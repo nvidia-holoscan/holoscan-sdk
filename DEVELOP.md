@@ -6,7 +6,7 @@ This document aims to guide users with recommended and advanced workflows to bui
 > **Disclaimer**: we only recommend building the SDK from source if you are a developer of the SDK, or need to build the SDK with debug symbols or other options not used as part of the published packages.
 >
 > - If you want to write your own operator or application, you can use the SDK as a dependency (and contribute to [HoloHub](https://github.com/nvidia-holoscan/holohub)).
-> - If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
+> - If you need to make other modifications to the SDK, [file a feature or bug request](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757).
 > - Refer to the [Holoscan SDK User Guide installation instructions](https://docs.nvidia.com/holoscan/sdk-user-guide/sdk_installation.html#install-the-sdk) for guidance on installing Holoscan SDK from published packages.
 
 ## Table of Contents
@@ -338,12 +338,18 @@ pre-commit run clang-format --all-files
 
 ### Building the User Guide
 
-The source of the user guide hosted at <https://docs.nvidia.com/holoscan/sdk-user-guide> is located in [docs](./docs/). From the **holoscan-sdk repository root**, build and validate with Fern:
+The source of the user guide hosted at <https://docs.nvidia.com/holoscan/sdk-user-guide> is located in [docs](./docs/). From the **holoscan-sdk repository root**, use the repository wrapper to build or preview with Fern:
 
-```sh
-python3 public/docs/scripts/build_holoscan_docs.py
-python3 public/docs/scripts/build_holoscan_docs.py --preview
+```bash
+./run build_docs
+./run live_docs
 ```
+
+With no arguments and no `FERN_TOKEN`, these commands reuse a prepared local
+API tree or omit the API-reference section when no tree exists. This keeps the
+local contributor workflow usable without Fern credentials. Pass
+`--with-library-mdx` explicitly to generate the API reference using
+`FERN_TOKEN` or `fern login`; other explicit options are forwarded unchanged.
 
 See [docs/README.md](./docs/README.md) for authoring and publishing details.
 

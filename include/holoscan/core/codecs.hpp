@@ -6,10 +6,15 @@
 #ifndef HOLOSCAN_CORE_CODECS_HPP
 #define HOLOSCAN_CORE_CODECS_HPP
 
+#include <algorithm>
+#include <array>
 #include <complex>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
+#include <new>
+#include <stdexcept>
 #include <string>
 #include <type_traits>
 #include <typeindex>
@@ -49,10 +54,14 @@ static inline expected<size_t, RuntimeError> serialize_trivial_type(const typeT&
 
 template <typename typeT>
 static inline expected<typeT, RuntimeError> deserialize_trivial_type(Endpoint* endpoint) {
-  typeT encoded;
+  typeT encoded{};
   auto maybe_value = endpoint->read_trivial_type(&encoded);
   if (!maybe_value) {
     return forward_error(maybe_value);
+  }
+  if (maybe_value.value() != sizeof(typeT)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "short trivial type"));
   }
   return encoded;
 }
@@ -86,14 +95,28 @@ struct ContiguousDataHeader {
 template <typename vectorT>
 static inline expected<size_t, RuntimeError> serialize_binary_blob(const vectorT& data,
                                                                    Endpoint* endpoint) {
+  using value_type = typename vectorT::value_type;
+  if (data.size() > 0 && sizeof(value_type) > std::numeric_limits<uint8_t>::max()) {
+    return make_unexpected<RuntimeError>(RuntimeError(
+        ErrorCode::kCodecError, "container element size cannot be represented on the wire"));
+  }
+  if (data.size() > std::numeric_limits<size_t>::max() / sizeof(value_type)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "container byte size overflow"));
+  }
+
   ContiguousDataHeader header;
   header.size = data.size();
-  header.bytes_per_element = header.size > 0 ? sizeof(data[0]) : 1;
+  // Preserve the existing empty-container wire representation for mixed-version deployments.
+  header.bytes_per_element = header.size > 0 ? sizeof(value_type) : 1;
   auto size = endpoint->write_trivial_type<ContiguousDataHeader>(&header);
   if (!size) {
     return forward_error(size);
   }
-  auto size2 = endpoint->write(data.data(), header.size * header.bytes_per_element);
+  if (header.size == 0) {
+    return size.value();
+  }
+  auto size2 = endpoint->write(data.data(), header.size * sizeof(value_type));
   if (!size2) {
     return forward_error(size2);
   }
@@ -102,16 +125,59 @@ static inline expected<size_t, RuntimeError> serialize_binary_blob(const vectorT
 
 template <typename vectorT>
 static inline expected<vectorT, RuntimeError> deserialize_binary_blob(Endpoint* endpoint) {
+  using value_type = typename vectorT::value_type;
   ContiguousDataHeader header;
   auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
   if (!header_size) {
     return forward_error(header_size);
   }
+  if (header_size.value() != sizeof(ContiguousDataHeader)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "short contiguous data header"));
+  }
+  if (header.size == 0) {
+    if (header.bytes_per_element != 1 && header.bytes_per_element != sizeof(value_type)) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "invalid empty contiguous data element size"));
+    }
+    return vectorT{};
+  }
+  if (header.bytes_per_element != sizeof(value_type)) {
+    return make_unexpected<RuntimeError>(RuntimeError(
+        ErrorCode::kCodecError, "contiguous data element size does not match destination type"));
+  }
+  if (header.size > std::numeric_limits<size_t>::max() / sizeof(value_type)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "contiguous data byte size overflow"));
+  }
+
   vectorT data;
-  data.resize(header.size);
-  auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
-  if (!result) {
-    return forward_error(result);
+  constexpr size_t kMaxReadChunkBytes = 64 * 1024;
+  constexpr size_t kElementsPerChunk = std::max<size_t>(1, kMaxReadChunkBytes / sizeof(value_type));
+  size_t elements_read = 0;
+  while (elements_read < header.size) {
+    const size_t elements_to_read = std::min(kElementsPerChunk, header.size - elements_read);
+    const size_t next_size = elements_read + elements_to_read;
+    try {
+      data.resize(next_size);
+    } catch (const std::bad_alloc&) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "unable to allocate decoded container"));
+    } catch (const std::length_error&) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "decoded container exceeds maximum size"));
+    }
+
+    const size_t bytes_to_read = elements_to_read * sizeof(value_type);
+    auto result = endpoint->read(data.data() + elements_read, bytes_to_read);
+    if (!result) {
+      return forward_error(result);
+    }
+    if (result.value() != bytes_to_read) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "short contiguous data payload"));
+    }
+    elements_read = next_size;
   }
   return data;
 }
@@ -131,15 +197,41 @@ struct codec<std::vector<typeT>> {
 // deserialize_array is exactly like deserialize_binary_blob, but without a call to resize()
 template <typename arrayT>
 static inline expected<arrayT, RuntimeError> deserialize_array(Endpoint* endpoint) {
+  using value_type = typename arrayT::value_type;
+  constexpr size_t kElementCount = std::tuple_size<arrayT>::value;
   ContiguousDataHeader header;
   auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
   if (!header_size) {
     return forward_error(header_size);
   }
+  if (header_size.value() != sizeof(ContiguousDataHeader)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "short fixed array header"));
+  }
+  if (header.size != kElementCount) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "fixed array element count mismatch"));
+  }
+  if constexpr (kElementCount == 0) {
+    if (header.bytes_per_element != 1 && header.bytes_per_element != sizeof(value_type)) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "invalid empty fixed array element size"));
+    }
+    return arrayT{};
+  }
+  if (header.bytes_per_element != sizeof(value_type)) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "fixed array element size mismatch"));
+  }
   arrayT data;
-  auto result = endpoint->read(data.data(), header.size * header.bytes_per_element);
+  constexpr size_t kDataSize = kElementCount * sizeof(value_type);
+  auto result = endpoint->read(data.data(), kDataSize);
   if (!result) {
     return forward_error(result);
+  }
+  if (result.value() != kDataSize) {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "short fixed array payload"));
   }
   return data;
 }
@@ -222,11 +314,11 @@ struct codec<std::vector<bool>> {
   }
 
   static expected<std::vector<bool>, RuntimeError> deserialize(Endpoint* endpoint) {
-    size_t num_bits;
-    auto size = endpoint->read_trivial_type<size_t>(&num_bits);
-    if (!size) {
-      return forward_error(size);
+    auto num_bits_result = deserialize_trivial_type<size_t>(endpoint);
+    if (!num_bits_result) {
+      return forward_error(num_bits_result);
     }
+    const size_t num_bits = num_bits_result.value();
     size_t num_bytes =
         (num_bits + 7) / 8;  // Calculate the number of bytes needed to store the bits
     std::vector<uint8_t> packed_data(num_bytes, 0);  // Create a vector to store the packed data
@@ -277,11 +369,11 @@ static inline expected<size_t, RuntimeError> serialize_vector_of_vectors(const t
 
 template <typename typeT>
 static inline expected<typeT, RuntimeError> deserialize_vector_of_vectors(Endpoint* endpoint) {
-  size_t num_vectors;
-  auto size = endpoint->read_trivial_type<size_t>(&num_vectors);
-  if (!size) {
-    return forward_error(size);
+  auto num_vectors_result = deserialize_trivial_type<size_t>(endpoint);
+  if (!num_vectors_result) {
+    return forward_error(num_vectors_result);
   }
+  const size_t num_vectors = num_vectors_result.value();
 
   using vectorT = typename typeT::value_type;
 
@@ -373,11 +465,11 @@ struct codec<std::unordered_map<KeyType, ValueType>> {
 
   static expected<std::unordered_map<KeyType, ValueType>, RuntimeError> deserialize(
       Endpoint* endpoint) {
-    size_t num_pairs;
-    auto size = endpoint->read_trivial_type<size_t>(&num_pairs);
-    if (!size) {
-      return forward_error(size);
+    auto num_pairs_result = deserialize_trivial_type<size_t>(endpoint);
+    if (!num_pairs_result) {
+      return forward_error(num_pairs_result);
     }
+    const size_t num_pairs = num_pairs_result.value();
 
     std::unordered_map<KeyType, ValueType> data;
     data.reserve(num_pairs);

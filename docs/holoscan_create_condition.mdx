@@ -560,7 +560,7 @@ The built-in `holoscan::CudaStreamCondition` uses this pattern with `cudaLaunchH
 
 #### Override behavior for default Operator port conditions
 
-The [section on customizing input and output ports](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#further-customizing-inputs-and-outputs), explains that when a user adds a port without specifying any condition in `Operator::setup`,  a default one is added. This default is a `MessageAvailableCondition` for input ports or a `DownstreamMessageAffordableCondition` for output ports).
+The [section on customizing input and output ports](/holoscan/sdk-user-guide/using-the-sdk/create-an-operator#further-customizing-inputs-and-outputs), explains that when a user adds a port without specifying any condition in `Operator::setup`,  a default one is added. This default is a `MessageAvailableCondition` for input ports or a `DownstreamMessageAffordableCondition` for output ports.
 
 If the user has supplied their own `Condition` to `make_operator` (C++) or as a positional argument to the operator constructor (Python) and that condition has a "receiver" or "transmitter" argument corresponding to an Operator port name, then a default condition should **not** be added to that port. This is done to avoid having multiple, potentially conflicting conditions on the same port. However, if the `Operator::setup` method **explicitly** specifies a condition via a call to `IOSpec::condition`, then that explicit condition would still be added to the port in addition to any other user-supplied one.
 

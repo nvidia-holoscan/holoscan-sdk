@@ -60,8 +60,8 @@ page in the user guide. Advanced install options are documented in the
 
 We appreciate community discussion and feedback in support of Holoscan platform users and developers. We ask that users:
 
-- Review the [Holoscan SDK Frequently Asked Questions](docs/hsdk_faq.md) document for common solutions and workarounds.
-- Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/healthcare/holoscan-sdk/320/all).
+- Review the [Holoscan SDK Frequently Asked Questions](docs/hsdk_faq.mdx) document for common solutions and workarounds.
+- Direct questions to the [NVIDIA Support Forum](https://forums.developer.nvidia.com/c/robotics-edge-computing/holoscan/757).
 - Enter SDK issues on the [SDK GitHub Issues board](https://github.com/nvidia-holoscan/holoscan-sdk/issues).
 
 ## Contributing to Holoscan SDK

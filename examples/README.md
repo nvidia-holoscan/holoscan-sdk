@@ -129,8 +129,6 @@ For additional video capture hardware, see [HoloHub](https://github.com/nvidia-h
 
 - [**Tensor interop**](tensor_interop): use the `Entity` message to pass tensors to/from Holoscan operators wrapping GXF codelets in Holoscan applications
 - [**Import GXF Components**](import_gxf_components): import the existing GXF Codelets and Components into Holoscan applications
-- [**Wrap operator as GXF extension**](wrap_operator_as_gxf_extension): wrap Holoscan native operators as GXF codelets to use in GXF applications
-- [**Wrap Holoscan as GXF Extension**](wrap_holoscan_as_gxf_extension): wrap Holoscan native operators and resources as GXF codelets and components within a single GXF extension for use in GXF applications
 
 ## Pub/Sub (Inter-Process Communication)
 

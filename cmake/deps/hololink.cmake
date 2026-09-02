@@ -9,8 +9,8 @@ if(hololink_FOUND OR TARGET hololink::hololink)
     return()
 endif()
 
-# Holoscan Sensor Bridge 2.6.0
-set(HOLOLINK_VERSION 2.6.0)
+# Holoscan Sensor Bridge 2.7.0
+set(HOLOLINK_VERSION 2.7.0)
 
 rapids_cpm_find(hololink ${HOLOLINK_VERSION}
     GLOBAL_TARGETS
@@ -34,6 +34,7 @@ rapids_cpm_find(hololink ${HOLOLINK_VERSION}
 
     OPTIONS
         "HOLOLINK_BUILD_EXAMPLES ON"
+        "HOLOLINK_BUILD_PYTHON ${HOLOSCAN_BUILD_PYTHON}"
         "HOLOLINK_BUILD_TESTS ON"
         EXCLUDE_FROM_ALL
 )

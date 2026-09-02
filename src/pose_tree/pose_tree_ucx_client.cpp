@@ -273,9 +273,10 @@ void PoseTreeUCXClient::run() {
               std::memcpy(&delta_msg, data, sizeof(DeltaMessage));
               switch (delta_msg.delta_type) {
                 case DELTA_FRAME_CREATED: {
-                  is_external_pose_tree_update_ = true;
                   const auto remote_frame_id = delta_msg.data.frame_data.frame_id;
-                  const std::string_view frame_name = delta_msg.data.frame_data.name;
+                  const std::string_view frame_name =
+                      deserialize_frame_name(delta_msg.data.frame_data.name);
+                  is_external_pose_tree_update_ = true;
 
                   // Avoid PoseTree logging errors for "already exists" by checking first.
                   auto local_frame_id = impl_->pose_tree->find_frame(frame_name);
@@ -375,7 +376,7 @@ void PoseTreeUCXClient::run() {
 
             for (const auto& frame : frames) {
               const auto remote_frame_id = frame.frame_id;
-              const std::string_view frame_name = frame.name;
+              const std::string_view frame_name = deserialize_frame_name(frame.name);
 
               // Avoid PoseTree logging errors for "already exists" by checking first.
               auto local_frame_id = impl_->pose_tree->find_frame(frame_name);

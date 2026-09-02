@@ -6,7 +6,12 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -21,6 +26,65 @@
 using std::string_literals::operator""s;
 
 namespace holoscan {
+
+struct OversizedCodecElement {
+  std::array<std::byte, 256> data;
+};
+
+class CodecTestEndpoint : public Endpoint {
+ public:
+  bool is_read_available() override { return true; }
+  bool is_write_available() override { return true; }
+
+  expected<size_t, RuntimeError> write(const void* data, size_t size) override {
+    const size_t call = write_calls_++;
+    if (call == fail_write_call_) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "injected write error"));
+    }
+    const auto* bytes = static_cast<const std::byte*>(data);
+    output_.insert(output_.end(), bytes, bytes + size);
+    return size;
+  }
+
+  expected<size_t, RuntimeError> read(void* data, size_t size) override {
+    max_read_size_ = std::max(max_read_size_, size);
+    const size_t call = read_calls_++;
+    const size_t read_size = call == short_read_call_ && size > 0 ? size - 1 : size;
+    if (read_size > input_.size() - read_offset_) {
+      return make_unexpected<RuntimeError>(
+          RuntimeError(ErrorCode::kCodecError, "injected truncated input"));
+    }
+    std::memcpy(data, input_.data() + read_offset_, read_size);
+    read_offset_ += read_size;
+    return read_size;
+  }
+
+  expected<void, RuntimeError> write_ptr(const void*, size_t, MemoryStorageType) override {
+    return make_unexpected<RuntimeError>(
+        RuntimeError(ErrorCode::kCodecError, "write_ptr is unsupported by this test endpoint"));
+  }
+
+  template <typename T>
+  void append_input(const T& value) {
+    const auto* bytes = reinterpret_cast<const std::byte*>(&value);
+    input_.insert(input_.end(), bytes, bytes + sizeof(T));
+  }
+
+  void set_fail_write_call(size_t call) { fail_write_call_ = call; }
+  void set_short_read_call(size_t call) { short_read_call_ = call; }
+  size_t max_read_size() const { return max_read_size_; }
+
+ private:
+  std::vector<std::byte> input_;
+  std::vector<std::byte> output_;
+  size_t read_offset_ = 0;
+  size_t read_calls_ = 0;
+  size_t write_calls_ = 0;
+  size_t fail_write_call_ = std::numeric_limits<size_t>::max();
+  size_t short_read_call_ = std::numeric_limits<size_t>::max();
+  size_t max_read_size_ = 0;
+};
 
 template <typename dataT>
 void codec_compare(dataT& value, size_t buffer_size = 4096, bool omit_size_check = false) {
@@ -336,6 +400,100 @@ TEST(Codecs, TestVectorInt32) {
   codec_vector_compare<std::vector<int32_t>>(value);
 }
 
+TEST(Codecs, TestEmptyVectorInt32) {
+  std::vector<int32_t> value;
+  codec_vector_compare<std::vector<int32_t>>(value);
+}
+
+TEST(Codecs, TestEmptyBinaryBlobAllowsOversizedElementType) {
+  std::vector<OversizedCodecElement> value;
+  auto endpoint =
+      std::make_shared<MockUcxSerializationBuffer>(512, holoscan::MemoryStorageType::kSystem);
+
+  auto serialized = codec<std::vector<OversizedCodecElement>>::serialize(value, endpoint.get());
+  ASSERT_TRUE(serialized);
+  EXPECT_EQ(serialized.value(), sizeof(ContiguousDataHeader));
+
+  auto deserialized = codec<std::vector<OversizedCodecElement>>::deserialize(endpoint.get());
+  ASSERT_TRUE(deserialized);
+  EXPECT_TRUE(deserialized.value().empty());
+}
+
+TEST(Codecs, TestNonEmptyBinaryBlobRejectsOversizedElementType) {
+  std::vector<OversizedCodecElement> value(1);
+  CodecTestEndpoint endpoint;
+
+  auto result = codec<std::vector<OversizedCodecElement>>::serialize(value, &endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestBinaryBlobRejectsElementSizeMismatch) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{3, sizeof(uint16_t)};
+  endpoint.append_input(header);
+
+  auto result = codec<std::vector<uint32_t>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestBinaryBlobRejectsByteSizeOverflow) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{std::numeric_limits<size_t>::max(), sizeof(uint32_t)};
+  endpoint.append_input(header);
+
+  auto result = codec<std::vector<uint32_t>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+  EXPECT_EQ(endpoint.max_read_size(), sizeof(ContiguousDataHeader));
+}
+
+TEST(Codecs, TestBinaryBlobReadsHugeTruncatedPayloadInBoundedChunks) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{std::numeric_limits<size_t>::max() / sizeof(uint32_t),
+                              sizeof(uint32_t)};
+  endpoint.append_input(header);
+
+  auto result = codec<std::vector<uint32_t>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+  EXPECT_LE(endpoint.max_read_size(), 64 * 1024);
+}
+
+TEST(Codecs, TestFixedArrayRejectsElementCountMismatch) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{15, sizeof(float)};
+  endpoint.append_input(header);
+
+  auto result = codec<std::array<float, 16>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestFixedArrayRejectsElementSizeMismatch) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{16, sizeof(double)};
+  endpoint.append_input(header);
+
+  auto result = codec<std::array<float, 16>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestBinaryBlobRejectsShortRead) {
+  CodecTestEndpoint endpoint;
+  ContiguousDataHeader header{2, sizeof(uint32_t)};
+  std::array<uint32_t, 2> payload{1, 2};
+  endpoint.append_input(header);
+  endpoint.append_input(payload);
+  endpoint.set_short_read_call(1);
+
+  auto result = codec<std::vector<uint32_t>>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
 TEST(Codecs, TestVectorUInt8) {
   std::vector<uint8_t> value{1, 2, 3, 4, 5};
   codec_vector_compare<std::vector<uint8_t>>(value);
@@ -523,6 +681,50 @@ TEST(Codecs, TestViewSerializerNoMatrix) {
   ASSERT_FALSE(result.matrix_.has_value());
 }
 
+TEST(Codecs, TestViewDeserializerPropagatesMatrixShortRead) {
+  CodecTestEndpoint endpoint;
+  const float offset_x = 0.1F;
+  const float offset_y = 0.2F;
+  const float width = 0.8F;
+  const float height = 0.6F;
+  const bool has_matrix = true;
+  const ContiguousDataHeader header{16, sizeof(float)};
+  const std::array<float, 16> matrix{};
+  endpoint.append_input(offset_x);
+  endpoint.append_input(offset_y);
+  endpoint.append_input(width);
+  endpoint.append_input(height);
+  endpoint.append_input(has_matrix);
+  endpoint.append_input(header);
+  endpoint.append_input(matrix);
+  endpoint.set_short_read_call(6);
+
+  auto result = codec<ops::HolovizOp::InputSpec::View>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestViewDeserializerRejectsFirstScalarShortRead) {
+  CodecTestEndpoint endpoint;
+  const float offset_x = 0.1F;
+  endpoint.append_input(offset_x);
+  endpoint.set_short_read_call(0);
+
+  auto result = codec<ops::HolovizOp::InputSpec::View>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
+}
+
+TEST(Codecs, TestViewSerializerPropagatesWriteError) {
+  CodecTestEndpoint endpoint;
+  endpoint.set_fail_write_call(0);
+  ops::HolovizOp::InputSpec::View view{0.2, 0.1, 0.6, 0.8};
+
+  auto result = codec<ops::HolovizOp::InputSpec::View>::serialize(view, &endpoint);
+
+  EXPECT_FALSE(result);
+}
+
 TEST(Codecs, TestVectorViewSerializer) {
   ops::HolovizOp::InputSpec::View v1{0.2, 0.1, 0.6, 0.8};
   ops::HolovizOp::InputSpec::View v2{0.1, 0.1, 0.7, 0.8};
@@ -581,6 +783,34 @@ TEST(Codecs, TestInputSpec) {
   EXPECT_EQ(typeid(result), typeid(spec));
   EXPECT_EQ(result.tensor_name_, tensor_name);
   EXPECT_EQ(result.type_, ops::HolovizOp::InputType::COLOR);
+}
+
+TEST(Codecs, TestInputSpecCodecPropagatesEndpointErrors) {
+  CodecTestEndpoint write_endpoint;
+  write_endpoint.set_fail_write_call(0);
+  ops::HolovizOp::InputSpec spec{"video", ops::HolovizOp::InputType::COLOR};
+
+  auto write_result = codec<ops::HolovizOp::InputSpec>::serialize(spec, &write_endpoint);
+  EXPECT_FALSE(write_result);
+
+  CodecTestEndpoint read_endpoint;
+  auto read_result = codec<ops::HolovizOp::InputSpec>::deserialize(&read_endpoint);
+  EXPECT_FALSE(read_result);
+}
+
+TEST(Codecs, TestInputSpecDeserializerRejectsFirstScalarShortRead) {
+  CodecTestEndpoint endpoint;
+  const ContiguousDataHeader tensor_name_header{5, sizeof(char)};
+  const std::array<char, 5> tensor_name{'v', 'i', 'd', 'e', 'o'};
+  const ops::HolovizOp::InputType input_type = ops::HolovizOp::InputType::COLOR;
+  endpoint.append_input(tensor_name_header);
+  endpoint.append_input(tensor_name);
+  endpoint.append_input(input_type);
+  endpoint.set_short_read_call(2);
+
+  auto result = codec<ops::HolovizOp::InputSpec>::deserialize(&endpoint);
+
+  EXPECT_FALSE(result);
 }
 
 TEST(Codecs, TestVectorInputSpec) {

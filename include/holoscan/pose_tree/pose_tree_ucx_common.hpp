@@ -14,6 +14,8 @@
 #include <limits>  // Add this include for std::numeric_limits
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include <holoscan/core/expected.hpp>
@@ -128,6 +130,16 @@ inline holoscan::Pose3d deserialize_pose3d(const EdgeData& edge_data) {
   return holoscan::Pose3d(holoscan::SO3d::from_normalized_quaternion(q), t);
 }
 
+// Decode a fixed-width frame name received from the wire without reading past the field.
+inline std::string_view deserialize_frame_name(
+    const char (&name)[PoseTree::kFrameNameMaximumLength + 1]) {
+  const auto* terminator = static_cast<const char*>(std::memchr(name, '\0', sizeof(name)));
+  if (terminator == nullptr) {
+    throw std::runtime_error("Invalid PoseTree frame name: missing NUL terminator");
+  }
+  return {name, static_cast<size_t>(terminator - name)};
+}
+
 // Serialize a full snapshot of frames and edges into a byte vector
 inline std::vector<char> serialize_snapshot(const std::vector<FrameInfo>& frames,
                                             const std::vector<EdgeData>& edges) {
@@ -167,55 +179,75 @@ inline std::vector<char> serialize_snapshot(const std::vector<FrameInfo>& frames
 // Deserialize a byte array back into lists of frames and edges
 inline void deserialize_snapshot(const uint8_t* data, size_t size, std::vector<FrameInfo>& frames,
                                  std::vector<EdgeData>& edges) {
-  if (size < 2 * sizeof(uint64_t)) {
-    throw std::runtime_error("Snapshot data is too small to be valid.");
+  if (data == nullptr && size != 0) {
+    throw std::runtime_error("Invalid snapshot: null data pointer");
   }
 
-  // Helper lambdas for safe arithmetic operations
-  auto safe_multiply = [](size_t count, size_t elem_sz) -> size_t {
-    if (count > std::numeric_limits<size_t>::max() / elem_sz) {
-      throw std::overflow_error("Size multiplication overflow while deserializing snapshot");
+  size_t offset = 0;
+  auto require_bytes = [&](size_t byte_count, const char* description) {
+    if (offset > size || byte_count > size - offset) {
+      throw std::runtime_error(std::string("Invalid snapshot: incomplete ") + description);
     }
-    return count * elem_sz;
   };
 
-  auto safe_add = [](size_t a, size_t b) -> size_t {
-    if (a > std::numeric_limits<size_t>::max() - b) {
-      throw std::overflow_error("Size addition overflow while deserializing snapshot");
-    }
-    return a + b;
+  auto read_count = [&](const char* description) -> uint64_t {
+    require_bytes(sizeof(uint64_t), description);
+    uint64_t count = 0;
+    std::memcpy(&count, data + offset, sizeof(count));
+    offset += sizeof(count);
+    return count;
   };
 
-  const char* ptr = reinterpret_cast<const char*>(data);
+  auto checked_body_size =
+      [&](uint64_t count, size_t element_size, const char* description) -> size_t {
+    if (count > std::numeric_limits<size_t>::max()) {
+      throw std::runtime_error(std::string("Invalid snapshot: ") + description +
+                               " count is too large");
+    }
+    const size_t converted_count = static_cast<size_t>(count);
+    // Comparing before multiplying prevents both arithmetic overflow and out-of-bounds access.
+    if (offset > size || converted_count > (size - offset) / element_size) {
+      throw std::runtime_error(std::string("Invalid snapshot: incomplete ") + description);
+    }
+    return converted_count * element_size;
+  };
 
-  uint64_t num_frames;
-  std::memcpy(&num_frames, ptr, sizeof(uint64_t));
-  ptr += sizeof(uint64_t);
-
-  size_t expected_size = safe_add(sizeof(uint64_t), safe_multiply(num_frames, sizeof(FrameInfo)));
-  if (size < expected_size) {
-    throw std::runtime_error("Snapshot data is incomplete for frames.");
+  std::vector<FrameInfo> parsed_frames;
+  const uint64_t num_frames = read_count("frame count");
+  const size_t frames_size = checked_body_size(num_frames, sizeof(FrameInfo), "frame body");
+  if (num_frames > parsed_frames.max_size()) {
+    throw std::runtime_error("Invalid snapshot: frame count exceeds container capacity");
   }
-  frames.resize(num_frames);
-  std::memcpy(frames.data(), ptr, safe_multiply(num_frames, sizeof(FrameInfo)));
-  ptr += num_frames * sizeof(FrameInfo);
-
-  uint64_t num_edges;
-  std::memcpy(&num_edges, ptr, sizeof(uint64_t));
-  ptr += sizeof(uint64_t);
-
-  expected_size = safe_add(expected_size,
-                           safe_add(sizeof(uint64_t), safe_multiply(num_edges, sizeof(EdgeData))));
-  if (size < expected_size) {
-    throw std::runtime_error("Snapshot data is incomplete for edges.");
+  parsed_frames.resize(static_cast<size_t>(num_frames));
+  if (frames_size != 0) {
+    std::memcpy(parsed_frames.data(), data + offset, frames_size);
   }
-  edges.resize(num_edges);
-  std::memcpy(edges.data(), ptr, safe_multiply(num_edges, sizeof(EdgeData)));
+  offset += frames_size;
+
+  std::vector<EdgeData> parsed_edges;
+  const uint64_t num_edges = read_count("edge count");
+  const size_t edges_size = checked_body_size(num_edges, sizeof(EdgeData), "edge body");
+  if (num_edges > parsed_edges.max_size()) {
+    throw std::runtime_error("Invalid snapshot: edge count exceeds container capacity");
+  }
+  parsed_edges.resize(static_cast<size_t>(num_edges));
+  if (edges_size != 0) {
+    std::memcpy(parsed_edges.data(), data + offset, edges_size);
+  }
+  offset += edges_size;
 
   // Check for trailing bytes to ensure strict format validation
-  if (size != expected_size) {
-    throw std::runtime_error("Trailing bytes detected in snapshot payload");
+  if (offset != size) {
+    throw std::runtime_error("Invalid snapshot: trailing bytes");
   }
+
+  for (const auto& frame : parsed_frames) {
+    (void)deserialize_frame_name(frame.name);
+  }
+
+  // Do not partially replace caller-owned state when parsing fails.
+  frames = std::move(parsed_frames);
+  edges = std::move(parsed_edges);
 }
 
 // Safe initialization helper for DeltaMessage

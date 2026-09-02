@@ -120,6 +120,7 @@ file(COPY
 ConfigureTest(
   CORE_TEST
   core/app_driver.cpp
+  core/app_worker_service.cpp
   core/application.cpp
   core/arg.cpp
   core/argument_setter.cpp
@@ -148,6 +149,10 @@ ConfigureTest(
   core/system_resource_manager.cpp
 )
 add_dependencies(CORE_TEST gxf_ucx_holoscan)
+target_link_libraries(CORE_TEST
+  PRIVATE
+    gRPC::grpc++
+)
 
 # ##################################################################################################
 # * pubsub runtime tests ---------------------------------------------------------------------------
@@ -330,6 +335,7 @@ ConfigureTest(GPU_RESIDENT_TEST
 ConfigureTest(POSE_TREE_TEST
   pose_tree/pose_tree.cpp
   pose_tree/pose_tree_history.cpp
+  pose_tree/pose_tree_ucx_common.cpp
 )
 target_link_libraries(POSE_TREE_TEST
   PRIVATE

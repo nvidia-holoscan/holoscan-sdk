@@ -556,8 +556,16 @@ void Vulkan::Impl::setup(Window* window, const std::string& font_path, float fon
   // Let the window select the device to use (e.g. the one connected to the display if we opened
   // a visible windows)
   const uint32_t device_index = window_->select_device(instance_, cuda_visible_physical_devices);
-  // Finally initialize the device
-  nvvk_.vk_ctx_.initDevice(cuda_visible_physical_devices[device_index], context_info);
+  // Finally initialize the device. Failure here is fatal and must not fall through:
+  // nvvk::Context::initDevice() calls deinit() before returning false, which destroys the
+  // Vulkan instance, but leaves m_physicalDevice pointing at the physical device handle
+  // owned by that destroyed instance. Continuing would hand that dangling handle to
+  // get_supported_formats() below, and the loader dereferences the freed instance dispatch
+  // table -- an intermittent jump through a NULL function pointer instead of a diagnosable
+  // error.
+  if (!nvvk_.vk_ctx_.initDevice(cuda_visible_physical_devices[device_index], context_info)) {
+    throw std::runtime_error("Failed to create the Vulkan device.");
+  }
   device_ = nvvk_.vk_ctx_.m_device;
   physical_device_ = nvvk_.vk_ctx_.m_physicalDevice;
 

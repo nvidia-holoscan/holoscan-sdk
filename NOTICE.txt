@@ -86,7 +86,7 @@ Licensed under Apache-2.0 (https://github.com/eProsima/Fast-DDS/blob/v3.4.2/LICE
 
 fmt (https://github.com/fmtlib/fmt)
 Copyright (c) 2012 - present, Victor Zverovich and {fmt} contributors
-Licensed under MIT (https://github.com/fmtlib/fmt/blob/11.0.2/LICENSE)
+Licensed under MIT (https://github.com/fmtlib/fmt/blob/12.1.0/LICENSE)
 
 foonathan_memory_vendor (https://github.com/eProsima/foonathan_memory_vendor)
 Licensed under Apache-2.0 (https://github.com/eProsima/foonathan_memory_vendor/blob/v1.3.2/LICENSE)
@@ -111,6 +111,7 @@ Licensed under BSD-3-Clause (https://github.com/google/googletest/blob/v1.17.0/L
 GXF
 Copyright 2021-2022, NVIDIA CORPORATION
 Licensed under Apache-2.0 (http://www.apache.org/licenses/LICENSE-2.0)
+Bundled components: yaml-cpp, PyYAML
 
 hwloc (https://github.com/open-mpi/hwloc)
 Copyright © 2004-2006 The Trustees of Indiana University and Indiana University Research and Technology Corporation.  All rights reserved.

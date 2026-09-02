@@ -22,6 +22,13 @@ find_package(Vulkan REQUIRED)
 add_executable(${PROJECT_NAME})
 add_executable(holoscan::viz::functionaltests ALIAS ${PROJECT_NAME})
 
+# Copy the external font fixture into the build tree so tests can resolve it
+# relative to CMAKE_BINARY_DIR regardless of the source/build directory layout.
+file(COPY
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../src/fonts/Roboto-Bold.ttf
+    DESTINATION ${CMAKE_BINARY_DIR}/tests/holoviz/fonts
+)
+
 # Disable clang-tidy for test files
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_CLANG_TIDY "")
 
@@ -73,3 +80,4 @@ target_link_libraries(${PROJECT_NAME}
     )
 
 add_test(NAME functional COMMAND ${PROJECT_NAME})
+set_tests_properties(functional PROPERTIES WORKING_DIRECTORY ${CMAKE_BINARY_DIR})

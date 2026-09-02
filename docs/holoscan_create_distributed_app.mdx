@@ -13,7 +13,7 @@ In this section we'll describe:
 
 <Tip>
 
-Defining distributed applications is also illustrated in the [video_replayer_distributed](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer-distributed) and [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) examples. The `ping_distributed` examples also illustrate how to update C++ or Python applications to parse user-defined arguments in a way that works without disrupting support for distributed application command line arguments (e.g., `--driver`, `--worker`).
+Defining distributed applications is also illustrated in the [video_replayer_distributed](/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer-distributed) and [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ping_distributed) examples. The `ping_distributed` examples also illustrate how to update C++ or Python applications to parse user-defined arguments in a way that works without disrupting support for distributed application command line arguments (e.g., `--driver`, `--worker`).
 
 </Tip>
 
@@ -448,6 +448,14 @@ For the Python API, any array-like object supporting the [DLPack](https://dmlc.g
 
 <Warning>
 
+Deserializing cloudpickle data can execute arbitrary code. Only connect fragments and accept
+network data from trusted applications and trusted networks, consistent with the Holoscan SDK
+security policy.
+
+</Warning>
+
+<Warning>
+
 A restriction imposed by the use of cloudpickle is that all fragments in a distributed application [must be running the same Python version](https://github.com/cloudpipe/cloudpickle/blob/v2.2.1/README.md?plain=1#L17-L18).
 
 </Warning>
@@ -692,7 +700,7 @@ CLI arguments (such as `--driver`, `--worker` ,`--fragments`)  are parsed by the
 
 When adding user-defined command line arguments to an application, one should avoid the use of any of the default command line argument names as `--help`, `--version`, `--config`, `--driver`, `--worker`, `--address`, `--worker-address`, `--fragments` as covered in the section on [running a distributed application](#building-and-running-a-distributed-application). It is recommended to parse user-defined arguments from the `argv` ((C++ (`holoscan::Application::argv`)/Python (`holoscan.core.Application.argv`))) method/property of the application as covered in the note above, instead of using C++ `char* argv[]` or Python `sys.argv` directly. This way, only the new, user-defined arguments will need to be parsed.
 
-A concrete example of this for both C++ and Python can be seen in the existing [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/ping_distributed) example where an application-defined boolean argument (`--gpu`) is specified in addition to the default set of application arguments.
+A concrete example of this for both C++ and Python can be seen in the existing [ping_distributed](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/ping_distributed) example where an application-defined boolean argument (`--gpu`) is specified in addition to the default set of application arguments.
 
 <Tabs>
 

@@ -179,10 +179,10 @@ PYBIND11_MODULE(_tool_tracking_postprocessor, m) {
 
 <Note>
 
-- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND_11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as [covered below](#pybind11-module_name_warning)).
-- If you are implementing the python wrapping in a standalone CMake project,the `<module_name>` passed to `PYBIND_11_MODULE` **must** match the name of the module passed to the [pybind11-add-module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
+- If you are implementing the python wrapping in Holohub, the `<module_name>` passed to `PYBIND11_MODULE` **must** match `_<CPP_CMAKE_TARGET>` as [covered below](#pybind11-module_name_warning).
+- If you are implementing the python wrapping in a standalone CMake project, the `<module_name>` passed to `PYBIND11_MODULE` **must** match the name of the module passed to the [pybind11_add_module](https://pybind11.readthedocs.io/en/stable/compiling.html#pybind11-add-module) CMake function.
 
-Using a mismatched name in `PYBIND_11_MODULE` will result in failure to import the module from Python.
+Using a mismatched name in `PYBIND11_MODULE` will result in failure to import the module from Python.
 
 </Note>
 

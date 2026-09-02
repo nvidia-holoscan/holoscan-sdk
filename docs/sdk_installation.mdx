@@ -97,17 +97,17 @@ We provide multiple ways to install and run the Holoscan SDK:
   - **CUDA 13** (x86_64, Jetson Thor, DGX Spark)
 
   ```bash
-    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda13
+    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.6.0-cuda13
   ```
   - **CUDA 12 dGPU** (x86_64, IGX Orin dGPU, Clara AGX dGPU, GH200)
 
   ```bash
-    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda12-dgpu
+    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.6.0-cuda12-dgpu
   ```
   - **CUDA 12 iGPU** (Jetson Orin, IGX Orin iGPU, Clara AGX iGPU)
 
   ```bash
-    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.5.0-cuda12-igpu
+    docker pull nvcr.io/nvidia/clara-holoscan/holoscan:v4.6.0-cuda12-igpu
   ```
   {/*  holoscan-version-sync:end  */}
   See details and usage instructions on [NGC][container].
@@ -149,6 +149,8 @@ We provide multiple ways to install and run the Holoscan SDK:
 
   </Warning>
 
+
+  <Anchor id="troubleshooting" />
 
   #### Troubleshooting
 
@@ -292,7 +294,7 @@ We provide multiple ways to install and run the Holoscan SDK:
 | [ConnectX][connectx] support [^11] | **User space included** <br />Install kernel drivers on the host | require manual <br />installation | require manual <br />installation |
 | [Holoscan Sensor Bridge][hololink] support [^12] | **User space included** <br />Install kernel drivers on the host | not included | not included |
 
-[examples]: https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#readme
+[examples]: https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#readme
 [data]: https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara-holoscan/collections/clara_holoscan
 [npp]: https://developer.nvidia.com/npp
 [trt]: https://developer.nvidia.com/tensorrt

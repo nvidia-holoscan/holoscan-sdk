@@ -13,6 +13,7 @@ rapids_cpm_find(fmt "${fmt_VERSION}"
     GITHUB_REPOSITORY fmtlib/fmt
     GIT_TAG "${fmt_VERSION}"
     GIT_SHALLOW TRUE
+    PATCH_COMMAND bash -c "patch -p1 -N --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/fmt_cuda.patch >/dev/null && patch -p1 -N -i ${CMAKE_CURRENT_LIST_DIR}/patches/fmt_cuda.patch || patch -p1 -R --dry-run -i ${CMAKE_CURRENT_LIST_DIR}/patches/fmt_cuda.patch >/dev/null"
 
     OPTIONS
     "FMT_INSTALL ON"

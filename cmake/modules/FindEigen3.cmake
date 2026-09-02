@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2006-2025, Eigen authors
-# SPDX-License-Identifier: MPL2
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 
 # Forked from upstream libeigen:
 # https://gitlab.com/libeigen/eigen/-/raw/3.4.0/cmake/FindEigen3.cmake

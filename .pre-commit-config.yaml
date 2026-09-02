@@ -38,12 +38,13 @@ repos:
     hooks:
       - id: check-copyright
         name: Check copyright headers
-        # Commit: staged paths only. ``--all-files``: auto-intersect vs main/release/latest refs
-        # when present; else all matching files. Override baseline: HOLOSCAN_COPYRIGHT_BASE_REF or
-        # ``--intersect-since-ref REF`` when invoking ``check_copyright.py`` (see ``--help``).
-        # Full tree: ``python3 scripts/check_copyright.py . --git-modified-only <ref>``.
+        # Commits check staged paths. Wide lists from ``--all-files`` are narrowed to the
+        # main/release diff unless an explicit base is supplied. Use the script's ``--full-scan``
+        # option for a deliberate full-tree audit.
         entry: python3 scripts/check_copyright.py
         args:
+          - --reject-nvidia-proprietary-path
+          - ^
           - --exclude
           - CodeCoverage.cmake
           - --exclude
@@ -66,21 +67,9 @@ repos:
           # Fern bundled dist/ output (generated files, no NVIDIA copyright header).
           - --exclude
           - docs/fern/dist/
-          # Fast DDS upstream examples (eProsima copyright); NVIDIA SPDX check does not apply.
-          - --exclude
-          - modules/holoipc/examples/fastdds_benchmark/
-          - --exclude
-          - modules/holoipc/examples/fastdds_example/
           - --update-current-year
         language: system
         pass_filenames: true
-
-      - id: check-doc-links
-        name: Check documentation links
-        entry: python3 docs/scripts/check_doc_links.py
-        language: system
-        pass_filenames: false
-        files: ^docs/
 
       - id: test-check-copyright
         name: Test copyright header checker
@@ -90,6 +79,38 @@ repos:
           - pytest
         pass_filenames: false
         files: ^scripts/(check_copyright|test_check_copyright)\.py$
+
+      - id: check-doc-source-links
+        name: Check documentation source links
+        entry: python3 docs/scripts/render_source_links.py --docs-root docs --write
+        language: system
+        pass_filenames: true
+        files: ^docs/.*\.mdx?$
+
+      - id: test-gxf-entity-codec
+        name: Test GXF entity codec
+        entry: pytest scripts/test_gxf_entity_codec.py
+        language: python
+        additional_dependencies:
+          - numpy
+          - pytest
+        pass_filenames: false
+        files: ^scripts/(convert_gxf_entities_to_video|convert_video_to_gxf_entities|gxf_entity_codec|test_gxf_entity_codec)\.py$
+
+      - id: check-doc-links
+        name: Check documentation links
+        entry: python3 docs/scripts/check_doc_links.py
+        language: system
+        pass_filenames: false
+        files: ^docs/
+
+      - id: check-local-markdown-links
+        name: Check local Markdown file links
+        entry: python3 docs/scripts/check_doc_links.py --local-files-only
+        language: system
+        pass_filenames: false
+        always_run: true
+        files: ^
 
   - repo: https://github.com/Lucas-C/pre-commit-hooks
     rev: v1.5.6

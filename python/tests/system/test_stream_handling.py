@@ -223,13 +223,17 @@ class CuPyExternalStreamOp(Operator):
         for tensor_name, tensor in tensors.items():
             # For PyTorch, It should work similarly to use:
             #     with torch.cuda.StreamContext(torch.cuda.ExternalStream(stream)):
-            with cp.cuda.ExternalStream(stream, device_id=context.device_from_stream(stream)):
+            external_stream = cp.cuda.ExternalStream(
+                stream, device_id=context.device_from_stream(stream)
+            )
+            with external_stream:
                 cp_tensor = cp.asarray(tensor)
 
                 # Need to set some value before the sum as PingTensorTxOp does not initialize the
                 # tensor's values.
                 cp_tensor[:] = 2
                 s = cp_tensor.sum()
+            external_stream.synchronize()
             print(f"{tensor_name=}, sum={s}")
             assert s == 2 * cp_tensor.size
         self.index += 1

@@ -1,299 +1,513 @@
-diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fbb8218..9c3ea1a 100644
---- a/CMakeLists.txt
-+++ b/CMakeLists.txt
-@@ -41,13 +41,8 @@ file(READ "VERSION" HOLOLINK_VERSION)
- string(STRIP ${HOLOLINK_VERSION} HOLOLINK_VERSION)
- string(REGEX MATCH "^([0-9]+\.[0-9]+\.[0-9]+)" HOLOLINK_VERSION_NUM ${HOLOLINK_VERSION})
+diff --git a/hololink_module/host/operators/CMakeLists.txt b/hololink_module/host/operators/CMakeLists.txt
+index 363d629..72555c1 100644
+--- a/hololink_module/host/operators/CMakeLists.txt
++++ b/hololink_module/host/operators/CMakeLists.txt
+@@ -17,7 +17,7 @@ if(NOT HOLOLINK_MODULE_BUILD_OPERATORS)
+ endif()
  
--set(PROJECT_LANGUAGES CXX)
--if (NOT HOLOLINK_BUILD_ONLY_NATIVE)
--  list(APPEND PROJECT_LANGUAGES CUDA)
--endif()
--
- project(hololink
--  LANGUAGES ${PROJECT_LANGUAGES}
-+  LANGUAGES CXX
-   VERSION ${HOLOLINK_VERSION_NUM})
- 
- # To discover our custom CMake modules
-@@ -55,6 +50,14 @@ list(APPEND CMAKE_MODULE_PATH ${hololink_SOURCE_DIR}/cmake)
- 
- # Find globally required dependencies
- if (NOT HOLOLINK_BUILD_ONLY_NATIVE)
-+  # Initialize CUDA architecture target list by precedence:
-+  #     -DCMAKE_CUDA_ARCHITECTURES > $ENV{CUDAARCHS} > `native`
-+  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT DEFINED ENV{CUDAARCHS})
-+    set(CMAKE_CUDA_ARCHITECTURES "native")
-+  endif()
-+  enable_language(CUDA)
-+  message(STATUS "hololink: initialized CMAKE_CUDA_ARCHITECTURES: ${CMAKE_CUDA_ARCHITECTURES}")
-+
-   # Find Holoscan if it is not already defined for source build with FetchContent
-   if(NOT holoscan_SOURCE_DIR)
+ # Holoscan SDK is required.
+-if(NOT TARGET holoscan::core)
++if(NOT TARGET holoscan::core AND NOT holoscan_SOURCE_DIR)
      find_package(holoscan 4.0 REQUIRED CONFIG PATHS "/opt/nvidia/holoscan")
-diff --git a/docker/Dockerfile b/docker/Dockerfile
-index 3d3d391..0a82892 100644
---- a/docker/Dockerfile
-+++ b/docker/Dockerfile
-@@ -205,7 +205,6 @@ FROM build_${CONTAINER_TYPE}
- # ARGs must be redeclared after FROM to be available in this build stage
- ARG HSDK_VERSION=invalid
- ARG L4T_VERSION=invalid
--ARG CUDA_NATIVE_ARCH=invalid
- ARG IBV_DEVICES=
- ARG TARGETARCH
- ARG DOCA_VERSION=3.3.0
-@@ -217,7 +216,6 @@ ENV IBV_DEVICES=${IBV_DEVICES}
- ENV PIP_BREAK_SYSTEM_PACKAGES=1
- # run as root user...ignore warnings about installing as root inside container
- ENV PIP_ROOT_USER_ACTION=ignore
--ENV CUDA_NATIVE_ARCH=${CUDA_NATIVE_ARCH}
- ENV CUDA_VERSION_MINOR_PATCH="${CUDA_VERSION#*.}"
- ENV CUDA_VERSION_MINOR="${CUDA_VERSION_MINOR_PATCH%%.*}"
- ENV CUDA_PATH=/usr/local/cuda
-diff --git a/docker/Dockerfile.demo b/docker/Dockerfile.demo
-index 96a8276..00102e2 100644
---- a/docker/Dockerfile.demo
-+++ b/docker/Dockerfile.demo
-@@ -33,6 +33,12 @@ WORKDIR /opt/hololink
- # RoCE receiver: GPU VRAM frame buffers require working GPUDirect RDMA.
- # Set OFF via docker/build.sh --disable-roce-gpu-vram when the PCIe path does not support it.
- ARG HOLOLINK_ROCE_USE_GPU_VRAM=ON
-+# Semicolon-separated list of CUDA architectures to target by default during the wheel build below.
-+# https://cmake.org/cmake/help/latest/envvar/CUDAARCHS.html
-+# Allowable values:
-+#   https://cmake.org/cmake/help/latest/prop_tgt/CUDA_ARCHITECTURES.html
-+#   https://developer.nvidia.com/cuda-gpus
-+ARG CUDAARCHS=native
+ endif()
  
- # See build.sh for why INSTALL_ENVIRONMENT is here.
- ARG INSTALL_ENVIRONMENT=""
-diff --git a/docker/build.sh b/docker/build.sh
-index 1952e5e..89b6a5b 100755
---- a/docker/build.sh
-+++ b/docker/build.sh
-@@ -88,14 +88,15 @@ then
-     echo "Warning: Cannot determine product name from DMI. This system/configuration may not be supported."
- fi
+diff --git a/src/hololink/emulation/src/CMakeLists.txt b/src/hololink/emulation/src/CMakeLists.txt
+index bf32072..03083de 100644
+--- a/src/hololink/emulation/src/CMakeLists.txt
++++ b/src/hololink/emulation/src/CMakeLists.txt
+@@ -36,8 +36,6 @@ add_library(emulation INTERFACE)
+-# need --whole-archive to link all the objects in the static libraries. prevents erroneous dead code elimination from library link orders
++# Scope whole-archive to these libraries so their transitive dependencies are
++# linked normally rather than being force-loaded as whole archives.
+ target_link_libraries(emulation INTERFACE
+-    -Wl,--whole-archive
+-    emulation_host
+-    emulation_common
+-    -Wl,--no-whole-archive
++    "$<LINK_LIBRARY:WHOLE_ARCHIVE,emulation_host,emulation_common>"
+     dlpack::dlpack
+ )
+@@ -120,5 +118,5 @@ _hsb_add_transport_library(emulationroce roce
+ # RoCE iCRC needs zlib's crc32 unless the platform provides a CRC peripheral
+ # (CRC_OFFLOAD). On the linux target ZLIB_FOUND is set by find_package(ZLIB).
+ if(TARGET emulationroce AND ZLIB_FOUND)
+-    target_link_libraries(emulationroce PUBLIC ${ZLIB_LIBRARIES})
++    target_link_libraries(emulationroce PRIVATE ZLIB::ZLIB)
+ endif()
+diff --git a/cmake/HololinkConfig.cmake.in b/cmake/HololinkConfig.cmake.in
+index 74201ce..90306eb 100644
+--- a/cmake/HololinkConfig.cmake.in
++++ b/cmake/HololinkConfig.cmake.in
+@@ -3 +3,2 @@
+ include(CMakeFindDependencyMacro)
++find_dependency(ZLIB)
+diff --git a/src/hololink/emulation/src/common/CMakeLists.txt b/src/hololink/emulation/src/common/CMakeLists.txt
+index 5d3c9c2..449c4c8 100644
+--- a/src/hololink/emulation/src/common/CMakeLists.txt
++++ b/src/hololink/emulation/src/common/CMakeLists.txt
+@@ -68,5 +68,4 @@ target_link_libraries(emulation_common
+         # before common/). PRIVATE so consumers of emulation_common don't inherit
+         # STM32 paths; only common's own .cpp files do.
+         hsb_platform
+-        $<$<BOOL:${ZLIB_FOUND}>:ZLIB::ZLIB>
+ )
+diff --git a/src/hololink/emulation/examples/CMakeLists.txt b/src/hololink/emulation/examples/CMakeLists.txt
+index 041ec59..723c98f 100644
+--- a/src/hololink/emulation/examples/CMakeLists.txt
++++ b/src/hololink/emulation/examples/CMakeLists.txt
+@@ -154,6 +154,5 @@ if (CUDAToolkit_FOUND)
+             hololink::emulation
+             hololink::emulation::roce
+             emulator_utils
+-            ${ZLIB_LIBRARIES}
+             CUDA::cudart
+         )
+@@ -219,6 +218,5 @@ if (CUDAToolkit_FOUND)
+             hololink::emulation::roce
+             hololink::emulation::sensors
+             emulator_utils
+-            ${ZLIB_LIBRARIES}
+             CUDA::cudart
+         )
+@@ -233,6 +231,5 @@ if (CUDAToolkit_FOUND)
+             hololink::emulation::roce
+             hololink::emulation::sensors
+             emulator_utils
+-            ${ZLIB_LIBRARIES}
+             CUDA::cudart
+         )
+@@ -247,6 +244,5 @@ if (CUDAToolkit_FOUND)
+             hololink::emulation::roce
+             hololink::emulation::sensors
+             emulator_utils
+-            ${ZLIB_LIBRARIES}
+             CUDA::cudart
+         )
+@@ -261,6 +257,5 @@ if (CUDAToolkit_FOUND)
+             hololink::emulation::roce
+             hololink::emulation::sensors
+             emulator_utils
+-            ${ZLIB_LIBRARIES}
+             CUDA::cudart
+         )
+diff --git a/hololink_module/host/operators/python/__init__.py b/hololink_module/host/operators/python/__init__.py
+index 24e90c1..6892f3f 100644
+--- a/hololink_module/host/operators/python/__init__.py
++++ b/hololink_module/host/operators/python/__init__.py
+@@ -15,7 +15,7 @@ Holoscan never load this module.
+ # holoscan::Operator (and holoscan::Fragment / Condition / Resource)
+ # with pybind11's type system, which our operator's pybind class
+ # references as a base type.
+-import holoscan  # noqa: F401 — side-effect import for pybind type registration
++import holoscan.core  # noqa: F401 — side-effect import for pybind type registration
  
--# compiles a minimal binary as CUDA program verbosely to detect the native architecture used for the available GPU(s) and captures it in output
--# this will be passed to docker container environment to be available to cmake both during container build and HSB rebuilds for targets that have architecture dependencies, e.g. gpu_roce_transceiver
--CUDA_NATIVE_ARCH=$(echo -n "int main(void) {return 0; }" | /usr/local/cuda/bin/nvcc -arch=native --verbose -x cu -o /tmp/main - 2>&1 | grep -m 1 -oE "__CUDA_ARCH__=[^-]+" | cut -d= -f2 | tr -d ' ')
--if [ -z "$CUDA_NATIVE_ARCH" ]; then
--    CUDA_NATIVE_ARCH=800
-+# compiles a minimal binary as CUDA program verbosely to detect the native architecture used for the available GPU(s) and captures it in output.
-+# this is exported to the container as CMAKE_CUDA_ARCHITECTURES so cmake picks it up directly for all CUDA targets (including gpu_roce_transceiver)
-+# without ever needing nvcc -arch=native inside the container (which has no GPU access during build).
-+HOLOLINK_CUDA_ARCHS=$(echo -n "int main(void) {return 0; }" | /usr/local/cuda/bin/nvcc -arch=native --verbose -x cu -o /tmp/main - 2>&1 | grep -m 1 -oE "__CUDA_ARCH__=[^-]+" | cut -d= -f2 | tr -d ' ')
-+if [ -z "$HOLOLINK_CUDA_ARCHS" ]; then
-+    HOLOLINK_CUDA_ARCHS=800
- fi
--# The result above will be for example 890 for compute 8.9. Remove the trailing digit
--CUDA_NATIVE_ARCH="${CUDA_NATIVE_ARCH%?}"
-+# The result above will be for example 890 for compute 8.9. Remove the trailing digit to get the CMake form (e.g. 89).
-+HOLOLINK_CUDA_ARCHS="${HOLOLINK_CUDA_ARCHS%?}"
+ from . import _hololink_module_operators as _native
  
- # detect infiniband devices. HOLOLINK_BUILD_ROCE is set to 1 if any are found
- IBV_DEVICES=""
-@@ -277,7 +278,7 @@ echo "CONTAINER_TYPE: $CONTAINER_TYPE"
- echo "PROTOTYPE_OPTIONS: $PROTOTYPE_OPTIONS"
- echo "INSTALL_ENVIRONMENT: $INSTALL_ENVIRONMENT"
- echo "L4T_VERSION: $L4T_VERSION"
--echo "CUDA_NATIVE_ARCH: $CUDA_NATIVE_ARCH"
-+echo "HOLOLINK_CUDA_ARCHS: $HOLOLINK_CUDA_ARCHS"
- echo "IBV_DEVICES: $IBV_DEVICES"
- echo "HOLOLINK_ROCE_USE_GPU_VRAM: $HOLOLINK_ROCE_USE_GPU_VRAM"
- set -x
-@@ -290,7 +291,6 @@ DOCKER_BUILDKIT=1 docker build \
-     --build-arg "CONTAINER_TYPE=$CONTAINER_TYPE" \
-     --build-arg "HSDK_VERSION=$HSDK_VERSION" \
-     --build-arg "L4T_VERSION=$L4T_VERSION" \
--    --build-arg "CUDA_NATIVE_ARCH=$CUDA_NATIVE_ARCH" \
-     --build-arg "IBV_DEVICES=$IBV_DEVICES" \
-     -t hololink-prototype:$VERSION \
-     -f $HERE/Dockerfile \
-@@ -302,6 +302,7 @@ DOCKER_BUILDKIT=1 docker build \
-     --network=host \
-     --build-arg CONTAINER_VERSION=hololink-prototype:$VERSION \
-     --build-arg "INSTALL_ENVIRONMENT=$INSTALL_ENVIRONMENT" \
-+    --build-arg "CUDAARCHS=$HOLOLINK_CUDA_ARCHS" \
-     --build-arg "HOLOLINK_ROCE_USE_GPU_VRAM=$HOLOLINK_ROCE_USE_GPU_VRAM" \
-     -t hololink-demo:$VERSION \
-     -f $HERE/Dockerfile.demo \
-diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
-index c56df12..eb30318 100644
---- a/examples/CMakeLists.txt
-+++ b/examples/CMakeLists.txt
-@@ -279,11 +279,13 @@ if(HOLOLINK_BUILD_ROCE)
-       sub_frame_vb1940_player.cpp
-       )
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index c77e503..2f19be4 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -175,7 +175,6 @@ ConfigureTest(
+     hololink_module_singletons_test.cpp
+   LINK_LIBRARIES
+     hololink::module
+-    hololink::core
+ )
+ target_compile_features(hololink_module_singletons_test PRIVATE cxx_std_17)
+ add_dependencies(hololink_module_singletons_test
+@@ -288,7 +287,7 @@ if(HOLOLINK_BUILD_PYTHON)
+     # The smoke test imports the in-build hololink_module package and
+     # drives Adapter.enumerate against the hsb_lite .so.
+     add_test(NAME hololink_module_python_smoke_test
+-        COMMAND python3 -m pytest -v
++        COMMAND python3 -m pytest -v --noconftest
+             --rootdir=${CMAKE_BINARY_DIR}/python
+             ${CMAKE_CURRENT_SOURCE_DIR}/test_hololink_module_python.py)
+     set_tests_properties(hololink_module_python_smoke_test PROPERTIES
+@@ -347,7 +346,7 @@ if(HOLOLINK_BUILD_ROCE AND HOLOLINK_MODULE_BUILD_OPERATORS)
+                 ${CMAKE_CURRENT_SOURCE_DIR}/test_hololink_module_operators_python.py)
+         set_tests_properties(hololink_module_operators_python_smoke_test PROPERTIES
+             ENVIRONMENT
+-                "PYTHONPATH=${CMAKE_BINARY_DIR}/python")
++                "PYTHONPATH=${CMAKE_BINARY_DIR}/python:${CMAKE_BINARY_DIR}/python/lib")
+     endif()
+ endif()
  
--    add_test(NAME sub_frame_vb1940_player_test
--              COMMAND sub_frame_vb1940_player --frame-limit=10 --headless --sub-frame-rows=1080
--              WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
--    set_tests_properties(sub_frame_vb1940_player_test PROPERTIES
--                          FAIL_REGULAR_EXPRESSION "ERROR;\\[error\\]")
-+    if(HOLOLINK_BUILD_TESTS)
-+      add_test(NAME sub_frame_vb1940_player_test
-+                COMMAND sub_frame_vb1940_player --frame-limit=10 --sub-frame-rows=1080
-+                WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-+      set_tests_properties(sub_frame_vb1940_player_test PROPERTIES
-+                            FAIL_REGULAR_EXPRESSION "ERROR;\\[error\\]")
-+    endif()
+diff --git a/tests/hololink_module_framework_test.cpp b/tests/hololink_module_framework_test.cpp
+index 88cb054..58ea33e 100644
+--- a/tests/hololink_module_framework_test.cpp
++++ b/tests/hololink_module_framework_test.cpp
+@@ -16,7 +16,7 @@
  
-     target_link_libraries(sub_frame_vb1940_player
-       PRIVATE
-diff --git a/examples/sub_frame_vb1940_player.cpp b/examples/sub_frame_vb1940_player.cpp
-index 6bfa5b5..2a90b5c 100644
---- a/examples/sub_frame_vb1940_player.cpp
-+++ b/examples/sub_frame_vb1940_player.cpp
-@@ -34,10 +34,7 @@
- #include <holoscan/core/resources/gxf/cuda_stream_pool.hpp>
- #include <holoscan/holoscan.hpp>
- #include <holoscan/operators/bayer_demosaic/bayer_demosaic.hpp>
--#include <holoscan/version_config.hpp>
+ #include "hololink/module/adapter.hpp"
+ #include "hololink/module/module.hpp"
+-#include "hololink/module/service.hpp"
++#include "hololink_module_test_services.hpp"
  
--#define HOLOSCAN_VERSION \
--    (HOLOSCAN_VERSION_MAJOR * 10000 + HOLOSCAN_VERSION_MINOR * 100 + HOLOSCAN_VERSION_PATCH)
+ // Anonymous namespace holds file-local TYPES only — function-local
+ // classes / anonymous namespaces are the only tools that give types
+@@ -24,21 +24,8 @@
+ // at file scope below.
+ namespace {
+ 
+-class HostTestServiceV1
+-    : public hololink::module::Service<HostTestServiceV1> {
+-public:
+-    static constexpr const char* type_id = "hololink_module_test.host.v1";
+-    virtual ~HostTestServiceV1() = default;
+-    virtual int answer() const = 0;
+-};
+-
+-class TestServiceV1
+-    : public hololink::module::Service<TestServiceV1> {
+-public:
+-    static constexpr const char* type_id = "hololink_module_test.module.v1";
+-    virtual ~TestServiceV1() = default;
+-    virtual int answer() const = 0;
+-};
++using hololink::module::test::HostTestServiceV1;
++using hololink::module::test::TestServiceV1;
+ 
+ class HostTestServiceImpl : public HostTestServiceV1 {
+ public:
+diff --git a/tests/hololink_module_hsb_lite_test.cpp b/tests/hololink_module_hsb_lite_test.cpp
+index f0f035b..2ad9347 100644
+--- a/tests/hololink_module_hsb_lite_test.cpp
++++ b/tests/hololink_module_hsb_lite_test.cpp
+@@ -18,8 +18,8 @@
+  * suppress the announcement (no post-enrichment callback) without
+  * throwing. Finally, pins the unified per-sensor addressing: enumerate
+  * (update_metadata) and Adapter::use_sensor route through one formula,
+- * so use_sensor recomputes hif_address per data plane and the two
+- * paths agree field-for-field; out-of-range sensors are rejected.
++ * so use_sensor preserves the enumerated physical data plane and the
++ * two paths agree field-for-field; out-of-range sensors are rejected.
+  */
+ 
+ #include <gtest/gtest.h>
+@@ -152,7 +152,7 @@ TEST(HololinkAdapterHsbLite, EnumerateSkipsUnsupportedIpVersion)
+     Adapter::get_adapter().unregister(handle);
+ }
+ 
+-TEST(HololinkAdapterHsbLite, UseSensorRecomputesHifAddress)
++TEST(HololinkAdapterHsbLite, UseSensorPreservesEnumeratedHifAddress)
+ {
+     using hololink::module::Adapter;
+     using hololink::module::EnumerationMetadata;
+@@ -170,12 +170,11 @@ TEST(HololinkAdapterHsbLite, UseSensorRecomputesHifAddress)
+     EXPECT_EQ(metadata.get<int64_t>("hif_address"), 0x02000300);
+     EXPECT_EQ(metadata.get<int64_t>("sensor_number"), 0);
+ 
+-    // Retarget to sensor 1: HSB-Lite maps it 1:1 onto data plane 1, so
+-    // hif_address MUST move with it. The pre-unification use_sensor path
+-    // (legacy DataChannel::use_sensor) left hif_address stale here — this
+-    // is the regression guard for that bug.
++    // Retarget to sensor 1 on the same physical data plane. Sensor selection
++    // changes the SIF/VP channel, but must not silently move the connection to
++    // a different NIC-backed data plane.
+     Adapter::get_adapter().use_sensor(metadata, 1);
+-    EXPECT_EQ(metadata.get<int64_t>("hif_address"), 0x02010300);
++    EXPECT_EQ(metadata.get<int64_t>("hif_address"), 0x02000300);
+     EXPECT_EQ(metadata.get<int64_t>("sensor_number"), 1);
+     EXPECT_EQ(metadata.get<int64_t>("sensor"), 2); // sensor_number * sifs(2)
+     EXPECT_EQ(metadata.get<int64_t>("sif_address"), 0x01010000);
+@@ -211,6 +210,7 @@ TEST(HololinkAdapterHsbLite, EnumerateMatchesUseSensorFieldForField)
+     EnumerationMetadata configured;
+     configured["fpga_uuid"] = std::string(HSB_LITE_UUID);
+     configured["compat_id"] = static_cast<std::int64_t>(0x2603);
++    configured["data_plane"] = static_cast<std::int64_t>(1);
+     Adapter::get_adapter().use_sensor(configured, 1);
+ 
+     for (const char* key : { "sensor_number", "sensor", "vp_mask",
+diff --git a/tests/hololink_module_stub_module.cpp b/tests/hololink_module_stub_module.cpp
+index 98d77a1..48e0cf9 100644
+--- a/tests/hololink_module_stub_module.cpp
++++ b/tests/hololink_module_stub_module.cpp
+@@ -12,8 +12,8 @@
+ 
+ #include "hololink/module/module.hpp"
+ #include "hololink/module/publisher.hpp"
+-#include "hololink/module/service.hpp"
+ #include "hololink/module/service_locator.h"
++#include "hololink_module_test_services.hpp"
+ 
+ // Anonymous namespace holds file-local TYPES only — function-local
+ // classes / anonymous namespaces are the only tools that give types
+@@ -21,21 +21,8 @@
+ // below.
+ namespace {
+ 
+-class HostTestServiceV1
+-    : public hololink::module::Service<HostTestServiceV1> {
+-public:
+-    static constexpr const char* type_id = "hololink_module_test.host.v1";
+-    virtual ~HostTestServiceV1() = default;
+-    virtual int answer() const = 0;
+-};
+-
+-class TestServiceV1
+-    : public hololink::module::Service<TestServiceV1> {
+-public:
+-    static constexpr const char* type_id = "hololink_module_test.module.v1";
+-    virtual ~TestServiceV1() = default;
+-    virtual int answer() const = 0;
+-};
++using hololink::module::test::HostTestServiceV1;
++using hololink::module::test::TestServiceV1;
+ 
+ class TestServiceImpl : public TestServiceV1 {
+ public:
+diff --git a/tests/hololink_module_test_services.hpp b/tests/hololink_module_test_services.hpp
+new file mode 100644
+index 0000000..ea714a4
+--- /dev/null
++++ b/tests/hololink_module_test_services.hpp
+@@ -0,0 +1,31 @@
++/*
++ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++#ifndef HOLOLINK_MODULE_TEST_SERVICES_HPP
++#define HOLOLINK_MODULE_TEST_SERVICES_HPP
++
++#include "hololink/module/service.hpp"
++
++namespace hololink::module::test {
++
++class HostTestServiceV1
++    : public Service<HostTestServiceV1> {
++public:
++    static constexpr const char* type_id = "hololink_module_test.host.v1";
++    virtual ~HostTestServiceV1() = default;
++    virtual int answer() const = 0;
++};
++
++class TestServiceV1
++    : public Service<TestServiceV1> {
++public:
++    static constexpr const char* type_id = "hololink_module_test.module.v1";
++    virtual ~TestServiceV1() = default;
++    virtual int answer() const = 0;
++};
++
++} // namespace hololink::module::test
++
++#endif /* HOLOLINK_MODULE_TEST_SERVICES_HPP */
+diff --git a/tests/test_hololink_module_python.py b/tests/test_hololink_module_python.py
+index 05a71ca..20e6de0 100644
+--- a/tests/test_hololink_module_python.py
++++ b/tests/test_hololink_module_python.py
+@@ -5,14 +5,26 @@
+ # Loads the HSB-Lite module .so by UUID through the Python-facing
+ # Adapter, then reads the enriched metadata back across the binding.
+ 
++import os
++from pathlib import Path
+ import threading
+ import time
+ 
+ import hololink_module
++import pytest
+ 
+ HSB_LITE_UUID = "889b7ce3-65a5-4247-8b05-4ff1904c3359"
+ 
+ 
++@pytest.fixture
++def module_dir():
++    env = os.environ.get("HOLOLINK_MODULE_TEST_MODULE_DIR")
++    if env:
++        return env
++    package_dir = Path(hololink_module.__file__).resolve().parent
++    return str(package_dir.parent.joinpath("lib", "hololink", "modules"))
++
++
+ def test_python_adapter_drives_hsb_lite_module(module_dir):
+     adapter = hololink_module.Adapter.get_adapter()
+     adapter.set_module_directory(module_dir)
+diff --git a/tests/hololink_module_singletons_test.cpp b/tests/hololink_module_singletons_test.cpp
+index 16013ee..283c3ad 100644
+--- a/tests/hololink_module_singletons_test.cpp
++++ b/tests/hololink_module_singletons_test.cpp
+@@ -5,22 +5,22 @@
+  * Loads a stub module that fetches the host's Reactor + Logging
+  * singletons, schedules a Reactor callback, and emits a log line
+  * from inside that callback. Verifies (a) the callback executes on
+- * the host's Reactor thread and (b) the log line arrives at the
+- * host-installed sink with its file/line/function decoration intact.
++ * the host's Reactor thread and (b) the log line arrives at the host's
++ * stderr sink with its file/line/function decoration intact.
+  */
+ 
+ #include <gtest/gtest.h>
+ 
+-#include <algorithm>
+ #include <chrono>
+-#include <condition_variable>
++#include <cstdio>
+ #include <cstdlib>
+ #include <filesystem>
+-#include <mutex>
++#include <poll.h>
++#include <stdexcept>
+ #include <string>
+-#include <vector>
+ 
+-#include "hololink/core/logging.hpp"
++#include <unistd.h>
++
+ #include "hololink/module/adapter.hpp"
+ 
+ static std::filesystem::path module_path(const char* basename)
+@@ -34,44 +34,82 @@ static std::filesystem::path module_path(const char* basename)
  
  namespace {
  
-diff --git a/src/hololink/emulation/src/CMakeLists.txt b/src/hololink/emulation/src/CMakeLists.txt
-index a910025..a021419 100644
---- a/src/hololink/emulation/src/CMakeLists.txt
-+++ b/src/hololink/emulation/src/CMakeLists.txt
-@@ -40,8 +40,9 @@ endif()
+-struct CapturedLog {
+-    std::string file;
+-    unsigned line;
+-    std::string function;
+-    hololink::logging::HsbLogLevel level;
+-    std::string message;
+-};
++class StderrCapture {
++public:
++    StderrCapture()
++    {
++        int pipe_fds[2];
++        if (::pipe(pipe_fds) != 0) {
++            throw std::runtime_error("Unable to create stderr capture pipe");
++        }
++        read_fd_ = pipe_fds[0];
++        saved_stderr_ = ::dup(STDERR_FILENO);
++        if (saved_stderr_ < 0) {
++            ::close(pipe_fds[0]);
++            ::close(pipe_fds[1]);
++            throw std::runtime_error("Unable to duplicate stderr");
++        }
++        if (::dup2(pipe_fds[1], STDERR_FILENO) != STDERR_FILENO) {
++            ::close(saved_stderr_);
++            saved_stderr_ = -1;
++            ::close(pipe_fds[0]);
++            ::close(pipe_fds[1]);
++            throw std::runtime_error("Unable to redirect stderr");
++        }
++        ::close(pipe_fds[1]);
++    }
  
- add_library(hololink::emulation ALIAS emulation)
+-} // namespace
++    ~StderrCapture()
++    {
++        std::fflush(stderr);
++        if (saved_stderr_ >= 0) {
++            ::dup2(saved_stderr_, STDERR_FILENO);
++            ::close(saved_stderr_);
++        }
++        if (read_fd_ >= 0) {
++            ::close(read_fd_);
++        }
++    }
  
--# INTERFACE has no artifact; DESTINATION is ignored for it. Export all three targets.
--install(TARGETS emulation emulation_host emulation_common
-+# INTERFACE has no artifact; DESTINATION is ignored for it.
-+# Handle target(s) declared in this folder
-+install(TARGETS emulation
-     EXPORT HololinkTargets
-     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-diff --git a/src/hololink/emulation/src/STM32/CMakeLists.txt b/src/hololink/emulation/src/STM32/CMakeLists.txt
-index ff8295e..6d606bb 100644
---- a/src/hololink/emulation/src/STM32/CMakeLists.txt
-+++ b/src/hololink/emulation/src/STM32/CMakeLists.txt
-@@ -90,6 +90,11 @@ target_link_libraries(emulation_host
+-static std::mutex g_log_mutex;
+-static std::condition_variable g_log_cv;
+-static std::vector<CapturedLog> g_log_records;
++    std::string read_until(const std::string& marker,
++        std::chrono::milliseconds timeout)
++    {
++        std::string captured;
++        const auto deadline = std::chrono::steady_clock::now() + timeout;
++        while (captured.find(marker) == std::string::npos) {
++            const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
++                deadline - std::chrono::steady_clock::now());
++            if (remaining.count() <= 0) {
++                break;
++            }
  
- set_property(TARGET emulation_host PROPERTY POSITION_INDEPENDENT_CODE ON)
- 
-+install(TARGETS emulation_host
-+    EXPORT HololinkTargets
-+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-+    COMPONENT hololink-emulation)
+-static void capture_logger(char const* file, unsigned line, const char* function,
+-    hololink::logging::HsbLogLevel level, const char* message)
+-{
+-    std::lock_guard<std::mutex> guard(g_log_mutex);
+-    g_log_records.push_back(CapturedLog { file, line, function, level, message });
+-    g_log_cv.notify_all();
+-}
++            pollfd descriptor { read_fd_, POLLIN, 0 };
++            if (::poll(&descriptor, 1, static_cast<int>(remaining.count())) <= 0) {
++                break;
++            }
 +
- add_library(emulationroce STATIC
-     rocev2_data_plane.cpp
-     rocev2_transmitter.cpp
-@@ -114,4 +119,9 @@ target_link_libraries(emulationroce
- #target_compile_definitions(emulationroce PRIVATE "-Dlocal")
- set_property(TARGET emulationroce PROPERTY POSITION_INDEPENDENT_CODE ON)
- 
--add_library(hololink::emulation::roce ALIAS emulationroce)
-\ No newline at end of file
-+add_library(hololink::emulation::roce ALIAS emulationroce)
++            char buffer[512];
++            const ssize_t count = ::read(read_fd_, buffer, sizeof(buffer));
++            if (count <= 0) {
++                break;
++            }
++            captured.append(buffer, static_cast<std::size_t>(count));
++        }
++        return captured;
++    }
 +
-+install(TARGETS stm32_hal_driver emulation_host emulationroce
-+    EXPORT HololinkTargets
-+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-+    COMPONENT hololink-emulation)
-diff --git a/src/hololink/emulation/src/common/CMakeLists.txt b/src/hololink/emulation/src/common/CMakeLists.txt
-index 657933c..973ce5a 100644
---- a/src/hololink/emulation/src/common/CMakeLists.txt
-+++ b/src/hololink/emulation/src/common/CMakeLists.txt
-@@ -38,3 +38,8 @@ target_link_libraries(emulation_common
- )
- 
- set_property(TARGET emulation_common PROPERTY POSITION_INDEPENDENT_CODE ON)
++private:
++    int read_fd_ = -1;
++    int saved_stderr_ = -1;
++};
 +
-+install(TARGETS emulation_common
-+    EXPORT HololinkTargets
-+    DESTINATION ${CMAKE_INSTALL_LIBDIR}
-+    COMPONENT hololink-emulation)
-diff --git a/src/hololink/emulation/src/linux/CMakeLists.txt b/src/hololink/emulation/src/linux/CMakeLists.txt
-index d05a701..3be7d51 100644
---- a/src/hololink/emulation/src/linux/CMakeLists.txt
-+++ b/src/hololink/emulation/src/linux/CMakeLists.txt
-@@ -86,7 +86,7 @@ set_property(TARGET emulationroce PROPERTY POSITION_INDEPENDENT_CODE ON)
++} // namespace
  
- add_library(hololink::emulation::roce ALIAS emulationroce)
+ TEST(HololinkAdapterSingletons, ReactorCallbackEmitsLog)
+ {
+     using hololink::module::Adapter;
  
--install(TARGETS emulationroce
-+install(TARGETS emulation_host emulationroce
-     EXPORT HololinkTargets
-     DESTINATION ${CMAKE_INSTALL_LIBDIR}
-     COMPONENT hololink-emulation)
-diff --git a/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt b/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
-index f21cad8..404fe10 100644
---- a/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
-+++ b/src/hololink/operators/gpu_roce_transceiver/CMakeLists.txt
-@@ -29,7 +29,6 @@ SET(DOCA_PATH /opt/mellanox/doca)
- pkg_search_module(DOCA_GPUNETIO REQUIRED doca-gpunetio)
- pkg_search_module(DOCA_VERBS REQUIRED doca-verbs)
- 
--enable_language(CUDA)
- # Check if DOCA is available
- message(STATUS "DOCA found at ${DOCA_PATH}")
- 
-@@ -40,40 +39,28 @@ add_library(gpu_roce_transceiver STATIC
-   gpu_roce_transceiver_kernel.cu
- )
- 
--set(LOCAL_CUDA_ARCHITECTURES "")
-+# doca-gpunetio requires sm_80+. We don't filter CMAKE_CUDA_ARCHITECTURES (explicit user intent
-+# is respected and an unbuildable arch should fail early at link time) but we warn so the source
-+# of any subsequent doca-gpunetio link error is obvious. "native" is a CMake 3.24+ sentinel
-+# resolved at configure time and is skipped by the numeric check.
-+set(_grt_low_archs "")
- if (DEFINED CMAKE_CUDA_ARCHITECTURES AND NOT CMAKE_CUDA_ARCHITECTURES STREQUAL "")
--  # Keep only architectures >= 80; compare numeric part only (values may be e.g. 80-virtual, 70-real)
--  # architectures < 70 will fail to build/link with doca-gpunetio. doca gpunetio development suggests minimum 80
-   foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
-+    if(arch STREQUAL "native")
-+      message(STATUS "gpu_roce_transceiver: skipped \"native\" arch check against the anticipated doca-gpunetio sm_80 minimum.")
-+      continue()
-+    endif()
-     string(REGEX REPLACE "^([0-9]+).*" "\\1" arch_num "${arch}")
--    if(NOT arch_num LESS 80)
--      list(APPEND LOCAL_CUDA_ARCHITECTURES ${arch})
--    else()
--      message(STATUS "gpu_roce_transceiver: ${arch} compute capability not used when building gpu_roce_transceiver. must be at least 80")
-+    if(arch_num LESS 80)
-+      list(APPEND _grt_low_archs ${arch})
-     endif()
-   endforeach()
- endif()
+-    // Install a capture sink on the host's logger and ensure the
+-    // level lets info lines through. Save the previous values to
+-    // restore at the end.
+-    auto previous_logger = hololink::logging::hsb_logger;
+-    auto previous_level = hololink::logging::hsb_log_level;
+-    hololink::logging::hsb_logger = &capture_logger;
+-    hololink::logging::hsb_log_level = hololink::logging::HSB_LOG_LEVEL_INFO;
 -
--# Default to compute_80 if empty for compatibility across target platforms and doca-gpunetio
--if(LOCAL_CUDA_ARCHITECTURES STREQUAL "")
--  list(APPEND LOCAL_CUDA_ARCHITECTURES 80-virtual)
--  message(STATUS "gpu_roce_transceiver: adding 80-virtual to CUDA_ARCHITECTURES for a minimally compatible build")
--endif()
--
--# If CUDA_NATIVE_ARCH is set, append it to LOCAL_CUDA_ARCHITECTURES; else use -arch=native
--if(NOT "$ENV{CUDA_NATIVE_ARCH}" STREQUAL "")
--  list(APPEND LOCAL_CUDA_ARCHITECTURES "$ENV{CUDA_NATIVE_ARCH}")
--else()
--  # Force native architecture for optimized performance on platform if available
--  # This can actually fail if container nvcc and host driver are different versions
--  # in which case nvcc will default to a significantly older compute capability, which may fail for gpu_roce_transceiver.
--  # if this happens and result is not desired, the build should set CUDA_NATIVE_ARCH in the environment to the desired/native architecture
--  target_compile_options(gpu_roce_transceiver PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:
--    -arch=native
--    >)
-+if(_grt_low_archs)
-+  # Anticipate sm_80 minimum from doca-gpunetio, but do not enforce it here.
-+  message(WARNING "gpu_roce_transceiver: Requested CUDA arch(s) ${_grt_low_archs} below the anticipated sm_80 minimum "
-+    "required by doca-gpunetio; build may fail at link time.")
- endif()
--message(STATUS "gpu_roce_transceiver: build architectures ${LOCAL_CUDA_ARCHITECTURES} and native")
--set_property(TARGET gpu_roce_transceiver PROPERTY CUDA_ARCHITECTURES ${LOCAL_CUDA_ARCHITECTURES})
+-    {
+-        std::lock_guard<std::mutex> guard(g_log_mutex);
+-        g_log_records.clear();
+-    }
++    StderrCapture capture;
  
- # to silence doca api warnings publicly
- target_compile_options(gpu_roce_transceiver PUBLIC -DDOCA_ALLOW_EXPERIMENTAL_API=1)
+     auto module = Adapter::get_adapter().load_module(
+         module_path("hololink_module_singletons_stub_module.so"));
+@@ -81,30 +119,12 @@ TEST(HololinkAdapterSingletons, ReactorCallbackEmitsLog)
+     // Reactor thread should run it shortly after. Wait up to a few
+     // seconds for the marker line to appear.
+     constexpr auto MARKER = "hololink_module_test::singletons-marker";
+-    bool got_marker = false;
+-    {
+-        std::unique_lock<std::mutex> lock(g_log_mutex);
+-        got_marker = g_log_cv.wait_for(lock, std::chrono::seconds(5), []() {
+-            return std::any_of(g_log_records.begin(), g_log_records.end(),
+-                [](const CapturedLog& r) {
+-                    return r.message.find(MARKER) != std::string::npos;
+-                });
+-        });
+-    }
+-    EXPECT_TRUE(got_marker);
+-
+-    // The line arrived through the wrapped sink, so file / function
+-    // are populated by the HSB_LOG_INFO macro in the .so source.
+-    if (got_marker) {
+-        std::lock_guard<std::mutex> guard(g_log_mutex);
+-        const auto record = std::find_if(g_log_records.begin(), g_log_records.end(),
+-            [](const CapturedLog& r) { return r.message.find(MARKER) != std::string::npos; });
+-        ASSERT_NE(record, g_log_records.end());
+-        EXPECT_EQ(record->level, hololink::logging::HSB_LOG_LEVEL_INFO);
+-        EXPECT_NE(record->file, std::string());
+-        EXPECT_NE(record->function, std::string());
+-    }
+-
+-    hololink::logging::hsb_logger = previous_logger;
+-    hololink::logging::hsb_log_level = previous_level;
++    const std::string captured = capture.read_until(MARKER, std::chrono::seconds(5));
++    EXPECT_NE(captured.find(MARKER), std::string::npos);
++
++    // The host logger decorates the line with severity, source, and function.
++    EXPECT_NE(captured.find("INFO"), std::string::npos);
++    EXPECT_NE(captured.find("hololink_module_singletons_stub_module.cpp"),
++        std::string::npos);
++    EXPECT_NE(captured.find("operator()"), std::string::npos);
+ }

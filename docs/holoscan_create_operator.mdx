@@ -939,7 +939,7 @@ Only conditions which the user has explicitly created via `make_condition` can b
 
 A subset of `Condition` types apply to multiple input ports of an operator (e.g. `MultiMessageAvailableCondition` and `MultiMessageAvailableTimeoutCondition`). In this case, rather than using the IOSpec::condition (`holoscan::IOSpec::condition`) method as demonstrated above for setting a condition on a single port, the OperatorSpec::multi_port_condition (`holoscan::OperatorSpec::multi_port_condition`) method should be used to configure a condition across multiple input ports. If an input port's name was included in a `multi_port_condition` call, this will automatically disable the default `MessageAvailableCondition` that would otherwise have been assigned to that port (This means it is not required to explicitly set a `ConditionType::kNone` condition on the input port via `IOSpec::condition` in order to be able to use the port with `multi_port_condition`).
 
-Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message) folder of the repository. An example of `Operator::setup` for a multi-message condition from `multi_message_sum_of_all.cpp` is shown below:
+Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/conditions/multi_message) folder of the repository. An example of `Operator::setup` for a multi-message condition from `multi_message_sum_of_all.cpp` is shown below:
 
 ```cpp
   void setup(OperatorSpec& spec) override {
@@ -1826,7 +1826,7 @@ Only conditions which the user has explicitly constructed with `Fragment.compose
 
 A subset of `Condition` types apply to multiple input ports of an operator (e.g. `MultiMessageAvailableCondition` and `MultiMessageAvailableTimeoutCondition`). In this case, rather than using the IOSpec.condition (`holoscan.core.IOSpec.condition`) method as demonstrated above for setting a condition on a single port, the OperatorSpec.multi_port_condition (`holoscan.core.OperatorSpec.multi_port_condition`) method should be used to configure a condition across multiple input ports. If an input port's name was included in a `multi_port_condition` call, this will automatically disable the default `MessageAvailableCondition` that would otherwise have been assigned to that port (This means it is not required to explicitly set a `ConditionType.NONE` condition on the input port via `IOSpec.condition` in order to be able to use the port with `multi_port_condition`).
 
-Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/conditions/multi_message) folder of the repository. An example of `Operator.setup` for a multi-message condition from `multi_message_sum_of_all.py` is shown below:
+Examples of use of multi-port conditions are given in the [examples/conditions/multi_message/](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/conditions/multi_message) folder of the repository. An example of `Operator.setup` for a multi-message condition from `multi_message_sum_of_all.py` is shown below:
 
 ```python
     def setup(self, spec):
@@ -2005,7 +2005,7 @@ Operator receiving the message, assuming the `outputs` port above is connected t
 
 Some existing operators allow [configuring](/holoscan/sdk-user-guide/using-the-sdk/create-an-application#configuring-an-application) the name of the tensors they send/receive. An example is the `tensors` parameter of `holoscan.operators.HolovizOp`, where the name for each tensor maps to the names of the tensors in the `holoscan.gxf.Entity` (see the `holoviz` entry in [applications/endoscopy_tool_tracking/python/endoscopy_tool_tracking.yaml](https://github.com/nvidia-holoscan/holohub/blob/main/applications/endoscopy_tool_tracking/python/endoscopy_tool_tracking.yaml)).
 
-A complete example of a Python native operator that emits multiple tensors to a downstream C++ operator is available in the [examples/holoviz/python](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/holoviz/python) directory.
+A complete example of a Python native operator that emits multiple tensors to a downstream C++ operator is available in the [examples/holoviz/python](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/holoviz/python) directory.
 
 There is a special serialization code for tensor types for emit/receive of tensor objects over a UCX connection that avoids copying the tensor data to an intermediate buffer. For distributed apps, we cannot just send the Python object as we do between operators in a single fragment app, but instead we need to cast it to `holoscan::Tensor` to use a special zero-copy code path. However, we also transmit a header indicating if the type was originally some other array-like object and attempt to return the same type again on the other side so that the behavior remains more similar to the non-distributed case.
 
@@ -2135,7 +2135,7 @@ To override the properties of the queue used for a given port, the `connector` (
 </Tabs>
 
 
-To learn more about overriding connectors and/or conditions there is a [multi_branch_pipeline](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples/multi_branch_pipeline) example which overrides default conditions to allow two branches of a pipeline to run at different frame rates. There is also an example of increasing the queue sizes available in [this Python queue policy test application](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_with_repeated_emit_on_same_port.py).
+To learn more about overriding connectors and/or conditions there is a [multi_branch_pipeline](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples/multi_branch_pipeline) example which overrides default conditions to allow two branches of a pipeline to run at different frame rates. There is also an example of increasing the queue sizes available in [this Python queue policy test application](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/python/tests/system/test_application_with_repeated_emit_on_same_port.py).
 
 ### Using the Holoscan SDK with Other Libraries
 

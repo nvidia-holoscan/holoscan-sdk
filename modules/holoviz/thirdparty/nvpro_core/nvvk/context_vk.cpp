@@ -517,7 +517,11 @@ bool Context::initDevice(VkPhysicalDevice physical_device, const ContextCreateIn
     deviceCreateChain->pNext = nullptr;
   }
 
-  if (result != VK_SUCCESS) {
+  // Report the VkResult before deinit() discards it. Without this the only failure path out of
+  // initDevice() that says anything is the extension check above (which LOGWs the missing
+  // extension), so a device creation failure reaches the caller completely silent and there is
+  // nothing to distinguish e.g. VK_ERROR_TOO_MANY_OBJECTS from VK_ERROR_DEVICE_LOST.
+  if (NVVK_CHECK(result)) {
     deinit();
     return false;
   }

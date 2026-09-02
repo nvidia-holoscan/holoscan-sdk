@@ -1,0 +1,14 @@
+diff --git a/include/fmt/format.h b/include/fmt/format.h
+index 4a65300..e10dbb7 100644
+--- a/include/fmt/format.h
++++ b/include/fmt/format.h
+@@ -2748,3 +2748,9 @@ class bigint {
+  public:
++#if defined(__NVCC__)
++  // Work around NVCC diagnostic 2417-D with C++17.
++  // See https://github.com/fmtlib/fmt/issues/4756.
++  FMT_CONSTEXPR20 bigint() : exp_(0) {}
++#else
+   FMT_CONSTEXPR bigint() : exp_(0) {}
++#endif
+   explicit bigint(uint64_t n) { assign(n); }

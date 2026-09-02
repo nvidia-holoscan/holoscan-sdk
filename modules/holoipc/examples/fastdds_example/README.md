@@ -4,7 +4,7 @@ This directory is a **Holoscan SDK** sample, not a drop-in copy of the upstream 
 
 **Where to read more**
 
-- Broader Holoscan examples and install layout: [Holoscan by Example](../../../../docs/holoscan_by_example.md) (this sample lives under `modules/holoipc/examples/` in the source tree).
+- Broader Holoscan examples and install layout: [Holoscan by Example](../../../../docs/holoscan_by_example.mdx) (this sample lives under `modules/holoipc/examples/` in the source tree).
 - Generic Fast DDS concepts (participants, readers/writers, listeners, wait-sets, XML profiles): [Fast DDS documentation](https://fast-dds.docs.eprosima.com/).
 
 The sections below focus on **how to run this binary** and **Holoscan IPC / build** notes. For full DDS entity theory, see the eProsima docs above.

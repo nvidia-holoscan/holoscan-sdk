@@ -360,7 +360,7 @@ TEST_F(GeometryLayer, TextClipped) {
 class GeometryLayerWithFont : public TestHeadless {
  protected:
   void SetUp() override {
-    ASSERT_NO_THROW(viz::SetFont("../modules/holoviz/src/fonts/Roboto-Bold.ttf", 12.F));
+    ASSERT_NO_THROW(viz::SetFont("tests/holoviz/fonts/Roboto-Bold.ttf", 12.F));
 
     // call base class
     ::TestHeadless::SetUp();

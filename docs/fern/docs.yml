@@ -4,15 +4,13 @@
 # `python3 docs/scripts/fix_generated_library_mdx.py`
 # (fixes ParamField type ampersands, default=""..."" string literals, description angle brackets).
 # See https://buildwithfern.com/learn/docs/api-references/library-reference
+# holoscan-tokenless-library:begin
 libraries:
   holoscan-cpp:
-    # `fern docs md generate` has Fern parse this configured public repository on its
-    # servers and materializes the raw MDX in output.path. `build_holoscan_docs.py`
-    # then post-processes those local files in place before validation or publication.
-    # A documentation preview ID does not select a Git ref.
+    # Generate from the selected checkout so release and archive API pages match
+    # the same source revision as the user guide.
     input:
-      git: https://github.com/nvidia-holoscan/holoscan-sdk
-      subpath: include/holoscan
+      path: ../../include/holoscan
     output:
       path: ./generated/api-reference/cpp
     lang: cpp
@@ -23,6 +21,7 @@ libraries:
  #   output:
  #     path: ./docs/generated/api-reference/python
  #   lang: python
+# holoscan-tokenless-library:end
 
 instances:
   - url: nvidia-holoscan.docs.buildwithfern.com/holoscan/sdk-user-guide
@@ -39,12 +38,19 @@ title: Holoscan SDK Documentation
 
 versions:
   # holoscan-version-sync:begin
-  - display-name: 4.5 (Latest)
+  - display-name: 4.6 (Latest)
   # holoscan-version-sync:end
     path: ./index.yml
     availability: ga
+  # Active LTSB line: lightweight version entry that redirects to the hosted
+  # ltsb-2.0 user guide (still maintained separately from the latest release).
+  - display-name: ltsb-2.0
+    path: ./versions/ltsb-2.0.yml
+  # Archived Fern versions are inserted during documentation assembly.
+  # holoscan-archive-versions:begin
+  # holoscan-archive-versions:end
   # "Archives" is a lightweight version entry (top version bar) whose only page
-  # redirects to the previous releases hosted on docs.nvidia.com (Sphinx).
+  # lists previous Holoscan SDK documentation releases (through v4.2.0).
   - display-name: Archives
     path: ./versions/archives.yml
   # To add an older version later:
@@ -95,6 +101,18 @@ logo:
 
 favicon: assets/NVIDIA_symbol.svg
 
+# Send unmatched paths to the docs homepage instead of Fern's 404 page.
+# Prefer explicit `redirects` below for known Sphinx → Fern page moves.
+settings:
+  hide-404-page: true
+  substitute-env-vars: false
+
+# Same GA4 property as HoloHub (nvidia-holoscan.github.io/holohub) and
+# nvidia-holoscan.github.io.
+analytics:
+  ga4:
+    measurement-id: G-S5CCWVS2B6
+
 js:
   - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
     strategy: beforeInteractive
@@ -106,9 +124,144 @@ css:
 
 redirects:
   # Paths are relative to the site root; subpath prefix matches instances + custom-domain.
-  # Legacy HTML URLs used .../path/to/page/index.html; Fern canonical URLs omit index.html.
+  # Legacy Sphinx used flat .../<page>.html (and some .../path/index.html); Fern uses
+  # section/page slugs without index.html.
+  # Generated C++ navigation now exposes only the public Holoscan namespace,
+  # matching v4.4 and later. Preserve moved Holoscan pages and send removed
+  # implementation namespace pages to the public C++ API root.
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/holoscan/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan/:slug*"
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/fmt/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan"
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/nvidia/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan"
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/nvtx3/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan"
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/std/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan"
+  - source: "/holoscan/sdk-user-guide/api-reference/cpp/yaml/:slug*"
+    destination: "/holoscan/sdk-user-guide/api-reference/holoscan"
   - source: "/holoscan/sdk-user-guide/index.html"
     destination: "/holoscan/sdk-user-guide/introduction/overview"
+
+  # --- Introduction (Sphinx flat HTML) ---
+  - source: "/holoscan/sdk-user-guide/overview.html"
+    destination: "/holoscan/sdk-user-guide/introduction/overview"
+  - source: "/holoscan/sdk-user-guide/relevant_technologies.html"
+    destination: "/holoscan/sdk-user-guide/introduction/relevant-technologies"
+  - source: "/holoscan/sdk-user-guide/getting_started.html"
+    destination: "/holoscan/sdk-user-guide/introduction/getting-started"
+
+  # --- Setup ---
+  - source: "/holoscan/sdk-user-guide/sdk_installation.html"
+    destination: "/holoscan/sdk-user-guide/setup/sdk-installation"
+  - source: "/holoscan/sdk-user-guide/sdk_installation"
+    destination: "/holoscan/sdk-user-guide/setup/sdk-installation"
+  - source: "/holoscan/sdk-user-guide/additional_setup.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup"
+  - source: "/holoscan/sdk-user-guide/set_up_gpudirect_rdma.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/enabling-gpu-direct-rdma"
+  - source: "/holoscan/sdk-user-guide/enable_gsync.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/enable-g-sync"
+  - source: "/holoscan/sdk-user-guide/disable_variable_backlight.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/disable-variable-backlight"
+  - source: "/holoscan/sdk-user-guide/enable_exclusive_display.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/enable-exclusive-display"
+  - source: "/holoscan/sdk-user-guide/use_igpu_with_dgpu.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/use-i-gpu-with-d-gpu"
+  - source: "/holoscan/sdk-user-guide/optimize_jetpack.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/optimizing-jet-pack"
+  - source: "/holoscan/sdk-user-guide/deployment_stack.html"
+    destination: "/holoscan/sdk-user-guide/setup/additional-setup/deployment-stack"
+  - source: "/holoscan/sdk-user-guide/third_party_hw_setup.html"
+    destination: "/holoscan/sdk-user-guide/setup/third-party-hardware-setup"
+  - source: "/holoscan/sdk-user-guide/holoscan_sensor_bridge.html"
+    destination: "/holoscan/sdk-user-guide/setup/third-party-hardware-setup/holoscan-sensor-bridge"
+
+  # --- Holoscan CLI ---
+  - source: "/holoscan/sdk-user-guide/holoscan_cli.html"
+    destination: "/holoscan/sdk-user-guide/holoscan-cli/holoscan-cli"
+
+  # --- Using the SDK ---
+  - source: "/holoscan/sdk-user-guide/holoscan_core.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-core"
+  - source: "/holoscan/sdk-user-guide/holoscan_core"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-core"
+  - source: "/holoscan/sdk-user-guide/gpu_resident.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/gpu-resident-execution"
+  - source: "/holoscan/sdk-user-guide/holoscan_by_example.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example"
+  - source: "/holoscan/sdk-user-guide/examples/hello_world.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/hello-world"
+  - source: "/holoscan/sdk-user-guide/examples/ping_simple.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-simple"
+  - source: "/holoscan/sdk-user-guide/examples/ping_custom_op.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-custom-op"
+  - source: "/holoscan/sdk-user-guide/examples/ping_multi_port.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/ping-multi-port"
+  - source: "/holoscan/sdk-user-guide/examples/video_replayer.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer"
+  - source: "/holoscan/sdk-user-guide/examples/video_replayer_distributed.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/video-replayer-distributed"
+  - source: "/holoscan/sdk-user-guide/examples/byom.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/byom"
+  - source: "/holoscan/sdk-user-guide/examples/custom_cuda_kernel_sample.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/holoscan-by-example/custom-cuda-kernel-sample"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_app.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/create-an-application"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_distributed_app.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/create-a-distributed-application"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_operator.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/create-an-operator"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_operator_via_decorator.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/create-an-operator-via-decorator"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_condition.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/create-a-condition"
+  - source: "/holoscan/sdk-user-guide/holoscan_dynamic_flow_control.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/dynamic-flow-control"
+  - source: "/holoscan/sdk-user-guide/holoscan_cuda_stream_handling.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling"
+  - source: "/holoscan/sdk-user-guide/holoscan_logging.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/logging"
+  - source: "/holoscan/sdk-user-guide/holoscan_data_logging.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/data-logging"
+  - source: "/holoscan/sdk-user-guide/holoscan_debugging.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/debugging"
+  - source: "/holoscan/sdk-user-guide/holoscan_create_operator_python_bindings.html"
+    destination: "/holoscan/sdk-user-guide/using-the-sdk/python-operator-bindings"
+
+  # --- Operators / Components / Performance / FAQ / HoloHub ---
+  - source: "/holoscan/sdk-user-guide/holoscan_operators_extensions.html"
+    destination: "/holoscan/sdk-user-guide/operators/operators-and-extensions"
+  - source: "/holoscan/sdk-user-guide/visualization.html"
+    destination: "/holoscan/sdk-user-guide/operators/visualization"
+  - source: "/holoscan/sdk-user-guide/inference.html"
+    destination: "/holoscan/sdk-user-guide/operators/inference"
+  - source: "/holoscan/sdk-user-guide/testing.html"
+    destination: "/holoscan/sdk-user-guide/operators/testing"
+  - source: "/holoscan/sdk-user-guide/video_io_vendor_implementation_guide.html"
+    destination: "/holoscan/sdk-user-guide/operators/video-i-o-vendor-implementation-guide"
+  - source: "/holoscan/sdk-user-guide/components/schedulers.html"
+    destination: "/holoscan/sdk-user-guide/components/schedulers"
+  - source: "/holoscan/sdk-user-guide/components/conditions.html"
+    destination: "/holoscan/sdk-user-guide/components/conditions"
+  - source: "/holoscan/sdk-user-guide/components/resources.html"
+    destination: "/holoscan/sdk-user-guide/components/resources"
+  - source: "/holoscan/sdk-user-guide/components/analytics.html"
+    destination: "/holoscan/sdk-user-guide/components/analytics"
+  - source: "/holoscan/sdk-user-guide/performance_considerations.html"
+    destination: "/holoscan/sdk-user-guide/performance/performance-considerations"
+  - source: "/holoscan/sdk-user-guide/flow_tracking.html"
+    destination: "/holoscan/sdk-user-guide/performance/flow-tracking"
+  - source: "/holoscan/sdk-user-guide/gxf_job_statistics.html"
+    destination: "/holoscan/sdk-user-guide/performance/gxf-job-statistics"
+  - source: "/holoscan/sdk-user-guide/nsight_profiling.html"
+    destination: "/holoscan/sdk-user-guide/performance/nsight-profiling"
+  - source: "/holoscan/sdk-user-guide/holohub_overview.html"
+    destination: "/holoscan/sdk-user-guide/holo-hub/holo-hub-overview"
+  - source: "/holoscan/sdk-user-guide/hsdk_faq.html"
+    destination: "/holoscan/sdk-user-guide/faq/faq"
+
   # AJA / Emergent setup moved to HoloHub (Holoscan SDK v3.0+).
   - source: "/holoscan/sdk-user-guide/setup/third-party-hardware-setup/aja-setup"
     destination: "https://nvidia-holoscan.github.io/holohub/operators/aja_source/"

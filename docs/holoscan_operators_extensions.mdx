@@ -44,7 +44,7 @@ If you are new to Holoscan, a common starting pipeline is:
 | **PingTensorTxOp** | Emit synthetic tensor payloads to validate tensor paths and operator interoperability.                                                                                                                         | C++ (`holoscan::ops::PingTensorTxOp`)/Python (`holoscan.operators.PingTensorTxOp`) |
 | **PingTensorRxOp** | Receive synthetic tensor payloads for debugging C++/Python tensor flow behavior.                                                                                                                               | C++ (`holoscan::ops::PingTensorRxOp`)/Python (`holoscan.operators.PingTensorRxOp`) |
 
-For complete, end-to-end application examples that combine these operators, see the [Holoscan SDK examples](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/examples#holoscan-sdk-examples) and the [Holohub repository](https://github.com/nvidia-holoscan/holohub).
+For complete, end-to-end application examples that combine these operators, see the [Holoscan SDK examples](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/examples#holoscan-sdk-examples) and the [Holohub repository](https://github.com/nvidia-holoscan/holohub).
 
 Given an instance of an operator class, you can print a human-readable description of its specification to inspect the inputs, outputs, and parameters that can be configured on that operator class:
 
@@ -69,7 +69,7 @@ Given an instance of an operator class, you can print a human-readable descripti
 
 <Note>
 
-The Holoscan SDK uses meta-programming with templating and `std::any` to support arbitrary data types. Because of this, some type information (and therefore values) might not be retrievable by the `description` API. If more details are needed, we recommend inspecting the list of `Parameter` members in the operator [header](https://github.com/nvidia-holoscan/holoscan-sdk/blob/main/include/holoscan/operators) to identify their type.
+The Holoscan SDK uses meta-programming with templating and `std::any` to support arbitrary data types. Because of this, some type information (and therefore values) might not be retrievable by the `description` API. If more details are needed, we recommend inspecting the list of `Parameter` members in the operator [header](https://github.com/nvidia-holoscan/holoscan-sdk/tree/main/include/holoscan/operators) to identify their type.
 
 </Note>
 

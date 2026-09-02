@@ -863,6 +863,7 @@ RUN cmake --install Fast-DDS/build --prefix ${FASTDDS_INSTALL_DIR}
 #
 FROM build-tools AS fastdds-gen-builder
 ARG FASTDDS_GEN_VERSION=4.3.0
+ARG FAST_DDS_GEN_MAVEN_MIRROR_URL=""
 ARG MAX_PROC
 ARG TARGETARCH
 ARG GPU_TYPE
@@ -877,11 +878,34 @@ WORKDIR /opt/fastdds-gen/build
 RUN git clone --depth 1 --branch v${FASTDDS_GEN_VERSION} \
     https://github.com/eProsima/Fast-DDS-Gen.git Fast-DDS-Gen
 WORKDIR /opt/fastdds-gen/build/Fast-DDS-Gen
-# Gradle resolves remote Java dependencies at build time. Use a Docker cache mount
-# to reduce network traffic on container rebuilds.
+# Gradle resolves remote Java dependencies at build time. Callers can select a
+# mirror without adding its URL to this Dockerfile. The init.d location also
+# applies the setting to Fast-DDS-Gen's nested IDL-Parser build.
+# See https://docs.gradle.org/9.2.1/userguide/init_scripts.html
 RUN --mount=type=cache,target=/root/.gradle,sharing=locked,id=holoscan-sdk-gradle-cache-$TARGETARCH \
+    set -euo pipefail; \
+    gradle_init_script="/root/.gradle/init.d/holoscan-maven-mirror.gradle"; \
+    trap 'rm -f "${gradle_init_script}"' EXIT; \
+    rm -f "${gradle_init_script}"; \
+    if [[ -n "${FAST_DDS_GEN_MAVEN_MIRROR_URL}" ]]; then \
+        mkdir -p "$(dirname "${gradle_init_script}")"; \
+        printf '%s\n' \
+            'beforeSettings { settings ->' \
+            '    settings.dependencyResolutionManagement.repositories {' \
+            '        clear()' \
+            '        maven {' \
+            '            name = "holoscanMavenMirror"' \
+            '            url = uri(System.getenv("FAST_DDS_GEN_MAVEN_MIRROR_URL"))' \
+            '        }' \
+            '    }' \
+            '    settings.dependencyResolutionManagement.repositoriesMode.set(' \
+            '        RepositoriesMode.PREFER_SETTINGS' \
+            '    )' \
+            '}' \
+            > "${gradle_init_script}"; \
+    fi; \
     ./gradlew assemble --no-daemon -Dorg.gradle.parallel=true \
-    -Dorg.gradle.workers.max=$(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
+        -Dorg.gradle.workers.max=$(( `nproc` > ${MAX_PROC} ? ${MAX_PROC} : `nproc` ))
 RUN mkdir -p "${FAST_DDS_GEN_INSTALL_DIR}/bin" \
     && cp build/libs/fastddsgen.jar "${FAST_DDS_GEN_INSTALL_DIR}/" \
     && printf '#!/bin/sh\nexec java -jar "%s/fastddsgen.jar" "$@"\n' "${FAST_DDS_GEN_INSTALL_DIR}" \

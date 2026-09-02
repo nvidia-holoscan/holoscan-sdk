@@ -1,4 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # markdownlint configuration for public/ (examples, READMEs, docs)
 # https://github.com/DavidAnson/markdownlint/blob/main/doc/Rules.md
 MD013:

@@ -7,6 +7,9 @@ generated/
 # Fern CLI local state (caches, `fern docs diff` output, etc.)
 .fern/
 
+# Temporary local Fern project without generated API navigation
+.fern-tokenless-*/
+
 # SDK local preview output (`fern generate --preview`)
 .preview/
 

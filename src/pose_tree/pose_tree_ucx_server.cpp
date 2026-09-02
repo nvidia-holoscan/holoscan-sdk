@@ -244,7 +244,7 @@ void PoseTreeUCXServer::ServerImpl::ClientSession::handle_delta_message(
                      static_cast<int>(delta_msg.delta_type));
   switch (delta_msg.delta_type) {
     case DELTA_FRAME_CREATED: {
-      frame_name_str = delta_msg.data.frame_data.name;
+      frame_name_str = deserialize_frame_name(delta_msg.data.frame_data.name);
       const auto client_frame_id = delta_msg.data.frame_data.frame_id;
       frame_id = client_frame_id;
 

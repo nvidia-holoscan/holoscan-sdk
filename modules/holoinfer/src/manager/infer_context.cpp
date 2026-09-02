@@ -230,21 +230,10 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   std::lock_guard<std::mutex> lock(g_managers_mutex);
   InferStatus status = InferStatus();
 
-  if (g_managers.size() == 0) {
-    status.set_code(holoinfer_code::H_ERROR);
-    status.set_message("Inference manager, Error: Inference Manager not initiated");
-    return status;
-  }
-
   try {
     auto multi_model_map = inference_specs->get_path_map();
 
     if (multi_model_map.size() == 0) {
-      if (g_managers.find("current_manager") != g_managers.end()) {
-        g_managers.at("current_manager").reset();
-        g_managers.erase("current_manager");
-      }
-
       status.set_code(holoinfer_code::H_ERROR);
       status.set_message("Inference manager, Error: Multi modal map cannot be empty in setup.");
       return status;
@@ -255,14 +244,7 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       unique_id_name += model_name + "_[]_";
     }
 
-    unique_id_ = unique_id_name;
-    HOLOSCAN_LOG_INFO("Inference context ID: {}", unique_id_);
-
     if (g_managers.find(unique_id_name) != g_managers.end()) {
-      if (g_managers.find("current_manager") != g_managers.end()) {
-        g_managers.erase("current_manager");
-      }
-
       status.set_code(holoinfer_code::H_ERROR);
       status.set_message(
           "Inference manager, Error: A manager with the same unique ID already exists.");
@@ -272,26 +254,16 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
       return status;
     }
 
-    if (g_managers.find("current_manager") == g_managers.end()) {
-      status.set_code(holoinfer_code::H_ERROR);
-      status.set_message("Inference manager, Error: Current Manager not initialized.");
-      HOLOSCAN_LOG_ERROR("Inference manager setup error: Inference context not initialized.");
-      return status;
-    }
+    HOLOSCAN_LOG_INFO("Inference context ID: {}", unique_id_name);
+    // Configure this context's manager while holding the map lock, then publish it only after
+    // setup succeeds. No shared placeholder is visible to another concurrently starting context.
+    auto manager = std::make_shared<ManagerInfer>();
+    status = manager->set_inference_params(inference_specs);
 
-    auto node = g_managers.extract("current_manager");
-    node.key() = std::move(unique_id_name);
-    g_managers.insert(std::move(node));
-
-    g_manager = g_managers.at(unique_id_);
-    status = g_manager->set_inference_params(inference_specs);
-
-    // Cache the resolved manager pointer under the same lock that created the
-    // binding, so subsequent execute_inference() / get_output_dimensions() calls can use the
-    // cached pointer with no further synchronization. See the InferContext header for
-    // thread-safety preconditions.
     if (status.get_code() == holoinfer_code::H_SUCCESS) {
-      cached_manager_ = g_manager;
+      unique_id_ = std::move(unique_id_name);
+      cached_manager_ = manager;
+      g_managers.emplace(unique_id_, std::move(manager));
     }
   } catch (const std::exception& e) {
     status.set_code(holoinfer_code::H_ERROR);
@@ -302,20 +274,7 @@ InferStatus InferContext::set_inference_params(std::shared_ptr<InferenceSpecs>& 
   return status;
 }
 
-// Moved from the old infer_manager.cpp.
-InferContext::InferContext() {
-  std::lock_guard<std::mutex> lock(g_managers_mutex);
-  try {
-    if (g_managers.find("current_manager") != g_managers.end()) {
-      HOLOSCAN_LOG_WARN("Inference context exists, cleaning up");
-      g_managers.at("current_manager").reset();
-      g_managers.erase("current_manager");
-    }
-    g_managers.insert({"current_manager", std::make_shared<ManagerInfer>()});
-  } catch (const std::bad_alloc&) {
-    throw;
-  }
-}
+InferContext::InferContext() = default;
 
 InferContext::~InferContext() {
   std::lock_guard<std::mutex> lock(g_managers_mutex);

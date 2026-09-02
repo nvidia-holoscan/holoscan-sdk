@@ -17,6 +17,27 @@
 // TRT backend — basic error conditions
 // =============================================================================
 
+TEST_F(HoloInferTests, ContextsHaveIndependentManagerSetupState) {
+  backend = "unsupported";
+  setup_specifications();
+  auto first_specs = inference_specs_;
+
+  model_path_map = {{"other_model", model_folder + "identity_model.onnx"}};
+  setup_specifications();
+  auto second_specs = inference_specs_;
+
+  HoloInfer::InferContext first_context;
+  HoloInfer::InferContext second_context;
+
+  const auto first_status = first_context.set_inference_params(first_specs);
+  const auto second_status = second_context.set_inference_params(second_specs);
+
+  EXPECT_EQ(first_status.get_code(), HoloInfer::holoinfer_code::H_ERROR);
+  EXPECT_EQ(second_status.get_code(), HoloInfer::holoinfer_code::H_ERROR);
+  EXPECT_NE(first_status.get_message().find("unsupported does not exist"), std::string::npos);
+  EXPECT_NE(second_status.get_message().find("unsupported does not exist"), std::string::npos);
+}
+
 TEST_F(HoloInferTests, TRT_EmptyInputData) {
   backend = "trt";
   auto status = prepare_for_inference();

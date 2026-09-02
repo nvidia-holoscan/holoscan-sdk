@@ -123,12 +123,14 @@ navigation:
       - page: Ai Skills
         path: ../ai_skills.mdx
 
+# holoscan-tokenless-api-navigation:begin
   - section: API reference
     availability: beta
     contents:
       - folder: ./generated/api-reference/cpp/holoscan
         title: C++ API
         collapsed: true
+# holoscan-tokenless-api-navigation:end
 
   - section: Performance
     contents:

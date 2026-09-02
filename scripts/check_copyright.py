@@ -29,7 +29,7 @@ sys.path.append(os.path.normpath(os.path.join(SCRIPT_DIR, "../scripts")))
 import gitutils  # noqa: E402
 
 FilesToCheck = [
-    re.compile(r"[.](cmake|cpp|css|cu|cuh|h|hpp|sh|pxd|py|pyx|yaml)$"),
+    re.compile(r"[.](cmake|cpp|css|cu|cuh|h|hpp|idl|sh|pxd|py|pyx|yaml)$"),
     re.compile(r"CMakeLists[.]txt$"),
     re.compile(r"Dockerfile$"),
     re.compile(r"[.]dockerfile$"),
@@ -38,7 +38,9 @@ FilesToCheck = [
     re.compile(r"[.]flake8[.]cython$"),
     re.compile(r"meta[.]yaml$"),
 ]
-ExemptFiles = ["FindEigen3.cmake"]
+# Third-party-derived source remains in scope for generic SPDX metadata. NVIDIA year policy is
+# applied only when a file carries an NVIDIA notice, preserving upstream ownership distinctions.
+ExemptFiles = []
 
 # this will break starting at year 10000, which is probably OK :)
 CheckSimple = re.compile(
@@ -64,11 +66,29 @@ APACHE_BOILERPLATE_LINES = [
     "limitations under the License.",
 ]
 
+NVIDIA_PROPRIETARY_BOILERPLATE_LINES = [
+    "NVIDIA CORPORATION, its affiliates and licensors retain all intellectual",
+    "property and proprietary rights in and to this material, related",
+    "documentation and any modifications thereto. Any use, reproduction,",
+    "disclosure or distribution of this material and related documentation",
+    "without an express license agreement from NVIDIA CORPORATION or",
+    "its affiliates is strictly prohibited.",
+]
+
 SPDX_COPYRIGHT_RE = (
     r"SPDX-FileCopyrightText: Copyright \(c\) [^\n]+ NVIDIA CORPORATION & AFFILIATES\. "
     r"All rights reserved\."
 )
 SPDX_LICENSE_RE = r"SPDX-License-Identifier: Apache-2\.0"
+
+SPDX_FILE_COPYRIGHT_LINE_RE = re.compile(r"SPDX-FileCopyrightText:[ \t]*\S[^\n]*")
+SPDX_LICENSE_IDENTIFIER_LINE_RE = re.compile(
+    r"SPDX-License-Identifier:[ \t]*(?P<expression>\S[^\n]*)"
+)
+NVIDIA_PROPRIETARY_LICENSE_RE = re.compile(
+    r"(?<![A-Za-z0-9.-])LicenseRef-NvidiaProprietary(?![A-Za-z0-9.-])",
+    re.IGNORECASE,
+)
 
 
 def _boilerplate_line_re(text):
@@ -107,6 +127,19 @@ def _block_comment_header(start, prefix, end):
         _comment_line(prefix, line) for line in APACHE_BOILERPLATE_LINES
     )
     return re.compile(spdx + boilerplate + rf"[ \t]*{re.escape(end.strip())}", re.MULTILINE)
+
+
+def _nvidia_proprietary_block_header():
+    prefix = r"[ \t]*\*[ \t]*"
+    spdx = (
+        rf"(?P<spdx>/\*!?\n"
+        rf"{prefix}{SPDX_COPYRIGHT_RE}\n"
+        rf"{prefix}SPDX-License-Identifier:[ \t]*[^\n]+\n)"
+    )
+    boilerplate = rf"{prefix}[ \t]*\n" + "".join(
+        _comment_line(prefix, line) for line in NVIDIA_PROPRIETARY_BOILERPLATE_LINES
+    )
+    return re.compile(spdx + boilerplate + r"[ \t]*\*/", re.MULTILINE)
 
 
 def _html_comment_header():
@@ -154,6 +187,7 @@ LongHeaderPatterns = [
     (_html_comment_header(), r"\g<spdx>-->"),
     (_docstring_header('"""'), r"\g<spdx>"),
     (_docstring_header(chr(39) * 3), r"\g<spdx>"),
+    (_nvidia_proprietary_block_header(), r"\g<spdx> */"),
 ]
 
 PREPROCESSOR_DIRECTIVE_RE = re.compile(
@@ -170,7 +204,15 @@ def check_this_file(f):
     for exempt in ExemptFiles:
         if exempt.search(f):
             return False
-    return any(checker.search(f) for checker in FilesToCheck)
+    if any(checker.search(f) for checker in FilesToCheck):
+        return True
+    if not os.path.splitext(f)[1]:
+        try:
+            with open(f, "rb") as fp:
+                return fp.read(2) == b"#!"
+        except OSError:
+            return False
+    return False
 
 
 def get_copyright_years(line):
@@ -311,60 +353,100 @@ def _deduplicate_files(paths):
     return out
 
 
-def check_copyright(f, update_current_year):
+def check_copyright(f, update_current_year, reject_nvidia_proprietary=False):
     """
-    Checks for copyright headers and their years
+    Checks for SPDX metadata and NVIDIA copyright years in the leading header.
     """
     errs = []
     this_year = datetime.datetime.now().year
-    line_num = 0
-    cr_found = False
+    nvidia_copyright_found = False
     year_matched = False
+    year_errors = []
     with open(f, encoding="utf-8") as fp:
         contents = fp.read()
     shortened_contents, shortened_count = shorten_license_header(contents)
     check_contents = shortened_contents if update_current_year else contents
     lines = check_contents.splitlines(keepends=True)
-    for line in lines:
-        line_num += 1
+    header_end = _header_region_end(check_contents)
+    header_contents = check_contents[:header_end]
+    license_expressions = [
+        match.group("expression").strip()
+        for match in SPDX_LICENSE_IDENTIFIER_LINE_RE.finditer(header_contents)
+    ]
+
+    if not SPDX_FILE_COPYRIGHT_LINE_RE.search(header_contents):
+        errs.append(
+            [
+                f,
+                0,
+                "SPDX-FileCopyrightText missing from leading header (manual fix required)",
+                None,
+            ]
+        )
+    if not SPDX_LICENSE_IDENTIFIER_LINE_RE.search(header_contents):
+        errs.append(
+            [
+                f,
+                0,
+                "SPDX-License-Identifier missing from leading header (manual fix required)",
+                None,
+            ]
+        )
+    elif len(license_expressions) > 1:
+        errs.append(
+            [
+                f,
+                0,
+                "Multiple SPDX-License-Identifier tags in leading header; combine licenses "
+                "into one SPDX expression (manual fix required)",
+                None,
+            ]
+        )
+
+    for line_num, line in enumerate(lines, start=1):
+        if line_num > header_contents.count("\n") + 1:
+            break
         start, end = get_copyright_years(line)
         if start is None:
             continue
-        cr_found = True
+        nvidia_copyright_found = True
         if start > end:
-            e = [
-                f,
-                line_num,
-                "First year after second year in the copyright header (manual fix required)",
-                None,
-            ]
-            errs.append(e)
+            year_errors.append(
+                [
+                    f,
+                    line_num,
+                    "First year after second year in the copyright header (manual fix required)",
+                    None,
+                ]
+            )
         if this_year < start or this_year > end:
             e = [f, line_num, "Current year not included in the copyright header", None]
             if this_year < start:
                 e[-1] = replace_current_year(line, this_year, end)
             if this_year > end:
                 e[-1] = replace_current_year(line, start, this_year)
-            errs.append(e)
+            year_errors.append(e)
         else:
             year_matched = True
-    # copyright header itself not found
-    if not cr_found:
-        e = [
-            f,
-            0,
-            "Copyright header missing or formatted incorrectly (manual fix required)",
-            None,
-        ]
-        errs.append(e)
-    # even if the year matches a copyright header, make the check pass
-    if year_matched:
-        errs = []
+    if nvidia_copyright_found and not year_matched:
+        errs.extend(year_errors)
+    if reject_nvidia_proprietary and any(
+        NVIDIA_PROPRIETARY_LICENSE_RE.search(expression) for expression in license_expressions
+    ):
+        errs.append(
+            [
+                f,
+                0,
+                "NVIDIA proprietary SPDX license is not allowed in public source "
+                "(manual licensing review required)",
+                None,
+            ]
+        )
     if shortened_count > 0 and not update_current_year:
         e = [
             f,
             0,
-            "Deprecated long Apache boilerplate header detected "
+            "Deprecated verbose license boilerplate header detected "
             f"({shortened_count} header(s)); run with --update-current-year",
             None,
         ]
@@ -401,6 +483,11 @@ def get_all_files_under_dir(root):
 def _normalize_repo_path(path):
     """Absolute, resolved path for stable set comparisons with git output."""
     return os.path.normcase(os.path.normpath(os.path.abspath(os.path.realpath(path))))
+
+
+def _relative_repo_path(path):
+    """Return a slash-separated path relative to the repository working directory."""
+    return os.path.relpath(_normalize_repo_path(path), os.getcwd()).replace(os.sep, "/")
 
 
 def expand_input_paths(paths):
@@ -513,7 +600,7 @@ def check_copyright_main():
             "with REF...HEAD when origin/main or main exists, else origin/release/latest or "
             "release/latest; if neither exists, all passed paths are checked. Normal commits only "
             "pass staged files, so auto-intersect is skipped. Override with --intersect-since-ref "
-            "or HOLOSCAN_COPYRIGHT_BASE_REF."
+            "or HOLOSCAN_COPYRIGHT_BASE_REF; use --full-scan to disable intersection."
         )
     )
     argparser.add_argument(
@@ -545,12 +632,25 @@ def check_copyright_main():
         help="Intersect explicit paths with git three-dot diff REF...HEAD (overrides env).",
     )
     argparser.add_argument(
+        "--full-scan",
+        action="store_true",
+        help="Check every explicitly passed path, ignoring base-ref and automatic intersection.",
+    )
+    argparser.add_argument(
         "--exclude",
         dest="exclude",
         action="append",
         required=False,
         default=[],
         help=("Exclude the paths specified (regexp). Can be specified multiple times."),
+    )
+    argparser.add_argument(
+        "--reject-nvidia-proprietary-path",
+        dest="reject_nvidia_proprietary_paths",
+        action="append",
+        default=[],
+        metavar="REGEX",
+        help="Reject LicenseRef-NvidiaProprietary for paths matching REGEX. Repeatable.",
     )
     argparser.add_argument(
         "paths",
@@ -560,9 +660,14 @@ def check_copyright_main():
     )
 
     args = argparser.parse_args()
+    if args.full_scan and (args.git_modified_only or args.intersect_since_ref):
+        argparser.error("--full-scan cannot be combined with an explicit git diff option")
     try:
         ExemptFiles = ExemptFiles + [pathName for pathName in args.exclude]
         ExemptFiles = [re.compile(file) for file in ExemptFiles]
+        reject_nvidia_proprietary_paths = [
+            re.compile(pattern) for pattern in args.reject_nvidia_proprietary_paths
+        ]
     except re.error as reException:
         print("Regular expression error:")
         print(reException)
@@ -584,8 +689,13 @@ def check_copyright_main():
         else:
             all_files = modified_files
     else:
-        base_ref = _explicit_intersect_base_ref(args)
-        if not base_ref and had_input_paths and not _passed_paths_are_subset_of_staged(all_files):
+        base_ref = None if args.full_scan else _explicit_intersect_base_ref(args)
+        if (
+            not args.full_scan
+            and not base_ref
+            and had_input_paths
+            and not _passed_paths_are_subset_of_staged(all_files)
+        ):
             base_ref = _auto_intersect_base_ref()
         if base_ref:
             changed = gitutils.changed_files_in_ref_range(base_ref, "HEAD", absolute_path=True)
@@ -594,7 +704,21 @@ def check_copyright_main():
     copyright_files = [f for f in all_files if check_this_file(f)]
     long_header_files = [f for f in all_files if has_long_license_header(f)]
     files = _deduplicate_files(copyright_files + long_header_files)
-    errors = tuple(itertools.chain(*[check_copyright(f, args.update_current_year) for f in files]))
+    errors = tuple(
+        itertools.chain(
+            *[
+                check_copyright(
+                    f,
+                    args.update_current_year,
+                    reject_nvidia_proprietary=any(
+                        pattern.search(_relative_repo_path(f))
+                        for pattern in reject_nvidia_proprietary_paths
+                    ),
+                )
+                for f in files
+            ],
+        )
+    )
     if errors:
         print("Copyright headers incomplete in some of the files!")
         for file_name, line_no, err_msg, _ in errors:

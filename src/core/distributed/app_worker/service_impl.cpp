@@ -5,6 +5,8 @@
 
 #include "service_impl.hpp"
 
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -28,10 +30,23 @@ grpc::Status AppWorkerServiceImpl::GetAvailablePorts(
 
   HOLOSCAN_LOG_INFO("Number of ports requested: {}", request->number_of_ports());
 
+  constexpr uint32_t kMaxPortNumber = std::numeric_limits<uint16_t>::max();
+  constexpr uint64_t kNetworkPortDomainSize = static_cast<uint64_t>(kMaxPortNumber) + 1;
+  if (request->min_port() > request->max_port() || request->max_port() > kMaxPortNumber) {
+    return {grpc::StatusCode::INVALID_ARGUMENT, "Invalid network port range"};
+  }
+  if (request->number_of_ports() > kNetworkPortDomainSize) {
+    return {grpc::StatusCode::INVALID_ARGUMENT,
+            "Requested port count exceeds the network port domain"};
+  }
+
   // Create a vector of uint32_t from the used_ports
   std::vector<int> used_ports;
   used_ports.reserve(request->used_ports_size());
   for (const auto& port : request->used_ports()) {
+    if (port > kMaxPortNumber) {
+      return {grpc::StatusCode::INVALID_ARGUMENT, "Used port is outside the valid range"};
+    }
     used_ports.push_back(port);
   }
 

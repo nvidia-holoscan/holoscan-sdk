@@ -19,6 +19,41 @@ ReadOnlyBuffer: TypeAlias = bytes
 WriteableBuffer: TypeAlias = bytearray | memoryview
 ReadableBuffer: TypeAlias = ReadOnlyBuffer | WriteableBuffer
 
+MAX_DESERIALIZED_BYTES_PER_ELEMENT = 16
+MAX_DESERIALIZED_TENSOR_BYTES = 1 << 30  # 1 GiB, matching GXF.
+
+
+def _remaining_bytes(reader: BufferedIOBase, end_offset: int = None) -> int:
+    """Return readable bytes without changing the current file position."""
+    current_offset = reader.tell()
+    file_size = get_file_size(reader)
+    if end_offset is None:
+        end_offset = file_size
+    elif end_offset > file_size:
+        raise ValueError(f"Declared data ends at offset {end_offset}, beyond file size {file_size}")
+    if current_offset > end_offset:
+        raise ValueError(f"Read offset {current_offset} is beyond declared end offset {end_offset}")
+    return end_offset - current_offset
+
+
+def _read_exact(
+    reader: BufferedIOBase,
+    size: int,
+    description: str,
+    *,
+    end_offset: int = None,
+) -> bytes:
+    """Read exactly ``size`` bytes after checking the bounded input length."""
+    if size < 0:
+        raise ValueError(f"Invalid negative {description} size: {size}")
+    remaining = _remaining_bytes(reader, end_offset)
+    if size > remaining:
+        raise ValueError(f"Truncated {description}: expected {size} bytes, only {remaining} remain")
+    data = reader.read(size)
+    if len(data) != size:
+        raise ValueError(f"Truncated {description}: expected {size} bytes, got {len(data)}")
+    return data
+
 
 class EntityIndex:
     """Serializer/deserializer for the EntityIndex.
@@ -48,8 +83,16 @@ class EntityIndex:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.read(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.read(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def log_time(self) -> int:
@@ -81,24 +124,21 @@ class EntityIndex:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
 
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             log_time, data_size, data_offset = data
         else:
             reader.seek(offset, whence)
-            buffer = reader.read(self.HEADER_SIZE)
-            if len(buffer) < self.HEADER_SIZE:
-                raise ValueError(
-                    f"GXF index file is empty or truncated: expected "
-                    f"{self.HEADER_SIZE} bytes, got {len(buffer)}. "
-                    "The recording may contain no entities."
-                )
+            buffer = _read_exact(
+                reader, self.HEADER_SIZE, "GXF entity index", end_offset=end_offset
+            )
             header_data = self.HEADER_STRUCT.unpack(buffer)
 
             log_time = header_data[0]
@@ -170,8 +210,16 @@ class EntityHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.deserialize(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def serialized_size(self) -> int:
@@ -208,14 +256,15 @@ class EntityHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
 
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             (
                 serialized_size,
                 checksum,
@@ -226,7 +275,9 @@ class EntityHeader:
             ) = data
         elif reader:
             reader.seek(offset, whence)
-            buffer = reader.read(self.HEADER_SIZE)
+            buffer = _read_exact(
+                reader, self.HEADER_SIZE, "GXF entity header", end_offset=end_offset
+            )
             header_data = self.HEADER_STRUCT.unpack(buffer)
 
             serialized_size = header_data[0]
@@ -310,8 +361,16 @@ class ComponentHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.deserialize(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def serialized_size(self) -> int:
@@ -336,18 +395,21 @@ class ComponentHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
 
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             serialized_size, tid_hash1, tid_hash2, name_size = data
         elif reader:
             reader.seek(offset, whence)
-            buffer = reader.read(self.HEADER_SIZE)
+            buffer = _read_exact(
+                reader, self.HEADER_SIZE, "GXF component header", end_offset=end_offset
+            )
             header_data = self.HEADER_STRUCT.unpack(buffer)
 
             serialized_size = header_data[0]
@@ -393,6 +455,7 @@ class MemoryStorageType(Enum):
     kHost = 0
     kDevice = 1
     kSystem = 2
+    kCudaManaged = 3
 
 
 class PrimitiveType(Enum):
@@ -407,6 +470,9 @@ class PrimitiveType(Enum):
     kUnsigned64 = 8
     kFloat32 = 9
     kFloat64 = 10
+    kComplex64 = 11
+    kComplex128 = 12
+    kFloat16 = 13
 
 
 PrimitiveType2DType = {
@@ -421,6 +487,9 @@ PrimitiveType2DType = {
     PrimitiveType.kUnsigned64: np.uint64,
     PrimitiveType.kFloat32: np.float32,
     PrimitiveType.kFloat64: np.float64,
+    PrimitiveType.kComplex64: np.complex64,
+    PrimitiveType.kComplex128: np.complex128,
+    PrimitiveType.kFloat16: np.float16,
 }
 
 
@@ -462,8 +531,16 @@ class TensorHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.deserialize(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.deserialize(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def storage_type(self) -> MemoryStorageType:
@@ -491,7 +568,17 @@ class TensorHeader:
 
     @property
     def dtype(self) -> np.dtype:
-        return PrimitiveType2DType[self.element_type]
+        dtype = PrimitiveType2DType[self.element_type]
+        if dtype is None:
+            raise ValueError("Custom GXF tensor element types are not supported")
+        return dtype
+
+    @property
+    def payload_size(self) -> int:
+        size = self.bytes_per_element
+        for dimension in self.dims:
+            size *= dimension
+        return size
 
     def __repr__(self) -> str:
         return f"TensorHeader(storage_type={self.storage_type}, element_type={self.element_type}, bytes_per_element={self.bytes_per_element}, rank={self.rank}, dims={self.dims}, strides={self.strides})"  # noqa
@@ -504,33 +591,71 @@ class TensorHeader:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
 
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             storage_type, element_type, bytes_per_element, rank, dims, strides = data
         elif reader:
             reader.seek(offset, whence)
-            buffer = reader.read(self.HEADER_SIZE)
+            buffer = _read_exact(
+                reader, self.HEADER_SIZE, "GXF tensor header", end_offset=end_offset
+            )
             header_data = self.HEADER_STRUCT.unpack(buffer)
 
-            storage_type = MemoryStorageType(header_data[0])
-            element_type = PrimitiveType(header_data[1])
+            storage_type = header_data[0]
+            element_type = header_data[1]
             bytes_per_element = header_data[2]
             rank = header_data[3]
             dims = header_data[4 : 4 + rank]
             strides = header_data[4 + Shape.kMaxRank : 4 + Shape.kMaxRank + rank]
 
+        try:
+            storage_type = MemoryStorageType(storage_type)
+        except ValueError as error:
+            raise ValueError(f"Invalid GXF tensor storage type: {storage_type}") from error
+        try:
+            element_type = PrimitiveType(element_type)
+        except ValueError as error:
+            raise ValueError(f"Invalid GXF tensor element type: {element_type}") from error
+        if rank < 1 or rank > Shape.kMaxRank:
+            raise ValueError(f"Invalid GXF tensor rank {rank}; expected 1 to {Shape.kMaxRank}")
+        if len(dims) != rank or len(strides) != rank:
+            raise ValueError(f"GXF tensor rank {rank} does not match dimensions and strides")
+        if any(dimension <= 0 for dimension in dims):
+            raise ValueError(f"GXF tensor dimensions must be positive: {tuple(dims)}")
+        if bytes_per_element < 1 or bytes_per_element > MAX_DESERIALIZED_BYTES_PER_ELEMENT:
+            raise ValueError(
+                "GXF tensor bytes_per_element "
+                f"{bytes_per_element} is outside the allowed range "
+                f"1 to {MAX_DESERIALIZED_BYTES_PER_ELEMENT}"
+            )
+        dtype = PrimitiveType2DType[element_type]
+        if dtype is not None and bytes_per_element != np.dtype(dtype).itemsize:
+            raise ValueError(
+                "GXF tensor bytes_per_element "
+                f"{bytes_per_element} does not match {element_type.name} size "
+                f"{np.dtype(dtype).itemsize}"
+            )
+        payload_size = bytes_per_element
+        for dimension in dims:
+            payload_size *= dimension
+            if payload_size > MAX_DESERIALIZED_TENSOR_BYTES:
+                raise ValueError(
+                    f"GXF tensor payload exceeds {MAX_DESERIALIZED_TENSOR_BYTES} bytes"
+                )
+
         self._storage_type = storage_type
         self._element_type = element_type
         self._bytes_per_element = bytes_per_element
         self._rank = rank
-        self._dims = dims
-        self._strides = strides
+        self._dims = tuple(dims)
+        self._strides = tuple(strides)
 
         return self
 
@@ -585,8 +710,16 @@ class Tensor:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.read(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.read(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def header(self) -> TensorHeader:
@@ -611,24 +744,44 @@ class Tensor:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             header, array = data
         else:
-            curr_offset = offset
-            header = TensorHeader(buffer=buffer, reader=reader, offset=curr_offset, whence=whence)
-            data_size_in_bytes = header.dims[0] * header.strides[0] * header.bytes_per_element
-            array_data = reader.read(data_size_in_bytes)
+            header = TensorHeader(
+                reader=reader,
+                offset=offset,
+                whence=whence,
+                end_offset=end_offset,
+            )
+            dtype = header.dtype
+            data_size_in_bytes = header.payload_size
+            addressed_size = header.bytes_per_element + sum(
+                (dimension - 1) * stride
+                for dimension, stride in zip(header.dims, header.strides, strict=True)
+            )
+            if addressed_size > data_size_in_bytes:
+                raise ValueError(
+                    "GXF tensor strides address "
+                    f"{addressed_size} bytes, beyond the {data_size_in_bytes}-byte payload"
+                )
+            array_data = _read_exact(
+                reader,
+                data_size_in_bytes,
+                "GXF tensor payload",
+                end_offset=end_offset,
+            )
 
             array = np.ndarray(
-                header.dims[: header.rank],
-                dtype=header.dtype,
-                strides=header.strides[: header.rank],
+                header.dims,
+                dtype=dtype,
+                strides=header.strides,
                 buffer=array_data,
             )
 
@@ -678,8 +831,16 @@ class Entity:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.read(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.read(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def header(self) -> EntityHeader:
@@ -726,23 +887,38 @@ class Entity:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             header, components = data
         else:
             curr_offset = offset
-            header = EntityHeader(buffer=buffer, reader=reader, offset=curr_offset, whence=whence)
+            header = EntityHeader(
+                reader=reader,
+                offset=curr_offset,
+                whence=whence,
+                end_offset=end_offset,
+            )
             curr_offset = reader.tell()
+            remaining = _remaining_bytes(reader, end_offset)
+            minimum_component_size = ComponentHeader.HEADER_SIZE + TensorHeader.HEADER_SIZE
+            if header.component_count > remaining // minimum_component_size:
+                raise ValueError(
+                    f"GXF entity declares {header.component_count} components, "
+                    f"but only {remaining} bytes remain"
+                )
             components = []
             for _ in range(header.component_count):
-                component = Component(buffer=buffer, reader=reader, offset=curr_offset)
-                curr_offset += component.size_in_bytes
+                component = Component(reader=reader, offset=curr_offset, end_offset=end_offset)
+                curr_offset = reader.tell()
                 components.append(component)
+            if end_offset is not None and curr_offset != end_offset:
+                raise ValueError(f"GXF entity has {end_offset - curr_offset} unconsumed bytes")
 
         self._header = header
         self._components = components
@@ -793,8 +969,16 @@ class Component:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ):
-        self.read(data=data, buffer=buffer, reader=reader, offset=offset, whence=whence)
+        self.read(
+            data=data,
+            buffer=buffer,
+            reader=reader,
+            offset=offset,
+            whence=whence,
+            end_offset=end_offset,
+        )
 
     @property
     def size_in_bytes(self) -> int:
@@ -823,25 +1007,38 @@ class Component:
         reader: BufferedIOBase = None,
         offset: int = 0,
         whence: int = os.SEEK_SET,
+        end_offset: int = None,
     ) -> None:
-        if not data and not buffer and not reader:
+        if data is None and buffer is None and reader is None:
             raise ValueError("Either data, buffer or reader must be provided")
-        if buffer:
+        if buffer is not None:
             reader = BytesIO(buffer)
 
-        if data:
+        if data is not None:
             header, name, tensor = data
             header._name_size = len(name)
             assert header.name_size == len(name)
         else:
             curr_offset = offset
             header = ComponentHeader(
-                buffer=buffer, reader=reader, offset=curr_offset, whence=whence
+                reader=reader,
+                offset=curr_offset,
+                whence=whence,
+                end_offset=end_offset,
             )
             curr_offset = reader.tell()
-            name = str(reader.read(header.name_size), "utf-8")
-            curr_offset += header.name_size
-            tensor = Tensor(buffer=buffer, reader=reader, offset=curr_offset)
+            name_data = _read_exact(
+                reader,
+                header.name_size,
+                "GXF component name",
+                end_offset=end_offset,
+            )
+            try:
+                name = name_data.decode("utf-8")
+            except UnicodeDecodeError as error:
+                raise ValueError("GXF component name is not valid UTF-8") from error
+            curr_offset = reader.tell()
+            tensor = Tensor(reader=reader, offset=curr_offset, end_offset=end_offset)
 
         self._header = header
         self._name = name
@@ -926,8 +1123,15 @@ class EntityReader:
         Returns:
             The entity index.
         """
+        num_entities = self.num_entities
+        if index < 0 or index >= num_entities:
+            raise ValueError(f"Entity index {index} is out of range for {num_entities} entities")
         offset = index * EntityIndex.HEADER_SIZE
-        return EntityIndex(reader=self._index_file, offset=offset)
+        return EntityIndex(
+            reader=self._index_file,
+            offset=offset,
+            end_offset=get_file_size(self._index_file),
+        )
 
     def get_entity(self, index: int) -> Entity:
         """Get an entity from the recording.
@@ -938,9 +1142,20 @@ class EntityReader:
         Returns:
             The entity.
         """
-        offset = index * EntityIndex.HEADER_SIZE
-        entity_index = EntityIndex(reader=self._index_file, offset=offset)
-        return Entity(reader=self._entities_file, offset=entity_index.data_offset)
+        entity_index = self.get_entity_index(index)
+        entities_size = get_file_size(self._entities_file)
+        entity_end = entity_index.data_offset + entity_index.data_size
+        if entity_index.data_offset > entities_size or entity_end > entities_size:
+            raise ValueError(
+                "GXF entity index data range "
+                f"[{entity_index.data_offset}, {entity_end}) exceeds entity file size "
+                f"{entities_size}"
+            )
+        return Entity(
+            reader=self._entities_file,
+            offset=entity_index.data_offset,
+            end_offset=entity_end,
+        )
 
     @property
     def num_entities(self) -> int:
@@ -949,7 +1164,13 @@ class EntityReader:
         Returns:
             The number of entities.
         """
-        return get_file_size(self._index_file) // EntityIndex.HEADER_SIZE
+        index_size = get_file_size(self._index_file)
+        if index_size % EntityIndex.HEADER_SIZE:
+            raise ValueError(
+                f"GXF index file size {index_size} is not a multiple of "
+                f"the {EntityIndex.HEADER_SIZE}-byte index record size"
+            )
+        return index_size // EntityIndex.HEADER_SIZE
 
     def get_entities(self) -> Generator[Entity, None, None]:
         """Get all entities from the recording.
@@ -979,6 +1200,11 @@ class EntityReader:
         last_entity_index = self.get_entity_index(num_entities - 1)
         last_timestamp = last_entity_index.log_time
         duration = last_timestamp - first_timestamp
+        if duration <= 0:
+            raise ValueError(
+                "Cannot guess framerate from non-increasing GXF entity timestamps: "
+                f"first={first_timestamp}, last={last_timestamp}"
+            )
         return num_entities * 10**9 / duration
 
     def get_frame(self, index: int) -> np.ndarray:

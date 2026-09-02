@@ -24,47 +24,37 @@ struct codec<ops::HolovizOp::InputSpec::View> {
     size_t total_size = 0;
     auto maybe_size = serialize_trivial_type<float>(view.offset_x_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(view.offset_y_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(view.width_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(view.height_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     bool has_matrix = view.matrix_.has_value();
     maybe_size = serialize_trivial_type<bool>(has_matrix, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     if (has_matrix) {
-      ContiguousDataHeader header;
-      header.size = 16;
-      header.bytes_per_element = sizeof(float);
-      maybe_size = endpoint->write_trivial_type<ContiguousDataHeader>(&header);
-      if (!maybe_size) {
-        return forward_error(maybe_size);
-      }
-      total_size += maybe_size.value();
-
-      maybe_size =
-          endpoint->write(view.matrix_.value().data(), header.size * header.bytes_per_element);
+      maybe_size = codec<std::array<float, 16>>::serialize(view.matrix_.value(), endpoint);
       if (!maybe_size) {
         return forward_error(maybe_size);
       }
@@ -77,47 +67,40 @@ struct codec<ops::HolovizOp::InputSpec::View> {
     ops::HolovizOp::InputSpec::View out;
     auto offset_x = deserialize_trivial_type<float>(endpoint);
     if (!offset_x) {
-      forward_error(offset_x);
+      return forward_error(offset_x);
     }
     out.offset_x_ = offset_x.value();
 
     auto offset_y = deserialize_trivial_type<float>(endpoint);
     if (!offset_y) {
-      forward_error(offset_y);
+      return forward_error(offset_y);
     }
     out.offset_y_ = offset_y.value();
 
     auto width = deserialize_trivial_type<float>(endpoint);
     if (!width) {
-      forward_error(width);
+      return forward_error(width);
     }
     out.width_ = width.value();
 
     auto height = deserialize_trivial_type<float>(endpoint);
     if (!height) {
-      forward_error(height);
+      return forward_error(height);
     }
     out.height_ = height.value();
 
     auto maybe_has_matrix = deserialize_trivial_type<bool>(endpoint);
     if (!maybe_has_matrix) {
-      forward_error(maybe_has_matrix);
+      return forward_error(maybe_has_matrix);
     }
     bool has_matrix = maybe_has_matrix.value();
 
     if (has_matrix) {
-      out.matrix_ = std::array<float, 16>{};
-
-      ContiguousDataHeader header;
-      auto header_size = endpoint->read_trivial_type<ContiguousDataHeader>(&header);
-      if (!header_size) {
-        return forward_error(header_size);
+      auto matrix = codec<std::array<float, 16>>::deserialize(endpoint);
+      if (!matrix) {
+        return forward_error(matrix);
       }
-      auto result =
-          endpoint->read(out.matrix_.value().data(), header.size * header.bytes_per_element);
-      if (!result) {
-        return forward_error(result);
-      }
+      out.matrix_ = matrix.value();
     }
     return out;
   }
@@ -151,11 +134,11 @@ struct codec<std::vector<ops::HolovizOp::InputSpec::View>> {
   }
   static expected<std::vector<ops::HolovizOp::InputSpec::View>, RuntimeError> deserialize(
       Endpoint* endpoint) {
-    size_t num_views;
-    auto size = endpoint->read_trivial_type<size_t>(&num_views);
-    if (!size) {
-      return forward_error(size);
+    auto num_views_result = deserialize_trivial_type<size_t>(endpoint);
+    if (!num_views_result) {
+      return forward_error(num_views_result);
     }
+    const size_t num_views = num_views_result.value();
 
     std::vector<ops::HolovizOp::InputSpec::View> data;
     data.reserve(num_views);
@@ -179,96 +162,96 @@ struct codec<ops::HolovizOp::InputSpec> {
     size_t total_size = 0;
     auto maybe_size = codec<std::string>::serialize(spec.tensor_name_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<ops::HolovizOp::InputType>(spec.type_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(spec.opacity_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<int32_t>(spec.priority_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<ops::HolovizOp::ImageFormat>(spec.image_format_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<ops::HolovizOp::YuvModelConversion>(
         spec.yuv_model_conversion_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<ops::HolovizOp::YuvRange>(spec.yuv_range_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size =
         serialize_trivial_type<ops::HolovizOp::ChromaLocation>(spec.x_chroma_location_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size =
         serialize_trivial_type<ops::HolovizOp::ChromaLocation>(spec.y_chroma_location_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = codec<std::vector<float>>::serialize(spec.color_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(spec.line_width_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<float>(spec.point_size_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = codec<std::vector<std::string>>::serialize(spec.text_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size = serialize_trivial_type<ops::HolovizOp::DepthMapRenderMode>(
         spec.depth_map_render_mode_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
     maybe_size =
         codec<std::vector<ops::HolovizOp::InputSpec::View>>::serialize(spec.views_, endpoint);
     if (!maybe_size) {
-      forward_error(maybe_size);
+      return forward_error(maybe_size);
     }
     total_size += maybe_size.value();
 
@@ -279,93 +262,93 @@ struct codec<ops::HolovizOp::InputSpec> {
 
     auto tensor_name = codec<std::string>::deserialize(endpoint);
     if (!tensor_name) {
-      forward_error(tensor_name);
+      return forward_error(tensor_name);
     }
     out.tensor_name_ = tensor_name.value();
 
     auto type = deserialize_trivial_type<ops::HolovizOp::InputType>(endpoint);
     if (!type) {
-      forward_error(type);
+      return forward_error(type);
     }
     out.type_ = type.value();
 
     auto opacity = deserialize_trivial_type<float>(endpoint);
     if (!opacity) {
-      forward_error(opacity);
+      return forward_error(opacity);
     }
     out.opacity_ = opacity.value();
 
     auto priority = deserialize_trivial_type<int32_t>(endpoint);
     if (!priority) {
-      forward_error(priority);
+      return forward_error(priority);
     }
     out.priority_ = priority.value();
 
     auto image_format = deserialize_trivial_type<ops::HolovizOp::ImageFormat>(endpoint);
     if (!image_format) {
-      forward_error(image_format);
+      return forward_error(image_format);
     }
     out.image_format_ = image_format.value();
 
     auto yuv_model_conversion =
         deserialize_trivial_type<ops::HolovizOp::YuvModelConversion>(endpoint);
     if (!yuv_model_conversion) {
-      forward_error(yuv_model_conversion);
+      return forward_error(yuv_model_conversion);
     }
     out.yuv_model_conversion_ = yuv_model_conversion.value();
 
     auto yuv_range = deserialize_trivial_type<ops::HolovizOp::YuvRange>(endpoint);
     if (!yuv_range) {
-      forward_error(yuv_range);
+      return forward_error(yuv_range);
     }
     out.yuv_range_ = yuv_range.value();
 
     auto x_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
     if (!x_chroma_location) {
-      forward_error(x_chroma_location);
+      return forward_error(x_chroma_location);
     }
     out.x_chroma_location_ = x_chroma_location.value();
 
     auto y_chroma_location = deserialize_trivial_type<ops::HolovizOp::ChromaLocation>(endpoint);
     if (!y_chroma_location) {
-      forward_error(y_chroma_location);
+      return forward_error(y_chroma_location);
     }
     out.y_chroma_location_ = y_chroma_location.value();
 
     auto color = codec<std::vector<float>>::deserialize(endpoint);
     if (!color) {
-      forward_error(color);
+      return forward_error(color);
     }
     out.color_ = color.value();
 
     auto line_width = deserialize_trivial_type<float>(endpoint);
     if (!line_width) {
-      forward_error(line_width);
+      return forward_error(line_width);
     }
     out.line_width_ = line_width.value();
 
     auto point_size = deserialize_trivial_type<float>(endpoint);
     if (!point_size) {
-      forward_error(point_size);
+      return forward_error(point_size);
     }
     out.point_size_ = point_size.value();
 
     auto text = codec<std::vector<std::string>>::deserialize(endpoint);
     if (!text) {
-      forward_error(text);
+      return forward_error(text);
     }
     out.text_ = text.value();
 
     auto depth_map_render_mode =
         deserialize_trivial_type<ops::HolovizOp::DepthMapRenderMode>(endpoint);
     if (!depth_map_render_mode) {
-      forward_error(depth_map_render_mode);
+      return forward_error(depth_map_render_mode);
     }
     out.depth_map_render_mode_ = depth_map_render_mode.value();
 
     auto views = codec<std::vector<ops::HolovizOp::InputSpec::View>>::deserialize(endpoint);
     if (!views) {
-      forward_error(views);
+      return forward_error(views);
     }
     out.views_ = views.value();
 
@@ -401,11 +384,11 @@ struct codec<std::vector<ops::HolovizOp::InputSpec>> {
   }
   static expected<std::vector<ops::HolovizOp::InputSpec>, RuntimeError> deserialize(
       Endpoint* endpoint) {
-    size_t num_specs;
-    auto size = endpoint->read_trivial_type<size_t>(&num_specs);
-    if (!size) {
-      return forward_error(size);
+    auto num_specs_result = deserialize_trivial_type<size_t>(endpoint);
+    if (!num_specs_result) {
+      return forward_error(num_specs_result);
     }
+    const size_t num_specs = num_specs_result.value();
 
     std::vector<ops::HolovizOp::InputSpec> data;
     data.reserve(num_specs);

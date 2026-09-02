@@ -7,6 +7,7 @@
 #include <netdb.h>       // for getaddrinfo(), gai_strerror(), freeaddrinfo(), addrinfo
 #include <netinet/in.h>  // for sockaddr_in
 #include <unistd.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>  // for rand()
 #include <cstring>  // for memset()
@@ -20,6 +21,12 @@
 #include <holoscan/logger/logger.hpp>
 
 namespace holoscan {
+
+namespace {
+
+constexpr size_t kNetworkPortDomainSize = 1U << 16;
+
+}  // namespace
 
 class Socket {
  public:
@@ -103,10 +110,11 @@ std::vector<int> get_unused_network_ports(uint32_t num_ports, uint32_t min_port,
                                           const std::vector<int>& prefer_ports) {
   // Add exclude ports to the set
   std::unordered_set<int> used_port_set(used_ports.begin(), used_ports.end());
-  used_port_set.reserve(num_ports + used_ports.size());
 
   std::vector<int> unused_ports;
-  unused_ports.reserve(num_ports);
+  // There are only 65536 distinct TCP/UDP port numbers. Keep an invalid caller-provided count
+  // from turning this convenience reservation into an allocation-amplification vector.
+  unused_ports.reserve(std::min(static_cast<size_t>(num_ports), kNetworkPortDomainSize));
 
   auto try_insert_port = [&unused_ports, num_ports, &used_port_set](int port) {
     if (unused_ports.size() < num_ports && used_port_set.insert(port).second &&
