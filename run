@@ -229,28 +229,56 @@ get_group_id() {
 
 # Version ======================================================================
 
+# True when this run script belongs to a git work tree.
+is_git_repo() {
+    git -C "${TOP}" rev-parse --verify HEAD >/dev/null 2>&1 &&
+        git -C "${TOP}" ls-files --error-unmatch -- "$(basename "${RUN_SCRIPT_FILE}")" \
+            >/dev/null 2>&1
+}
+
 get_git_sha() {
-    echo -n "$(git rev-parse --short=9 HEAD)"
+    is_git_repo || return 1
+    echo -n "$(git -C "${TOP}" rev-parse --short=9 HEAD)"
 }
 
 get_git_branch() {
-    # Can't use "/" in tag, convert to "-"
-    echo -n "$(git branch --show-current | sed 's|/|_|g')"
+    is_git_repo || return 1
+    # Can't use "/" in tag, convert to "_"
+    echo -n "$(git -C "${TOP}" branch --show-current | sed 's|/|_|g')"
 }
 
 get_git_tag() {
-    echo -n "$(git tag --points-at HEAD)"
+    is_git_repo || return 1
+    echo -n "$(git -C "${TOP}" tag --points-at HEAD)"
 }
 
 get_version() {
     echo -n "$(cat $TOP/VERSION)"
 }
 
+get_build_img_tag() {
+    if is_git_repo; then
+        get_git_sha
+    else
+        get_version
+    fi
+}
+
 get_image_tag_flags() {
     local img_name=$1
-    local tags=("latest" $(get_version) $(get_git_branch) $(get_git_tag) $(get_git_sha))
+    local tags=("latest" "$(get_version)")
+    if is_git_repo; then
+        tags+=($(get_git_branch) $(get_git_tag) $(get_git_sha))
+    fi
     local flags=""
+    local seen="|"
     for tag in "${tags[@]}"; do
+        [ -z "${tag}" ] && continue
+        # Deduplicate tags when VERSION matches a git-derived tag.
+        case "${seen}" in
+            *"|${tag}|"*) continue ;;
+        esac
+        seen+="${tag}|"
         flags+="-t ${img_name}:${tag} "
     done
     echo -n "$flags"
@@ -359,14 +387,10 @@ check_system_deps() {
         https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository"
     fi
 
-    if ! groups | grep -e docker -e root -q; then
-        c_echo_err G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user."
-        fatal G "groups" W " doesn't contain 'docker' group. Please add 'docker' group to your user." B '
-    # Create the docker group.
-    sudo groupadd docker
-    # Add your user to the docker group.
-    sudo usermod -aG docker $USER
-    newgrp docker
+    if ! ${HOLOSCAN_DOCKER_EXE} info > /dev/null 2>&1; then
+        fatal G "${HOLOSCAN_DOCKER_EXE}" W " is unavailable or inaccessible. Ensure the Docker daemon is running and this user can access it." B '
+    # Verify Docker access.
+    docker info
     docker run hello-world'
     fi
 
@@ -403,9 +427,12 @@ build_image_desc() { c_echo 'Build the image where we can build the SDK
 This will generate an image will the following tags:
 - `latest`
 - from VERSION file
-- from git branch name
-- from git tag, if any
-- from git commit sha - used in the build and launch methods
+- from git branch name (git checkout only)
+- from git tag, if any (git checkout only)
+- from git commit sha (git checkout only)
+
+The git commit sha is used by the build and launch methods in a git checkout.
+VERSION is used instead for source archives.
 '
 }
 build_image() {
@@ -451,9 +478,6 @@ Arguments:
   --installprefix, -i <install_directory> : Specify the install directory
         Default: install-<arch>
         Associated environment variable: CMAKE_INSTALL_PREFIX
-  --holomq-installprefix <install_directory> : Specify the HoloMQ install directory
-        Default: same as --installprefix
-        Associated environment variable: HOLOMQ_INSTALL_PREFIX
   --reconfigure, -f: Force reconfiguration of the CMake project. By default CMake is only run if
         a CMakeCache.txt does not exist in the build directory or if CMake detects a reconfigure
         is needed.
@@ -500,7 +524,6 @@ build() {
     local build_njobs="${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
     local build_path="${CMAKE_BUILD_PATH:-$(get_build_dir)}"
     local install_prefix="${CMAKE_INSTALL_PREFIX:-$(get_install_dir)}"
-    local holomq_install_prefix="${HOLOMQ_INSTALL_PREFIX:-}"
     local reconfigure=false
     local clean_build=false
     local build_python="${HOLOSCAN_BUILD_PYTHON:-ON}"
@@ -629,11 +652,6 @@ build() {
             shift
             shift
         ;;
-        --holomq-installprefix)
-            holomq_install_prefix="$2"
-            shift
-            shift
-        ;;
         --reconfigure|-f)
             reconfigure=true
             shift
@@ -667,10 +685,6 @@ build() {
         runtime=nvidia
     else
         runtime=runc
-    fi
-
-    if [ -z "${holomq_install_prefix}" ]; then
-        holomq_install_prefix="${install_prefix}"
     fi
 
     # DOCKER PARAMETERS
@@ -730,7 +744,7 @@ build() {
     #   Builds the SDK using the build path at ${build_path} with number of concurrent
     #   jobs given by -j ${build_njobs}
     #
-    img="$(get_build_img_name):$(get_git_sha)"
+    img="$(get_build_img_name):$(get_build_img_tag)"
     config_args="${config_args[@]}"
     run_command $HOLOSCAN_DOCKER_EXE run \
         --rm \
@@ -813,14 +827,57 @@ build() {
             install_component_if_present holomq-iceoryx2-libraries
             # Install iceoryx2 CMake package metadata required by downstream HoloMQ consumers.
             install_component_if_present dev
-            if [ '${holomq_install_prefix}' != '${install_prefix}' ]; then
-                echo 'Installing HoloMQ package artifacts to ${holomq_install_prefix}'
-            fi
-            install_component_if_present holomq '${holomq_install_prefix}'
             if [ \"${build_python}\" != 'OFF' ]; then
                 install_component_if_present holoscan-python_libs
             fi
         "
+}
+
+#===============================================================================
+# Section: Documentation
+#===============================================================================
+
+build_docs_desc() { c_echo 'Build and validate the Fern user guide
+
+Runs the repository documentation pipeline from the current checkout. Any
+remaining arguments are passed to docs/scripts/build_holoscan_docs.py.
+With no arguments and no FERN_TOKEN, generated library MDX is skipped; when no
+local API tree exists, validation omits the API-reference section.
+
+Examples:
+  ./public/run build_docs
+  ./run build_docs                 # public repository layout
+  ./public/run build_docs --skip-library-mdx
+'
+}
+build_docs() {
+    local docs_args=("$@")
+    if [[ $# -eq 0 && -z "${FERN_TOKEN:-}" ]]; then
+        docs_args=(--skip-library-mdx)
+    fi
+    run_command "${HOLOSCAN_PY_EXE}" \
+        "${TOP}/docs/scripts/build_holoscan_docs.py" "${docs_args[@]}"
+}
+
+live_docs_desc() { c_echo 'Start a foreground local Fern user-guide preview
+
+Runs the same documentation pipeline with --preview. Any remaining arguments
+are passed to docs/scripts/build_holoscan_docs.py after --preview.
+With no arguments and no FERN_TOKEN, the local preview omits the API-reference
+section when no generated library MDX exists.
+
+Examples:
+  ./public/run live_docs
+  ./run live_docs                   # public repository layout
+  ./public/run live_docs --skip-library-mdx
+'
+}
+live_docs() {
+    local docs_args=(--preview "$@")
+    if [[ $# -eq 0 && -z "${FERN_TOKEN:-}" ]]; then
+        docs_args+=(--skip-library-mdx)
+    fi
+    build_docs "${docs_args[@]}"
 }
 
 #===============================================================================
@@ -852,7 +909,12 @@ Examples:
 }
 lint() {
     local REPO_ROOT
-    REPO_ROOT="$(git -C "${TOP}" rev-parse --show-toplevel 2>/dev/null)" || REPO_ROOT="$(dirname "${TOP}")"
+    # Prefer git toplevel when available; otherwise TOP (source archive / zip extract).
+    if is_git_repo; then
+        REPO_ROOT="$(git -C "${TOP}" rev-parse --show-toplevel)"
+    else
+        REPO_ROOT="${TOP}"
+    fi
     if [ ! -f "${REPO_ROOT}/.pre-commit-config.yaml" ]; then
         c_echo_err R "Not found: ${REPO_ROOT}/.pre-commit-config.yaml"
         return 1
@@ -1707,7 +1769,7 @@ launch() {
     # - Append the Holoscan bin folder to the existing `PATH` before running
     # - Preserve the image-provided PYTHONPATH before running
 
-    img="$(get_build_img_name):$(get_git_sha)"
+    img="$(get_build_img_name):$(get_build_img_tag)"
     pythonpath=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'PYTHONPATH=\K[^ ]+' || true)
     ld_library_path=$(docker inspect ${img} --format '{{.Config.Env}}' | grep -oP 'LD_LIBRARY_PATH=\K[^ ]+' || true)
 
